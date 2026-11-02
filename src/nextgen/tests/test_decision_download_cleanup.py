@@ -16,6 +16,7 @@ from src.nextgen.tests.test_stage_media_job import StageMediaJobTests
 from src.nextgen.tests.test_torrent_submission import Secrets
 from src.nextgen.tests.test_torrent_transfer import TorrentTransferTests
 from src.nextgen.tests.test_verify_media_job import VerifyMediaJobTests
+from src.nextgen.worker import Worker
 
 
 class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
@@ -37,8 +38,9 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'")[0][0]
         return worker,target,job
 
-    def attach(self,worker,mode='normal'):
-        test=self;self.controls=[]
+    def attach(self,worker,mode='normal',*,preserve_controls=False):
+        test=self
+        if not preserve_controls:self.controls=[]
         class Client:
             def __init__(self,*args):pass
             def login(self):pass
@@ -46,15 +48,31 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
             def cleanup_control(self,intent,fingerprint,permit,action):
                 permit.take(fingerprint,action);test.controls.append(action)
                 if action=='stop':
-                    if mode!='stop_present':test.snapshot=replace(test.snapshot,observation=replace(test.snapshot.observation,state='stoppedDL'))
-                    if mode in ('stop_lost','stop_present'):raise ClientUnavailable()
+                    first_delayed=mode=='stop_delayed' and test.controls.count('stop')==1
+                    if mode!='stop_present' and not first_delayed:
+                        test.snapshot=replace(test.snapshot,observation=replace(test.snapshot.observation,state='stoppedDL'))
+                    if mode in ('stop_lost','stop_present') or first_delayed:raise ClientUnavailable()
                 else:
-                    if mode!='remove_present':test.snapshot=None
-                    if mode in ('remove_lost','remove_present','changed_after_remove'):
+                    first_delayed=mode=='remove_delayed' and test.controls.count('remove')==1
+                    if mode not in ('remove_present','remove_present_ok') and not first_delayed:
+                        test.snapshot=None
+                    if mode in ('remove_lost','remove_present','changed_after_remove') or first_delayed:
                         if mode=='changed_after_remove':test.remainder.write_bytes(b'changed')
                         raise ClientUnavailable()
         factory=partial(Service,client_factory=Client)
-        worker.registry=Registry((*worker.registry.entries.values(),registration(Secrets(),service_factory=factory)))
+        # A recreated worker already has a cleanup registration; swap its
+        # client-backed handler rather than registering the same kind twice.
+        entries=tuple(item for item in worker.registry.entries.values() if item.kind!=KIND)
+        worker.registry=Registry((*entries,registration(Secrets(),service_factory=factory)))
+
+    def restart(self,previous,mode):
+        # The normal fixture factory seeds configuration at revision 1. A true
+        # restart reuses the persisted settings and handler registry instead
+        # of trying to apply the initial configuration for a second time.
+        restarted=Worker(self.store,self.startup,previous.registry,policy=previous.policy)
+        self.addAsyncCleanup(restarted.close)
+        self.attach(restarted,mode=mode,preserve_controls=True)
+        return restarted
 
     async def download_ready(self,action='keep',mode='normal'):
         worker,fake,actions,target,decision,staging_cleanup=await self.cleanup_ready()
@@ -130,10 +148,69 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controls,['stop','remove'])
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
 
-    async def test_uncertain_remove_still_present_never_gets_another_permit(self):
-        worker,_,_,_,_,job=await self.download_ready(mode='remove_present')
-        for _ in range(3):await self.make_due(job);await worker.attempt()
-        self.assertEqual(self.controls,['stop','remove']);self.assertTrue(self.remainder.exists())
+    async def test_unconfirmed_stop_recovers_after_worker_restart(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='stop_delayed')
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('STOP_UNCERTAIN',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('RETRY_WAIT',)])
+        # A new Worker and Client resume against the same durable journal.
+        restarted=self.restart(worker,mode='stop_delayed')
+        await self.make_due(job)
+        await restarted.attempt()
+        self.assertEqual(self.controls,['stop','stop','remove'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+
+    async def test_unconfirmed_stop_rechecks_active_torrent_without_repeating_delete(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='stop_present')
+        await worker.attempt()
+        await self.make_due(job)
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','stop'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('STOP_UNCERTAIN',)])
+
+    async def test_uncertain_remove_still_present_is_rechecked_and_retried(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_present_ok')
+        for _ in range(3):
+            await self.make_due(job)
+            await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove','remove','remove'])
+        self.assertTrue(self.remainder.exists())
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('RETRY_WAIT',)])
+
+    async def test_remove_not_delivered_can_recover_after_worker_restart(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_delayed')
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
+        restarted=self.restart(worker,mode='remove_delayed')
+        await self.make_due(job)
+        await restarted.attempt()
+        self.assertEqual(self.controls,['stop','remove','remove'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
+        self.assertFalse(self.remainder.exists())
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+
+    async def test_remove_retries_require_matching_owned_torrent(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_present_ok')
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove'])
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,tags=()))
+        await self.make_due(job)
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertTrue(self.remainder.exists())
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
+
+    async def test_remove_restarted_active_torrent_is_stopped_first(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_present_ok')
+        await worker.attempt()
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='downloading'))
+        await self.make_due(job)
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove','stop','remove'])
         self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
 
     async def test_changed_file_after_lost_remove_is_purged_with_the_folder(self):

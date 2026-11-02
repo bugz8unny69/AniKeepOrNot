@@ -155,6 +155,9 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['data']['items'][0]['event']['message'],'Job created.')
         self.assertEqual(result['data']['job']['kind'],job['kind'])
         self.assertEqual(result['data']['job']['module'],job['kind'].lower()+'_job')
+        self.assertEqual(result['data']['job']['poll_check_count'],0)
+        self.assertEqual(result['data']['job']['work_attempt_count'],0)
+        self.assertEqual(result['data']['job']['scheduler_claim_count'],0)
         self.assertNotIn(WEB,json.dumps(result))
 
     async def test_malformed_json_duplicate_headers_and_oversized_input_never_commit(self):

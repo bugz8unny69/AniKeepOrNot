@@ -1,7 +1,7 @@
 """Shared one-shot owned torrent and manifest-file cleanup journal."""
 import json
 from src.nextgen.acquisition.cleanup import CleanupPermit, owned
-from src.nextgen.acquisition.transfers import STOPPED, CHECKING
+from src.nextgen.acquisition.transfers import STOPPED, CHECKING, ACTIVE
 from src.nextgen.cancellation import CancellationError
 from src.nextgen.history import job_attempt, append_job_history
 from src.nextgen.storage.sqlite import transaction
@@ -58,9 +58,15 @@ class OwnedCleanup:
             current=owned(intent,found)
             if current.state in CHECKING:return False
             if current.state not in STOPPED:
-                if phase=='STOP_UNCERTAIN':return False
-                self._advance(intent,phase,'STOP_UNCERTAIN');phase='STOP_UNCERTAIN'
-                # At most one stop request; a lost/uncertain permit is not rearmed.
+                # Stopping is repeatable. After restart, each control rechecks
+                # exact ownership rather than trusting a prior HTTP response.
+                # Reject unexpected client states instead of guessing.
+                if current.state not in ACTIVE:raise CancellationError()
+                if phase=='PREPARED':
+                    self._advance(intent,phase,'STOP_UNCERTAIN');phase='STOP_UNCERTAIN'
+                # The operation gate excludes other handlers while this check
+                # runs; cleanup_control revalidates the exact owned torrent
+                # immediately before each stop request.
                 self._fence()
                 client.cleanup_control(intent,intent.fingerprint,CleanupPermit(intent.fingerprint,'stop'),'stop')
                 found=client.inspect(intent.plan.manifest.info_hash)
@@ -68,14 +74,34 @@ class OwnedCleanup:
                 if current.state not in STOPPED:return False
             files=self._pin(cleaner) if self.purge else self._capture(cleaner)
             self._advance(intent,phase,'REMOVE_UNCERTAIN',files);phase='REMOVE_UNCERTAIN'
-            self._fence()
-            client.cleanup_control(intent,intent.fingerprint,CleanupPermit(intent.fingerprint,'remove'),'remove')
-            found=client.inspect(intent.plan.manifest.info_hash)
         if phase=='REMOVE_UNCERTAIN':
-            # Still present after uncertainty is never a second delete permit.
+            # A lost removal response is not proof of removal. The qBittorrent
+            # command deletes only its *torrent record* (deleteFiles=false);
+            # local files are separately protected after absence is confirmed.
             if found is not None:
-                owned(intent,found)
-                return False
+                current=owned(intent,found)
+                if current.state in CHECKING:return False
+                if current.state not in STOPPED:
+                    if current.state not in ACTIVE:raise CancellationError()
+                    # A client restart or another actor may have resumed it.
+                    # Never remove an active torrent: stop, then verify.
+                    self._fence()
+                    client.cleanup_control(intent,intent.fingerprint,
+                        CleanupPermit(intent.fingerprint,'stop'),'stop')
+                    found=client.inspect(intent.plan.manifest.info_hash)
+                    current=owned(intent,found)
+                    if current.state not in STOPPED:return False
+                # Repeat only after verifying the exact persisted identity,
+                # stopped state, current lease and operation ownership. The
+                # client independently validates identity immediately before
+                # every command. No filesystem deletion is retried here.
+                self._fence()
+                client.cleanup_control(intent,intent.fingerprint,
+                    CleanupPermit(intent.fingerprint,'remove'),'remove')
+                found=client.inspect(intent.plan.manifest.info_hash)
+                if found is not None:
+                    owned(intent,found)
+                    return False
             self._advance(intent,phase,'FILES');phase='FILES'
         if phase=='FILES':
             # Reappearance prevents file deletion, even after an earlier absence.

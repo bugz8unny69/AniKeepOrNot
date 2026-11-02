@@ -669,6 +669,17 @@ class Application:
                 from importlib.util import find_spec
                 about={'job_id':job,'kind':kind[0],'label':CATALOG.handler(kind[0]),
                        'module':module if find_spec('src.nextgen.jobs.'+module) else None}
+                # A deferred observation is not another failed processing attempt.
+                # Keep the historical claim count for leases/CAS; expose the
+                # successfully deferred checks separately in History.
+                counts=db.execute("SELECT j.attempt_count, "
+                    "(SELECT count(*) FROM job_history h WHERE h.job_id=j.job_id AND h.event_code='DEFERRED') "
+                    "FROM jobs j WHERE j.job_id=?",(job,)).fetchone()
+                about['scheduler_claim_count']=counts[0]
+                about['poll_check_count']=counts[1]
+                about['work_attempt_count']=counts[0]-counts[1]
+                if kind[0]=='CLEANUP_DECIDED_DOWNLOAD':
+                    about['cleanup_progress']=self._cleanup_progress(db,job)
                 target=db.execute("SELECT target_job_id FROM management_actions WHERE job_id=?",(job,)).fetchone()
                 if target:about['target_job_id']=target[0]
                 if kind[0]=='REJECT_SERIES':
@@ -777,6 +788,27 @@ class Application:
             items=[self._job(queue,db,row[1:]) for row in rows[:limit]]
         return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
 
+    @staticmethod
+    def _cleanup_progress(db,job_id):
+        """Current recorded checkpoint, not an instruction to repeat deletion."""
+        source=db.execute(
+            "SELECT json_extract(payload_json,'$.staging_job_id'), "
+            "json_extract(payload_json,'$.decision_job_id') "
+            "FROM jobs WHERE job_id=? AND kind='CLEANUP_DECIDED_DOWNLOAD'",(job_id,)).fetchone()
+        if not source:return None
+        if source[0] is not None:
+            row=db.execute("SELECT c.phase,c.updated_at_ms FROM staging_publications s "
+                "JOIN cancellation_cleanup c ON c.plan_id=s.plan_id "
+                "WHERE s.job_id=?",(source[0],)).fetchone()
+        elif source[1] is not None:
+            row=db.execute("SELECT c.phase,c.updated_at_ms FROM management_actions a "
+                "JOIN job_operation_members m ON m.operation_id=a.operation_id "
+                "JOIN staging_publications s ON s.job_id=m.job_id "
+                "JOIN cancellation_cleanup c ON c.plan_id=s.plan_id "
+                "WHERE a.job_id=?",(source[1],)).fetchone()
+        else:return None
+        return None if row is None else {'phase':row[0],'since_ms':row[1]}
+
     def _job(self,queue,db,row):
         op=db.execute('SELECT o.operation_id,o.state,o.cleanup_state,o.reason_code FROM job_operations o JOIN job_operation_members m USING(operation_id) WHERE m.job_id=?',(row[0],)).fetchone()
         actions=ManagementActions(queue.database).capabilities(db,row[0])
@@ -807,6 +839,7 @@ class Application:
                 'release_name':release,'anime_title':titles[0][0] if len(titles)==1 else None,
                 'acquisition_status':CATALOG.state('acquisition',op[1]),
                 'status':CATALOG.job_status(row[4],row[5],kind=row[3]),'attempt_count':row[6],
+                'cleanup_progress':self._cleanup_progress(db,row[0]) if row[3]=='CLEANUP_DECIDED_DOWNLOAD' else None,
                 'reason':None if row[7] is None else CATALOG.reason(row[7]),'size_detail':sized,'failed_detail':stopped,'actions':actions,
                 'cancellation':{'operation_id':op[0],'state':op[1],'cleanup_state':op[2],'reason_code':op[3],
                                  'reason':None if op[3] is None else CATALOG.reason(op[3]),
