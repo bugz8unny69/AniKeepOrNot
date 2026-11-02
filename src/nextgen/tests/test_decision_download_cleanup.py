@@ -37,8 +37,9 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'")[0][0]
         return worker,target,job
 
-    def attach(self,worker,mode='normal'):
-        test=self;self.controls=[]
+    def attach(self,worker,mode='normal',*,preserve_controls=False):
+        test=self
+        if not preserve_controls:self.controls=[]
         class Client:
             def __init__(self,*args):pass
             def login(self):pass
@@ -46,8 +47,10 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
             def cleanup_control(self,intent,fingerprint,permit,action):
                 permit.take(fingerprint,action);test.controls.append(action)
                 if action=='stop':
-                    if mode!='stop_present':test.snapshot=replace(test.snapshot,observation=replace(test.snapshot.observation,state='stoppedDL'))
-                    if mode in ('stop_lost','stop_present'):raise ClientUnavailable()
+                    first_delayed=mode=='stop_delayed' and test.controls.count('stop')==1
+                    if mode!='stop_present' and not first_delayed:
+                        test.snapshot=replace(test.snapshot,observation=replace(test.snapshot.observation,state='stoppedDL'))
+                    if mode in ('stop_lost','stop_present') or first_delayed:raise ClientUnavailable()
                 else:
                     if mode!='remove_present':test.snapshot=None
                     if mode in ('remove_lost','remove_present','changed_after_remove'):
@@ -129,6 +132,29 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt();await self.make_due(job);await worker.attempt()
         self.assertEqual(self.controls,['stop','remove'])
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+
+    async def test_unconfirmed_stop_recovers_after_worker_restart(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='stop_delayed')
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('STOP_UNCERTAIN',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('RETRY_WAIT',)])
+        # A new Worker and Client resume against the same durable journal.
+        restarted=StageMediaJobTests.worker(self)
+        self.attach(restarted,mode='stop_delayed',preserve_controls=True)
+        await self.make_due(job)
+        await restarted.attempt()
+        self.assertEqual(self.controls,['stop','stop','remove'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+
+    async def test_unconfirmed_stop_rechecks_active_torrent_without_repeating_delete(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='stop_present')
+        await worker.attempt()
+        await self.make_due(job)
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','stop'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('STOP_UNCERTAIN',)])
 
     async def test_uncertain_remove_still_present_never_gets_another_permit(self):
         worker,_,_,_,_,job=await self.download_ready(mode='remove_present')

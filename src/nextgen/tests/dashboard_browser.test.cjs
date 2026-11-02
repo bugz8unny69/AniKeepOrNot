@@ -429,6 +429,22 @@ test('History lists every release tried for a backfill episode and why it stoppe
   assert.match(shown, /Staged · AD-139/);
   assert.match(shown, /3\. Ranked release #3 \(not sent yet\)/);
 });
+test('History separates deferred polling checks from other worker runs', async () => {
+  const h = await harness();
+  h.ctx.fetch = async () => response({
+    items: [], next_after_id: null,
+    job: {job_id: 3079, kind: 'CLEANUP_DECIDED_DOWNLOAD',
+      label: {message: 'Remove the finished download from qBittorrent'},
+      module: 'cleanup_decided_download_job',
+      scheduler_claim_count: 6065, poll_check_count: 6064, work_attempt_count: 1,
+      cleanup_progress: {phase: 'STOP_UNCERTAIN', since_ms: 1793373174000}},
+  });
+  await h.run('openHistory(3079)');
+  const text = element => [element.textContent || '', ...element.children.map(text)].join(' ');
+  const shown = text(h.elements.get('history-rows'));
+  assert.match(shown, /6064 deferred checks · 1 other runs · 6065 total claims/);
+  assert.match(shown, /Cleanup checkpoint: STOP_UNCERTAIN/);
+});
 test('Search asks the API for the current page scope and resets paging', async () => {
   const h = await harness();
   const calls = [];

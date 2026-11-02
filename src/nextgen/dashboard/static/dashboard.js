@@ -183,6 +183,16 @@ function renderJobs() {
       details.appendChild(node('p', job.reason.message));
       if (job.reason.action) details.appendChild(node('small', job.reason.action, 'muted'));
     } else if (job.cancellation.state === 'STAGED' && !job.actions?.keep?.job?.completion) details.appendChild(node('p', COPY['dashboard.staged']));
+    if (job.cleanup_progress) {
+      const phases = {
+        PREPARED: 'Preparing cleanup', STOP_UNCERTAIN: 'Confirming torrent stopped',
+        REMOVE_UNCERTAIN: 'Confirming torrent removed (no repeat deletion)',
+        FILES: 'Cleaning leftover files', COMPLETE: 'Cleanup completed'
+      };
+      details.appendChild(node('small',
+        `Cleanup: ${phases[job.cleanup_progress.phase] || job.cleanup_progress.phase} · Last advanced ${date(job.cleanup_progress.since_ms)}`,
+        'muted'));
+    }
     if (job.size_detail) details.appendChild(node('p', job.size_detail));
     if (job.failed_detail) details.appendChild(node('small', job.failed_detail + ` · run: sudo adm report job --id ${job.job_id}`, 'muted'));
     const activeAction = ['cleanup', 'keep'].map(name => job.actions?.[name]?.job).find(Boolean);
@@ -488,6 +498,15 @@ async function loadHistory() {
     // Every line names the job that did the work (its *_job.py module).
     const worker = data.job?.module || data.job?.kind || `Job #${job}`;
     if (data.job) $('history-title').textContent = `Job #${job} · ${data.job.label?.message || data.job.kind} · ${worker}`;
+    if (data.job && !state.historyCursor && Number.isInteger(data.job.poll_check_count)) {
+      $('history-rows').appendChild(node('p',
+        `${data.job.poll_check_count} deferred checks · ${data.job.work_attempt_count} other runs · ${data.job.scheduler_claim_count} total claims`,
+        'muted'));
+      if (data.job.cleanup_progress) {
+        const p = data.job.cleanup_progress;
+        $('history-rows').appendChild(node('p', `Cleanup checkpoint: ${p.phase} · Last advanced ${date(p.since_ms)}`, 'muted'));
+      }
+    }
     if (data.job?.kind === 'REJECT_SERIES' && !state.historyCursor) {
       $('history-rows').appendChild(node('p',
         'Rejected: ' + (data.job.rejection_reason || 'Reason not recorded') +

@@ -1,7 +1,7 @@
 """Shared one-shot owned torrent and manifest-file cleanup journal."""
 import json
 from src.nextgen.acquisition.cleanup import CleanupPermit, owned
-from src.nextgen.acquisition.transfers import STOPPED, CHECKING
+from src.nextgen.acquisition.transfers import STOPPED, CHECKING, ACTIVE
 from src.nextgen.cancellation import CancellationError
 from src.nextgen.history import job_attempt, append_job_history
 from src.nextgen.storage.sqlite import transaction
@@ -58,9 +58,15 @@ class OwnedCleanup:
             current=owned(intent,found)
             if current.state in CHECKING:return False
             if current.state not in STOPPED:
-                if phase=='STOP_UNCERTAIN':return False
-                self._advance(intent,phase,'STOP_UNCERTAIN');phase='STOP_UNCERTAIN'
-                # At most one stop request; a lost/uncertain permit is not rearmed.
+                # Stopping is repeatable; removing is not. A crash or lost stop
+                # response must never strand an owned, still-active torrent.
+                # Reject unexpected client states instead of guessing.
+                if current.state not in ACTIVE:raise CancellationError()
+                if phase=='PREPARED':
+                    self._advance(intent,phase,'STOP_UNCERTAIN');phase='STOP_UNCERTAIN'
+                # The operation gate excludes other handlers while this check
+                # runs; cleanup_control revalidates the exact owned torrent
+                # immediately before each stop request.
                 self._fence()
                 client.cleanup_control(intent,intent.fingerprint,CleanupPermit(intent.fingerprint,'stop'),'stop')
                 found=client.inspect(intent.plan.manifest.info_hash)
