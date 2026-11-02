@@ -43,6 +43,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),[('DONE',)])
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PUBLISHED',)])
+        self.assertEqual(self.rows("SELECT json_extract(manifest_json,'$.transfer') FROM staging_publications"),[('COPY',)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(1,)])
         self.assertEqual(len(list(target.rglob('*.mkv'))),1)
         self.assertEqual(len(list(target.rglob('*.nfo'))),2)
