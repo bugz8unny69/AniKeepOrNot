@@ -98,10 +98,13 @@ def _inventory(intent):
 def lookup(database,digest):
     """Read-only lookup for downstream batch jobs; no permits or mutations."""
     digest=infohash(digest)
-    with _open(database,readonly=True,timeout_ms=5000) as db:
+    db=_open(database,readonly=True,timeout_ms=5000)
+    try:
         if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
             raise AcquisitionConflict()
         intent=_select(db,info_hash=digest)
+    finally:
+        db.close()
     if intent is None or intent.state not in ('OWNED_STOPPED','ADOPTED'):
         return None,None
     return intent,_inventory(intent)

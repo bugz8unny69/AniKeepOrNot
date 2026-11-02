@@ -73,9 +73,12 @@ def _event_magnet(database,event_id,digest):
     from src.nextgen.storage.migrations import _open
     from src.nextgen.job_contracts import parse_payload
     from src.nextgen.acquisition.metadata import hash_magnet
-    with _open(database,readonly=True,timeout_ms=5000) as db:
+    db=_open(database,readonly=True,timeout_ms=5000)
+    try:
         row=db.execute('SELECT raw_body FROM incoming_events WHERE event_id=?',
                        (event_id,)).fetchone()
+    finally:
+        db.close()
     if row is None:
         raise MetadataSourceDenied()
     try:

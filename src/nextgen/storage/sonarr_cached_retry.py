@@ -61,8 +61,11 @@ def _cached(db, plan_id, episode, english, now=None):
 
 def load_cached(database,plan_id,episode,english):
     from src.nextgen.storage.migrations import _open
-    with _open(database,readonly=True,timeout_ms=5000) as db:
+    db=_open(database,readonly=True,timeout_ms=5000)
+    try:
         return next(_cached(db,plan_id,episode,english),None)
+    finally:
+        db.close()
 
 
 def _scrub(db, condition, args):
