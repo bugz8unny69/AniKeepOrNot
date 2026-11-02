@@ -48,12 +48,12 @@ def can_cancel_operation(db,op):
                        (op[0],)).fetchone() is not None)
 
 
-def cancel_job(db,job_id,now,component='worker'):
+def cancel_job(db,job_id,now,component='worker',*,reason_code='JOB_CANCELED'):
     row=db.execute('SELECT state,attempt_count FROM jobs WHERE job_id=?',(job_id,)).fetchone()
     if row is None or row[0] not in CANCELABLE:return ()
     db.execute("UPDATE jobs SET state='CANCELED',lease_token=NULL,lease_expires_at_ms=NULL,activity_code=NULL,"
-               "last_reason_code='JOB_CANCELED',updated_at_ms=? WHERE job_id=?",(now,job_id))
-    return (append_job_history(db,job_id=job_id,event_code='CANCELED',reason_code='JOB_CANCELED',component=component,
+               "last_reason_code=?,updated_at_ms=? WHERE job_id=?",(reason_code,now,job_id))
+    return (append_job_history(db,job_id=job_id,event_code='CANCELED',reason_code=reason_code,component=component,
                               occurred_at_ms=now,details={'attempt':row[1]}),)
 
 
@@ -88,6 +88,29 @@ def mark_staged(db,claim):
     db.execute("UPDATE job_operations SET state='STAGED',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
 
 
+def request_cancellation(db,job_id,now,*,component='api',reason_code='JOB_CANCELED'):
+    """Cancel via the normal guarded operation lifecycle inside the caller transaction."""
+    if not db.in_transaction:raise CancellationError()
+    if db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(job_id,)).fetchone():raise CancellationError()
+    op=operation(db,job_id)
+    if op[1] in ('CANCEL_REQUESTED','CANCELED'):return op[0],()
+    members=db.execute('SELECT j.job_id,j.state,j.attempt_count FROM jobs j JOIN job_operation_members m USING(job_id) '
+                       'WHERE m.operation_id=?',(op[0],)).fetchall()
+    if not can_cancel_operation(db,op):raise CancellationError()
+    db.execute("UPDATE job_operations SET state='CANCEL_REQUESTED',cleanup_state='PENDING',reason_code='CANCELLATION_DRAINING',"
+               'updated_at_ms=? WHERE operation_id=?',(now,op[0]))
+    receipts=[]
+    for member,state,attempt in members:
+        if state not in CANCELABLE:continue
+        receipts.append(append_job_history(db,job_id=member,event_code='CANCELLATION_REQUESTED',reason_code=reason_code,
+            component=component,occurred_at_ms=now,details={'attempt':attempt}))
+        if state!='RUNNING':receipts.extend(cancel_job(db,member,now,component,reason_code=reason_code))
+    if not receipts:
+        receipts.append(append_job_history(db,job_id=job_id,event_code='CANCELLATION_REQUESTED',reason_code=reason_code,
+            component=component,occurred_at_ms=now,details={'attempt':job_attempt(db,job_id)}))
+    return op[0],tuple(receipts)
+
+
 class CancellationStore:
     def __init__(self,database,*,clock=None):self.queue=JobQueue(database,clock=clock)
     def status(self,job_id):
@@ -104,25 +127,8 @@ class CancellationStore:
             return self.request_in_transaction(db,job_id)
     def request_in_transaction(self,db,job_id):
         """Caller transaction allows cancellation + cleanup enqueue to be atomic."""
-        if not db.in_transaction:raise CancellationError()
-        if db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(job_id,)).fetchone():raise CancellationError()
-        op=operation(db,job_id)
-        if op[1] in ('CANCEL_REQUESTED','CANCELED'):return op[0],()
-        members=db.execute('SELECT j.job_id,j.state,j.attempt_count FROM jobs j JOIN job_operation_members m USING(job_id) '
-                           'WHERE m.operation_id=?',(op[0],)).fetchall()
-        if not can_cancel_operation(db,op):raise CancellationError()
-        now=self.queue.now();receipts=[]
-        db.execute("UPDATE job_operations SET state='CANCEL_REQUESTED',cleanup_state='PENDING',reason_code='CANCELLATION_DRAINING',"
-                   'updated_at_ms=? WHERE operation_id=?',(now,op[0]))
-        for job,state,attempt in members:
-            if state not in CANCELABLE:continue
-            receipts.append(append_job_history(db,job_id=job,event_code='CANCELLATION_REQUESTED',reason_code='JOB_CANCELED',
-                component='api',occurred_at_ms=now,details={'attempt':attempt}))
-            if state!='RUNNING':receipts.extend(cancel_job(db,job,now,'api'))
-        if not receipts:
-            receipts.append(append_job_history(db,job_id=job_id,event_code='CANCELLATION_REQUESTED',reason_code='JOB_CANCELED',
-                component='api',occurred_at_ms=now,details={'attempt':job_attempt(db,job_id)}))
-        return op[0],tuple(receipts)
+        return request_cancellation(db,job_id,self.queue.now())
+
     def acknowledge(self,claim):
         with self.queue.connection() as db,transaction(db):
             op=operation(db,claim.job_id)

@@ -153,5 +153,5 @@ def persist(db,claim,value):
     mark_staged(db,claim)
     from src.nextgen.storage.sonarr_candidates import mark_published
     mark_published(db,event_id=claim.event_id,info_hash=intent.plan.manifest.info_hash)
-    from src.nextgen.storage.episode_reservations import skip_staged_waiters
-    return skip_staged_waiters(db,intent.plan.plan_id,__import__('time').time_ns()//1000000)
+    from src.nextgen.storage.episode_reservations import cancel_staged_waiters
+    return cancel_staged_waiters(db,intent.plan.plan_id,__import__('time').time_ns()//1000000)

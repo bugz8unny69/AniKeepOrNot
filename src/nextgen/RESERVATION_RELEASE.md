@@ -44,6 +44,29 @@ Remaining work includes download/torrent cleanup after Keep/Reject, optional
 Shoko integration, service lifecycle/setup and end-to-end lab validation. Existing
 cancellation download cleanup is reused, rather than being reimplemented here.
 
+## Staged-episode competitor reconciliation
+
+When one single-episode operation reaches the durable `STAGED` milestone,
+the worker cancels other `ON_HOLD / EPISODE_RESERVED` single-episode jobs
+whose independently verified AniDB/TVDB episode identity matches exactly.
+Unlike a later arrival, which can complete as `SKIPPED_DUPLICATE`, a held
+contender is `CANCELED` with reason `EPISODE_ALREADY_STAGED`.
+
+The worker requests cancellation for the **whole competing operation**, not
+just one job, and atomically queues its normal
+`CLEANUP_CANCELED_OPERATION` control job. This existing cleanup path
+handles resources owned by the loser and records pending/review/complete
+outcomes; it does not delete the winning operation's staged media or
+release its reservation. No external cleanup is performed inside the
+staging completion transaction.
+
+On startup and during polling, the worker reconciles old held competitors
+against confirmed `PUBLISHED` receipts in `STAGED` operations. This covers
+missed notifications and restarts without a manual repair script. It is
+idempotent: a canceled operation cannot generate duplicate cleanup actions.
+Unpublished/partially staged work, invalid identity matches, or holds for
+other reasons are never automatically canceled.
+
 ## Decision download cleanup follow-up
 
 New completed Reject decisions and post-Keep staging cleanups enqueue a separate

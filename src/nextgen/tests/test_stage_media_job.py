@@ -8,6 +8,8 @@ from src.nextgen.jobs.verify_media_job import registration as verify_registratio
 from src.nextgen.jobs.stage_trial_media_job import registration as stage_registration
 from src.nextgen.staging import Publisher
 from src.nextgen.storage.cancellation import CancellationStore
+from src.nextgen.jobs.cleanup_canceled_operation_job import registration as cleanup_registration
+from src.nextgen.tests.test_torrent_submission import Secrets
 from src.nextgen.storage.sqlite import connect, transaction
 from src.nextgen.tests.test_torrent_transfer import TorrentTransferTests
 from src.nextgen.tests.test_verify_media_job import VerifyMediaJobTests
@@ -65,9 +67,9 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
             with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='STAGE_TRIAL_MEDIA'")
         finally:db.close()
 
-    async def test_staging_closes_held_groups_and_late_releases_skip_without_download(self):
+    async def test_staging_cancels_held_groups_and_late_releases_skip_without_download(self):
         from unittest.mock import patch
-        worker=self.worker();target,source=await self.staged_ready(worker)
+        worker=self.worker(additional=(cleanup_registration(Secrets()),));target,source=await self.staged_ready(worker)
         await self.held_contender(worker)
         await self.held_contender(worker)
         self.stage_due()
@@ -75,13 +77,32 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         with patch('src.nextgen.worker.log_history',side_effect=lambda logger,record:records.append(record)):
             await worker.attempt()
         self.assertEqual(self.rows("SELECT state,activity_code FROM jobs WHERE kind='RESERVE_EPISODE' ORDER BY job_id"),
-            [('DONE',None),('DONE','SKIPPED_DUPLICATE'),('DONE','SKIPPED_DUPLICATE')])
-        self.assertEqual(sum(r.event_code=='DONE' and r.activity_code=='SKIPPED_DUPLICATE' for r in records),2)
+            [('DONE',None),('CANCELED',None),('CANCELED',None)])
+        self.assertEqual(sum(r.event_code=='CANCELED' and r.reason_code=='EPISODE_ALREADY_STAGED' for r in records),2)
+        self.assertEqual(self.rows("SELECT count(*) FROM management_actions WHERE action='CLEANUP'"),[(2,)])
+        await worker.attempt();await worker.attempt()
+        self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='CANCELED' AND cleanup_state='COMPLETE'"),[(2,)])
         self.source();await worker.attempt();await worker.attempt()
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE activity_code='SKIPPED_DUPLICATE'"),[(3,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE activity_code='SKIPPED_DUPLICATE'"),[(1,)])
         self.assertEqual(self.rows('SELECT count(*) FROM acquisition_plans'),[(1,)])
         self.assertEqual(len(list(target.rglob('*.mkv'))),1)
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='PREPARE_ACQUISITION'"),[(1,)])
+
+    async def test_stage_does_not_cancel_held_contender_for_another_episode(self):
+        worker=self.worker();await self.staged_ready(worker)
+        await self.held_contender(worker)
+        # The unrelated held reservation must remain untouched. The regular
+        # contender (same episode) will still be canceled on stage completion.
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                other=db.execute("SELECT job_id FROM jobs WHERE state='ON_HOLD' LIMIT 1").fetchone()[0]
+                db.execute("UPDATE jobs SET last_reason_code='EPISODE_RESERVATION_CONFLICT' WHERE job_id=?",(other,))
+        finally:db.close()
+        self.stage_due();await worker.attempt()
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(other,)),
+                         [('ON_HOLD','EPISODE_RESERVATION_CONFLICT')])
+        self.assertEqual(self.rows("SELECT count(*) FROM management_actions WHERE action='CLEANUP'"),[(0,)])
 
     async def test_partial_staging_does_not_skip_waiters(self):
         from unittest.mock import patch
@@ -101,23 +122,24 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
     async def test_staging_transaction_rolls_back_duplicate_closure_on_failure(self):
         from unittest.mock import patch
         from src.nextgen.storage.job_queue import QueueUnavailable
-        from src.nextgen.storage.episode_reservations import skip_staged_waiters
+        from src.nextgen.storage.episode_reservations import cancel_staged_waiters
         worker=self.worker();await self.staged_ready(worker)
         await self.held_contender(worker);self.stage_due()
         def fail_after_closure(*args):
-            skip_staged_waiters(*args)
+            cancel_staged_waiters(*args)
             raise OSError('interrupted transaction')
-        with patch('src.nextgen.storage.episode_reservations.skip_staged_waiters',side_effect=fail_after_closure):
+        with patch('src.nextgen.storage.episode_reservations.cancel_staged_waiters',side_effect=fail_after_closure):
             with self.assertRaises(QueueUnavailable):await worker.attempt()
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PLANNED',)])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE state='ON_HOLD' AND last_reason_code='EPISODE_RESERVED'"),[(1,)])
-        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE activity_code='SKIPPED_DUPLICATE'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='CANCELED'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM management_actions"),[(0,)])
 
     async def test_reservation_conflict_at_commit_stops_for_review_instead_of_crash_looping(self):
         from unittest.mock import patch
         from src.nextgen.episode_reservations import ReservationConflict
         worker=self.worker();await self.staged_ready(worker)
-        with patch('src.nextgen.storage.episode_reservations.skip_staged_waiters',side_effect=ReservationConflict()):
+        with patch('src.nextgen.storage.episode_reservations.cancel_staged_waiters',side_effect=ReservationConflict()):
             self.assertTrue(await worker.attempt())
         self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),
                          [('NEEDS_REVIEW','EPISODE_RESERVATION_CONFLICT')])
@@ -152,6 +174,21 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         worker.queue.finish(claim,caught.exception.outcome,spec=spec,invocation='a'*32,registry=worker.registry)
         self.assertEqual(self.rows('SELECT state,activity_code FROM jobs WHERE job_id=?',(claim.job_id,)),[('DONE','SKIPPED_DUPLICATE')])
         self.assertEqual(self.rows('SELECT count(*) FROM acquisition_plans'),[(1,)])
+
+    async def test_restart_reconciles_missed_staged_cancellation_idempotently(self):
+        from unittest.mock import patch
+        worker=self.worker();await self.staged_ready(worker)
+        await self.held_contender(worker);self.stage_due()
+        # Simulate a pre-upgrade staged commit that left a held contender behind.
+        with patch('src.nextgen.storage.episode_reservations.cancel_staged_waiters',return_value=()):
+            await worker.attempt()
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE state='ON_HOLD' AND last_reason_code='EPISODE_RESERVED'"),[(1,)])
+        await worker._recover()
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='RESERVE_EPISODE' AND state='CANCELED'"),[(1,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM management_actions WHERE action='CLEANUP'"),[(1,)])
+        await worker._recover()
+        self.assertEqual(self.rows("SELECT count(*) FROM management_actions WHERE action='CLEANUP'"),[(1,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_reservations WHERE state='ACTIVE'"),[(1,)])
 
     async def test_metadata_failure_retains_video_and_does_not_mark_staged(self):
         class FailMetadata(Publisher):
