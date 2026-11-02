@@ -265,11 +265,11 @@ def reject_series(database, anidb_id, operation_ids, reason, note):
         return {'job_id': control, 'reused': False}
 
 
-def retry_episode(database, anidb_id, season, episode):
+def retry_episode(database, anidb_id, season, episode, *, delete_cache=True):
     integer(anidb_id, positive=True)
     integer(season)
     integer(episode, positive=True)
-    if season < 0:
+    if season < 0 or type(delete_cache) is not bool:
         raise IntakeUnavailable()
     queue = JobQueue(database)
     with queue.connection() as db, transaction(db):
@@ -289,6 +289,15 @@ def retry_episode(database, anidb_id, season, episode):
         if episode not in numbers:
             raise IntakeUnavailable()
         held = _waiting_for_dub(db, plan_id).get(episode)
+        # A repeated click must not enqueue another worker while retry is pending.
+        active_retry = db.execute(
+            "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
+            "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
+            "AND json_extract(payload_json,'$.plan_id')=? "
+            "AND json_extract(payload_json,'$.exhausted_episode')=? "
+            "ORDER BY job_id DESC LIMIT 1", (plan_id, episode)).fetchone()
+        if active_retry:
+            return {'job_id':active_retry[0], 'reused':True}
         prior = db.execute(
             'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND tvdb_episode=?',
             (plan_id, episode)).fetchone()
@@ -307,7 +316,8 @@ def retry_episode(database, anidb_id, season, episode):
     from src.nextgen.storage.review_retry import request_review_retry, RetryNotAllowed, RetryStale
     try:
         receipt = request_review_retry(database, held[0], expected_attempt=held[1],
-                                       expected_reason=WAITING_FOR_DUB)
+                                       expected_reason=WAITING_FOR_DUB,
+                                       delete_cache=delete_cache)
     except (RetryNotAllowed, RetryStale):
         raise IntakeUnavailable() from None
     return {'job_id': receipt.job_id, 'reused': receipt.outcome == 'ALREADY_QUEUED'}

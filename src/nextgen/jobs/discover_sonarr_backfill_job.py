@@ -23,6 +23,7 @@ from src.nextgen.storage.sonarr_backfill import (
     AUTOMATIC_RETRY_MS, automatic_retry_used,
     WAITING_FOR_DUB, DubFound, load_dub_search, persist_dub_found,
 )
+from src.nextgen.storage.sonarr_cached_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
 
 KIND = 'DISCOVER_SONARR_BACKFILL'
@@ -59,6 +60,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             if (set(payload) not in ({'plan_id','start'},
                                     {'plan_id','start','fallback_episode'},
                                     {'plan_id','start','exhausted_episode'},
+                                    {'plan_id','start','exhausted_episode','delete_cache'},
                                     {'plan_id','start','retry_episode'})
                     or context.claim.event_id is None):
                 raise ValueError()
@@ -71,6 +73,9 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                                  if 'exhausted_episode' in payload else None)
             retry_episode = (integer(payload['retry_episode'],positive=True)
                              if 'retry_episode' in payload else None)
+            delete_cache = payload.get('delete_cache', True)
+            if type(delete_cache) is not bool or ('delete_cache' in payload and exhausted_episode is None):
+                raise ValueError()
         except (ValueError, TypeError):
             return Outcome('review', 'JOB_PAYLOAD_INVALID')
         log = context.logger
@@ -91,6 +96,15 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     if wants_english(context.configuration.value('acquisition.audio_check')) else None)
                 if target is None:
                     return Outcome('review','SONARR_CANDIDATES_EXHAUSTED')
+                if not delete_cache:
+                    cached = await blocking(
+                        load_cached,context.configuration.value('storage.database_path'),
+                        plan_id,exhausted_episode,True)
+                    if cached is None:
+                        log.info('Backfill episode %s: no eligible cached magnet remains',exhausted_episode)
+                        return Outcome('hold',WAITING_FOR_DUB)
+                    log.info('Backfill episode %s: retrying cached metadata source',exhausted_episode)
+                    return Outcome(value=(plan,exhausted_episode,cached))
                 client = connect()
                 result = await blocking(client.search,plan.anidb_id,target.identity)
                 fresh = _new_dub_releases(result,client.policy,target.tried)
@@ -167,12 +181,15 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_fallback_missing(db,claim,value)
             if type(value) is DubFound:
                 return persist_dub_found(db,claim,value)
+            if type(value) is tuple and len(value)==3 and type(value[2]) is CachedTorrent:
+                return persist_cached(db,claim,*value,True)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
         except BackfillConflict:
             raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
 
     def route(value):
-        if type(value) in (FallbackCompletion,FallbackMissing,DubFound): return ()
+        if (type(value) in (FallbackCompletion,FallbackMissing,DubFound)
+                or type(value) is tuple and len(value)==3 and type(value[2]) is CachedTorrent): return ()
         if type(value) is not BackfillCompletion: raise ValueError('typed backfill result required')
         if value.retry_episode is not None: return ()
         next_start=value.plan.start+len(value.plan.numbers)

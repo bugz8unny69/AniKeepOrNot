@@ -112,6 +112,18 @@
     <p id="matching-summary" class="muted" role="status"></p>
     <div id="matching-body"></div>
   </dialog>
+  <dialog id="search-again-dialog" class="match-trace" aria-labelledby="search-again-title">
+    <form method="dialog">
+      <h2 id="search-again-title">Search again — <span id="search-again-episode"></span></h2>
+      <p>Retry previously saved magnets without contacting Prowlarr.</p>
+      <label class="inline"><input id="search-again-delete" type="checkbox"> Delete cache</label>
+      <p class="muted">Checked: delete saved magnets for this episode and search Prowlarr for new releases. Previous failure history is preserved.</p>
+      <div class="inline">
+        <button type="submit" value="search">Search again</button>
+        <button type="submit" value="cancel" class="secondary">Cancel</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="history-dialog" class="match-trace" aria-labelledby="history-title">
     <div class="toolbar"><h2 id="history-title">Job history</h2><button id="history-close" class="secondary">Close</button></div>
     <div id="history-rows"></div><button id="history-more" class="secondary" hidden>Load more</button>

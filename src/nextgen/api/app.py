@@ -596,9 +596,13 @@ class Application:
             if retry_match:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-                exact(body,())
+                if set(body) not in (set(), {'delete_cache'}) or (
+                        'delete_cache' in body and type(body['delete_cache']) is not bool):
+                    raise ApiError(400,'API_REQUEST_INVALID')
                 aid,season,episode=map(int,retry_match.groups())
-                return 202,retry_missing_episode(configuration.value('storage.database_path'),aid,season,episode),[]
+                return 202,retry_missing_episode(
+                    configuration.value('storage.database_path'),aid,season,episode,
+                    delete_cache=body.get('delete_cache',True)),[]
             if path==PREFIX+'/intake':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]

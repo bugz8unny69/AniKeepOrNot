@@ -1,0 +1,144 @@
+"""Replay a previously admitted magnet once, after cleanup. Never query Prowlarr.
+
+The original internal event is the source; no duplicate magnet cache table.
+"""
+from dataclasses import dataclass
+import json
+import time
+
+from src.nextgen.acquisition.audio import dual_audio_tagged
+from src.nextgen.acquisition.metadata import hash_magnet
+from src.nextgen.history import append_job_history
+
+RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+
+@dataclass(frozen=True)
+class CachedTorrent:
+    info_hash: str
+    title: str
+    declared_title: str
+    magnet_uri: str
+
+
+def _cached(db, plan_id, episode, english, now=None):
+    """Only the original, released magnet is eligible for one new attempt."""
+    if now is None:
+        now = time.time_ns() // 1000000
+    rows = db.execute(
+        "SELECT c.info_hash,e.raw_body FROM sonarr_episode_candidates c "
+        "JOIN sonarr_magnet_intents i ON i.plan_id=c.plan_id "
+        "AND i.tvdb_episode=c.tvdb_episode AND i.info_hash=c.info_hash "
+        "JOIN incoming_events e ON e.event_id=i.event_id AND e.source='sonarr-discovery' "
+        "JOIN job_operation_members m ON m.job_id=i.job_id "
+        "JOIN job_operations o ON o.operation_id=m.operation_id "
+        "WHERE c.plan_id=? AND c.tvdb_episode=? AND c.state='FAILED' "
+        "AND c.reason_code='TORRENT_METADATA_TIMEOUT' AND i.state='RELEASED' "
+        "AND o.state='CANCELED' AND o.cleanup_state='COMPLETE' "
+        "AND i.created_at_ms>=? "
+        "AND (SELECT count(*) FROM sonarr_magnet_intents previous "
+        "WHERE previous.plan_id=i.plan_id AND previous.tvdb_episode=i.tvdb_episode "
+        "AND previous.info_hash=i.info_hash)=1 "
+        "ORDER BY c.rank,i.event_id", (plan_id, episode, now-RETENTION_MS)
+    ).fetchall()
+    for digest, raw in rows:
+        try:
+            item = json.loads(raw)
+            if type(item) is not dict or item.get('torrent_infohash') != digest:
+                continue
+            title, declared, magnet = (item.get(k) for k in (
+                'source_release_name', 'release_name', 'magnet_uri'))
+            if not all(type(x) is str and x for x in (title,declared,magnet)):
+                continue
+            if english and not dual_audio_tagged(title):
+                continue
+            if hash_magnet(digest,magnet) != magnet:
+                continue
+            yield CachedTorrent(digest,title,declared,magnet)
+        except (ValueError,TypeError,UnicodeError,AttributeError):
+            continue
+
+
+def load_cached(database,plan_id,episode,english):
+    from src.nextgen.storage.migrations import _open
+    with _open(database,readonly=True,timeout_ms=5000) as db:
+        return next(_cached(db,plan_id,episode,english),None)
+
+
+def _scrub(db, condition, args):
+    """Remove reusable magnet only after the prior operation is fully cleaned."""
+    return db.execute(
+        "UPDATE incoming_events SET raw_body=CAST(json_remove(CAST(raw_body AS TEXT),"
+        "'$.magnet_uri') AS BLOB) WHERE event_id IN ("
+        "SELECT i.event_id FROM sonarr_magnet_intents i "
+        "JOIN job_operation_members m ON m.job_id=i.job_id "
+        "JOIN job_operations o ON o.operation_id=m.operation_id "
+        "WHERE i.state='RELEASED' AND o.state='CANCELED' "
+        "AND o.cleanup_state='COMPLETE' AND " + condition + ") "
+        "AND source='sonarr-discovery' AND json_valid(CAST(raw_body AS TEXT)) "
+        "AND json_type(CAST(raw_body AS TEXT),'$.magnet_uri')='text'",
+        args).rowcount
+
+
+def clear_cached(db,plan_id,episode):
+    return _scrub(db,"i.plan_id=? AND i.tvdb_episode=?",(plan_id,episode))
+
+
+def expire_cached(db,now):
+    """Opportunistic 30-day garbage cleanup on manual Search again."""
+    return _scrub(db,"i.created_at_ms<?",(now-RETENTION_MS,))
+
+
+def persist_cached(db,claim,plan,episode,expected,english):
+    """Fenced, new verification operation; the old job remains historical."""
+    from src.nextgen.storage.sonarr_backfill import BackfillBatch, BackfillConflict, _plan
+    from src.nextgen.storage.sonarr_dispatch import dispatch_cached
+    from src.nextgen.sonarr_episode import VerifiedEpisode
+    if (not db.in_transaction or type(plan) is not BackfillBatch
+            or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or episode not in plan.numbers or type(expected) is not CachedTorrent):
+        raise BackfillConflict()
+    frozen=_plan(db,plan.plan_id,plan.start)
+    if (frozen.anidb_id,frozen.tvdb_series_id,frozen.season,frozen.numbers) != (
+            plan.anidb_id,plan.tvdb_series_id,plan.season,plan.numbers):
+        raise BackfillConflict()
+    if next(_cached(db,plan.plan_id,episode,english),None)!=expected:
+        raise BackfillConflict()
+    current=db.execute(
+        "SELECT s.tvdb_episode_id,s.info_hash,c.state FROM sonarr_episode_selections s "
+        "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+        "AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=s.info_hash "
+        "WHERE s.plan_id=? AND s.tvdb_episode=?",(plan.plan_id,episode)).fetchone()
+    if current is None or current[2]!='FAILED':
+        raise BackfillConflict()
+    if db.execute(
+        "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=? "
+        "AND state IN ('READY','ACTIVE','SUCCEEDED') LIMIT 1",
+        (plan.plan_id,episode)).fetchone():
+        raise BackfillConflict()
+    for table in ('episode_reservations','batch_episode_reservations'):
+        if db.execute(
+            f"SELECT 1 FROM {table} WHERE tvdb_series_id=? AND tvdb_season=? "
+            "AND tvdb_episode=? AND state='ACTIVE' LIMIT 1",
+            (plan.tvdb_series_id,plan.season,episode)).fetchone():
+            raise BackfillConflict()
+    change=db.execute(
+        "UPDATE sonarr_episode_candidates SET state='ACTIVE',reason_code=NULL "
+        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=? "
+        "AND state='FAILED' AND reason_code='TORRENT_METADATA_TIMEOUT'",
+        (plan.plan_id,episode,expected.info_hash))
+    if change.rowcount!=1:
+        raise BackfillConflict()
+    change=db.execute(
+        "UPDATE sonarr_episode_selections SET info_hash=?,selected_at_ms=? "
+        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=?",
+        (expected.info_hash,time.time_ns()//1000000,plan.plan_id,episode,current[1]))
+    if change.rowcount!=1:
+        raise BackfillConflict()
+    identity=VerifiedEpisode(plan.tvdb_series_id,current[0],plan.season,episode)
+    routed=dispatch_cached(db,claim,plan,identity,expected)
+    audit=append_job_history(
+        db,job_id=claim.job_id,event_code='SONARR_BACKFILL_OBSERVED',
+        component='worker',occurred_at_ms=time.time_ns()//1000000,
+        details={'attempt':claim.attempt,'cached_replay':True})
+    return (audit,*routed)
