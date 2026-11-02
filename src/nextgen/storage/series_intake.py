@@ -99,10 +99,12 @@ def detail(db, anidb_id):
     return result
 
 
-def list_items(db, before, limit):
+def list_items(db, before, limit, match=None):
+    # ``match`` is an optional (sql, params) filter from src.nextgen.search.
+    where, params = match if match else ('1', [])
     rows = db.execute(
-        'SELECT anidb_id FROM identified_anime WHERE anidb_id<? '
-        'ORDER BY anidb_id DESC LIMIT ?', (before, limit + 1)
+        'SELECT anidb_id FROM identified_anime WHERE anidb_id<? AND (' + where + ') '
+        'ORDER BY anidb_id DESC LIMIT ?', (before, *params, limit + 1)
     ).fetchall()
     items = []
     for (aid,) in rows[:limit]:

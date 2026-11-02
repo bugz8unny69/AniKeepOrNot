@@ -41,6 +41,7 @@ const state = {
   historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
   matchingJob: null, matchingVersion: 0,
   seriesBusy: false,
+  search: '', recognizedSearch: '', searchTimer: null,
 };
 function notice(message = '', error = false) {
   $('notice').textContent = message;
@@ -63,6 +64,8 @@ function clearPrivate(message = '') {
   $('matching-body').replaceChildren(); $('matching-summary').textContent = '';
   $('recognized-rows').replaceChildren(); $('recognized-note').textContent = '';
   $('access-key').value = '';
+  state.search = ''; state.recognizedSearch = ''; clearTimeout(state.searchTimer);
+  $('search').value = ''; $('recognized-search').value = '';
   if ($('history-dialog').open) $('history-dialog').close();
   if ($('matching-dialog').open) $('matching-dialog').close();
   if ($('series-dialog').open) $('series-dialog').close();
@@ -419,7 +422,10 @@ async function loadActivity() {
   const generation = state.generation;
   state.loading = (async () => {
     try {
-      let path = `${API}/${state.page === 'intake' ? 'intake/series' : 'jobs'}?before_id=${state.cursor}&limit=30`;
+      // One search route; the page decides the scope and keeps its own filters.
+      let path = state.search
+        ? `${API}/search?${searchQuery(state.page === 'intake' ? 'intake' : 'jobs', state.search)}&before_id=${state.cursor}&limit=30`
+        : `${API}/${state.page === 'intake' ? 'intake/series' : 'jobs'}?before_id=${state.cursor}&limit=30`;
       if (state.page === 'jobs') {
         const filter = $('status-filter').value;
         if (filter) path += '&state=' + encodeURIComponent(filter);
@@ -429,6 +435,7 @@ async function loadActivity() {
       const data = await request(path);
       if (generation !== state.generation || !state.csrf) return;
       state.jobs = data.items; state.next = data.next_before_id ?? null; renderJobs();
+      $('no-jobs').textContent = state.search ? 'No matches.' : 'No items on this page.';
       $('live-indicator').textContent = '● Live'; $('live-indicator').className = 'status running';
     } catch (error) {
       if (generation === state.generation) {
@@ -936,7 +943,8 @@ async function loadRecognized() {
   const generation = state.generation;
   const table = $('recognized-rows');
   try {
-    const result = await request(`${API}/recognized`);
+    const result = await request(state.recognizedSearch
+      ? `${API}/search?${searchQuery('recognized', state.recognizedSearch)}` : `${API}/recognized`);
     if (generation !== state.generation || !state.csrf) return;
     table.replaceChildren();
     for (const item of result.items) {
@@ -982,10 +990,35 @@ async function loadRecognized() {
     }
     $('recognized-note').textContent = result.items.length
       ? `${result.items.length} verified series/season identities`
-      : 'No verified series/season identities yet.';
+      : state.recognizedSearch ? 'No matches.' : 'No verified series/season identities yet.';
   } catch (error) {
     $('recognized-note').textContent = error.message;
   }
+}
+function searchQuery(scope, text) {
+  return 'scope=' + encodeURIComponent(scope) + '&q=' + encodeURIComponent(text);
+}
+// Fewer than two characters means no search; the normal list returns.
+function searchText(value) {
+  const text = String(value || '').trim().slice(0, 100);
+  return text.length >= 2 ? text : '';
+}
+async function applySearch() {
+  if (!state.csrf) return;
+  if (state.page === 'recognized') {
+    const text = searchText($('recognized-search').value);
+    if (text === state.recognizedSearch) return;
+    state.recognizedSearch = text; await loadRecognized(); return;
+  }
+  const text = searchText($('search').value);
+  if (text === state.search) return;
+  if (state.loading) await state.loading;
+  state.search = text; state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
+  await loadActivity();
+}
+function queueSearch() {
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(applySearch, 250);
 }
 async function showWorkspace() {
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
@@ -1005,6 +1038,7 @@ async function showWorkspace() {
   $('completed-toggle-label').hidden = state.page !== 'jobs';
   $('canceled-toggle-label').hidden = state.page !== 'jobs';
   $('status-filter-label').hidden = state.page === 'intake';
+  $('search').placeholder = state.page === 'intake' ? 'Search anime' : 'Search jobs: release, anime or #id';
   if (state.page === 'intake') {
     const titles = ['Received', 'Series', 'Staged', 'Status', 'Backfill', 'Actions'];
     const names = ['received', 'series', 'staged', 'status', 'backfill', 'actions'];
@@ -1043,6 +1077,13 @@ $('sign-out').addEventListener('click', async () => {
   catch (error) { displayError(error); }
 });
 $('refresh').addEventListener('click', () => loadActivity());
+for (const id of ['search', 'recognized-search']) {
+  $(id).addEventListener('input', queueSearch);
+  $(id).addEventListener('keydown', event => {
+    if (event.key === 'Escape') { $(id).value = ''; clearTimeout(state.searchTimer); applySearch(); }
+    if (event.key === 'Enter') { clearTimeout(state.searchTimer); applySearch(); }
+  });
+}
 $('refresh-recognized').addEventListener('click', () => loadRecognized());
 $('reload-settings').addEventListener('click', async () => {
   if (state.dirty && !confirm(COPY['dashboard.discard'])) return;
