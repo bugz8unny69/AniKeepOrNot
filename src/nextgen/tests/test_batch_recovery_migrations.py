@@ -45,7 +45,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'sonarr_magnet_intents_next','sonarr_backfill_results_v48',
             'manual_identity_matches', None, 'batch_metadata_admissions',
             'anime_title_metadata',  # v52 adds optional display names
-            'sonarr_backfill_results_v53')  # v53 allows WAITING_FOR_DUB results
+            'sonarr_backfill_results_v53',  # v53 allows WAITING_FOR_DUB results
+            'prowlarr_search_snapshots')  # v54 adds durable Prowlarr matching snapshots
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):
