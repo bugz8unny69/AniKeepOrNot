@@ -149,7 +149,7 @@ class ReleaseTitleTests(unittest.TestCase):
         self.assertIn('Reborn as a Space Mercenary 01', audio_queries)
         self.assertIn('Reborn as a Space Mercenary S01E01', audio_queries)
         self.assertIn('Saikyosoubi 01', audio_queries)
-        self.assertIn('Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai S01E01 Dual-Audio', audio_queries)
+        self.assertIn('Reborn as a Space Mercenary S01E01 Dual-Audio', audio_queries)
         self.assertLessEqual(len(audio_queries), 6)
 
     def test_pipe_delimited_and_season_releases_map_only_to_target_episode(self):

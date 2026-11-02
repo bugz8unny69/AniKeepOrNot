@@ -38,8 +38,9 @@ historical job and table names are kept so existing jobs and history stay valid)
      when available (`English 01`, `English S01E01`);
    - Broad fallback queries for short synonyms (`Saikyosoubi 01`) so traditional
      anime indexers are never missed;
-   - Bounded audio-aware variants (`Title S01E01 Dual-Audio`, `Title 01 Dual-Audio`)
-     when `acquisition.audio_check=japanese_english`;
+   - Bounded audio-aware variants (prioritizing the English scene title e.g.
+     `English S01E01 Dual-Audio`, followed by the AniDB main title) when
+     `acquisition.audio_check=japanese_english`;
    - Franchise and sequel base queries (`Base 01`, `Base SxxEyy`, and absolute
      sequel numbers like `Base 29`).
    Indexer throttling and rate limiting remain Prowlarr's responsibility;
