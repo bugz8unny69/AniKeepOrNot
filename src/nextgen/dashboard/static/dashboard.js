@@ -323,7 +323,8 @@ async function openSeries(anidbId) {
     const series = await request(API + '/intake/series/' + anidbId);
     const dialog = $('series-dialog');
     $('series-title').textContent = series.title;
-    const description = [series.english_title, series.type, series.year].filter(Boolean).join(' · ');
+    const alternative = series.title === series.english_title ? series.romaji_title : series.english_title;
+    const description = [alternative, series.type, series.year].filter(Boolean).join(' · ');
     $('series-description').textContent = description ||
       'No series synopsis is stored in the verified metadata yet.';
     const list = $('series-episodes'); list.replaceChildren();
@@ -709,9 +710,15 @@ async function openMatching(jobId) {
 
 function settingInput(path, definition, value) {
   const label = node('label', null, 'setting-field'); label.appendChild(node('span', definition.label));
-  const input = node(definition.type === 'levels' ? 'textarea' : 'input');
+  const input = node(definition.type === 'title_language' ? 'select' :
+    definition.type === 'levels' ? 'textarea' : 'input');
   input.name = path; input.dataset.kind = definition.type;
-  if (definition.type === 'levels') input.value = JSON.stringify(value, null, 2);
+  if (definition.type === 'title_language') {
+    for (const [code, text] of [['english', 'English'], ['japanese', 'Japanese (Romaji)']]) {
+      const option = node('option', text); option.value = code; input.appendChild(option);
+    }
+    input.value = value;
+  } else if (definition.type === 'levels') input.value = JSON.stringify(value, null, 2);
   else {
     input.type = definition.type === 'integer' ? 'number' : 'text'; input.value = String(value);
     if (definition.minimum !== null) input.min = String(definition.minimum);

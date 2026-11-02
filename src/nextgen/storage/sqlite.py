@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS identified_anime (
  tvdb_series_id INTEGER NOT NULL CHECK(tvdb_series_id > 0),
  title TEXT NOT NULL CHECK(length(trim(title)) > 0)
 );
+CREATE TABLE IF NOT EXISTS anime_title_metadata (
+ anidb_id INTEGER PRIMARY KEY REFERENCES identified_anime(anidb_id),
+ english_title TEXT CHECK(english_title IS NULL OR length(trim(english_title)) BETWEEN 1 AND 512),
+ romaji_title TEXT CHECK(romaji_title IS NULL OR length(trim(romaji_title)) BETWEEN 1 AND 512),
+ CHECK(english_title IS NOT NULL OR romaji_title IS NOT NULL)
+);
 CREATE TABLE IF NOT EXISTS identified_episodes (
  anidb_episode_id INTEGER PRIMARY KEY CHECK(anidb_episode_id > 0),
  anidb_id INTEGER NOT NULL REFERENCES identified_anime(anidb_id),
@@ -791,7 +797,7 @@ def initialize(db):
     if db.in_transaction:
         raise ValueError("initialization requires no active transaction")
     try:
-        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=51;\nCOMMIT;")
+        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=52;\nCOMMIT;")
     except BaseException:
         db.rollback()
         raise
@@ -886,6 +892,8 @@ def persist_identity(db, event_id, candidate, validated_at_ms=None):
     db.execute(
         "INSERT OR IGNORE INTO identified_anime VALUES(?,?,?)",
         (aid,anime["tvdb_series_id"],anime["title"]))
+    upsert_anime_titles(db, aid, anime.get("english_title"),
+                       payload.get("attributes", {}).get("romaji_title"))
     rid = db.execute(
         "INSERT INTO identity_results(event_id,anidb_id,schema_version,series_json,validated_at_ms)"
         " VALUES(?,?,?,?,?)",
@@ -905,6 +913,21 @@ def persist_identity(db, event_id, candidate, validated_at_ms=None):
     audit = append_event_history(db, event_id=event_id, event_code="SERIES_IDENTIFIED",
                                  component="identity", occurred_at_ms=now)
     return rid, audit
+
+
+def upsert_anime_titles(db, anidb_id, english_title, romaji_title):
+    """Preserve known translations; never overwrite a verified identity or alias."""
+    if not english_title and not romaji_title:
+        return
+    for title in (english_title, romaji_title):
+        if title is not None and (type(title) is not str or not 1 <= len(title.strip()) <= 512):
+            raise ValueError("Invalid translated anime title")
+    db.execute(
+        "INSERT INTO anime_title_metadata(anidb_id,english_title,romaji_title) VALUES(?,?,?) "
+        "ON CONFLICT(anidb_id) DO UPDATE SET "
+        "english_title=COALESCE(anime_title_metadata.english_title,excluded.english_title), "
+        "romaji_title=COALESCE(anime_title_metadata.romaji_title,excluded.romaji_title)",
+        (anidb_id, english_title, romaji_title))
 
 
 def save_identity(db, event_id, candidate, validated_at_ms=None):

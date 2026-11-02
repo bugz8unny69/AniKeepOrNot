@@ -273,8 +273,12 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 incomplete("canceled")
             check("identity_verified", "passed", "verified")
             return {"schema_version": 2, "anime": {
-                "anidb_id": aid, "tvdb_series_id": tid, "title": anime["title"]},
-                "episodes": [], "attributes": {}}
+                "anidb_id": aid, "tvdb_series_id": tid, "title": anime["title"],
+                "english_title": anime.get("english_title"),
+                "original_title": anime.get("original_title")},
+                "episodes": [], "attributes": (
+                    {"romaji_title": anime["romaji_title"]}
+                    if anime.get("romaji_title") else {})}
         except ProviderDeferred:
             check(stage, "waiting", "upstream_deferred")
             raise
