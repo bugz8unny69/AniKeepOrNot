@@ -30,9 +30,25 @@ historical job and table names are kept so existing jobs and history stay valid)
    to its AniDB episode number with the same cached AniDB record, Anime-Lists
    offsets and TVDB official episode list that VERIFY_RELEASE uses, and reads
    the AniDB air date.
-2. Prowlarr is queried with GET `/api/v1/search` (at most six queries per
-   episode): two AniDB titles plus the AniDB episode number, and for sequels the
-   franchise title plus the absolute number and `SxxEyy`.
+2. Prowlarr is queried with GET `/api/v1/search` with a bounded, deterministic
+   query budget of at most six queries per episode:
+   - Primary traditional AniDB episode number (`Title 01`) and scene-style
+     `S01E01` / `SxxEyy` formatting for the AniDB main title;
+   - Verified catalog aliases, prioritizing a known official English title
+     when available (`English 01`, `English S01E01`);
+   - Broad fallback queries for short synonyms (`Saikyosoubi 01`) so traditional
+     anime indexers are never missed;
+   - Bounded audio-aware variants (`Title S01E01 Dual-Audio`, `Title 01 Dual-Audio`)
+     when `acquisition.audio_check=japanese_english`;
+   - Franchise and sequel base queries (`Base 01`, `Base SxxEyy`, and absolute
+     sequel numbers like `Base 29`).
+   Indexer throttling and rate limiting remain Prowlarr's responsibility;
+   Anime Discovery does not add an internal rate limiter, honoring HTTP 429
+   `Retry-After` headers and transient backoffs directly. A query returning
+   an already-failed hash proceeds to subsequent queries. In fallback mode,
+   searching stops early once the target candidate hash is located; for initial
+   searches, queries execute deterministically to populate the candidate
+   fallback set in `sonarr_episode_candidates`.
 3. Each result title is parsed the way release groups write it
    (`acquisition/release_titles.py`): `[Group] Title - 05 (1080p)`,
    `Title 2nd Season - 05`, `Title S2 - 05`, `Title II - 05`, `Title - S02E05`,
@@ -52,10 +68,11 @@ historical job and table names are kept so existing jobs and history stay valid)
    `prowlarr.rank_by`. A release with no reported size is not skipped; the
    size limit is still checked after its file list is read.
    When `acquisition.audio_check=japanese_english`, only titles advertising
-   Dual/Multi Audio or both Japanese and English audio are eligible for
-   download. Sub-only, untagged and English-dub-only releases still count as
-   search results, but are not submitted to qBittorrent. This is a title
-   heuristic; ffprobe still verifies both audio tracks after download.
+   Dual/Multi Audio, MULTi AD, or both Japanese and English audio are eligible
+   for download. Sub-only, Multi-Subs, untagged and English-dub-only releases
+   are rejected by the dual-audio title gate. Release title tags are search hints
+   only; ffprobe verification after download remains the sole authority requiring
+   both `jpn` and `eng` audio tracks.
 5. The magnet comes from `magnetUrl`, a magnet `guid`, or the `infoHash`
    (bare hash). Conflicting hashes drop the result.
 6. The best release goes through the existing pipeline unchanged: an internal
