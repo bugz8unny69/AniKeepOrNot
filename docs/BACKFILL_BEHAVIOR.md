@@ -78,12 +78,21 @@ at intake too. Season packs keep the existing batch path.
 | Status | Meaning |
 | --- | --- |
 | `CANDIDATES` | Matching releases found; the best usable one was sent on |
-| `NO_RESULTS` | Prowlarr returned no matching release |
+| `NO_RESULTS` | Prowlarr returned no matching release when dual-audio gating is disabled |
+| `WAITING_FOR_DUB` | English and Japanese audio required, but Prowlarr returned no Dual/Multi Audio titles to try |
 | `NOT_AIRED` | AniDB has no past air date, or TVDB does not list the episode yet |
 | `MAPPING_MISSING` | TVDB lists the episode but the AniDB/TVDB mapping is missing or ambiguous |
 | `IN_PROGRESS` | Already reserved, staged or kept |
 
 One episode without releases never holds back the others on the page.
+When the configured audio check requires Japanese and English, a searchable
+episode with no Dual/Multi Audio titles (including no results at all) is
+persisted as `WAITING_FOR_DUB`. The Intake series view shows **Waiting for dub**
+with **Search again**, which reuses the existing one-episode Prowlarr retry.
+This search outcome does not create an ON_HOLD job or a torrent. A tagged
+release disqualified for an unrelated reason (such as size) is not incorrectly
+reported as a missing dub. Existing downloaded-release audio failures still
+use the held-job WAITING_FOR_DUB path.
 
 A slow or busy Prowlarr is retried, not reported straight away:
 

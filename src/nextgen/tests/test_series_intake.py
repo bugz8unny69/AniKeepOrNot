@@ -97,5 +97,14 @@ class SeriesIntakeTests(unittest.TestCase):
         self.assertEqual(english['keep_operations'], japanese['keep_operations'])
         self.assertEqual(list_items(self.db, 100, 30, language='japanese')['items'][0]['title'], 'Romaji Name')
 
+    def test_no_candidates_status_is_visible_on_intake(self):
+        self.db.execute("INSERT INTO sonarr_backfill_results VALUES"
+                        "(300,2,'WAITING_FOR_DUB')")
+        info = detail(self.db, 10)
+        episode = next(x for x in info['missing'] if x['episode'] == 2)
+        self.assertEqual((episode['status'], episode['can_retry']),
+                         ('WAITING_FOR_DUB', True))
+        self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 1)
+
     def test_missing_series_is_not_invented(self):
         self.assertIsNone(detail(self.db, 999))

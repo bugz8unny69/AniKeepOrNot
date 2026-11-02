@@ -417,6 +417,12 @@ class Client:
                 continue
             ranked = self._search(catalog, season, target)
             accepted = sum(self.policy.accepts(r) for r in ranked)
+            status = 'CANDIDATES' if ranked else 'NO_RESULTS'
+            # A searchable episode with no Dual/Multi Audio releases is an
+            # availability outcome, not a failed audio probe or review job.
+            if (self.policy.prefer_audio_tag and not accepted
+                    and not any(dual_audio_tagged(r.title) for r in ranked)):
+                status = 'WAITING_FOR_DUB'
             choice = None
             if select_candidates and accepted:
                 identity = VerifiedEpisode(tvdb_series_id, target.tvdb_episode_id, season, number)
@@ -424,7 +430,7 @@ class Client:
                     SearchResult(tvdb_series_id, target.tvdb_episode_id, ranked),
                     ranked[0], self.policy)
             output.append(BackfillObservation(number, target.tvdb_episode_id,
-                          'CANDIDATES' if ranked else 'NO_RESULTS', len(ranked), accepted, choice))
+                          status, len(ranked), accepted, choice))
         return tuple(output)
 
     def search(self, anidb_id, identity):

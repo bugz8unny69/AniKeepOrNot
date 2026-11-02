@@ -155,6 +155,36 @@ class ProwlarrClientTests(unittest.TestCase):
         self.assertEqual((observed[0].candidates, observed[0].accepted), (1, 0))
         self.assertIsNone(observed[0].selection)
 
+    def test_unavailable_dual_audio_is_waiting_not_a_download(self):
+        title = '[SubsPlease] Kusuriya no Hitorigoto - 01 (1080p)'
+        fake = FakeProwlarr({'Kusuriya no Hitorigoto 01': [
+            row(title, A),
+            row('[Group] Kusuriya no Hitorigoto - 01 (1080p) [English Dub]', B)]})
+        policy = DiscoveryPolicy(prefer_audio_tag=True)
+        result = client(fake, policy=policy).backfill(
+            50, 100, 1, (1,), select_candidates=True)[0]
+        self.assertEqual((result.status, result.candidates, result.accepted),
+                         ('WAITING_FOR_DUB', 2, 0))
+        self.assertIsNone(result.selection)
+
+        empty = client(FakeProwlarr(), policy=policy).backfill(
+            50, 100, 1, (1,), select_candidates=True)[0]
+        self.assertEqual((empty.status, empty.candidates, empty.accepted),
+                         ('WAITING_FOR_DUB', 0, 0))
+
+        normal = client(fake).backfill(50, 100, 1, (1,), select_candidates=True)[0]
+        self.assertEqual(normal.status, 'CANDIDATES')
+        self.assertEqual(normal.accepted, 2)
+
+    def test_dual_audio_rejected_for_size_is_not_mislabeled_waiting_for_dub(self):
+        fake = FakeProwlarr({'Kusuriya no Hitorigoto 01': [
+            row('[Group] Kusuriya no Hitorigoto - 01 (1080p) [Dual Audio]',
+                A, size=2_000_000_000)]})
+        result = client(fake, policy=DiscoveryPolicy(max_episode_mb=600,
+                                                     prefer_audio_tag=True)).backfill(
+            50, 100, 1, (1,), select_candidates=True)[0]
+        self.assertEqual((result.status, result.accepted), ('CANDIDATES', 0))
+
     def test_reserved_episode_is_not_searched(self):
         fake = FakeProwlarr()
         observed = client(fake).backfill(50, 100, 1, (1, 2), reserved=(1, 2))
