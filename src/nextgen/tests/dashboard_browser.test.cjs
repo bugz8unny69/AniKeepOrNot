@@ -513,3 +513,47 @@ test('Search again defaults to cached magnets and checks Delete cache only on re
     assert.deepEqual(JSON.parse(posts[0].options.body), {delete_cache: deleteCache});
   }
 });
+
+
+test('failed anchor offers guarded retry, try-next and a direct Jobs link', async () => {
+  for (const action of ['retry', 'cancel']) {
+    const h = await harness();
+    const calls = [];
+    let navigated = null;
+    h.ctx.location.assign = url => { navigated = url; };
+    h.ctx.fetch = async (url, options = {}) => {
+      calls.push({url, options});
+      if (url === '/api/v1/intake/series/123')
+        return response({anidb_id:123,title:'Example Anime',english_title:null,
+          episodes:[],missing:[{season:1,episode:5,status:'NEEDS_REVIEW',
+            reason_code:'TORRENT_METADATA_TIMEOUT',job_id:1585,reservation_id:99,
+            waiting_job_ids:[2001,2002,2003],can_retry:false,
+            can_retry_job:true,can_try_next:true}],
+          keep_operations:[],reject_operations:[],rejection:null});
+      if (url === '/api/v1/jobs/1585')
+        return response({job_id:1585,attempt_count:2,
+          reason:{code:'TORRENT_METADATA_TIMEOUT'},
+          actions:{retry:{enabled:true},cancel:{enabled:true}}});
+      if (url === '/api/v1/jobs/1585/' + action)
+        return response({notification:{message:'Submitted'}},202);
+      return response({items:[],next_before_id:null});
+    };
+    await h.run('openSeries(123)');
+    const row = h.elements.get('series-missing').children[0];
+    const buttons = row.children[2].children;
+    assert.equal(buttons[0].textContent, 'View job');
+    assert.equal(buttons[1].textContent, 'Retry acquisition');
+    assert.equal(buttons[2].textContent, 'Try next release');
+    assert.match(row.children[1].children[0].textContent, /metadata timed out/i);
+    assert.match(row.children[1].children[1].textContent, /3 competing/);
+    buttons[0].listeners.click();
+    assert.equal(navigated, '/jobs?job=1585');
+    await buttons[action === 'retry' ? 1 : 2].listeners.click();
+    const posts = calls.filter(x => x.options.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, '/api/v1/jobs/1585/' + action);
+    assert.deepEqual(JSON.parse(posts[0].options.body),
+      action === 'retry'
+        ? {expected_attempt:2,expected_reason:'TORRENT_METADATA_TIMEOUT'} : {});
+  }
+});

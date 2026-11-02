@@ -41,6 +41,31 @@ existing rejection decisions, leaving older decisions valid. Stop the API and
 worker, run the normal explicit database preview/upgrade flow, and restart
 with the new code; never start v50 services against an older database.
 
+## Original anchor recovery in Intake
+
+The frozen backfill window still excludes the source/anchor episode from automatic
+Prowlarr search. **Intake does not exclude it**: if it has no PUBLISHED staging
+receipt, the episode remains visible, even when the RESERVE_EPISODE owner is
+DONE or the downstream PREPARE_ACQUISITION job has stopped. Intake correlates
+the ACTIVE reservation with its owning operation and prefers an actionable
+stopped job for the display and Jobs link. The missing count includes episodes
+that need attention but cannot currently be re-searched.
+
+A stopped acquisition provides **Retry acquisition** using the existing
+`/jobs/{id}/retry` (snapshot-checked attempt/reason, original reservation
+retained), plus **View job** linking to the Jobs search for that exact ID.
+When eligible held duplicates exist, **Try next release** requests the existing
+`/jobs/{id}/cancel` and safe cleanup. Reservation release wakes exactly
+one eligible waiter; the others remain held until further release or staging.
+
+The existing Waiting for dub **Search again** dialog is unchanged: by default
+it tries a cleaned-up cached magnet; Delete cache explicitly searches Prowlarr.
+It is deliberately not offered as a replacement-acquisition action while an
+active reservation and waiting competitors exist. A durable group-level
+cancel-and-search intent is separately required to make that atomic across
+worker restarts. This PR does not silently delete cached sources or bypass
+the reservation owner.
+
 ## Missing episodes
 
 Backfill remains Prowlarr-based. NO_RESULTS, NOT_AIRED, MAPPING_MISSING and

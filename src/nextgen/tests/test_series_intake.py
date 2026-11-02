@@ -16,17 +16,21 @@ class SeriesIntakeTests(unittest.TestCase):
             CREATE TABLE staging_publications(plan_id INTEGER,job_id INTEGER,state TEXT);
             CREATE TABLE acquisition_plans(plan_id INTEGER,reservation_id INTEGER);
             CREATE TABLE episode_reservations(reservation_id INTEGER,anidb_id INTEGER,
-                tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
+                tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER,
+                owner_job_id INTEGER,state TEXT DEFAULT 'ACTIVE',
+                anidb_episode_id INTEGER,tvdb_episode_id INTEGER);
             CREATE TABLE job_operation_members(job_id INTEGER,operation_id INTEGER);
             CREATE TABLE job_operations(operation_id INTEGER,state TEXT);
             CREATE TABLE management_actions(operation_id INTEGER,action TEXT,job_id INTEGER);
-            CREATE TABLE jobs(job_id INTEGER,state TEXT,kind TEXT,payload_json TEXT,last_reason_code TEXT,attempt_count INTEGER);
+            CREATE TABLE jobs(job_id INTEGER,state TEXT,kind TEXT,payload_json TEXT,last_reason_code TEXT,attempt_count INTEGER,created_at_ms INTEGER);
             CREATE TABLE anime_review_decisions(anidb_id INTEGER,job_id INTEGER,
                 reason_text TEXT,cleanup_state TEXT);
             CREATE TABLE batch_staging_publications(plan_id INTEGER,file_index INTEGER,
                 job_id INTEGER,state TEXT);
             CREATE TABLE batch_episode_reservations(plan_id INTEGER,file_index INTEGER,
-                anidb_id INTEGER,tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
+                anidb_id INTEGER,tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER,
+                reservation_id INTEGER,owner_job_id INTEGER,state TEXT DEFAULT 'ACTIVE',
+                anidb_episode_id INTEGER,tvdb_episode_id INTEGER);
             CREATE TABLE trial_plans(plan_id INTEGER,anidb_id INTEGER,tvdb_season INTEGER,
                 anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
             CREATE TABLE sonarr_backfill_results(plan_id INTEGER,tvdb_episode INTEGER,status TEXT);
@@ -35,12 +39,16 @@ class SeriesIntakeTests(unittest.TestCase):
                 '{"anime":{"english_title":"Example English","type":"TV","year":2026}}',1);
             INSERT INTO job_operations VALUES(11,'STAGED'),(12,'STAGED');
             INSERT INTO job_operation_members VALUES(101,11),(102,12);
-            INSERT INTO episode_reservations VALUES(1,10,200,2,4),(2,10,200,2,5);
+            INSERT INTO episode_reservations VALUES(1,10,200,2,4,101,'ACTIVE',10004,20004),
+                (2,10,200,2,5,102,'ACTIVE',10005,20005);
             INSERT INTO acquisition_plans VALUES(201,1),(202,2);
             INSERT INTO staging_publications VALUES(201,101,'PUBLISHED'),(202,102,'PUBLISHED');
             INSERT INTO trial_plans VALUES(300,10,2,5,6,3);
             ALTER TABLE trial_plans ADD COLUMN anchor_verification_id INTEGER;
-            CREATE TABLE IF NOT EXISTS trial_evaluations(job_id INTEGER,verification_id INTEGER,plan_id INTEGER);
+            CREATE TABLE IF NOT EXISTS trial_evaluations(job_id INTEGER,verification_id INTEGER,plan_id INTEGER,selected INTEGER);
+            CREATE TABLE release_verifications(verification_id INTEGER,anidb_id INTEGER,
+                tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER,
+                anidb_episode_id INTEGER,tvdb_episode_id INTEGER);
             CREATE TABLE IF NOT EXISTS job_history(job_id INTEGER,event_code TEXT);
             INSERT INTO sonarr_backfill_results VALUES(300,1,'NO_RESULTS');
         """)
@@ -105,6 +113,44 @@ class SeriesIntakeTests(unittest.TestCase):
         self.assertEqual((episode['status'], episode['can_retry']),
                          ('WAITING_FOR_DUB', True))
         self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 1)
+
+
+    def test_failed_anchor_is_visible_with_owner_and_three_held_releases(self):
+        # EP5 is the frozen anchor: automatic backfill intentionally omitted it.
+        # Publication was never achieved; its active reservation must not hide it.
+        self.db.executescript("""
+            DELETE FROM staging_publications WHERE plan_id=202;
+            DELETE FROM episode_reservations WHERE reservation_id=2;
+            INSERT INTO job_operations VALUES(109,'ACTIVE'),(910,'ACTIVE'),(911,'ACTIVE'),(912,'ACTIVE');
+            INSERT INTO job_operation_members VALUES(882,109),(1585,109),
+                (2001,910),(2002,911),(2003,912);
+            INSERT INTO jobs(job_id,state,kind,last_reason_code,attempt_count)
+                VALUES(882,'DONE','RESERVE_EPISODE',NULL,1),
+                      (1585,'NEEDS_REVIEW','PREPARE_ACQUISITION','TORRENT_METADATA_TIMEOUT',1);
+            INSERT INTO episode_reservations VALUES(99,10,200,2,5,882,'ACTIVE',10005,20005);
+            INSERT INTO release_verifications VALUES(51,10,200,2,5,10005,20005),
+                (52,10,200,2,5,10005,20005),(53,10,200,2,5,10005,20005);
+            INSERT INTO trial_evaluations VALUES(901,51,300,1),(902,52,300,1),(903,53,300,1);
+            INSERT INTO jobs(job_id,state,kind,payload_json,last_reason_code,attempt_count,created_at_ms)
+                VALUES(2001,'ON_HOLD','RESERVE_EPISODE','{"evaluation_job_id":901}',
+                    'EPISODE_RESERVED',1,100),
+                      (2002,'ON_HOLD','RESERVE_EPISODE','{"evaluation_job_id":902}',
+                    'EPISODE_RESERVED',1,200),
+                      (2003,'ON_HOLD','RESERVE_EPISODE','{"evaluation_job_id":903}',
+                    'EPISODE_RESERVED',1,300);
+        """)
+        info = detail(self.db, 10)
+        anchor = next(x for x in info['missing'] if x['episode'] == 5)
+        self.assertEqual(anchor['status'], 'NEEDS_REVIEW')
+        self.assertEqual(anchor['reason_code'], 'TORRENT_METADATA_TIMEOUT')
+        self.assertEqual(anchor['job_id'], 1585)
+        self.assertEqual(anchor['reservation_id'], 99)
+        self.assertEqual(anchor['waiting_job_ids'], [2001, 2002, 2003])
+        self.assertTrue(anchor['can_retry_job'])
+        self.assertTrue(anchor['can_try_next'])
+        self.assertFalse(anchor['can_retry'])
+        self.assertEqual(list_items(self.db,100,30)['items'][0]['missing_count'],
+                         len(info['missing']))
 
     def test_missing_series_is_not_invented(self):
         self.assertIsNone(detail(self.db, 999))

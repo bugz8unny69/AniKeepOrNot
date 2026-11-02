@@ -28,7 +28,7 @@ installer=load('nextgen_test_installer',ROOT/'bin/anime-discovery-install')
 class InstallerSupportTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name);self.config=self.root/'config';self.config.mkdir()
+        self.root=Path(self.temp.name);self.config=self.root/'config';self.config.mkdir(mode=0o700);self.config.chmod(0o700)
         self.database=self.root/'nextgen.sqlite'
 
     def test_fresh_setup_and_repeated_upgrade_preserve_values_and_keys(self):
@@ -99,6 +99,8 @@ class InstallerSupportTests(unittest.TestCase):
             path.write_text(body)
             paths.append(str(path))
         result=subprocess.run(['systemd-analyze','verify',*paths],capture_output=True,text=True)
+        if result.returncode != 0 and "Failed to create directory '/run/systemd/'" in result.stderr:
+            self.skipTest('systemd runtime directory unavailable')
         self.assertEqual(result.returncode,0,result.stderr)
 
     def test_installer_has_no_plan_option(self):
@@ -274,13 +276,21 @@ class InstallerOrchestrationTests(unittest.TestCase):
     def patches(self,service=None):
         account=self.namespace(pw_uid=1001,pw_gid=1001)
         real_stat=Path.stat
+        real_lstat=Path.lstat
         def root_stat(path,*args,**kwargs):
             result=real_stat(path,*args,**kwargs)
             if path.is_relative_to(self.folder):
                 values=list(result);values[4]=0
                 return os.stat_result(values)
             return result
+        def root_lstat(path,*args,**kwargs):
+            result=real_lstat(path,*args,**kwargs)
+            if path.is_relative_to(self.folder):
+                values=list(result);values[4]=0
+                return os.stat_result(values)
+            return result
         with patch.object(installer.Path,'stat',autospec=True,side_effect=root_stat), \
+             patch.object(installer.Path,'lstat',autospec=True,side_effect=root_lstat), \
              patch.object(installer.os,'geteuid',return_value=0),patch.object(installer.os,'chown'), \
              patch.object(installer.pwd,'getpwnam',return_value=account), \
              patch.object(installer.grp,'getgrnam',return_value=self.namespace(gr_gid=1001)), \

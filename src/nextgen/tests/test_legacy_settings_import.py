@@ -10,7 +10,7 @@ converter=load('legacy_settings_converter',ROOT/'fixes/migrate_legacy_settings.p
 class LegacySettingsImportTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name);self.old=self.root/'legacy';self.old.mkdir()
+        self.root=Path(self.temp.name);self.old=self.root/'legacy';self.old.mkdir(mode=0o700);self.old.chmod(0o700)
         self.output=self.root/'native';self.database=self.root/'nextgen.sqlite'
         self.settings={'daemon':{'database_path':str(self.root/'legacy.db'),'concurrency':2},
             'web':{'host':'0.0.0.0','port':8877},
@@ -63,7 +63,7 @@ class LegacySettingsImportTests(unittest.TestCase):
         self.assertEqual(store.read().value('worker.concurrency'),7);self.assertEqual(private.tvdb_credentials().api_key,'new-private')
 
     def test_existing_unrelated_output_and_changed_inputs_are_not_overwritten(self):
-        self.output.mkdir();(self.output/'settings.json').write_text('keep')
+        self.output.mkdir(mode=0o700);self.output.chmod(0o700);(self.output/'settings.json').write_text('keep')
         with self.assertRaises(ValueError):converter.migrate(self.old,self.output,self.database,apply=True)
         self.assertEqual((self.output/'settings.json').read_text(),'keep')
         (self.output/'settings.json').unlink();self.output.rmdir()

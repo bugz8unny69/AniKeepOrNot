@@ -41,7 +41,9 @@ const state = {
   historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
   matchingJob: null, matchingVersion: 0,
   seriesBusy: false,
-  search: '', recognizedSearch: '', searchTimer: null,
+  search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams(location.search).get('job') || '')
+    ? '#' + new URLSearchParams(location.search).get('job') : '',
+  recognizedSearch: '', searchTimer: null,
 };
 function notice(message = '', error = false) {
   $('notice').textContent = message;
@@ -323,7 +325,7 @@ function renderSeries() {
       series.kept_count ? 'Kept' : 'Tracking'),
       'status ' + (series.rejection ? 'blocked' :
         series.staged_count || (series.kept_count && !series.waiting_for_dub) ? 'completed' : 'waiting')));
-    td(series.missing_count + ' missing / retryable');
+    td(series.missing_count + ' not staged');
     const actions = td();
     const open = node('button', 'View series', 'secondary');
     open.type = 'button';
@@ -358,8 +360,55 @@ async function openSeries(anidbId) {
       const tr = node('tr');
       tr.appendChild(node('td', 'S' + String(item.season).padStart(2, '0') +
         'E' + String(item.episode).padStart(2, '0')));
-      tr.appendChild(node('td', item.status.replaceAll('_', ' ').toLowerCase()));
+      const result = node('td', item.status.replaceAll('_', ' ').toLowerCase());
+      if (item.reason_code) {
+        result.appendChild(node('small', item.reason_code === 'TORRENT_METADATA_TIMEOUT'
+          ? 'Torrent metadata timed out' : item.reason_code.replaceAll('_', ' ').toLowerCase(), 'muted job-note'));
+      }
+      if (item.waiting_job_ids?.length) {
+        result.appendChild(node('small', item.waiting_job_ids.length + ' competing release(s) on hold', 'muted job-note'));
+      }
+      tr.appendChild(result);
       const action = node('td');
+      if (item.job_id) {
+        const view = node('button', 'View job', 'secondary');
+        view.type = 'button';
+        view.addEventListener('click', () => { location.assign('/jobs?job=' + item.job_id); });
+        action.appendChild(view);
+        if (item.can_retry_job || item.can_try_next) {
+          for (const [name, label] of [
+            ['retry', 'Retry acquisition'], ['cancel', 'Try next release']
+          ]) {
+            if (name === 'retry' && !item.can_retry_job ||
+                name === 'cancel' && !item.can_try_next) continue;
+            const button = node('button', label, 'secondary');
+            button.type = 'button';
+            button.addEventListener('click', async () => {
+              if (state.seriesBusy) return;
+              state.seriesBusy = true; button.disabled = true;
+              try {
+                // The Jobs API is authoritative for the current, guarded action.
+                const job = await request(API + '/jobs/' + item.job_id);
+                if (!job.actions?.[name]?.enabled ||
+                    job.actions[name].execution_available === false) {
+                  throw new Error('This job action is no longer available. Refresh Intake.');
+                }
+                if (name === 'cancel' && !confirm(
+                  'Cancel this failed release and safely clean up its resources? ' +
+                  'After reservation release, one waiting release will be tried.')) return;
+                const body = name === 'retry'
+                  ? {expected_attempt: job.attempt_count, expected_reason: job.reason?.code} : {};
+                const receipt = await request(API + '/jobs/' + item.job_id + '/' + name,
+                  {method: 'POST', body});
+                notice(receipt.notification?.message || 'Episode recovery submitted.');
+                dialog.close(); await loadActivity();
+              } catch (error) { displayError(error); }
+              finally { state.seriesBusy = false; button.disabled = false; }
+            });
+            action.appendChild(button);
+          }
+        }
+      }
       if (item.can_retry) {
         const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' :
           item.status === 'WAITING_FOR_DUB' ? 'Search again' : 'Retry search', 'secondary');
@@ -1077,6 +1126,9 @@ async function showWorkspace() {
   for (const link of document.querySelectorAll('nav a')) link.classList.toggle('selected', new URL(link.href).pathname === location.pathname);
   if (state.page === 'settings') { await loadSettings(); return; }
   if (state.page === 'recognized') { await loadRecognized(); return; }
+  if (state.page === 'jobs' && state.search && $('search').value !== state.search) {
+    $('search').value = state.search;
+  }
   $('page-title').textContent = state.page === 'intake' ? 'Intake' : 'Jobs';
   $('activity-title').textContent = state.page === 'intake' ? 'Incoming anime' : 'Job activity';
   $('page-description').textContent = state.page === 'intake' ? 'Follow incoming anime through processing and staging.' : 'Track jobs and their recorded history. Status updates every five seconds.';

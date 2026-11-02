@@ -26,6 +26,64 @@ def _waiting_for_dub(db, plan_id):
     return {episode: (job, attempt) for episode, job, attempt in rows if type(episode) is int}
 
 
+
+def _active_episode(db, anidb_id, season, episode):
+    """Read existing acquisition ownership; never infer staged from a reservation."""
+    owner = db.execute(
+        "SELECT r.reservation_id,r.owner_job_id,m.operation_id,o.state,"
+        "r.anidb_episode_id,r.tvdb_episode_id,r.tvdb_series_id "
+        "FROM episode_reservations r "
+        "JOIN job_operation_members m ON m.job_id=r.owner_job_id "
+        "JOIN job_operations o ON o.operation_id=m.operation_id "
+        "WHERE r.anidb_id=? AND r.tvdb_season=? AND r.tvdb_episode=? AND r.state='ACTIVE' "
+        "UNION ALL "
+        "SELECT r.reservation_id,r.owner_job_id,m.operation_id,o.state,"
+        "r.anidb_episode_id,r.tvdb_episode_id,r.tvdb_series_id "
+        "FROM batch_episode_reservations r "
+        "JOIN job_operation_members m ON m.job_id=r.owner_job_id "
+        "JOIN job_operations o ON o.operation_id=m.operation_id "
+        "WHERE r.anidb_id=? AND r.tvdb_season=? AND r.tvdb_episode=? AND r.state='ACTIVE' "
+        "LIMIT 1",
+        (anidb_id, season, episode, anidb_id, season, episode)
+    ).fetchone()
+    if owner is None:
+        return None
+    (reservation_id, owner_job_id, operation_id, operation_state,
+     anidb_episode_id, tvdb_episode_id, tvdb_series_id) = owner
+    # Prefer the actionable stopped step over the completed RESERVE_EPISODE job.
+    step = db.execute(
+        "SELECT j.job_id,j.state,j.last_reason_code "
+        "FROM jobs j JOIN job_operation_members m USING(job_id) "
+        "WHERE m.operation_id=? "
+        "ORDER BY CASE j.state WHEN 'NEEDS_REVIEW' THEN 0 WHEN 'BLOCKED' THEN 1 "
+        "WHEN 'RUNNING' THEN 2 WHEN 'RETRY_WAIT' THEN 3 WHEN 'PENDING' THEN 4 "
+        "ELSE 5 END, j.job_id DESC LIMIT 1", (operation_id,)
+    ).fetchone()
+    waiting = db.execute(
+        "SELECT j.job_id FROM jobs j "
+        "JOIN job_operation_members m ON m.job_id=j.job_id "
+        "JOIN job_operations o ON o.operation_id=m.operation_id "
+        "JOIN trial_evaluations t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
+        "JOIN release_verifications v ON v.verification_id=t.verification_id "
+        "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' "
+        "AND j.last_reason_code='EPISODE_RESERVED' AND o.state='ACTIVE' "
+        "AND t.selected=1 AND v.anidb_id=? AND v.anidb_episode_id=? "
+        "AND v.tvdb_series_id=? AND v.tvdb_season=? AND v.tvdb_episode=? "
+        "AND v.tvdb_episode_id=? "
+        "ORDER BY j.created_at_ms,j.job_id",
+        (anidb_id, anidb_episode_id, tvdb_series_id, season, episode,
+         tvdb_episode_id)
+    ).fetchall()
+    job_id, job_state, reason = step if step else (owner_job_id, 'DONE', None)
+    state = ('CLEANUP_PENDING' if operation_state != 'ACTIVE' else
+             job_state if job_state in ('NEEDS_REVIEW', 'BLOCKED') else 'IN_PROGRESS')
+    return {'status': state, 'job_id': job_id, 'reason_code': reason,
+            'operation_id': operation_id, 'reservation_id': reservation_id,
+            'waiting_job_ids': [row[0] for row in waiting],
+            'can_retry_job': operation_state == 'ACTIVE' and job_state == 'NEEDS_REVIEW',
+            'can_try_next': (operation_state == 'ACTIVE' and
+                             job_state in ('NEEDS_REVIEW', 'BLOCKED') and bool(waiting))}
+
 def detail(db, anidb_id, language='english'):
     integer(anidb_id, positive=True)
     row = db.execute(
@@ -96,6 +154,14 @@ def detail(db, anidb_id, language='english'):
             operations.add(op)
     result['keep_operations'] = sorted(operations) if rejected is None else []
     result['reject_operations'] = sorted(operations) if rejected is None else []
+    # Fetch reservation coverage once per series; Intake may show large windows
+    # and its summary is recomputed during polling.
+    active_episodes = set(db.execute(
+        "SELECT tvdb_season,tvdb_episode FROM episode_reservations "
+        "WHERE anidb_id=? AND state='ACTIVE' UNION "
+        "SELECT tvdb_season,tvdb_episode FROM batch_episode_reservations "
+        "WHERE anidb_id=? AND state='ACTIVE'", (anidb_id, anidb_id)
+    ).fetchall())
     plans = db.execute(
         'SELECT plan_id,tvdb_season,anchor_episode,backfill_count,following_count '
         'FROM trial_plans WHERE anidb_id=? ORDER BY tvdb_season', (anidb_id,)
@@ -105,13 +171,23 @@ def detail(db, anidb_id, language='english'):
             'SELECT tvdb_episode,status FROM sonarr_backfill_results WHERE plan_id=?',
             (plan_id,)).fetchall())
         waiting = _waiting_for_dub(db, plan_id)
-        for episode in plan_window(db, plan_id, anchor, backfill, following):
+        # The anchor is intentionally excluded from automatic backfill, but
+        # it is NOT excluded from Intake: its original acquisition may fail.
+        visible = set(plan_window(db, plan_id, anchor, backfill, following))
+        visible.add(anchor)
+        for episode in sorted(visible):
             if (season, episode) in staged_episodes:
                 continue
-            status = WAITING_FOR_DUB if episode in waiting else observed.get(episode, 'NOT_SEARCHED')
+            work = (_active_episode(db, anidb_id, season, episode)
+                    if (season, episode) in active_episodes else None)
+            status = (work['status'] if work else
+                      WAITING_FOR_DUB if episode in waiting else observed.get(episode, 'NOT_SEARCHED'))
             result['missing'].append({
                 'season': season, 'episode': episode, 'status': status,
-                'can_retry': rejected is None and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED', 'MAPPING_MISSING', WAITING_FOR_DUB)
+                'can_retry': rejected is None and work is None and episode != anchor
+                             and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED',
+                                            'MAPPING_MISSING', WAITING_FOR_DUB),
+                **(work or {})
             })
     return result
 
@@ -128,7 +204,7 @@ def _summary(db, aid, language):
         'tvdb_series_id': item['tvdb_series_id'],
         'staged_count': sum(x['status'] == 'Staged' for x in item['episodes']),
         'kept_count': sum(x['status'] == 'Kept' for x in item['episodes']),
-        'missing_count': sum(x['can_retry'] for x in item['missing']),
+        'missing_count': len(item['missing']),
         'waiting_for_dub': sum(x['status'] == WAITING_FOR_DUB for x in item['missing']),
         'season_count': len({x['season'] for x in item['episodes'] + item['missing']}),
         'rejection': item['rejection']
