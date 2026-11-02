@@ -27,19 +27,11 @@ from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.sqlite import transaction, upsert_anime_titles
 
 
-STAGED_ANIME = """
+IDENTIFIED_ANIME = """
+-- Include Tracking series even when no release has been staged yet.
 SELECT a.anidb_id, a.title, t.english_title, t.romaji_title
 FROM identified_anime a
 LEFT JOIN anime_title_metadata t ON t.anidb_id = a.anidb_id
-WHERE a.anidb_id IN (
-    SELECT r.anidb_id FROM staging_publications s
-    JOIN acquisition_plans p ON p.plan_id=s.plan_id
-    JOIN episode_reservations r ON r.reservation_id=p.reservation_id
-    UNION
-    SELECT r.anidb_id FROM batch_staging_publications s
-    JOIN batch_episode_reservations r
-      ON r.plan_id=s.plan_id AND r.file_index=s.file_index
-)
 ORDER BY a.anidb_id
 """
 
@@ -99,7 +91,7 @@ def main(argv=None):
     planned_titles = {}
     with scope as lease:
         with JobQueue(database).connection() as db:
-            records = db.execute(STAGED_ANIME).fetchall()
+            records = db.execute(IDENTIFIED_ANIME).fetchall()
             counts["found"] = len(records)
             if args.apply:
                 print("Database backup:", backup(database, db))
@@ -140,7 +132,7 @@ def main(argv=None):
         if args.apply:
             lease.complete()
     refresh_failed = False
-    if args.apply and (nfos['changed'] or counts['updated']):
+    if args.apply and nfos['changed']:
         if config.value('jellyfin.base_url'):
             try:
                 request_refresh(config, SecretStore(args.config_dir))
@@ -152,7 +144,7 @@ def main(argv=None):
             print("Jellyfin address not configured; refresh skipped")
 
     label = "Applied" if args.apply else "Dry run"
-    print(f"{label}: {counts['found']} staged/kept anime, {counts['updated']} "
+    print(f"{label}: {counts['found']} identified anime, {counts['updated']} "
           f"{'updated' if args.apply else 'would update'}, "
           f"{counts['unchanged']} unchanged, {counts['unresolved']} unresolved, "
           f"{counts['failed']} provider failures")

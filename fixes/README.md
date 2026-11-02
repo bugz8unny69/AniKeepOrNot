@@ -71,11 +71,12 @@ sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/remove_staged
 Each queued job appears in the dashboard as "Remove the finished download from
 qBittorrent". A second run does nothing. Do not remove these torrents by hand.
 
-## Repair Jellyfin NFO titles for existing staging
+## Backfill identified anime titles and repair staged Jellyfin NFOs
 
-After installing the title-language update, use the existing title backfill:
-it now corrects the <title> of published `tvshow.nfo` files and the
-<showtitle> of episode NFOs, in addition to retrieving verified AniDB titles.
+After installing the title-language update, use the existing title backfill.
+It retrieves missing English/Romaji titles for **every identified anime**,
+including Tracking entries without staged media. It also corrects the <title>
+of published `tvshow.nfo` files and the <showtitle> of episode NFOs.
 It retains canonical filenames and all episode/provider IDs.
 
 Preview:

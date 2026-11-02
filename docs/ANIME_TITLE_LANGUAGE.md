@@ -14,7 +14,7 @@ entries sharing a TVDB series ID cannot accidentally share a title. Historical
 `identity_results` snapshots and `recognized_seasons.display_title` remain
 untouched. Missing translations display the existing canonical title instead.
 
-## Upgrades and existing staged anime
+## Upgrades and existing identified anime
 
 Apply the normal, explicit NextGen configuration **v12 → v13** and SQLite
 **v51 → v52** migrations before using the new API or running the backfill
@@ -29,9 +29,9 @@ python3 fixes/backfill_anime_titles.py --apply
 ```
 
 `--config-dir /etc/anime-discovery` is the default and can be overridden for
-non-production environments. The script inspects unique anime IDs referenced
-by individual and batch staged media, including those later Kept. It requests
-metadata through the **existing throttled AniDB client and provider cache**,
+non-production environments. The script inspects every verified `identified_anime` entry, including
+**Tracking** series without staged episodes, alongside Staged and Kept series.
+It requests metadata through the **existing throttled AniDB client and provider cache**,
 backs up the SQLite database before applying changes, and only fills missing
 English/Romaji title values. It is safe to rerun. Provider problems and missing
 English translations are reported for manual review. No media paths,
