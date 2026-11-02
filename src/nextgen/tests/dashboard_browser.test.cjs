@@ -429,3 +429,27 @@ test('History lists every release tried for a backfill episode and why it stoppe
   assert.match(shown, /Staged · AD-139/);
   assert.match(shown, /3\. Ranked release #3 \(not sent yet\)/);
 });
+test('Search asks the API for the current page scope and resets paging', async () => {
+  const h = await harness();
+  const calls = [];
+  h.ctx.fetch = async url => { calls.push(url); return response({items: [], next_before_id: null}); };
+  h.run("state.page='jobs'; state.cursor='55'; state.previous=['99'];");
+  h.elements.get('search').value = '  frieren 05 ';
+  await h.run('applySearch()');
+  assert.ok(calls[0].startsWith('/api/v1/search?scope=jobs&q=frieren%2005&before_id=9223372036854775807'), calls[0]);
+  assert.ok(calls[0].includes('&show_canceled='));
+  assert.equal(h.run('state.previous.length'), 0);
+  assert.equal(h.elements.get('no-jobs').textContent, 'No matches.');
+  h.elements.get('search').value = 'f';
+  await h.run('applySearch()');
+  assert.ok(calls[1].startsWith('/api/v1/jobs?before_id='), calls[1]);
+  h.run("state.page='recognized';");
+  h.elements.get('recognized-search').value = 'journeys';
+  await h.run('applySearch()');
+  assert.equal(calls[2], '/api/v1/search?scope=recognized&q=journeys');
+  h.run("state.page='intake';");
+  h.elements.get('search').value = 'dandadan';
+  await h.run('applySearch()');
+  assert.ok(calls[3].startsWith('/api/v1/search?scope=intake&q=dandadan&before_id='), calls[3]);
+  assert.ok(!calls[3].includes('show_canceled'));
+});
