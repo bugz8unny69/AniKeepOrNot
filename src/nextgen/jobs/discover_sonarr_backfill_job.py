@@ -82,9 +82,11 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
         try:
             plan = await blocking(load_batch,
                 context.configuration.value('storage.database_path'),plan_id,start,retry_episode)
-            def connect():
+            def connect(search_mode='initial'):
                 client = client_factory(context.configuration,secrets)
-                if isinstance(client, Client): client.logger = log
+                if isinstance(client, Client):
+                    client.logger = log
+                    client.set_context(plan_id=plan.plan_id, search_mode=search_mode)
                 return client
             if exhausted_episode is not None:
                 if not acquire_candidates or exhausted_episode not in plan.numbers:
@@ -105,21 +107,22 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                         return Outcome('hold',WAITING_FOR_DUB)
                     log.info('Backfill episode %s: retrying cached metadata source',exhausted_episode)
                     return Outcome(value=(plan,exhausted_episode,cached))
-                client = connect()
+                client = connect('exhausted')
                 result = await blocking(client.search,plan.anidb_id,target.identity)
                 fresh = _new_dub_releases(result,client.policy,target.tried)
+                snapshots = getattr(client, 'snapshots', None)
                 if not fresh:
                     log.info('Backfill episode %s: waiting for a dub', exhausted_episode)
-                    return Outcome('hold',WAITING_FOR_DUB)
+                    return Outcome('hold',WAITING_FOR_DUB,search_snapshots=snapshots)
                 log.info('Backfill episode %s: %s new Dual/Multi Audio release(s)',
                          exhausted_episode, len(fresh))
-                return Outcome(value=DubFound(plan,exhausted_episode,target,fresh))
+                return Outcome(value=DubFound(plan,exhausted_episode,target,fresh),search_snapshots=snapshots)
             log.info('Backfill search: anidb_id=%s tvdb_series_id=%s season=%s episodes=%s reserved=%s',
                      plan.anidb_id, plan.tvdb_series_id, plan.season, plan.numbers, plan.reserved)
-            client = connect()
             if fallback_episode is not None:
                 if not acquire_candidates or fallback_episode not in plan.numbers:
                     raise BackfillConflict()
+                client = connect('fallback')
                 target=await blocking(load_fallback,
                     context.configuration.value('storage.database_path'),
                     plan_id,fallback_episode)
@@ -129,11 +132,13 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     and client.policy.accepts(row)
                     and row.tvdb_episode_id==result.tvdb_episode_id
                     and _magnet_hash(row.magnet_url)==target.next_hash),None)
+                snapshots = getattr(client, 'snapshots', None)
                 if release is None:
-                    return Outcome(value=FallbackMissing(plan,fallback_episode,target))
+                    return Outcome(value=FallbackMissing(plan,fallback_episode,target),search_snapshots=snapshots)
                 return Outcome(value=FallbackCompletion(
                     plan,fallback_episode,target,
-                    CandidateSelection(target.identity,result,release,client.policy)))
+                    CandidateSelection(target.identity,result,release,client.policy)),search_snapshots=snapshots)
+            client = connect('initial')
             observed = await blocking(
                 client.backfill,plan.anidb_id,plan.tvdb_series_id,plan.season,plan.numbers,
                 reserved=plan.reserved,verified_ids=dict(plan.verified),
@@ -145,7 +150,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             for item in observed:
                 log.info('Backfill episode %s: status=%s matching=%s accepted=%s',
                          item.number, item.status, item.candidates, item.accepted)
-            return Outcome(value=BackfillCompletion(plan,observed,retry_episode))
+            snapshots = getattr(client, 'snapshots', None)
+            return Outcome(value=BackfillCompletion(plan,observed,retry_episode),search_snapshots=snapshots)
         except BackfillConflict:
             return Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')
         except SearchUnavailable as exc:   # includes SearchTimeout
@@ -154,16 +160,20 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             reason = exc.reason_code
             used = await blocking(automatic_retry_used,
                 context.configuration.value('storage.database_path'),context.claim.job_id)
-            if used: return Outcome('blocked',reason)
+            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
+            if used: return Outcome('blocked',reason,search_snapshots=snapshots)
             log.warning('Backfill search will run again in %s minutes: %s',
                         AUTOMATIC_RETRY_MS//60000, reason)
-            return Outcome('defer',reason,delay_ms=AUTOMATIC_RETRY_MS)
+            return Outcome('defer',reason,delay_ms=AUTOMATIC_RETRY_MS,search_snapshots=snapshots)
         except SearchUnauthorized:
-            return Outcome('review','PROWLARR_AUTH_FAILED')
+            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
+            return Outcome('review','PROWLARR_AUTH_FAILED',search_snapshots=snapshots)
         except SearchConfiguration:
-            return Outcome('review','PROWLARR_CONFIGURATION_INVALID')
+            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
+            return Outcome('review','PROWLARR_CONFIGURATION_INVALID',search_snapshots=snapshots)
         except SearchReview:
-            return Outcome('review','PROWLARR_SEARCH_REVIEW')
+            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
+            return Outcome('review','PROWLARR_SEARCH_REVIEW',search_snapshots=snapshots)
         except ProviderDeferred as exc:
             return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)
         except (ProviderUnavailable,ProviderInvalidResponse) as exc:

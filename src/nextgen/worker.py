@@ -246,7 +246,11 @@ class Worker:
                               job_id=claim.job_id, event_id=claim.event_id, attempt=claim.attempt)
                 # The first transaction rolled back all facts/ending/successors.
                 # Record the expected domain decision under the same valid lease.
-                records = await self._io(self.queue.finish,claim,rejection.outcome,spec=spec,
+                rej_outcome = rejection.outcome
+                if getattr(rej_outcome, 'search_snapshots', None) is None and getattr(outcome, 'search_snapshots', None) is not None:
+                    from dataclasses import replace
+                    rej_outcome = replace(rej_outcome, search_snapshots=outcome.search_snapshots)
+                records = await self._io(self.queue.finish,claim,rej_outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
             for record in records:
                 log_history(logger,record)

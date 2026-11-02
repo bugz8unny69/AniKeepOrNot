@@ -1,9 +1,14 @@
 # Job report diagnostics
 
 ```
-sudo adm report job --id 1292            # text
-sudo adm report job --id 1292 --json     # structured diagnostics only
-sudo adm report --compress job --id 1292 # /tmp/job-report-1292.tar.gz
+sudo adm report job --id 1292                                          # text
+sudo adm report job --id 1292 --json                                   # structured diagnostics only
+sudo adm report --compress job --id 1292                               # /tmp/job-report-1292.tar.gz
+sudo adm report job --id 1292 --include-matching prowlarr               # full report + Prowlarr matching
+sudo adm report --short job --id 1292 --include-matching prowlarr       # matching section only
+sudo adm report --short --id 1292 --include-matching prowlarr           # short form alias without "job"
+sudo adm report job --id 1292 --include-matching prowlarr --json        # structured JSON with matching.prowlarr
+sudo adm report --short job --id 1292 --include-matching prowlarr --json# matching JSON document only
 ```
 
 The report is read-only. It opens the database with `mode=ro` and
@@ -24,6 +29,7 @@ the existing on-disk existence check of recorded paths, which is labeled as one.
 | Operation | The existing member list, plus jobs grouped as complete / executing / waiting / intervention / canceled, and whether any of them has a path to progress. `ACTIVE` is not treated as proof of work. |
 | History | Unchanged order. Each event shows its reason (or its registered event message), the attempt, and the cause reason |
 | Records and paths | Unchanged |
+| Prowlarr matching | Optional (`--include-matching prowlarr`). Complete listing of every returned row (raw results, query attribution, policy dispositions, exact episode matching, Dual-Audio hints, and detailed rejection reasons). Captured at search time; offline and read-only. |
 
 Wording: `Not recorded` = the database has no such fact. `Not checked` = the report
 did not look (for example, live qBittorrent state). `MISSING` under *Paths on disk* = checked

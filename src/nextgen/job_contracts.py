@@ -82,8 +82,11 @@ class Outcome:
     value: object = field(default=None, repr=False)
     matching: str | None = field(default=None, repr=False)
     facts: dict | None = field(default=None, repr=False)
+    search_snapshots: tuple | list | None = field(default=None, repr=False)
 
     def __post_init__(self):
+        if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
+            raise ValueError("invalid outcome search snapshots")
         if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked")
                 or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path"}
                 or any((type(v) is not str) if k in ("failed_check", "failed_path") else (type(v) is not int or v < 0)
