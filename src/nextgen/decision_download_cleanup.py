@@ -1,8 +1,9 @@
 """Independent owned-download cleanup once the video is staged, or after Keep/Reject.
 
-Staging moves the verified video out of the torrent's folder, so the torrent
-has nothing left to seed: it is removed (and any leftover files) as soon as
-staging is confirmed. A later Keep/Reject cleanup then finds it already done.
+Staging copies a verified video, retaining qBittorrent's source until the
+staging transaction commits. The owned torrent and its payload are then
+removed, followed by any remaining pinned ad-* folder. Legacy MOVE plans
+remain recoverable. Later Keep/Reject cleanup finds the job already done.
 """
 import json
 
@@ -147,7 +148,7 @@ class Service(OwnedCleanup):
         return captured
 
     def _pin(self,cleaner):
-        # The folder staging moved the video out of, or already gone.
+        # The original qBittorrent folder, or already gone.
         pinned=cleaner.root_only()
         if pinned['root'] not in (None,self.source_root_identity):raise CancellationError()
         return pinned

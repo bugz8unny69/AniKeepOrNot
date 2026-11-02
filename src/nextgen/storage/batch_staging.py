@@ -179,7 +179,7 @@ def persist_batch_stage(db,claim,value):
                 or set(receipt)!={'role','path','root','file','sha256',
                                  'hash_checked','artifact'}
                 or receipt['role']!=entry['role']
-                or receipt['hash_checked'] is not True
+                or receipt['hash_checked'] is not (entry['role']!='media')
                 or receipt['path']!=entry['path']
                 or receipt['sha256']!=entry['sha256']
                 or type(receipt['file']) is not list or len(receipt['file'])!=5

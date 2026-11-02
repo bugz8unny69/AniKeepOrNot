@@ -34,7 +34,7 @@ class BatchStagingCopyTests(unittest.TestCase):
         self.publisher=Publisher(self.journal,SimpleNamespace(job_id=123),
                                  threading.Event(),allow_root=True)
 
-    def test_batch_staging_copies_and_hashes_without_moving_torrent_data(self):
+    def test_batch_staging_copies_without_rehashing_torrent_data(self):
         original_inode=self.video.stat().st_ino
         receipts=self.publisher.publish(self.plan)
         output=self.stage/self.plan['entries'][0]['path']
@@ -42,8 +42,8 @@ class BatchStagingCopyTests(unittest.TestCase):
         self.assertNotEqual(output.stat().st_ino,original_inode)
         self.assertEqual(self.video.stat().st_ino,original_inode)
         self.assertEqual(receipts[0]['sha256'],self.sha)
-        self.assertTrue(receipts[0]['hash_checked'])
-        self.assertTrue(all(p['hash_checked'] for p in receipts))
+        self.assertFalse(receipts[0]['hash_checked'])
+        self.assertTrue(all(p['hash_checked'] for p in receipts[1:]))
         again=self.publisher.publish(self.plan)
         self.assertEqual(receipts,again)
         self.assertTrue(self.video.exists())

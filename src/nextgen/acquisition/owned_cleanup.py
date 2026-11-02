@@ -11,8 +11,8 @@ class OwnedCleanup:
     cleanup_event='CANCELLATION_CONTROL_RECORDED'
     complete_reason='CANCELLATION_COMPLETE'
     pending_reason='CANCELLATION_PENDING'
-    # Post-staging cleanups delete the whole owned ad-<marker> folder once the
-    # torrent is confirmed gone; cancellations keep the exact-file removal.
+    # qBittorrent deletes the payload when removing an owned completed torrent.
+    # Purge only the pinned ad-<marker> folder it may leave behind.
     purge=False
 
     def _capture(self,cleaner):return cleaner.capture()
@@ -76,8 +76,8 @@ class OwnedCleanup:
             self._advance(intent,phase,'REMOVE_UNCERTAIN',files);phase='REMOVE_UNCERTAIN'
         if phase=='REMOVE_UNCERTAIN':
             # A lost removal response is not proof of removal. The qBittorrent
-            # command deletes only its *torrent record* (deleteFiles=false);
-            # local files are separately protected after absence is confirmed.
+            # command deletes the owned torrent and payload (deleteFiles=true).
+            # Recheck absence before removing any remaining owned folder.
             if found is not None:
                 current=owned(intent,found)
                 if current.state in CHECKING:return False

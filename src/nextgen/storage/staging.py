@@ -68,7 +68,7 @@ class Journal:
             if prior is not None:
                 if prior[:2]!=(claim.job_id,verification):raise StagingReview()
                 plan=json.loads(prior[2])
-                # Pinned destinations survive later configuration changes.
+                # Pinned transfer mode and destinations survive later changes.
                 if plan['source']!=evidence or plan['source_root']!=intent.options.download_root:raise StagingReview()
                 return plan
             root=configuration.value('storage.trial_root')

@@ -38,15 +38,16 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),[('PENDING',)])
         return target,path
 
-    async def test_verified_move_metadata_and_done_commit_with_staged_milestone(self):
+    async def test_verified_copy_metadata_and_done_commit_with_staged_milestone(self):
         worker=self.worker();target,source=await self.staged_ready(worker)
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),[('DONE',)])
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PUBLISHED',)])
+        self.assertEqual(self.rows("SELECT json_extract(manifest_json,'$.transfer') FROM staging_publications"),[('COPY',)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(1,)])
         self.assertEqual(len(list(target.rglob('*.mkv'))),1)
         self.assertEqual(len(list(target.rglob('*.nfo'))),2)
-        self.assertFalse(source.exists())
+        self.assertTrue(source.exists())
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[(0,)])
         job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'")[0][0]
         self.assertFalse(CancellationStore(self.database).status(job)['can_cancel'])
@@ -198,7 +199,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         worker=self.worker(partial(FailMetadata,allow_root=True));target,source=await self.staged_ready(worker)
         await worker.attempt()
         self.assertEqual(len(list(target.rglob('*.mkv'))),1)
-        self.assertFalse(source.exists())
+        self.assertTrue(source.exists())
         self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(0,)])
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PLANNED',)])
 
@@ -214,7 +215,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(0,)])
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PLANNED',)])
         self.assertEqual(len(list(target.rglob('*.mkv'))),1)
-        self.assertFalse(source.exists())
+        self.assertTrue(source.exists())
 
     async def test_retry_uses_pinned_root_after_configuration_change(self):
         class LoseConfirmation(Publisher):

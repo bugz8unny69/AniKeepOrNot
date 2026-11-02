@@ -48,6 +48,8 @@ class StagingPublicationTests(unittest.TestCase):
         intent=SimpleNamespace(options=SimpleNamespace(download_root=str(source)))
         self.plan=specification(intent,evidence,(100,101,200,0,10,201,'Title <& / dangerous>'),str(self.target),1)
         self.plan['root_identity']=root_identity(str(self.target))
+        self.assertEqual(self.plan['transfer'],'COPY')
+        self.plan['transfer']='MOVE'  # Existing tests also cover persisted MOVE plans.
         self.journal=JournalDouble();self.flag=threading.Event()
         self.publisher=Publisher(self.journal,SimpleNamespace(job_id=1),self.flag,allow_root=True)
 
@@ -199,9 +201,84 @@ class StagingPublicationTests(unittest.TestCase):
 
     def test_changed_nfo_leaves_already_published_video(self):
         target=self.target/self.plan['entries'][1]['path'];target.parent.mkdir(parents=True);target.write_text('other metadata')
-        with self.assertRaises(StagingReview):self.publisher.publish(self.plan)
+        with self.assertRaises(StagingReview) as raised:self.publisher.publish(self.plan)
+        self.assertTrue(raised.exception.failed_check.endswith('NFO_SIZE'))
+        self.assertEqual(raised.exception.failed_path,str(target))
         self.assertEqual(self.video().read_bytes(),b'x'*100)
         self.assertEqual(target.read_text(),'other metadata')
+
+    def test_new_copy_preserves_source_and_does_not_rehash_video(self):
+        from unittest.mock import patch
+        from src.nextgen import staging
+        self.plan['transfer']='COPY'
+        real_digest=staging.digest_fd
+        def metadata_only(fd,size,flag):
+            if size==100:raise AssertionError('must not re-read the video')
+            return real_digest(fd,size,flag)
+        with patch('src.nextgen.staging.digest_fd',side_effect=metadata_only):
+            receipts=self.publisher.publish(self.plan)
+        self.assertEqual(self.video().read_bytes(),self.file.read_bytes())
+        self.assertNotEqual(self.video().stat().st_ino,self.file.stat().st_ino)
+        self.assertFalse(receipts[0]['hash_checked'])
+        self.assertTrue(all(r['hash_checked'] for r in receipts[1:]))
+        self.assertTrue(self.file.exists())
+
+    def test_copy_retry_discards_incomplete_owned_temporary(self):
+        from unittest.mock import patch
+        self.plan['transfer']='COPY'
+        original=self.publisher._copy
+        once=[True]
+        def interrupted(plan,entry,fd):
+            if entry['role']=='media' and once[0]:
+                once[0]=False
+                os.write(fd,b'incomplete')
+                raise OSError('interrupted copy')
+            return original(plan,entry,fd)
+        with patch.object(self.publisher,'_copy',side_effect=interrupted):
+            with self.assertRaises(OSError):self.publisher.publish(self.plan)
+        temporary=self.video().parent/self.plan['entries'][0]['temporary']
+        self.assertEqual(temporary.read_bytes(),b'incomplete')
+        self.publisher.publish(self.plan)
+        self.assertEqual(self.video().read_bytes(),self.file.read_bytes())
+        self.assertFalse(temporary.exists())
+
+    def test_copy_retry_recovers_short_uncertain_temporary(self):
+        from unittest.mock import patch
+        self.plan['transfer']='COPY'
+        real_rename=os.rename
+        once=[True]
+        def interrupted(source,target,**kw):
+            if str(target).endswith('.mkv') and once[0]:
+                once[0]=False
+                raise OSError('rename interrupted')
+            return real_rename(source,target,**kw)
+        with patch('src.nextgen.staging.os.rename',side_effect=interrupted):
+            with self.assertRaises(OSError):self.publisher.publish(self.plan)
+        temporary=self.video().parent/self.plan['entries'][0]['temporary']
+        self.assertEqual(temporary.stat().st_size,100)
+        temporary.write_bytes(b'short')
+        self.publisher.publish(self.plan)
+        self.assertEqual(self.video().read_bytes(),self.file.read_bytes())
+        self.assertFalse(temporary.exists())
+
+    def test_published_episode_nfo_recreated_without_moving_video_again(self):
+        self.publisher.publish(self.plan)
+        video_inode=self.video().stat().st_ino
+        nfo=self.target/self.plan['entries'][1]['path']
+        nfo.write_text('stale metadata')
+        self.publisher.publish(self.plan)
+        self.assertEqual(nfo.read_text(),self.plan['entries'][1]['text'])
+        self.assertEqual(self.video().stat().st_ino,video_inode)
+        nfo.unlink()
+        self.publisher.publish(self.plan)
+        self.assertEqual(nfo.read_text(),self.plan['entries'][1]['text'])
+
+    def test_shared_series_nfo_is_regenerated(self):
+        self.publisher.publish(self.plan)
+        nfo=self.target/self.plan['entries'][2]['path']
+        nfo.write_text('wrong series metadata')
+        self.publisher.publish(self.plan)
+        self.assertEqual(nfo.read_text(),self.plan['entries'][2]['text'])
 
     def test_cancel_during_copy_does_not_publish(self):
         import asyncio
