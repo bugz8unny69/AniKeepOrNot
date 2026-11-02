@@ -1,7 +1,8 @@
 """`adm report [--compress] [--dest PATH] job --id N`: one read-only, plain-text report of everything about a job.
 
 Reads the database in read-only mode; never changes state or calls a service.
-Covers the job, the work it controls (or is controlled by), every job in that
+Covers the job, a diagnostic summary (job_diagnostics.py: state, blockers,
+reservation, download/staging, recovery), the work it controls (or is controlled by), every job in that
 operation, their full history including which check failed, and every
 recorded download/staging path with whether it still exists on disk.
 """
@@ -11,6 +12,8 @@ import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+
+from src.nextgen.messages import EVENTS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -113,6 +116,9 @@ def report(db, job_id, out=print):
     focus = target[0]['target_job_id'] if target else job_id
     if target:
         out(f'This is the {target[0]["action"]} action for Job #{focus}; the report below covers that work.')
+    from src.nextgen.job_diagnostics import diagnose
+    diagnostics = diagnose(db, job_id)
+    render(out, diagnostics)
     op = rows(db, 'SELECT o.* FROM job_operations o JOIN job_operation_members m USING(operation_id) '
                   'WHERE m.job_id=?', (focus,))
     members = [focus]
@@ -129,6 +135,8 @@ def report(db, job_id, out=print):
         for action in rows(db, 'SELECT a.action,a.job_id,j.state,j.last_reason_code FROM management_actions a '
                                'JOIN jobs j USING(job_id) WHERE a.operation_id=?', (op['operation_id'],)):
             out(f'  {action["action"]} action: Job #{action["job_id"]} {action["state"]} {action["last_reason_code"] or ""}')
+        if diagnostics['operation'] and diagnostics['operation']['operation_id'] == op['operation_id']:
+            overview(out, diagnostics['operation'])
 
     # History of this job, its target and every member, oldest first.
     scope = sorted({job_id, focus, *members})
@@ -140,9 +148,13 @@ def report(db, job_id, out=print):
         details = json.loads(h['details_json'] or '{}')
         line = f'{when(h["occurred_at_ms"])} Job #{h["job_id"]:<6} {h["event_code"]}'
         if h['reason_code']: line += ' · ' + reason_text(h['reason_code'])
-        if details.get('cause_reason_code'): line += f' (cause {details["cause_reason_code"]})'
+        elif h['event_code'] in EVENTS: line += ' · ' + EVENTS[h['event_code']].message
+        if details.get('cause_reason_code'): line += f' (cause {reason_text(details["cause_reason_code"])})'
+        if details.get('attempt'): line += f' · attempt {details["attempt"]}'
         if h['handler_label']: line += f' [{h["handler_label"]}]'
         out(line)
+        if h['event_code'] == 'ON_HOLD' and h['reason_code'] == 'EPISODE_RESERVED':
+            out('    (blocking reservation not recorded in this event; see Reservation above)')
         if details.get('failed_check'):
             out(f'    failed check: {details["failed_check"]}')
             failed.append(details['failed_check'])
@@ -171,7 +183,7 @@ def report(db, job_id, out=print):
         for row in rows(db, f'SELECT * FROM {table} WHERE plan_id IN ({",".join("?" * len(ids))})', ids):
             show(out, label, row, paths)
     markers = sorted({p for p in paths if Path(p).name.startswith('ad-')})
-    out('\n=== Paths on disk')
+    out('\n=== Paths on disk (live filesystem check, read-only)')
     if not paths: out('  (none recorded)')
     for p in paths:
         try: state = 'directory' if os.path.isdir(p) else 'file' if os.path.exists(p) else 'MISSING'
@@ -180,6 +192,104 @@ def report(db, job_id, out=print):
     if markers:
         out('\nDownload folders owned by this work: ' + ', '.join(Path(p).name for p in markers))
     return 0
+
+
+def overview(out, op):
+    """Member jobs grouped by status; ACTIVE alone is not proof of current work."""
+    for name in ('complete', 'executing', 'waiting', 'intervention', 'canceled'):
+        if op['groups'][name]: out(f'  {name:<12} ' + ', '.join(f'#{j}' for j in op['groups'][name]))
+    out(f'  Path to progress: {op["progress"]} (operation status alone is not proof of current work)')
+
+
+def render(out, d):
+    """Diagnostic sections, in the order: state, dependencies, reservation, downloads, recovery."""
+    from src.nextgen.job_diagnostics import when as w, NOT_RECORDED, NOT_CHECKED
+    s = d['state']
+    out('\n=== Current state')
+    out(f'  Now:              {s["doing"]}')
+    out(f'  Waiting for:      {s["waiting_for"] or "Nothing"}')
+    out(f'  Continues when:   {s["condition"] or "-"}')
+    out(f'  Automatic resume: {s["automatic"]}')
+    out(f'  Manual action:    {s["manual"]}')
+    out(f'  Last success:     {s["last_success"]}')
+    out(f'  Last activity:    {s["last_activity"]}')
+    if s['suspected_stranded']:
+        out('  ! Suspected stranded: unfinished, with no known automatic way to continue.')
+
+    out('\n=== Blocking dependencies')
+    out(f'  Created by: {d["creator"] or "none"} (creator, not necessarily a blocker)')
+    if not d['dependencies']: out('  No blocking dependency recorded.')
+    for dep in d['dependencies']:
+        out(f'  {dep["type"]}: ' + ' · '.join(x for x in (
+            dep.get('blocking_job') and f'Job #{dep["blocking_job"]}',
+            dep.get('blocking_operation') and f'Operation #{dep["blocking_operation"]}',
+            dep.get('blocking_status')) if x))
+        out(f'    why: {dep["reason"]} · since {dep["since"]} · validity {dep["valid"]}')
+        out(f'    resolves when: {dep["resolves_when"]}')
+    if d['chain']:
+        out('  Chain: ' + ' -> '.join(d['chain']))
+
+    r = d['reservation']
+    if r is not None:
+        out('\n=== Episode reservation')
+        ep = r['episode']
+        out('  Episode: ' + (f'AniDB {ep["anidb_id"]} ep-id {ep["anidb_episode_id"]} · TVDB {ep["tvdb_series_id"]} '
+                             f'S{ep["tvdb_season"]:02}E{ep["tvdb_episode"]:02} (ep-id {ep["tvdb_episode_id"]}) · '
+                             f'selected={bool(ep["selected"])}' if ep else NOT_RECORDED))
+        own = r['own']
+        out('  This job\'s reservation: ' + (f'#{own["reservation_id"]} {own["state"]} since {w(own["reserved_at_ms"])}'
+                                            if own else 'none'))
+        for c in r['conflicts']:
+            op = c.get('owner_operation')
+            out(f'  Blocking {"batch " if c["batch"] else ""}reservation #{c["reservation_id"]} ACTIVE since '
+                f'{w(c["reserved_at_ms"])} · matched on {", ".join(c["matched_on"])}')
+            out(f'    owner: {"Job #" + str(c["owner_job_id"])} '
+                + (f'{c["owner_job"]["kind"]} {c["owner_job"]["state"]}' if c.get('owner_job') else '(not found)')
+                + (f' · Operation #{op["operation_id"]} {op["state"]} cleanup {op["cleanup_state"]}' if op else ''))
+            out(f'    validity: {c["validity"]} — {c["detail"]}')
+        for c in r['released'][:5]:
+            out(f'  Released {"batch " if c["batch"] else ""}reservation #{c["reservation_id"]} (owner Job '
+                f'#{c["owner_job_id"]}) ended {w(c["ended_at_ms"])} by Job #{c["ended_by_job_id"]}')
+        if r.get('finding'): out('  ' + r['finding'])
+        for check in r.get('wake_checks', ()):
+            out(f'  wake check: [{"ok" if check["ok"] else "FAILS"}] {check["check"]} ({check["detail"]})')
+        for note in r['limitations']: out(f'  Limitation: {note}')
+
+    dl, nxt = d['downloads'], d['next_step']
+    out('\n=== Download and staging')
+    if dl is None: out('  No download or staging records for this work.')
+    for p in (dl or {}).get('plans', ()):
+        plan, sub, tr, ver, st = p['plan'], p['submission'], p['transfer'], p['verification'], p['staging']
+        out(f'  Plan #{plan["plan_id"]} {plan["state"]} · hash {plan["info_hash"]} · prepared by Job #{plan["job_id"]}')
+        out('    torrent: ' + (f'{sub["state"]} ({sub["reason_code"]}) · save path {sub["save_path"]}' if sub else NOT_RECORDED)
+            + f' · live qBittorrent state: {NOT_CHECKED}')
+        out('    download: ' + (f'{tr["phase"]} {tr["selected_progress"]:.0%} · updated {w(tr["updated_at_ms"])}'
+                                + (f' · Job #{tr["start_job_id"]}' if tr['start_job_id'] else '') if tr else NOT_RECORDED))
+        out('    verified: ' + (f'Job #{ver["job_id"]} at {w(ver["verified_at_ms"])}' if ver else NOT_RECORDED))
+        out('    staging: ' + (f'{st["state"]} · Job #{st["job_id"]} · published {w(st["published_at_ms"])}' if st else NOT_RECORDED))
+    for b in (dl or {}).get('batches', ()):
+        sub, tr = b['submission'], b['transfer']
+        out(f'  Batch plan #{sub["plan_id"]} torrent {sub["state"]} · hash {sub["info_hash"]} · save path {sub["save_path"]}'
+            f' · live qBittorrent state: {NOT_CHECKED}')
+        out('    download: ' + (f'{tr.get("phase", NOT_RECORDED)} · updated {w(tr.get("updated_at_ms"))}' if tr else NOT_RECORDED))
+        staged = [x for x in b['staging'] if x['state'] == 'PUBLISHED']
+        out(f'    staging: {len(staged)} of {len(b["staging"])} recorded files published')
+    out(f'  Next step: {nxt["status"]} — {nxt["detail"]}')
+
+    rec = d['recovery']
+    out('\n=== Recovery and retry')
+    if rec['lease']: out(f'  Lease: expires {rec["lease"]["expires"]}' + (' (EXPIRED)' if rec['lease']['expired'] else ''))
+    out(f'  Interrupted attempts (started, never ended): {len(rec["interrupted_attempts"])}'
+        + ''.join(f' · {a["started"]}' for a in rec['interrupted_attempts'][-3:]))
+    out(f'  Lease expirations reclaimed: {rec["lease_expired_events"]}')
+    out(f'  Automatic retries in current window: {rec["retries_in_window"]} '
+        f'(default limit {rec["retry_limit"]}; the worker\'s configured limit is not recorded)')
+    out(f'  Manual retry requests: {rec["retry_requests"]} · Retry action: {rec["retry_action"]}')
+    if rec['next_attempt']: out(f'  Next attempt: {rec["next_attempt"]}')
+    if rec['recovery_events']:
+        out('  Recovery events: ' + ', '.join(f'{k}×{v}' for k, v in rec['recovery_events'].items()))
+    out(f'  Operation cleanup: {rec["cleanup_state"]}')
+
 
 
 def show(out, label, row, paths):
@@ -237,6 +347,7 @@ def main(argv):
     kinds = parser.add_subparsers(dest='what', required=True, metavar='{job}')
     job = kinds.add_parser('job', help='Everything about one job: history, failed check, paths')
     job.add_argument('--id', dest='job_id', type=int, required=True, help='Job number, e.g. 2593')
+    job.add_argument('--json', action='store_true', help='Print the diagnostics as JSON instead of text')
     args = parser.parse_args(argv)
     try:
         db = connect(args.config_dir)
@@ -245,8 +356,15 @@ def main(argv):
                        'Run with sudo, or as the anime-discovery service account.\n')
     lines = []
     printing = not (args.compress or args.dest)
+    out = print if printing else lines.append
     with db:
-        status = report(db, args.job_id, out=print if printing else lines.append)
+        if args.json:
+            from src.nextgen.job_diagnostics import diagnose
+            data = diagnose(db, args.job_id)
+            out(json.dumps(data, indent=2, default=str) if data else json.dumps({'error': 'job not found'}))
+            status = 0 if data else 1
+        else:
+            status = report(db, args.job_id, out=out)
     if not printing:
         saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{args.job_id}',
                      dest=args.dest, compress=args.compress)

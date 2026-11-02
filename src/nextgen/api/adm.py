@@ -12,7 +12,7 @@ def main():
         from src.nextgen.job_report import main as report
         sys.exit(report(sys.argv[2:]))
     parser = argparse.ArgumentParser(description="Anime Discovery local administration",
-                                     epilog="Also: adm report [--compress] [--dest PATH] job --id JOB_ID  (read-only report of one job)")
+                                     epilog="Also: adm report [--compress] [--dest PATH] job --id JOB_ID [--json]  (read-only report of one job; see docs/JOB_REPORT.md)")
     parser.add_argument("command", choices=("set-password",))
     parser.add_argument("--socket", default="/run/anime-discovery/admin.sock")
     parser.add_argument("--password-stdin", action="store_true", help="Read a password from standard input for automation")
