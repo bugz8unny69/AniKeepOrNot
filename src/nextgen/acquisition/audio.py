@@ -1,7 +1,7 @@
-"""Audio requirement setting and the release-title audio hint.
+"""Audio requirement setting and release-title audio hints.
 
-The title hint only orders work (rank first, or search instead of downloading
-an untagged webhook release). The ffprobe check stays the only proof.
+Japanese+English acquisitions require a Dual/Multi Audio title hint, but
+ffprobe remains the only proof of actual audio tracks.
 """
 import re
 
@@ -38,6 +38,23 @@ def required_languages(mode):
 
 def wants_english(mode):
     return 'eng' in required_languages(mode)
+
+
+# Explicit Dual/Multi Audio or Japanese+English title hints only. English
+# Dub alone does not advertise the Japanese track required by this mode.
+_DUAL_TAG = re.compile(
+    r'(?<![a-z0-9])(?:'
+    r'dual' + _SEP + r'(?:audio|aud)?'
+    r'|multi' + _SEP + r'(?:audio|aud)'
+    r'|multi(?!' + _SEP + r'(?:sub|subs|subtitles?)\b)'
+    r'|' + _JA + _SEP + _EN +
+    r'|' + _EN + _SEP + _JA +
+    r')(?![a-z0-9])', re.I)
+
+
+def dual_audio_tagged(title):
+    """Candidate hint for both audio tracks; actual languages require ffprobe."""
+    return type(title) is str and _DUAL_TAG.search(title) is not None
 
 
 def audio_tagged(title):

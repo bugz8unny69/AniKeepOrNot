@@ -135,6 +135,26 @@ class ProwlarrClientTests(unittest.TestCase):
         self.assertEqual(observed[0].selection.release.info_hash, A)
         self.assertIn('The Ramparts of Ice S02E02', fake.queries)
 
+    def test_english_requirement_only_sends_dual_audio_candidates(self):
+        fake = FakeProwlarr({'Kusuriya no Hitorigoto 01': [
+            row('[SubsPlease] Kusuriya no Hitorigoto - 01 (1080p)', A),
+            row('[Dub] Kusuriya no Hitorigoto - 01 (1080p) [English Dub]', B),
+            row('[Dual] Kusuriya no Hitorigoto - 01 (720p) [Dual Audio]', C)]})
+        policy = DiscoveryPolicy(prefer_audio_tag=True)
+        observed = client(fake, policy=policy).backfill(50, 100, 1, (1,), select_candidates=True)
+        self.assertEqual((observed[0].candidates, observed[0].accepted), (3, 1))
+        self.assertEqual(observed[0].selection.release.info_hash, C)
+        self.assertEqual([r.info_hash for r in observed[0].selection.result.candidates
+                          if policy.accepts(r)], [C])
+
+    def test_no_dual_audio_release_does_not_start_acquisition(self):
+        fake = FakeProwlarr({'Kusuriya no Hitorigoto 01': [
+            row('[SubsPlease] Kusuriya no Hitorigoto - 01 (1080p)', A)]})
+        observed = client(fake, policy=DiscoveryPolicy(prefer_audio_tag=True)).backfill(
+            50, 100, 1, (1,), select_candidates=True)
+        self.assertEqual((observed[0].candidates, observed[0].accepted), (1, 0))
+        self.assertIsNone(observed[0].selection)
+
     def test_reserved_episode_is_not_searched(self):
         fake = FakeProwlarr()
         observed = client(fake).backfill(50, 100, 1, (1, 2), reserved=(1, 2))

@@ -51,6 +51,11 @@ historical job and table names are kept so existing jobs and history stay valid)
    counted but never sent to qBittorrent. The rest are ranked by
    `prowlarr.rank_by`. A release with no reported size is not skipped; the
    size limit is still checked after its file list is read.
+   When `acquisition.audio_check=japanese_english`, only titles advertising
+   Dual/Multi Audio or both Japanese and English audio are eligible for
+   download. Sub-only, untagged and English-dub-only releases still count as
+   search results, but are not submitted to qBittorrent. This is a title
+   heuristic; ffprobe still verifies both audio tracks after download.
 5. The magnet comes from `magnetUrl`, a magnet `guid`, or the `infoHash`
    (bare hash). Conflicting hashes drop the result.
 6. The best release goes through the existing pipeline unchanged: an internal
@@ -58,9 +63,10 @@ historical job and table names are kept so existing jobs and history stay valid)
    alongside) is verified by VERIFY_RELEASE, reserved, sent to qBittorrent with
    its sanitized magnet, downloaded, verified and staged. Lower-ranked releases
    are kept as fallbacks: if any later step fails (bad metadata, size limit,
-   failed verification), the attempt is cleaned up and the next ranked release
-   is tried automatically. Only when every ranked release has failed does the
-   episode stop for review.
+   failed verification), the attempt is cleaned up and the next eligible ranked
+   release is tried automatically. When every attempted release failed and at
+   least one failed audio verification, the exhausted episode waits for a dub
+   instead of entering Needs Review.
 
 Webhook intake uses the same reader: `declared_episode()`, the identity
 aliases and season hints, and the batch router (`release_scope_hint`) all call

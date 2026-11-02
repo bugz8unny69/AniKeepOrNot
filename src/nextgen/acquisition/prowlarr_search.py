@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 
 from src.nextgen.acquisition.qbittorrent import _NoRedirect, _json
-from src.nextgen.acquisition.audio import audio_tagged, wants_english
+from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
 from src.nextgen.acquisition.settings import endpoint
 from src.nextgen.sonarr_episode import VerifiedEpisode
 
@@ -77,7 +77,7 @@ class DiscoveryPolicy:
     rank_by: str = 'resolution'
     # acquisition.max_episode_mb (decimal MB). None: no size check here.
     max_episode_mb: int | None = None
-    # acquisition.audio_check=japanese_english: Dual/Multi Audio titles first.
+    # acquisition.audio_check=japanese_english: require Dual/Multi Audio title hints.
     prefer_audio_tag: bool = False
 
     def __post_init__(self):
@@ -106,22 +106,18 @@ class DiscoveryPolicy:
         return (release.eligible_for_handoff
                 and 0 < release.resolution <= self.max_resolution
                 and release.seeders is not None and release.seeders >= self.min_seeders
-                and not self.oversized(release))
+                and not self.oversized(release)
+                and (not self.prefer_audio_tag or dual_audio_tagged(release.title)))
 
     def rank(self, releases):
-        """Accepted first, then audio tag (if preferred), then resolution/seeders.
-
-        Ties keep input order. Untagged releases stay in the list: the title is
-        a hint and ffprobe makes the final call.
-        """
+        """Eligible releases first, then quality; ffprobe verifies actual audio."""
         rows = tuple(releases)
         def key(item):
             index, release = item
             preference = ((release.resolution, release.seeders or 0)
                           if self.rank_by == 'resolution'
                           else (release.seeders or 0, release.resolution))
-            untagged = self.prefer_audio_tag and not audio_tagged(release.title)
-            return (not self.accepts(release), untagged, -preference[0], -preference[1], index)
+            return (not self.accepts(release), -preference[0], -preference[1], index)
         return tuple(release for _, release in sorted(enumerate(rows), key=key))
 
 

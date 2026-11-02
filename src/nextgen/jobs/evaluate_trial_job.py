@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import time
 
-from src.nextgen.acquisition.audio import audio_tagged, wants_english
+from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
 
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
@@ -68,10 +68,10 @@ def registration(*, reservation_kind=None, discovery_kind=None):
                                              context.configuration.value('trial.following_count')),
                                 context.configuration.desired_revision)
         except TrialConflict:return Outcome('review','TRIAL_PLAN_CONFLICT')
-        # Only the webhook's own release is gated; Prowlarr picks already rank by tag.
+        # Gate the webhook release; Prowlarr uses the same eligibility rule.
         audio_search=(discovery_kind is not None and origin=='autobrr'
                       and wants_english(context.configuration.value('acquisition.audio_check'))
-                      and not audio_tagged(title))
+                      and not dual_audio_tagged(title))
         return Outcome(value=EvaluationCompletion(value,context.claim.job_id,audio_search))
 
     def route(value):
