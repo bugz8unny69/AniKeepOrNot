@@ -60,7 +60,10 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
                         if mode=='changed_after_remove':test.remainder.write_bytes(b'changed')
                         raise ClientUnavailable()
         factory=partial(Service,client_factory=Client)
-        worker.registry=Registry((*worker.registry.entries.values(),registration(Secrets(),service_factory=factory)))
+        # A recreated worker already has a cleanup registration; swap its
+        # client-backed handler rather than registering the same kind twice.
+        entries=tuple(item for item in worker.registry.entries.values() if item.kind!=KIND)
+        worker.registry=Registry((*entries,registration(Secrets(),service_factory=factory)))
 
     def restart(self,previous,mode):
         # The normal fixture factory seeds configuration at revision 1. A true
