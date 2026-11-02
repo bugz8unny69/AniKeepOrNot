@@ -307,7 +307,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  attempt=None, max_attempts=None, cause_reason_code=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
                  failed_check=None, failed_path=None,
-                 delete_cache=None, cache_entries_deleted=None, cached_replay=None) -> dict:
+                 delete_cache=None, cache_entries_deleted=None, cached_replay=None,
+                 observed_audio=None, missing_audio=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -351,6 +352,14 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                 or any(ord(c) < 32 or ord(c) == 127 for c in failed_path)):
             raise ValueError("invalid failed path")
         details["failed_path"] = failed_path
+    if observed_audio is not None:
+        if type(observed_audio) is not str or len(observed_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in observed_audio):
+            raise ValueError("invalid observed audio tags")
+        details["observed_audio"] = observed_audio
+    if missing_audio is not None:
+        if type(missing_audio) is not str or len(missing_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in missing_audio):
+            raise ValueError("invalid missing audio tags")
+        details["missing_audio"] = missing_audio
     if cause_reason_code is not None:
         cause = get_reason(cause_reason_code)
         if cause is None:

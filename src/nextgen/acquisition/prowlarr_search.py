@@ -398,14 +398,14 @@ class Client:
             'RESOLUTION_OUT_OF_POLICY': 0,
             'EPISODE_SIZE_TOO_LARGE': 0,
             'INSUFFICIENT_SEEDERS': 0,
-            'NEW_ELIGIBLE': 0,
+            'PASSES_POLICY': 0,
         }
         raw_count = 0
         raw_dual_audio_count = 0
         matched_dual_audio_count = 0
         unmatched_count = 0
         matched_count = 0
-        new_eligible_count = 0
+        passes_policy_count = 0
 
         snapshot = {
             'plan_id': getattr(self, '_plan_id', None),
@@ -472,7 +472,8 @@ class Client:
                     'raw': raw_count,
                     'unmatched': unmatched_count,
                     'matched': matched_count,
-                    'new_eligible': new_eligible_count,
+                    'passes_policy': passes_policy_count,
+                    'new_eligible': passes_policy_count,
                     'raw_dual_audio': raw_dual_audio_count,
                     'matched_dual_audio': matched_dual_audio_count,
                     'dispositions': counts_dispositions,
@@ -618,11 +619,11 @@ class Client:
                         reason += '; also: ' + '; '.join(detailed_reasons[1:])
                     failed_checks = row_failed_checks
                 else:
-                    primary_disp = 'NEW_ELIGIBLE'
-                    new_eligible_count += 1
-                    counts_dispositions['NEW_ELIGIBLE'] += 1
-                    reason = 'eligible new candidate; meets all policy checks'
-                    failed_checks = ['NEW_ELIGIBLE']
+                    primary_disp = 'PASSES_POLICY'
+                    passes_policy_count += 1
+                    counts_dispositions['PASSES_POLICY'] += 1
+                    reason = 'passes policy checks (resolution, seeders, size, audio hint)'
+                    failed_checks = ['PASSES_POLICY']
 
                 captured_results.append({
                     'row_number': row_number,
@@ -664,7 +665,8 @@ class Client:
             'raw': raw_count,
             'unmatched': unmatched_count,
             'matched': matched_count,
-            'new_eligible': new_eligible_count,
+            'passes_policy': passes_policy_count,
+            'new_eligible': passes_policy_count,
             'raw_dual_audio': raw_dual_audio_count,
             'matched_dual_audio': matched_dual_audio_count,
             'dispositions': counts_dispositions,

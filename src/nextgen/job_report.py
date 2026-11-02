@@ -155,6 +155,10 @@ def report(db, job_id, out=print):
         out(line)
         if h['event_code'] == 'ON_HOLD' and h['reason_code'] == 'EPISODE_RESERVED':
             out('    (blocking reservation not recorded in this event; see Reservation above)')
+        if details.get('observed_audio') is not None or details.get('missing_audio') is not None:
+            obs = details.get('observed_audio') or 'none'
+            mis = details.get('missing_audio') or 'none'
+            out(f'    audio check: observed=[{obs}] missing required=[{mis}] (ffprobe verified)')
         if details.get('failed_check'):
             out(f'    failed check: {details["failed_check"]}')
             failed.append(details['failed_check'])
@@ -380,28 +384,92 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
 
     plan_id = snapshot.get('plan_id') or target.get('plan_id')
     prior_attempts = 0
+    candidate_rows = []
     if plan_id is not None and episode is not None:
         have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sonarr_episode_candidates'").fetchone()
         if have_candidates:
-            row_prior = db.execute("SELECT count(*) FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=?",
-                                   (plan_id, episode)).fetchone()
-            if row_prior:
-                prior_attempts = row_prior[0]
+            candidate_rows = db.execute(
+                "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
+                "WHERE plan_id=? AND tvdb_episode=? ORDER BY rank",
+                (plan_id, episode)
+            ).fetchall()
+            prior_attempts = len(candidate_rows)
+
+    candidates_map = {row[1].lower(): {'rank': row[0], 'state': row[2], 'reason_code': row[3]} for row in candidate_rows}
+
+    # Audio diagnostic detail lookup from job_history for candidates
+    audio_details_by_hash = {}
+    have_history = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_history'").fetchone()
+    if have_history and candidate_rows:
+        try:
+            hist_rows = db.execute(
+                "SELECT h.job_id, h.details_json FROM job_history h "
+                "WHERE h.reason_code='MEDIA_AUDIO_REQUIRED' AND h.details_json IS NOT NULL"
+            ).fetchall()
+            for jid, d_json in hist_rows:
+                try:
+                    d = json.loads(d_json)
+                    obs = d.get('observed_audio')
+                    mis = d.get('missing_audio')
+                    if obs is not None or mis is not None:
+                        op_row = db.execute(
+                            "SELECT p.info_hash FROM job_operation_members m "
+                            "JOIN acquisition_plans p ON p.job_id=m.job_id "
+                            "WHERE m.operation_id=(SELECT operation_id FROM job_operation_members WHERE job_id=?)",
+                            (jid,)
+                        ).fetchone()
+                        if op_row and op_row[0]:
+                            audio_details_by_hash[op_row[0].lower()] = {'observed': obs, 'missing': mis}
+                except (ValueError, TypeError, sqlite3.Error):
+                    pass
+        except sqlite3.Error:
+            pass
+
+    results = snapshot.get('results') or []
+    policy_accepted_hashes = set()
+    previously_tried_hashes = set()
+    newly_actionable_hashes = set()
+
+    for r in results:
+        disp = r.get('primary_disposition')
+        if disp == 'NEW_ELIGIBLE':
+            disp = 'PASSES_POLICY'
+        is_dup = r.get('is_duplicate', False)
+        h = (r.get('info_hash') or '').lower()
+        if disp == 'PASSES_POLICY' and not is_dup and h:
+            policy_accepted_hashes.add(h)
+            if h in candidates_map:
+                previously_tried_hashes.add(h)
+            else:
+                newly_actionable_hashes.add(h)
+
+    passes_policy_count = len(policy_accepted_hashes)
+    actionable_count = len(newly_actionable_hashes)
+    previously_tried_count = len(previously_tried_hashes)
 
     counts = snapshot.get('counts') or {}
     raw_count = counts.get('raw', 0)
     unmatched_count = counts.get('unmatched', 0)
     matched_count = counts.get('matched', 0)
-    eligible_count = counts.get('new_eligible', 0)
     raw_dual_count = counts.get('raw_dual_audio', 0)
     matched_dual_count = counts.get('matched_dual_audio', 0)
 
     out('\nSearch results:')
-    out(f'  {raw_count} raw · {unmatched_count} unmatched · {matched_count} EP{episode} matched · {eligible_count} newly eligible')
+    if previously_tried_count > 0:
+        out(f'  {raw_count} raw · {unmatched_count} unmatched · {matched_count} EP{episode} matched · '
+            f'{passes_policy_count} passes policy ({actionable_count} newly actionable, {previously_tried_count} previously tried)')
+    else:
+        out(f'  {raw_count} raw · {unmatched_count} unmatched · {matched_count} EP{episode} matched · '
+            f'{passes_policy_count} passes policy ({actionable_count} newly actionable)')
     out(f'  {raw_dual_count} raw Dual-Audio hints; {matched_dual_count} matching EP{episode} with a Dual-Audio hint')
     out(f'  Prior database attempts: {prior_attempts} (historical; separately counted)')
 
-    disps = counts.get('dispositions') or {}
+    disps = dict(counts.get('dispositions') or {})
+    if 'NEW_ELIGIBLE' in disps and 'PASSES_POLICY' not in disps:
+        disps['PASSES_POLICY'] = disps.pop('NEW_ELIGIBLE')
+    elif 'NEW_ELIGIBLE' in disps and 'PASSES_POLICY' in disps:
+        disps['PASSES_POLICY'] += disps.pop('NEW_ELIGIBLE')
+
     out('\nDispositions for this run (mutually exclusive primary classifications):')
     standard_order = (
         'UNMATCHED_TITLE_OR_EPISODE',
@@ -411,23 +479,58 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
         'EPISODE_SIZE_TOO_LARGE',
         'INSUFFICIENT_SEEDERS',
         'DUPLICATE_RESULT',
-        'NEW_ELIGIBLE',
+        'PASSES_POLICY',
         'MAGNET_HASH_CONFLICT',
         'INVALID_TITLE',
         'NON_TORRENT_PROTOCOL',
     )
     for code in standard_order:
-        if code in disps or (code in ('UNMATCHED_TITLE_OR_EPISODE', 'NEW_ELIGIBLE') and raw_count > 0):
+        if code in disps or (code in ('UNMATCHED_TITLE_OR_EPISODE', 'PASSES_POLICY') and raw_count > 0):
             out(f'  {code:<28} {disps.get(code, 0):>4}')
     for code, val in disps.items():
         if code not in standard_order:
             out(f'  {code:<28} {val:>4}')
     out(f'  {"TOTAL":<28} {raw_count:>4}')
 
-    results = snapshot.get('results') or []
+    failure_reasons = {}
+    for row in candidate_rows:
+        if row[2] == 'FAILED':
+            code = row[3] or 'UNKNOWN'
+            failure_reasons[code] = failure_reasons.get(code, 0) + 1
+
+    has_audio_failure = any(row[3] == 'MEDIA_AUDIO_REQUIRED' for row in candidate_rows)
+    all_candidates_failed = len(candidate_rows) > 0 and all(row[2] == 'FAILED' for row in candidate_rows)
+    is_waiting_for_dub = all_candidates_failed and has_audio_failure
+
+    if candidate_rows or snapshot.get('search_mode') == 'exhausted':
+        out('\nCandidate history reconciliation & hold explanation:')
+        out(f'  Policy-accepted results : {passes_policy_count} ({previously_tried_count} previously tried, {actionable_count} newly actionable)')
+        out(f'  Policy-rejected results : {raw_count - passes_policy_count}')
+        if failure_reasons:
+            reasons_summary = ', '.join(f'{k}: {v}' for k, v in sorted(failure_reasons.items()))
+            out(f'  Previous failure reasons: {reasons_summary}')
+        else:
+            out('  Previous failure reasons: none')
+
+        for row in candidate_rows:
+            rank, h_cand, state, reason = row
+            if reason == 'MEDIA_AUDIO_REQUIRED':
+                audio_info = audio_details_by_hash.get(h_cand.lower())
+                if audio_info:
+                    obs = audio_info.get('observed') or 'none'
+                    mis = audio_info.get('missing') or 'none'
+                    out(f'  Audio diagnostic (#{rank:02d} {h_cand[:8]}): observed=[{obs}], missing required=[{mis}] (ffprobe verified)')
+                else:
+                    out(f'  Audio diagnostic (#{rank:02d} {h_cand[:8]}): Not recorded')
+                out('    (Release-title hints such as MULTi AD or Dual Audio are search hints, not verified audio streams)')
+
+        if is_waiting_for_dub and actionable_count == 0:
+            out('  Hold explanation (WAITING_FOR_DUB): All previous candidates failed (with at least one audio failure) '
+                'and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.')
+
     out(f'\nAll releases ({len(results)} of {raw_count}):')
     res_hdr = f'{max_res}p?'
-    out(f'  #    Query  Episode hint  {res_hdr:<6}  Seeders  Size MB  Dual?  Disposition                 Title')
+    out(f'  #    Query  Episode hint  {res_hdr:<6}  Seeders  Size MB  Dual?  Policy outcome       Candidate history           Title')
     for r in results:
         num = f'{r.get("row_number", 0):03d}'
         q_idx = str(r.get('query_index', 1))
@@ -439,14 +542,41 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
         size_str = str(size_bytes // 1_000_000) if size_bytes else '-'
         dual_str = 'Yes' if r.get('has_dual_audio_hint') else 'No'
         disp_str = r.get('primary_disposition') or '-'
+        if disp_str == 'NEW_ELIGIBLE':
+            disp_str = 'PASSES_POLICY'
+        h = (r.get('info_hash') or '').lower()
+        if h in candidates_map:
+            cand = candidates_map[h]
+            state = cand.get('state', 'UNKNOWN')
+            reason = cand.get('reason_code')
+            cand_hist_str = f'FAILED ({reason})' if (state == 'FAILED' and reason) else state
+        else:
+            cand_hist_str = 'UNTRIED'
         title_str = r.get('title') or ''
-        out(f'  {num:<4} {q_idx:<6} {ep_hint:<13} {res_str:<7} {seeders_str:<8} {size_str:<8} {dual_str:<6} {disp_str:<27} {title_str}')
+        out(f'  {num:<4} {q_idx:<6} {ep_hint:<13} {res_str:<7} {seeders_str:<8} {size_str:<8} {dual_str:<6} {disp_str:<20} {cand_hist_str:<27} {title_str}')
 
     out('\nDetailed reasons:')
     for r in results:
         num = f'{r.get("row_number", 0):03d}'
         reason_str = r.get('reason') or ''
-        out(f'  #{num} {reason_str}')
+        disp_str = r.get('primary_disposition') or ''
+        if disp_str == 'NEW_ELIGIBLE':
+            disp_str = 'PASSES_POLICY'
+        h = (r.get('info_hash') or '').lower()
+        if h in candidates_map:
+            cand = candidates_map[h]
+            state = cand.get('state')
+            reason_code = cand.get('reason_code')
+            hist_note = f'candidate history: {state}' + (f' ({reason_code})' if reason_code else '') + ' - previously tried, not actionable'
+            if disp_str == 'PASSES_POLICY':
+                out(f'  #{num} passes policy checks; {hist_note}')
+            else:
+                out(f'  #{num} {reason_str}; {hist_note}')
+        else:
+            if disp_str == 'PASSES_POLICY':
+                out(f'  #{num} passes policy checks; untried, actionable new release')
+            else:
+                out(f'  #{num} {reason_str}')
     return 0
 
 
@@ -459,16 +589,121 @@ def prowlarr_matching_json(db, job_id, attempt=None):
             'message': 'Not recorded for this attempt (older search or capture unavailable). No Prowlarr request was made.',
         }
     target = snapshot.get('target') or {}
-    episode = target.get('episode') or snapshot.get('episode')
+    episode = target.get('episode') or snapshot.get('episode') or 1
     plan_id = snapshot.get('plan_id') or target.get('plan_id')
     prior_attempts = 0
+    candidate_rows = []
     if plan_id is not None and episode is not None:
         have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sonarr_episode_candidates'").fetchone()
         if have_candidates:
-            row_prior = db.execute("SELECT count(*) FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=?",
-                                   (plan_id, episode)).fetchone()
-            if row_prior:
-                prior_attempts = row_prior[0]
+            candidate_rows = db.execute(
+                "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
+                "WHERE plan_id=? AND tvdb_episode=? ORDER BY rank",
+                (plan_id, episode)
+            ).fetchall()
+            prior_attempts = len(candidate_rows)
+
+    candidates_map = {row[1].lower(): {'rank': row[0], 'state': row[2], 'reason_code': row[3]} for row in candidate_rows}
+
+    # Audio diagnostic detail lookup from job_history for candidates
+    audio_details_by_hash = {}
+    have_history = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_history'").fetchone()
+    if have_history and candidate_rows:
+        try:
+            hist_rows = db.execute(
+                "SELECT h.job_id, h.details_json FROM job_history h "
+                "WHERE h.reason_code='MEDIA_AUDIO_REQUIRED' AND h.details_json IS NOT NULL"
+            ).fetchall()
+            for jid, d_json in hist_rows:
+                try:
+                    d = json.loads(d_json)
+                    obs = d.get('observed_audio')
+                    mis = d.get('missing_audio')
+                    if obs is not None or mis is not None:
+                        op_row = db.execute(
+                            "SELECT p.info_hash FROM job_operation_members m "
+                            "JOIN acquisition_plans p ON p.job_id=m.job_id "
+                            "WHERE m.operation_id=(SELECT operation_id FROM job_operation_members WHERE job_id=?)",
+                            (jid,)
+                        ).fetchone()
+                        if op_row and op_row[0]:
+                            audio_details_by_hash[op_row[0].lower()] = {'observed': obs, 'missing': mis}
+                except (ValueError, TypeError, sqlite3.Error):
+                    pass
+        except sqlite3.Error:
+            pass
+
+    results = snapshot.get('results') or []
+    policy_accepted_hashes = set()
+    previously_tried_hashes = set()
+    newly_actionable_hashes = set()
+    enriched_releases = []
+
+    for r in results:
+        disp = r.get('primary_disposition')
+        if disp == 'NEW_ELIGIBLE':
+            disp = 'PASSES_POLICY'
+        is_dup = r.get('is_duplicate', False)
+        h = (r.get('info_hash') or '').lower()
+        if disp == 'PASSES_POLICY' and not is_dup and h:
+            policy_accepted_hashes.add(h)
+            if h in candidates_map:
+                previously_tried_hashes.add(h)
+            else:
+                newly_actionable_hashes.add(h)
+
+        item = dict(r)
+        if item.get('primary_disposition') == 'NEW_ELIGIBLE':
+            item['primary_disposition'] = 'PASSES_POLICY'
+        if h in candidates_map:
+            cand = candidates_map[h]
+            item['candidate_history'] = {
+                'recorded': True,
+                'state': cand['state'],
+                'reason_code': cand['reason_code'],
+                'rank': cand['rank'],
+            }
+        else:
+            item['candidate_history'] = {
+                'recorded': False,
+                'state': 'UNTRIED',
+                'reason_code': None,
+                'rank': None,
+            }
+        enriched_releases.append(item)
+
+    passes_policy_count = len(policy_accepted_hashes)
+    actionable_count = len(newly_actionable_hashes)
+    previously_tried_count = len(previously_tried_hashes)
+
+    failure_reasons = {}
+    for row in candidate_rows:
+        if row[2] == 'FAILED':
+            code = row[3] or 'UNKNOWN'
+            failure_reasons[code] = failure_reasons.get(code, 0) + 1
+
+    has_audio_failure = any(row[3] == 'MEDIA_AUDIO_REQUIRED' for row in candidate_rows)
+    all_candidates_failed = len(candidate_rows) > 0 and all(row[2] == 'FAILED' for row in candidate_rows)
+    is_waiting_for_dub = all_candidates_failed and has_audio_failure
+
+    counts_out = dict(snapshot.get('counts') or {})
+    counts_out['passes_policy'] = passes_policy_count
+    counts_out['newly_actionable'] = actionable_count
+    counts_out['previously_tried'] = previously_tried_count
+
+    candidate_reconcile = {
+        'prior_candidates_count': len(candidate_rows),
+        'policy_accepted_count': passes_policy_count,
+        'previously_tried_count': previously_tried_count,
+        'newly_actionable_count': actionable_count,
+        'previous_failure_reasons': failure_reasons,
+        'is_waiting_for_dub': is_waiting_for_dub,
+        'hold_explanation': (
+            'All previous candidates failed (with at least one audio failure) and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.'
+            if (is_waiting_for_dub and actionable_count == 0) else None
+        ),
+    }
+
     return {
         'recorded': True,
         'snapshot_id': snapshot.get('snapshot_id'),
@@ -481,9 +716,10 @@ def prowlarr_matching_json(db, job_id, attempt=None):
         'target': snapshot.get('target'),
         'policy': snapshot.get('policy'),
         'queries': snapshot.get('queries'),
-        'counts': snapshot.get('counts'),
+        'counts': counts_out,
         'prior_database_attempts': prior_attempts,
-        'releases': snapshot.get('results'),
+        'candidate_reconciliation': candidate_reconcile,
+        'releases': enriched_releases,
         'truncated': snapshot.get('truncated', False),
     }
 

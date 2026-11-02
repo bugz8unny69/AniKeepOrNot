@@ -29,11 +29,20 @@ the existing on-disk existence check of recorded paths, which is labeled as one.
 | Operation | The existing member list, plus jobs grouped as complete / executing / waiting / intervention / canceled, and whether any of them has a path to progress. `ACTIVE` is not treated as proof of work. |
 | History | Unchanged order. Each event shows its reason (or its registered event message), the attempt, and the cause reason |
 | Records and paths | Unchanged |
-| Prowlarr matching | Optional (`--include-matching prowlarr`). Complete listing of every returned row (raw results, query attribution, policy dispositions, exact episode matching, Dual-Audio hints, and detailed rejection reasons). Captured at search time; offline and read-only. |
+| Prowlarr matching | Optional (`--include-matching prowlarr`). Complete listing of every returned row (raw results, query attribution, policy dispositions, exact episode matching, Dual-Audio hints, and detailed rejection reasons). Captured at search time; offline and read-only. Reconciled with candidate history and audio verification diagnostics. |
 
 Wording: `Not recorded` = the database has no such fact. `Not checked` = the report
 did not look (for example, live qBittorrent state). `MISSING` under *Paths on disk* = checked
 live and confirmed absent.
+
+## Prowlarr matching & candidate reconciliation
+
+When `--include-matching prowlarr` is requested, the report reconciles Prowlarr search results against episode candidate history:
+
+- **Policy Disposition vs Candidate History**: Releases that satisfy discovery filters are marked `PASSES_POLICY`. The historical candidate lifecycle state (`READY`, `ACTIVE`, `FAILED`, `SUCCEEDED`) and prior failure reasons (e.g. `FAILED (MEDIA_AUDIO_REQUIRED)`) are displayed separately.
+- **Actionable Releases Count**: Distinguishes policy-accepted releases that were previously tried from newly actionable (untried) releases.
+- **Hold Explanation (`WAITING_FOR_DUB`)**: Explains why a job was held. When retries are exhausted or candidates fail, if all evaluated candidates failed and at least one failure was due to audio requirements (`MEDIA_AUDIO_REQUIRED`), the worker transitions to `ON_HOLD / WAITING_FOR_DUB` even if other failures were metadata/timeout related.
+- **Audio Verification Diagnostics**: When a candidate fails with `MEDIA_AUDIO_REQUIRED`, `ffprobe` observed audio streams (e.g., `observed=[fra]`) and missing required streams (e.g., `missing required=[eng,jpn]`) recorded in `job_history.details_json` are surfaced in both the History audit and candidate reconciliation. Title hints (e.g., `[MULTi AD]`, `[Dual-Audio]`) are treated as search hints only, never as verified audio. If audio details are absent (legacy jobs), `Not recorded` is shown.
 
 ## Reservation validity
 

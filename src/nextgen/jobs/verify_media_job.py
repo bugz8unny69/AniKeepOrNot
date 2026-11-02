@@ -1,6 +1,6 @@
 """Read-only selected-video verification; staging remains a separate component."""
 from functools import partial
-from src.nextgen.acquisition.media import verify_file, MediaInvalid, MediaUnavailable, ProbeUnavailable
+from src.nextgen.acquisition.media import verify_file, MediaInvalid, MediaUnavailable, ProbeUnavailable, AudioMissing
 from src.nextgen.acquisition.metadata import AcquisitionConflict, MetadataInvalid, SourceMissing
 from src.nextgen.acquisition.settings import SizeEvidenceMissing, DownloadConfigurationError
 from src.nextgen.acquisition.submission import ClientInvalid
@@ -44,6 +44,11 @@ def registration(*,verify=verify_file,load_input=load,staging_kind=None):
             return Outcome(value={'media':value,'verification_job_id':context.claim.job_id})
         except MediaUnavailable as exc:return Outcome('retry',exc.reason_code)
         except ProbeUnavailable as exc:return Outcome('review',exc.reason_code)
+        except AudioMissing as exc:
+            obs = ','.join(exc.observed) if exc.observed else 'none'
+            mis = ','.join(exc.missing) if exc.missing else 'none'
+            facts = {'observed_audio': obs, 'missing_audio': mis}
+            return Outcome('review', exc.reason_code, facts=facts)
         except REVIEW as exc:return Outcome('review',exc.reason_code)
     def route(value):
         return () if staging_kind is None else (Successor.create(staging_kind,{'verification_job_id':value['verification_job_id']}),)
