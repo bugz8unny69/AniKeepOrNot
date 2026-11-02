@@ -1,0 +1,183 @@
+"""Waiting for dub: audio-only exhaustion holds instead of review; Search again."""
+import importlib.util
+import json
+from pathlib import Path
+import unittest
+
+from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
+from src.nextgen.job_contracts import Registry, Policy
+from src.nextgen.jobs.discover_sonarr_backfill_job import (
+    KIND as DISCOVER_KIND, registration as discovery_registration,
+)
+from src.nextgen.jobs.evaluate_trial_job import registration as trial_registration
+from src.nextgen.storage.series_intake import detail, retry_episode
+from src.nextgen.storage.sqlite import connect, enqueue_job, transaction
+from src.nextgen.tests import test_backfill_discovery as backfill
+from src.nextgen.worker import Worker
+
+TRIED = ('a' * 40, 'b' * 40)
+DUBBED = 'c' * 40
+
+
+def release(title, digest):
+    return Release(title, 'Nyaa', 1080, 50, 400_000_000, 2002, digest,
+                   'magnet:?xt=urn:btih:' + digest, True, 'Test - 02')
+
+
+class FakeSearch(backfill.FakeDiscovery):
+    def __init__(self, releases=()):
+        super().__init__()
+        self.policy = DiscoveryPolicy(prefer_audio_tag=True)
+        self.releases = tuple(releases)
+        self.searches = 0
+
+    def search(self, anidb_id, identity):
+        self.searches += 1
+        return SearchResult(identity.tvdb_series_id, identity.tvdb_episode_id,
+                            self.policy.rank(self.releases))
+
+
+class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = backfill.BackfillWorkerTests.asyncSetUp
+    rows = backfill.BackfillWorkerTests.rows
+    source = backfill.BackfillWorkerTests.source
+
+    async def exhausted(self, reasons=('MEDIA_AUDIO_REQUIRED', 'MEDIA_AUDIO_REQUIRED'), audio=None):
+        """Plan for E10; episode 2's two ranked releases all failed; exhausted job queued."""
+        if audio is not None:
+            self.store.update({'acquisition': {'audio_check': audio}}, expected_revision=1)
+        self.source(10)
+        self.fake = FakeSearch()
+        await self.run_worker(self.fake)        # EVALUATE_TRIAL -> first page job.
+        db = connect(self.database)
+        try:
+            with transaction(db):
+                event = db.execute('SELECT event_id FROM jobs WHERE kind=?', (DISCOVER_KIND,)).fetchone()[0]
+                db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
+                db.execute('INSERT INTO sonarr_episode_selections VALUES(1,2,2002,?,1)', (TRIED[-1],))
+                for rank, (digest, reason) in enumerate(zip(TRIED, reasons), 1):
+                    db.execute("INSERT INTO sonarr_episode_candidates VALUES(1,2,?,?,'FAILED',?)",
+                               (rank, digest, reason))
+                self.job = enqueue_job(db, kind=DISCOVER_KIND, component='worker', event_id=event,
+                                       payload={'plan_id': 1, 'start': 1, 'exhausted_episode': 2},
+                                       available_at_ms=0)
+        finally:
+            db.close()
+
+    async def run_worker(self, fake, attempts=1):
+        registry = Registry((trial_registration(discovery_kind=DISCOVER_KIND),
+                             discovery_registration(None, client_factory=lambda c, s: fake,
+                                                    select_candidates=True, acquire_candidates=True)))
+        worker = Worker(self.store, self.startup, registry, policy=Policy(lease_ms=30000))
+        try:
+            for _ in range(attempts):
+                await worker.attempt()
+        finally:
+            await worker.close()
+
+    def state(self):
+        return self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?', (self.job,))[0]
+
+    def series(self):
+        db = connect(self.database)
+        try: return detail(db, 123)
+        finally: db.close()
+
+    async def test_audio_only_failures_wait_for_dub_instead_of_review(self):
+        await self.exhausted()
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        self.assertEqual(self.fake.searches, 1)
+        episode = next(x for x in self.series()['missing'] if x['episode'] == 2)
+        self.assertEqual((episode['status'], episode['can_retry']), ('WAITING_FOR_DUB', True))
+
+    async def test_other_failures_still_need_review(self):
+        await self.exhausted(reasons=('MEDIA_AUDIO_REQUIRED', 'ACQUISITION_METADATA_INVALID'))
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state(), ('NEEDS_REVIEW', 'SONARR_CANDIDATES_EXHAUSTED'))
+        self.assertEqual(self.fake.searches, 0)
+
+    async def test_check_only_runs_when_english_is_required(self):
+        await self.exhausted(audio='japanese')
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state(), ('NEEDS_REVIEW', 'SONARR_CANDIDATES_EXHAUSTED'))
+        self.assertEqual(self.fake.searches, 0)
+
+    async def test_search_again_tries_only_new_dual_audio_releases(self):
+        await self.exhausted()
+        await self.run_worker(self.fake)
+        self.fake.releases = (release('[Old] Test - 02 (1080p)', TRIED[0]),
+                              release('[Raw] Test - 02 (1080p)', 'd' * 40),
+                              release('[Group] Test - 02 (1080p) [Dual Audio]', DUBBED))
+        attempt = self.rows('SELECT attempt_count FROM jobs WHERE job_id=?', (self.job,))[0][0]
+        result = retry_episode(self.database, 123, 1, 2)
+        self.assertEqual(result, {'job_id': self.job, 'reused': False})
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state()[0], 'DONE')
+        self.assertEqual(self.rows('SELECT rank,info_hash,state FROM sonarr_episode_candidates '
+                                   'WHERE tvdb_episode=2 AND rank=3'), [(3, DUBBED, 'READY')])
+        payloads = self.rows('SELECT payload_json FROM jobs WHERE created_by_job_id=?', (self.job,))
+        self.assertEqual([json.loads(p) for p, in payloads],
+                         [{'plan_id': 1, 'start': 1, 'fallback_episode': 2}])
+        self.assertGreater(attempt, 0)
+
+    async def test_search_again_with_nothing_new_waits_again(self):
+        await self.exhausted()
+        await self.run_worker(self.fake)
+        retry_episode(self.database, 123, 1, 2)
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        self.assertEqual(self.fake.searches, 2)
+
+
+fix_spec = importlib.util.spec_from_file_location(
+    'requeue_waiting_for_dub',
+    Path(__file__).resolve().parents[3] / 'fixes' / 'requeue_waiting_for_dub.py')
+fix = importlib.util.module_from_spec(fix_spec)
+fix_spec.loader.exec_module(fix)
+
+
+class RequeueFixTests(WaitingForDubTests):
+    async def stuck(self, **kwargs):
+        """Old behavior: the exhausted job stopped in review."""
+        await self.exhausted(**kwargs)
+        db = connect(self.database)
+        try:
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='NEEDS_REVIEW',attempt_count=1,"
+                           "last_reason_code='SONARR_CANDIDATES_EXHAUSTED' WHERE job_id=?", (self.job,))
+        finally:
+            db.close()
+
+    async def test_preview_then_apply_moves_stuck_jobs_to_waiting(self):
+        await self.stuck()
+        preview = fix.execute(self.database, 'japanese_english')
+        self.assertEqual((preview['eligible_jobs'], preview['requeued']), ([self.job], 0))
+        self.assertEqual(self.state()[0], 'NEEDS_REVIEW')
+        applied = fix.execute(self.database, 'japanese_english', apply=True)
+        self.assertEqual(applied['requeued'], 1)
+        self.assertTrue(Path(applied['backup']).is_file())
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        self.assertEqual(fix.execute(self.database, 'japanese_english', apply=True)['requeued'], 0)
+
+    async def test_other_failures_are_left_in_review(self):
+        await self.stuck(reasons=('MEDIA_AUDIO_REQUIRED', 'ACQUISITION_METADATA_INVALID'))
+        report = fix.execute(self.database, 'japanese_english', apply=True)
+        self.assertEqual((report['eligible_jobs'], report['left_in_review']), ([], 1))
+
+    async def test_refuses_when_english_is_not_required(self):
+        await self.stuck()
+        with self.assertRaises(ValueError):
+            fix.execute(self.database, 'japanese', apply=True)
+
+    # The worker tests above also run for this subclass; skip the duplicates.
+    test_audio_only_failures_wait_for_dub_instead_of_review = None
+    test_other_failures_still_need_review = None
+    test_check_only_runs_when_english_is_required = None
+    test_search_again_tries_only_new_dual_audio_releases = None
+    test_search_again_with_nothing_new_waits_again = None
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -306,9 +306,10 @@ function renderSeries() {
     td().appendChild(node('strong', series.title));
     td(series.staged_count + ' staged');
     td().appendChild(node('span', series.rejection ? 'Rejected' :
-      series.staged_count ? 'Ready to Keep' : series.kept_count ? 'Kept' : 'Tracking',
+      series.staged_count ? 'Ready to Keep' : series.waiting_for_dub ? 'Waiting for dub' :
+      series.kept_count ? 'Kept' : 'Tracking',
       'status ' + (series.rejection ? 'blocked' :
-        series.staged_count || series.kept_count ? 'completed' : 'waiting')));
+        series.staged_count || (series.kept_count && !series.waiting_for_dub) ? 'completed' : 'waiting')));
     td(series.missing_count + ' missing / retryable');
     const actions = td();
     const open = node('button', 'View series', 'secondary');
@@ -347,7 +348,8 @@ async function openSeries(anidbId) {
       tr.appendChild(node('td', item.status.replaceAll('_', ' ').toLowerCase()));
       const action = node('td');
       if (item.can_retry) {
-        const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' : 'Retry search', 'secondary');
+        const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' :
+          item.status === 'WAITING_FOR_DUB' ? 'Search again' : 'Retry search', 'secondary');
         retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (state.seriesBusy) return;

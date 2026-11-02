@@ -427,3 +427,89 @@ def persist_observations(db, claim, value, *, dispatch=False):
     return (append_job_history(db,job_id=claim.job_id,
         event_code='SONARR_BACKFILL_OBSERVED',component='worker',occurred_at_ms=now,
         details={'attempt':claim.attempt}),*routed)
+
+
+# --- Waiting for dub -------------------------------------------------------
+# English audio is required and every ranked release of an episode failed only
+# the audio check. The episode's exhausted job goes ON_HOLD with this reason
+# instead of NEEDS_REVIEW. Retry ("Search again") searches Prowlarr once more
+# and appends only new Dual/Multi Audio releases; the existing fallback job
+# then tries them. No new table: the held job is the series status.
+WAITING_FOR_DUB = 'WAITING_FOR_DUB'
+# A withdrawn release was never downloaded, so it does not count against audio.
+_AUDIO_ONLY = ('MEDIA_AUDIO_REQUIRED', 'PROWLARR_RELEASE_WITHDRAWN')
+
+
+@dataclass(frozen=True)
+class DubSearch:
+    identity: object
+    tried: frozenset
+
+
+@dataclass(frozen=True)
+class DubFound:
+    plan: BackfillBatch
+    episode: int
+    target: DubSearch
+    hashes: tuple
+
+
+def _audio_only(db, plan_id, episode):
+    """Hashes tried for this episode when all of them failed only on audio."""
+    rows = db.execute(
+        'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
+        'WHERE plan_id=? AND tvdb_episode=?', (plan_id, episode)).fetchall()
+    if (not rows or any(state != 'FAILED' or reason not in _AUDIO_ONLY
+                        for _, state, reason in rows)
+            or not any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows)):
+        return None
+    return frozenset(row[0] for row in rows)
+
+
+def audio_exhausted(db, plan_id, episode):
+    return _audio_only(db, plan_id, episode) is not None
+
+
+def load_dub_search(database, plan_id, episode):
+    """The episode identity and tried hashes, or None if not an audio-only exhaustion."""
+    from src.nextgen.sonarr_episode import VerifiedEpisode
+    db = None
+    try:
+        db = _open(database, readonly=True, timeout_ms=5000)
+        db.execute('BEGIN')
+        if db.execute('PRAGMA user_version').fetchone()[0] != LATEST_VERSION:
+            raise QueueUnavailable()
+        tried = _audio_only(db, plan_id, episode)
+        if tried is None: return None
+        row = db.execute(
+            "SELECT p.tvdb_series_id,p.tvdb_season,s.tvdb_episode_id "
+            "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
+            "WHERE p.plan_id=? AND s.tvdb_episode=?", (plan_id, episode)).fetchone()
+        if row is None: raise BackfillConflict()
+        return DubSearch(VerifiedEpisode(row[0], row[2], row[1], episode), tried)
+    except (sqlite3.Error, OSError, MigrationError):
+        raise QueueUnavailable() from None
+    finally:
+        if db is not None: db.close()
+
+
+def persist_dub_found(db, claim, value):
+    """Append new tagged releases after the tried ones and hand off to fallback."""
+    if (not db.in_transaction or type(value) is not DubFound
+            or claim.kind != 'DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or type(value.plan) is not BackfillBatch or value.episode not in value.plan.numbers
+            or not value.hashes or len(set(value.hashes)) != len(value.hashes)):
+        raise BackfillConflict()
+    plan, episode = value.plan, value.episode
+    if _audio_only(db, plan.plan_id, episode) != value.target.tried or set(value.hashes) & value.target.tried:
+        raise BackfillConflict()
+    last = db.execute('SELECT max(rank) FROM sonarr_episode_candidates WHERE plan_id=? '
+                      'AND tvdb_episode=?', (plan.plan_id, episode)).fetchone()[0]
+    for rank, digest in enumerate(value.hashes, last + 1):
+        db.execute('INSERT INTO sonarr_episode_candidates(plan_id,tvdb_episode,rank,info_hash) '
+                   'VALUES(?,?,?,?)', (plan.plan_id, episode, rank, digest))
+    _, created = enqueue_job_with_receipt(
+        db, component='worker', kind='DISCOVER_SONARR_BACKFILL',
+        event_id=claim.event_id, created_by_job_id=claim.job_id,
+        payload={'plan_id': plan.plan_id, 'start': plan.start, 'fallback_episode': episode})
+    return (created,)
