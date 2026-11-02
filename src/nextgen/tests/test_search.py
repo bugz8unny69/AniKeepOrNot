@@ -99,7 +99,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item['anidb_id'] for item in data['items']], [1001])
         self.assertEqual(set(data['items'][0]),
                          {'anidb_id', 'title', 'tvdb_series_id', 'staged_count', 'kept_count',
-                          'missing_count', 'waiting_for_dub', 'season_count', 'rejection'})
+                          'missing_count', 'waiting_for_dub', 'season_count', 'rejection', 'status'})
         status, data = await self.search('scope=intake&q=dan')
         self.assertEqual([item['anidb_id'] for item in data['items']], [1002])
         status, data = await self.search('scope=intake&q=frieren')

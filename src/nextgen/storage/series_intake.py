@@ -116,27 +116,50 @@ def detail(db, anidb_id, language='english'):
     return result
 
 
-def list_items(db, before, limit, language='english', match=None):
+# Intake row status, in display precedence. The dashboard filter uses these codes.
+SERIES_STATUSES = ('REJECTED', 'STAGED', 'WAITING_FOR_DUB', 'KEPT', 'TRACKING')
+SCAN_CHUNK = 50
+
+
+def _summary(db, aid, language):
+    item = detail(db, aid, language=language)
+    row = {
+        'anidb_id': aid, 'title': item['title'],
+        'tvdb_series_id': item['tvdb_series_id'],
+        'staged_count': sum(x['status'] == 'Staged' for x in item['episodes']),
+        'kept_count': sum(x['status'] == 'Kept' for x in item['episodes']),
+        'missing_count': sum(x['can_retry'] for x in item['missing']),
+        'waiting_for_dub': sum(x['status'] == WAITING_FOR_DUB for x in item['missing']),
+        'season_count': len({x['season'] for x in item['episodes'] + item['missing']}),
+        'rejection': item['rejection']
+    }
+    row['status'] = ('REJECTED' if row['rejection'] else 'STAGED' if row['staged_count'] else
+                     'WAITING_FOR_DUB' if row['waiting_for_dub'] else
+                     'KEPT' if row['kept_count'] else 'TRACKING')
+    return row
+
+
+def list_items(db, before, limit, language='english', match=None, status=None):
     # ``match`` is an optional (sql, params) filter from src.nextgen.search.
+    # ``status`` is computed per series, so filtered pages scan in chunks.
+    if status is not None and status not in SERIES_STATUSES:
+        raise ValueError('Invalid Intake status')
     where, params = match if match else ('1', [])
-    rows = db.execute(
-        'SELECT anidb_id FROM identified_anime WHERE anidb_id<? AND (' + where + ') '
-        'ORDER BY anidb_id DESC LIMIT ?', (before, *params, limit + 1)
-    ).fetchall()
-    items = []
-    for (aid,) in rows[:limit]:
-        item = detail(db, aid, language=language)
-        items.append({
-            'anidb_id': aid, 'title': item['title'],
-            'tvdb_series_id': item['tvdb_series_id'],
-            'staged_count': sum(x['status'] == 'Staged' for x in item['episodes']),
-            'kept_count': sum(x['status'] == 'Kept' for x in item['episodes']),
-            'missing_count': sum(x['can_retry'] for x in item['missing']),
-            'waiting_for_dub': sum(x['status'] == WAITING_FOR_DUB for x in item['missing']),
-            'season_count': len({x['season'] for x in item['episodes'] + item['missing']}),
-            'rejection': item['rejection']
-        })
-    return {'items': items, 'next_before_id': rows[limit - 1][0] if len(rows) > limit else None}
+    items, cursor = [], before
+    while True:
+        rows = db.execute(
+            'SELECT anidb_id FROM identified_anime WHERE anidb_id<? AND (' + where + ') '
+            'ORDER BY anidb_id DESC LIMIT ?', (cursor, *params, SCAN_CHUNK)
+        ).fetchall()
+        for (aid,) in rows:
+            if len(items) == limit:
+                return {'items': items, 'next_before_id': items[-1]['anidb_id']}
+            row = _summary(db, aid, language)
+            if status is None or row['status'] == status:
+                items.append(row)
+        if len(rows) < SCAN_CHUNK:
+            return {'items': items, 'next_before_id': None}
+        cursor = rows[-1][0]
 
 
 def keep_targets(db, anidb_id, operation_ids):

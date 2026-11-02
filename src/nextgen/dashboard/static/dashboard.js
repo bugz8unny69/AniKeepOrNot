@@ -306,6 +306,9 @@ async function submitSelected() {
     if (state.csrf) await loadActivity();
   }
 }
+const INTAKE_STATUS = Object.freeze({
+  REJECTED: 'Rejected', STAGED: 'Ready to Keep', WAITING_FOR_DUB: 'Waiting for dub', KEPT: 'Kept', TRACKING: 'Tracking',
+});
 function renderSeries() {
   const tbody = $('job-rows'); tbody.replaceChildren();
   $('no-jobs').hidden = state.jobs.length !== 0;
@@ -315,9 +318,9 @@ function renderSeries() {
     td('—');
     td().appendChild(node('strong', series.title));
     td(series.staged_count + ' staged');
-    td().appendChild(node('span', series.rejection ? 'Rejected' :
+    td().appendChild(node('span', INTAKE_STATUS[series.status] || (series.rejection ? 'Rejected' :
       series.staged_count ? 'Ready to Keep' : series.waiting_for_dub ? 'Waiting for dub' :
-      series.kept_count ? 'Kept' : 'Tracking',
+      series.kept_count ? 'Kept' : 'Tracking'),
       'status ' + (series.rejection ? 'blocked' :
         series.staged_count || (series.kept_count && !series.waiting_for_dub) ? 'completed' : 'waiting')));
     td(series.missing_count + ' missing / retryable');
@@ -439,6 +442,9 @@ async function loadActivity() {
       let path = state.search
         ? `${API}/search?${searchQuery(state.page === 'intake' ? 'intake' : 'jobs', state.search)}&before_id=${state.cursor}&limit=30`
         : `${API}/${state.page === 'intake' ? 'intake/series' : 'jobs'}?before_id=${state.cursor}&limit=30`;
+      if (state.page === 'intake' && $('intake-filter').value) {
+        path += '&status=' + encodeURIComponent($('intake-filter').value);
+      }
       if (state.page === 'jobs') {
         const filter = $('status-filter').value;
         if (filter) path += '&state=' + encodeURIComponent(filter);
@@ -448,7 +454,8 @@ async function loadActivity() {
       const data = await request(path);
       if (generation !== state.generation || !state.csrf) return;
       state.jobs = data.items; state.next = data.next_before_id ?? null; renderJobs();
-      $('no-jobs').textContent = state.search ? 'No matches.' : 'No items on this page.';
+      $('no-jobs').textContent = state.search || (state.page === 'intake' && $('intake-filter').value)
+        ? 'No matches.' : 'No items on this page.';
       $('live-indicator').textContent = '● Live'; $('live-indicator').className = 'status running';
     } catch (error) {
       if (generation === state.generation) {
@@ -1066,6 +1073,7 @@ async function showWorkspace() {
   $('completed-toggle-label').hidden = state.page !== 'jobs';
   $('canceled-toggle-label').hidden = state.page !== 'jobs';
   $('status-filter-label').hidden = state.page === 'intake';
+  $('intake-filter-label').hidden = state.page !== 'intake';
   $('search').placeholder = state.page === 'intake' ? 'Search anime' : 'Search jobs: release, anime, activity or #id';
   if (state.page === 'intake') {
     const titles = ['Received', 'Series', 'Staged', 'Status', 'Backfill', 'Actions'];
@@ -1124,6 +1132,12 @@ $('status-filter').addEventListener('change', () => {
   resetJobsPage();
 });
 $('show-completed').addEventListener('change', resetJobsPage);
+$('intake-filter').addEventListener('change', async () => {
+  if (!state.csrf || state.page !== 'intake') return;
+  if (state.loading) await state.loading;
+  state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
+  await loadActivity();
+});
 $('show-canceled').addEventListener('change', resetJobsPage);
 $('select-page').addEventListener('change', () => {
   if (state.bulkSubmitting || state.page !== 'jobs') return;

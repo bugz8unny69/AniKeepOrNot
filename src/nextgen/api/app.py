@@ -31,7 +31,7 @@ from src.nextgen.storage.job_queue import JobQueue, QueueUnavailable
 from src.nextgen.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
 from src.nextgen.storage.management_actions import ManagementActions, ActionUnavailable, ActionNotFound
 from src.nextgen.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
-    keep_targets as series_keep_targets, retry_episode as retry_missing_episode, reject_series as reject_intake_series, IntakeUnavailable)
+    SERIES_STATUSES, keep_targets as series_keep_targets, retry_episode as retry_missing_episode, reject_series as reject_intake_series, IntakeUnavailable)
 from src.nextgen.storage.migrations import LATEST_VERSION
 from src.nextgen.storage.sqlite import accept_event_and_job
 
@@ -117,6 +117,13 @@ def size_detail(details):
     if used is None:return f'The video is {video:,} MB; the episode limit is {limit:,} MB.'
     return (f'The video is {video:,} MB; this anime\'s trial episodes already use {used:,} MB '
             f'of their {limit:,} MB total limit.')
+
+
+def intake_status(query):
+    value=query.get('status',[])
+    if not value:return None
+    if len(value)!=1 or value[0] not in SERIES_STATUSES:raise ApiError(400,'API_REQUEST_INVALID')
+    return value[0]
 
 
 def failed_detail(details):
@@ -542,12 +549,13 @@ class Application:
             # Series-first Intake reuses existing jobs and staging evidence.
             if path==PREFIX+'/intake/series':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                if set(query)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
+                if set(query)-{'before_id','limit','status'}:raise ApiError(400,'API_REQUEST_INVALID')
                 before=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1)
                 limit=page_number(query,'limit',30,1,100)
                 with JobQueue(configuration.value('storage.database_path')).connection() as db:
                     db.execute('BEGIN')
-                    return 200,series_items(db,before,limit,language=configuration.value('anime.title_language')),[]
+                    return 200,series_items(db,before,limit,language=configuration.value('anime.title_language'),
+                                            status=intake_status(query)),[]
             series_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})(?:/(keep|reject))?',path)
             if series_match:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -768,10 +776,10 @@ class Application:
             if scope[0]=='recognized':
                 if rest:raise ApiError(400,'API_REQUEST_INVALID')
                 return self._recognized(db,language,found)
-            if set(rest)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
+            if set(rest)-{'before_id','limit','status'}:raise ApiError(400,'API_REQUEST_INVALID')
             before=page_number(rest,'before_id',(1<<63)-1,1,(1<<63)-1)
             limit=page_number(rest,'limit',30,1,100)
-            return series_items(db,before,limit,language=language,match=found)
+            return series_items(db,before,limit,language=language,match=found,status=intake_status(rest))
 
     def _intake(self,configuration,query):
         if set(query)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
