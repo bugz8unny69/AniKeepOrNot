@@ -262,14 +262,21 @@ class Publisher:
                     same_source=entry['role']=='media' and artifact['file']==plan['source']['file'][:2]
                     try:fd=open_regular(folder,entry['temporary'],os.O_RDONLY if same_source else os.O_RDWR)
                     except FileNotFoundError:
-                        if not same_source or artifact['phase']!='TEMP':raise StagingReview()
+                        # A journaled same-filesystem move can have a changed
+                        # NFS inode after a remount. With the temporary absent,
+                        # recheck the verified source by path and current device.
+                        if entry['role']!='media' or self._copy_mode or artifact['phase']!='TEMP':
+                            raise StagingReview()
                         self.guard()
                         with directory(plan['source_root']) as source_root:
                             with parent(source_root,plan['source']['path']) as (source_folder,name):
-                                if signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False))[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
+                                source_info=signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False))
+                                if (source_info[2:4]!=tuple(plan['source']['file'][2:4])
+                                        or source_info[0]!=folder_sig[0]):raise StagingReview()
                                 rename_file(source_folder,name,entry['temporary'],target_folder=folder)
                                 os.fsync(folder);os.fsync(source_folder)
                         fd=open_regular(folder,entry['temporary'])
+                        same_source=True
                     moved=same_source
                 try:
                     if artifact['phase']=='TEMP' and not moved:self._copy(plan,entry,fd)
