@@ -1045,7 +1045,7 @@ async function showWorkspace() {
   $('completed-toggle-label').hidden = state.page !== 'jobs';
   $('canceled-toggle-label').hidden = state.page !== 'jobs';
   $('status-filter-label').hidden = state.page === 'intake';
-  $('search').placeholder = state.page === 'intake' ? 'Search anime' : 'Search jobs: release, anime or #id';
+  $('search').placeholder = state.page === 'intake' ? 'Search anime' : 'Search jobs: release, anime, activity or #id';
   if (state.page === 'intake') {
     const titles = ['Received', 'Series', 'Staged', 'Status', 'Backfill', 'Actions'];
     const names = ['received', 'series', 'staged', 'status', 'backfill', 'actions'];

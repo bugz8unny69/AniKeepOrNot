@@ -133,5 +133,30 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
                              ["Frieren: Beyond Journey's End"], scope)
 
 
+    async def test_jobs_scope_matches_activity_details_and_job_label(self):
+        from src.nextgen.history import append_job_history
+        stuck = await self.webhook('Show A - 01', 'd' * 40)
+        stopped = await self.webhook('Show B - 01', 'e' * 40)
+        with connect(self.database) as db, transaction(db):
+            db.execute("UPDATE jobs SET state='NEEDS_REVIEW',last_reason_code='JOB_RETRY_EXHAUSTED' "
+                       "WHERE job_id=?", (stuck,))
+            db.execute("UPDATE jobs SET state='NEEDS_REVIEW',attempt_count=1,last_reason_code='IDENTITY_INCOMPLETE' "
+                       "WHERE job_id=?", (stopped,))
+            append_job_history(db, job_id=stopped, event_code='NEEDS_REVIEW',
+                               reason_code='IDENTITY_INCOMPLETE', component='worker', occurred_at_ms=1,
+                               details={'attempt': 1, 'failed_check': 'src/nextgen/acquisition/audio.py:80 audio_probe',
+                                        'failed_path': '/staging/b.mkv'})
+        status, data = await self.search('scope=jobs&q=retries&state=NEEDS_REVIEW')
+        self.assertEqual(status, 200)
+        self.assertEqual([item['job_id'] for item in data['items']], [stuck])
+        self.assertEqual(data['items'][0]['reason']['message'], 'Automatic retries have stopped.')
+        status, data = await self.search('scope=jobs&q=audio_probe')
+        self.assertEqual([item['job_id'] for item in data['items']], [stopped])
+        status, data = await self.search('scope=jobs&q=retries&state=DONE')
+        self.assertEqual(data['items'], [])
+        status, data = await self.search('scope=jobs&q=identify+series')
+        self.assertEqual(sorted(item['job_id'] for item in data['items']), sorted([stuck, stopped]))
+
+
 if __name__ == '__main__':
     unittest.main()
