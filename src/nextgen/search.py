@@ -33,6 +33,8 @@ SCOPES = {
             "FROM incoming_events e WHERE e.event_id=jobs.event_id) {like}",
             "EXISTS (SELECT 1 FROM identity_results r JOIN identified_anime a USING(anidb_id) "
             "WHERE r.event_id=jobs.event_id AND a.title {like})",
+            "EXISTS (SELECT 1 FROM identity_results r JOIN anime_title_metadata t USING(anidb_id) "
+            "WHERE r.event_id=jobs.event_id AND (t.english_title {like} OR t.romaji_title {like}))",
         ),
         ids=('jobs.job_id',)),
     'intake': Scope(
@@ -43,6 +45,8 @@ SCOPES = {
             "EXISTS (SELECT 1 FROM identity_results r WHERE r.anidb_id=identified_anime.anidb_id "
             "AND (json_extract(r.series_json,'$.anime.english_title') {like} "
             "OR json_extract(r.series_json,'$.anime.original_title') {like}))",
+            "EXISTS (SELECT 1 FROM anime_title_metadata t WHERE t.anidb_id=identified_anime.anidb_id "
+            "AND (t.english_title {like} OR t.romaji_title {like}))",
         ),
         ids=('identified_anime.anidb_id',)),
     'recognized': Scope(
@@ -50,6 +54,8 @@ SCOPES = {
             "s.display_title {like}",
             "EXISTS (SELECT 1 FROM recognized_aliases x WHERE x.tvdb_series_id=s.tvdb_series_id "
             "AND x.tvdb_season=s.tvdb_season AND x.anidb_id=s.anidb_id AND x.alias_key {like})",
+            "EXISTS (SELECT 1 FROM anime_title_metadata t WHERE t.anidb_id=s.anidb_id "
+            "AND (t.english_title {like} OR t.romaji_title {like}))",
         ),
         ids=('s.anidb_id', 's.tvdb_series_id')),
 }

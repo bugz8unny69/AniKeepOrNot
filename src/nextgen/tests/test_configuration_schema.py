@@ -75,7 +75,7 @@ class ConfigurationSchemaTests(unittest.TestCase):
         migrated = convert_document(old)
         self.assertEqual(old, original)
         self.assertEqual(source_version(old), 0)
-        self.assertEqual(migrated.revision, 12)
+        self.assertEqual(migrated.revision, 13)
         self.assertEqual(migrated.value("logging.level"), "DEBUG")
         self.assertEqual(migrated.value("logging.components")["worker"], "TRACE")
         self.assertEqual(convert_document(migrated.to_document()), migrated)
@@ -83,6 +83,17 @@ class ConfigurationSchemaTests(unittest.TestCase):
             load_current(json.dumps(old).encode())
         with self.assertRaises(ConfigurationError):
             convert_document({"daemon": {"concurrency": 4}})  # Not a legacy production import.
+
+    def test_anime_language_is_strict_and_switchable(self):
+        current = ConfigurationSnapshot(1, {})
+        self.assertEqual(current.value("anime.title_language"), "english")
+        changed, fields = patch_snapshot(current, {"anime": {"title_language": "japanese"}})
+        self.assertEqual(changed.value("anime.title_language"), "japanese")
+        self.assertEqual(fields, ("anime.title_language",))
+        self.assertEqual(field_definitions()["anime.title_language"]["apply_mode"], "next_operation")
+        for bad in ("ja", "Romaji", "", None, 1):
+            with self.assertRaises(ConfigurationError):
+                patch_snapshot(current, {"anime": {"title_language": bad}})
 
     def test_strict_decode_rejects_duplicate_nonfinite_oversized_or_invalid_input(self):
         for raw in (b'{"logging":{},"logging":{}}', b'{"x":NaN}', b'{"x":Infinity}',

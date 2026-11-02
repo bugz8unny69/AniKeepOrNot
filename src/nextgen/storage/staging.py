@@ -6,6 +6,7 @@ import os
 from pathlib import PurePosixPath
 import stat
 
+from src.nextgen.anime_titles import title_for
 from src.nextgen.acquisition.media import VerifiedMedia
 from src.nextgen.history import integer
 from src.nextgen.maintenance import MaintenanceGate
@@ -73,7 +74,9 @@ class Journal:
             root=configuration.value('storage.trial_root')
             disjoint(root,(intent.options.download_root,configuration.value('storage.download_root'),
                 configuration.value('storage.keep_root'),configuration.value('storage.database_path')))
-            plan=specification(intent,evidence,identity,root,configuration.desired_revision)
+            shown=title_for(db,identity[0],identity[6],configuration.value('anime.title_language'))
+            plan=specification(intent,evidence,identity,root,configuration.desired_revision,
+                               display_title=shown)
             plan['root_identity']=root_identity(root)
             raw=encoded(plan)
             if len(raw.encode())>65536:raise StagingReview()

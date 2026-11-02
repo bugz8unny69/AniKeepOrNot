@@ -5,6 +5,7 @@ No new tables, provider adapters, or import jobs are needed.
 """
 import json
 
+from src.nextgen.anime_titles import preferred_title
 from src.nextgen.history import integer, append_job_history
 from src.nextgen.storage.cancellation import CancellationStore, can_cancel_operation
 from src.nextgen.storage.job_queue import JobQueue
@@ -16,20 +17,26 @@ class IntakeUnavailable(ValueError):
     reason_code = 'MANAGEMENT_ACTION_UNAVAILABLE'
 
 
-def detail(db, anidb_id):
+def detail(db, anidb_id, language='english'):
     integer(anidb_id, positive=True)
     row = db.execute(
-        'SELECT anidb_id,tvdb_series_id,title FROM identified_anime WHERE anidb_id=?',
-        (anidb_id,)).fetchone()
+        'SELECT a.anidb_id,a.tvdb_series_id,a.title,t.english_title,t.romaji_title '
+        'FROM identified_anime a LEFT JOIN anime_title_metadata t USING(anidb_id) '
+        'WHERE a.anidb_id=?', (anidb_id,)).fetchone()
     if row is None:
         return None
     info = db.execute(
         'SELECT series_json FROM identity_results WHERE anidb_id=? '
         'ORDER BY validated_at_ms DESC LIMIT 1', (anidb_id,)).fetchone()
-    anime = json.loads(info[0]).get('anime', {}) if info else {}
+    snapshot = json.loads(info[0]) if info else {}
+    anime = snapshot.get('anime', {})
+    english = row[3] or anime.get('english_title')
+    romaji = row[4] or snapshot.get('attributes', {}).get('romaji_title')
     result = {
-        'anidb_id': row[0], 'tvdb_series_id': row[1], 'title': row[2],
-        'english_title': anime.get('english_title'), 'original_title': anime.get('original_title'),
+        'anidb_id': row[0], 'tvdb_series_id': row[1],
+        'title': preferred_title(row[2], english, romaji, language),
+        'english_title': english, 'romaji_title': romaji,
+        'original_title': anime.get('original_title'),
         'year': anime.get('year'), 'type': anime.get('type'),
         'description': None,  # The persisted AnimeSeries identity has no synopsis field.
         'episodes': [], 'missing': [], 'keep_operations': []
@@ -99,7 +106,7 @@ def detail(db, anidb_id):
     return result
 
 
-def list_items(db, before, limit, match=None):
+def list_items(db, before, limit, language='english', match=None):
     # ``match`` is an optional (sql, params) filter from src.nextgen.search.
     where, params = match if match else ('1', [])
     rows = db.execute(
@@ -108,7 +115,7 @@ def list_items(db, before, limit, match=None):
     ).fetchall()
     items = []
     for (aid,) in rows[:limit]:
-        item = detail(db, aid)
+        item = detail(db, aid, language=language)
         items.append({
             'anidb_id': aid, 'title': item['title'],
             'tvdb_series_id': item['tvdb_series_id'],

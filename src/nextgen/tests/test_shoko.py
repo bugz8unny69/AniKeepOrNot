@@ -65,7 +65,7 @@ class ShokoTests(unittest.TestCase):
             document=CONVERSIONS[version](document)
             self.assertNotIn('shoko',document['settings'])
         upgraded=convert_document(document)
-        self.assertEqual((upgraded.schema_version,upgraded.revision),(12,12))
+        self.assertEqual((upgraded.schema_version,upgraded.revision),(13,13))
         self.assertEqual(upgraded.value('shoko.base_url'),'')
         with self.assertRaises(ConfigurationError):convert_document({**document,'settings':{**document['settings'],'shoko':{}}})
         with tempfile.TemporaryDirectory() as directory:

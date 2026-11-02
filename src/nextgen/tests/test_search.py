@@ -122,5 +122,16 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(full['data']['items']), 2)
 
 
+    async def test_english_title_is_searchable_and_displayed(self):
+        self.seed(("INSERT INTO identified_anime VALUES(1001,2001,'Sousou no Frieren')",),
+                  ("INSERT INTO anime_title_metadata VALUES(1001,'Frieren: Beyond Journey''s End',NULL)",),
+                  (SEASON, (2001, 1001, 'Sousou no Frieren')))
+        for scope in ('intake', 'recognized'):
+            status, data = await self.search(f'scope={scope}&q=beyond')
+            self.assertEqual(status, 200)
+            self.assertEqual([item['title'] for item in data['items']],
+                             ["Frieren: Beyond Journey's End"], scope)
+
+
 if __name__ == '__main__':
     unittest.main()

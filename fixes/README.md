@@ -70,3 +70,33 @@ sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/remove_staged
 
 Each queued job appears in the dashboard as "Remove the finished download from
 qBittorrent". A second run does nothing. Do not remove these torrents by hand.
+
+## Repair Jellyfin NFO titles for existing staging
+
+After installing the title-language update, use the existing title backfill:
+it now corrects the <title> of published `tvshow.nfo` files and the
+<showtitle> of episode NFOs, in addition to retrieving verified AniDB titles.
+It retains canonical filenames and all episode/provider IDs.
+
+Preview:
+
+```sh
+sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/backfill_anime_titles.py --dry-run
+```
+
+Apply (requires draining running NextGen work; automatically requests exclusive
+maintenance and backs up SQLite before changing metadata):
+
+```sh
+sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/backfill_anime_titles.py --apply
+```
+
+The script updates existing publication proofs together with any changed NFO
+files so subsequent Keep/Reject cleanup still works. Absent episode NFOs
+after Keep are skipped, never recreated. A changed/unrecognized NFO is refused
+rather than overwritten. After applying, it reuses the standard Jellyfin
+`POST /Library/Refresh` scan request when configured. A 204 response only
+means the scan was accepted, not that every Jellyfin item has reloaded its
+metadata. NFOs already removed by post-Keep cleanup cannot be updated by this
+script. If exclusive maintenance is unavailable or a repair fails, investigate
+the pending maintenance state before restarting workers.

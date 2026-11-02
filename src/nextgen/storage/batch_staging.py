@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import PurePosixPath
 from types import SimpleNamespace
 
+from src.nextgen.anime_titles import title_for
 from src.nextgen.acquisition.media import VerifiedMedia
 from src.nextgen.staging import (
     StagingReview, disjoint, specification, root_identity, encoded,
@@ -139,8 +140,9 @@ class BatchStagingJournal(Journal):
                            configuration.value('storage.download_root'),
                            configuration.value('storage.keep_root'),
                            configuration.value('storage.database_path')))
+            shown=title_for(db,identity[0],identity[6],configuration.value('anime.title_language'))
             plan=specification(intent,evidence,identity,root,
-                               configuration.desired_revision)
+                               configuration.desired_revision,display_title=shown)
             plan['transfer']='COPY'
             plan['root_identity']=root_identity(root)
             raw=encoded(plan)

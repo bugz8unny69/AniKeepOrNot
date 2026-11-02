@@ -11,6 +11,7 @@ class SeriesIntakeTests(unittest.TestCase):
         self.db = sqlite3.connect(':memory:')
         self.db.executescript("""
             CREATE TABLE identified_anime(anidb_id INTEGER,tvdb_series_id INTEGER,title TEXT);
+            CREATE TABLE anime_title_metadata(anidb_id INTEGER,english_title TEXT,romaji_title TEXT);
             CREATE TABLE identity_results(anidb_id INTEGER,series_json TEXT,validated_at_ms INTEGER);
             CREATE TABLE staging_publications(plan_id INTEGER,job_id INTEGER,state TEXT);
             CREATE TABLE acquisition_plans(plan_id INTEGER,reservation_id INTEGER);
@@ -86,6 +87,15 @@ class SeriesIntakeTests(unittest.TestCase):
         self.assertEqual(list_items(self.db,100,30)['items'][0]['rejection']['job_id'],900)
         with self.assertRaises(IntakeUnavailable):
             keep_targets(self.db,10,[11])
+
+    def test_language_switch_preserves_canonical_and_operations(self):
+        self.db.execute("INSERT INTO anime_title_metadata VALUES(10,'English Name','Romaji Name')")
+        english = detail(self.db, 10, language='english')
+        japanese = detail(self.db, 10, language='japanese')
+        self.assertEqual(english['title'], 'English Name')
+        self.assertEqual(japanese['title'], 'Romaji Name')
+        self.assertEqual(english['keep_operations'], japanese['keep_operations'])
+        self.assertEqual(list_items(self.db, 100, 30, language='japanese')['items'][0]['title'], 'Romaji Name')
 
     def test_missing_series_is_not_invented(self):
         self.assertIsNone(detail(self.db, 999))

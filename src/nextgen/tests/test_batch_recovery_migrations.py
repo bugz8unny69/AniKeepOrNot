@@ -43,7 +43,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'sonarr_backfill_results','sonarr_episode_selections',
             'sonarr_episode_candidates','sonarr_magnet_intents','acquisition_plans_next',
             'sonarr_magnet_intents_next','sonarr_backfill_results_v48',
-            'manual_identity_matches', None, 'batch_metadata_admissions')  # v51 adds owned batch metadata
+            'manual_identity_matches', None, 'batch_metadata_admissions',
+            'anime_title_metadata')  # v52 adds optional display names
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

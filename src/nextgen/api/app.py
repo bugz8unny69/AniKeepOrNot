@@ -30,7 +30,7 @@ from src.nextgen.secrets import SecretStore
 from src.nextgen.storage.job_queue import JobQueue, QueueUnavailable
 from src.nextgen.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
 from src.nextgen.storage.management_actions import ManagementActions, ActionUnavailable, ActionNotFound
-from src.nextgen.storage.series_intake import (detail as series_detail, list_items as series_items,
+from src.nextgen.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
     keep_targets as series_keep_targets, retry_episode as retry_missing_episode, reject_series as reject_intake_series, IntakeUnavailable)
 from src.nextgen.storage.migrations import LATEST_VERSION
 from src.nextgen.storage.sqlite import accept_event_and_job
@@ -517,13 +517,20 @@ class Application:
                         (tid,season,aid) if aid is not None else (tid,season)).fetchall()
                     if len(parents)!=1:raise ApiError(404,'API_ROUTE_NOT_FOUND')
                     parent=parents[0]
+                    translated=db.execute(
+                        "SELECT english_title,romaji_title FROM anime_title_metadata WHERE anidb_id=?",
+                        (parent[0],)).fetchone()
+                    recognized_title=preferred_title(parent[1],
+                        translated[0] if translated else None,
+                        translated[1] if translated else None,
+                        configuration.value('anime.title_language'))
                     records=db.execute(
                         "SELECT anidb_episode_number,anidb_episode_id,tvdb_episode,tvdb_episode_id "
                         "FROM recognized_episodes WHERE tvdb_series_id=? AND tvdb_season=? "
                         "AND anidb_id=? ORDER BY tvdb_episode LIMIT 501",(tid,season,parent[0])).fetchall()
                 if len(records)>500:raise ApiError(503,'API_UNAVAILABLE')
                 return 200,{'tvdb_series_id':tid,'season':season,'anidb_id':parent[0],
-                    'title':parent[1],'items':[{'anidb_episode_number':an,
+                    'title':recognized_title,'items':[{'anidb_episode_number':an,
                     'anidb_episode_id':ae,'tvdb_episode':te,'tvdb_episode_id':tid_episode}
                     for an,ae,te,tid_episode in records]},[]
             if path==PREFIX+'/recognized':
@@ -531,7 +538,7 @@ class Application:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 with JobQueue(configuration.value('storage.database_path')).connection() as db:
                     db.execute('BEGIN')
-                    return 200,self._recognized(db),[]
+                    return 200,self._recognized(db,configuration.value('anime.title_language')),[]
             # Series-first Intake reuses existing jobs and staging evidence.
             if path==PREFIX+'/intake/series':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
@@ -540,7 +547,7 @@ class Application:
                 limit=page_number(query,'limit',30,1,100)
                 with JobQueue(configuration.value('storage.database_path')).connection() as db:
                     db.execute('BEGIN')
-                    return 200,series_items(db,before,limit),[]
+                    return 200,series_items(db,before,limit,language=configuration.value('anime.title_language')),[]
             series_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})(?:/(keep|reject))?',path)
             if series_match:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -549,7 +556,7 @@ class Application:
                 if series_match[2] is None and method=='GET':
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
-                        item=series_detail(db,aid)
+                        item=series_detail(db,aid,language=configuration.value('anime.title_language'))
                     if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
                     return 200,item,[]
                 if series_match[2]=='keep' and method=='POST':
@@ -714,12 +721,14 @@ class Application:
         page={'items':items,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
         return {**page,'job':about,'backfill_attempts':attempts} if history else page
 
-    def _recognized(self,db,match=None):
+    def _recognized(self,db,language,match=None):
         where,params=match if match else ('1',[])
         rows=db.execute(
             "SELECT s.tvdb_series_id,s.tvdb_season,s.anidb_id,s.display_title,"
+            "t.english_title,t.romaji_title,"
             "count(DISTINCT a.alias_key),count(DISTINCT v.anidb_episode_id) "
             "FROM recognized_seasons s "
+            "LEFT JOIN anime_title_metadata t ON t.anidb_id=s.anidb_id "
             "LEFT JOIN recognized_aliases a "
             "ON a.tvdb_series_id=s.tvdb_series_id AND a.tvdb_season=s.tvdb_season AND a.anidb_id=s.anidb_id "
             "LEFT JOIN recognized_episodes v "
@@ -730,8 +739,9 @@ class Application:
             "ORDER BY s.display_title,s.tvdb_season LIMIT 501",params).fetchall()
         if len(rows)>500:raise ApiError(503,'API_UNAVAILABLE')
         return {'items':[{'tvdb_series_id':tid,'season':season,
-            'anidb_id':aid,'title':title,'alias_count':alias_count,
-            'verified_episode_count':ep_count} for tid,season,aid,title,alias_count,ep_count in rows]}
+            'anidb_id':aid,'title':preferred_title(title,english,romaji,language),
+            'alias_count':alias_count,'verified_episode_count':ep_count}
+            for tid,season,aid,title,english,romaji,alias_count,ep_count in rows]}
 
     def _search(self,configuration,query):
         # One route for every page; the scope decides which page's list is filtered.
@@ -740,16 +750,17 @@ class Application:
         try:found=search_match(scope[0],search_words(text[0]))
         except SearchInvalid:raise ApiError(400,'API_REQUEST_INVALID') from None
         rest={key:value for key,value in query.items() if key not in ('scope','q')}
+        language=configuration.value('anime.title_language')
         if scope[0]=='jobs':return self._jobs(configuration,PREFIX+'/jobs',rest,match=found)
         with JobQueue(configuration.value('storage.database_path')).connection() as db:
             db.execute('BEGIN')
             if scope[0]=='recognized':
                 if rest:raise ApiError(400,'API_REQUEST_INVALID')
-                return self._recognized(db,found)
+                return self._recognized(db,language,found)
             if set(rest)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
             before=page_number(rest,'before_id',(1<<63)-1,1,(1<<63)-1)
             limit=page_number(rest,'limit',30,1,100)
-            return series_items(db,before,limit,found)
+            return series_items(db,before,limit,language=language,match=found)
 
     def _intake(self,configuration,query):
         if set(query)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
