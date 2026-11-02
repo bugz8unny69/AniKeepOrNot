@@ -9,6 +9,7 @@ Usage from repository root:
 No GitHub Actions, legacy imports, network calls or production services.
 """
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -33,6 +34,7 @@ def batch_modules(modules, size):
 
 
 def main(argv=None):
+    os.umask(0o022)
     parser = argparse.ArgumentParser(
         description="Run fresh NextGen unit tests locally, in named-file batches.")
     parser.add_argument("--match", default=None,

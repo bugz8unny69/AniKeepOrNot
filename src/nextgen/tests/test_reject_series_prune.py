@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -14,6 +15,7 @@ FOLDER = 'Koori no Jouheki _2026_ [tvdbid-459627] [anidbid-20168]'
 class PruneSeriesTests(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
         os.makedirs(f'{self.root}/{FOLDER}/Season 02')
         with open(f'{self.root}/{FOLDER}/tvshow.nfo', 'wb') as f:
             f.write(SHOW)
@@ -50,6 +52,7 @@ class RemoveSeriesTests(unittest.TestCase):
         from unittest import mock
         from src.nextgen.storage import review_decisions
         base = PruneSeriesTests('test_empty_series_is_removed'); base.setUp()
+        self.addCleanup(shutil.rmtree, base.root, True)
         calls = []
         with mock.patch.object(review_decisions, 'remove_selected',
                                lambda m, r, g, k: calls.append(r)):
