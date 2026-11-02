@@ -430,14 +430,13 @@ def persist_observations(db, claim, value, *, dispatch=False):
 
 
 # --- Waiting for dub -------------------------------------------------------
-# English audio is required and every ranked release of an episode failed only
-# the audio check. The episode's exhausted job goes ON_HOLD with this reason
-# instead of NEEDS_REVIEW. Retry ("Search again") searches Prowlarr once more
-# and appends only new Dual/Multi Audio releases; the existing fallback job
-# then tries them. No new table: the held job is the series status.
+# English audio is required, every ranked release of an episode failed, and at
+# least one failed the audio check. The exhausted job goes ON_HOLD with this
+# reason instead of NEEDS_REVIEW; other failures (stalled torrents, conflicts)
+# are just releases that did not work. Retry ("Search again") searches Prowlarr
+# once more and appends only new Dual/Multi Audio releases; the existing
+# fallback job then tries them. No new table: the held job is the status.
 WAITING_FOR_DUB = 'WAITING_FOR_DUB'
-# A withdrawn release was never downloaded, so it does not count against audio.
-_AUDIO_ONLY = ('MEDIA_AUDIO_REQUIRED', 'PROWLARR_RELEASE_WITHDRAWN')
 
 
 @dataclass(frozen=True)
@@ -455,12 +454,11 @@ class DubFound:
 
 
 def _audio_only(db, plan_id, episode):
-    """Hashes tried for this episode when all of them failed only on audio."""
+    """Hashes tried for this episode when all failed and one failed on audio."""
     rows = db.execute(
         'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
         'WHERE plan_id=? AND tvdb_episode=?', (plan_id, episode)).fetchall()
-    if (not rows or any(state != 'FAILED' or reason not in _AUDIO_ONLY
-                        for _, state, reason in rows)
+    if (not rows or any(state != 'FAILED' for _, state, _ in rows)
             or not any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows)):
         return None
     return frozenset(row[0] for row in rows)

@@ -84,7 +84,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             if exhausted_episode is not None:
                 if not acquire_candidates or exhausted_episode not in plan.numbers:
                     raise BackfillConflict()
-                # Only when English is required and every release failed audio:
+                # Only when English is required, all releases failed and one failed audio:
                 # wait for a dub instead of review. Retry runs this again.
                 target = (await blocking(load_dub_search,
                     context.configuration.value('storage.database_path'),plan_id,exhausted_episode)
