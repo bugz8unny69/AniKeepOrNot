@@ -156,10 +156,27 @@ def season_entry(payload, tid, season, episode=None):
 def anime_record(payload, aid):
     root = xml(payload,"anime",limit=4194304)
     if root.get("id")!=str(aid): raise ProviderInvalidResponse()
-    titles = [(item.text or "").strip() for item in root.findall("titles/title") if (item.text or "").strip()]
-    main = [(item.text or "").strip() for item in root.findall("titles/title") if item.get("type")=="main" and (item.text or "").strip()]
-    if len(main)!=1 or not titles: raise ProviderInvalidResponse()
-    return {"anidb_id":aid,"title":main[0],"titles":tuple(titles)}
+    entries = [item for item in root.findall("titles/title") if (item.text or "").strip()]
+    titles = [(item.text or "").strip() for item in entries]
+    main = [(item.text or "").strip() for item in entries if item.get("type") == "main"]
+    if len(main) != 1 or not titles:
+        raise ProviderInvalidResponse()
+
+    def translated(language):
+        # AniDB XML annotates titles using xml:lang and type=main/official/syn.
+        matches = [item for item in entries
+                   if item.get("{http://www.w3.org/XML/1998/namespace}lang",
+                               item.get("lang")) == language]
+        preferred = next((item for item in matches if item.get("type") == "official"), None)
+        return preferred if preferred is not None else (matches[0] if matches else None)
+
+    english = translated("en")
+    romaji = translated("x-jat")
+    native = translated("ja")
+    return {"anidb_id": aid, "title": main[0], "titles": tuple(titles),
+            "english_title": english.text.strip() if english is not None else None,
+            "romaji_title": romaji.text.strip() if romaji is not None else None,
+            "original_title": native.text.strip() if native is not None else None}
 
 
 def tvdb_record(document, tid):

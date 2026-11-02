@@ -53,7 +53,7 @@ class RefreshTests(unittest.TestCase):
             doc=CONVERSIONS[version](doc)
             self.assertNotIn('jellyfin',doc['settings'])
         current=convert_document(doc)
-        self.assertEqual(current.schema_version,12)
+        self.assertEqual(current.schema_version,13)
         self.assertEqual(current.value('jellyfin.base_url'),'')
         with self.assertRaises(ConfigurationError):
             convert_document({**doc,'settings':{**doc['settings'],'jellyfin':{}}})
