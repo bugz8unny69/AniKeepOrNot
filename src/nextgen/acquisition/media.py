@@ -37,10 +37,13 @@ class ProbeUnavailable(RuntimeError):
 
 class AudioMissing(MediaInvalid):
     reason_code='MEDIA_AUDIO_REQUIRED'
-    def __init__(self,required=('eng','jpn')):
+    def __init__(self,required=('eng','jpn'),observed=(),missing=None):
+        self.required=tuple(sorted(required))
+        self.observed=tuple(sorted(observed))
+        self.missing=tuple(sorted(missing if missing is not None else (set(self.required)-set(self.observed))))
         names={'jpn':'Japanese','eng':'English'}
-        wanted=' and '.join(names[x] for x in ('jpn','eng') if x in required)
-        ValueError.__init__(self,wanted+' audio '+('tracks are' if len(required)>1 else 'track is')+' required.')
+        wanted=' and '.join(names.get(x,x) for x in ('jpn','eng') if x in self.required)
+        ValueError.__init__(self,wanted+' audio '+('tracks are' if len(self.required)>1 else 'track is')+' required.')
 
 
 def signature(info):
@@ -113,7 +116,7 @@ def parse_probe(raw,suffix,audio=JAPANESE_ENGLISH):
         if (suffix=='.mkv' and 'matroska' not in formats) or (suffix=='.mp4' and 'mp4' not in formats):raise MediaInvalid()
         duration=float(info['duration'])
         if not math.isfinite(duration) or not 0<duration<=604800:raise MediaInvalid()
-        videos=0;languages=set();indices=set()
+        videos=0;languages=set();indices=set();all_observed=set()
         for stream in streams:
             if type(stream) is not dict:raise MediaInvalid()
             index=stream['index']
@@ -132,10 +135,14 @@ def parse_probe(raw,suffix,audio=JAPANESE_ENGLISH):
                 language=tags.get('language','')
                 if type(language) is not str:raise MediaInvalid()
                 if disposition.get('comment',0)!=0:continue
-                language={'ja':'jpn','en':'eng'}.get(language.lower(),language.lower())
-                if language in ('jpn','eng'):languages.add(language)
+                raw_lang=language.lower().strip()
+                norm_lang={'ja':'jpn','en':'eng'}.get(raw_lang,raw_lang)
+                tag=norm_lang if norm_lang else 'und'
+                all_observed.add(tag)
+                if norm_lang in ('jpn','eng'):languages.add(norm_lang)
         if videos!=1:raise MediaInvalid()
-        if not required<=languages:raise AudioMissing(tuple(sorted(required)))
+        if not required<=languages:
+            raise AudioMissing(tuple(sorted(required)),tuple(sorted(all_observed)),tuple(sorted(required-languages)))
         return max(1,round(duration*1000)),tuple(sorted(languages))
     except (ValueError,TypeError,KeyError,AttributeError,RecursionError,OverflowError) as exc:
         if isinstance(exc,MediaInvalid):raise

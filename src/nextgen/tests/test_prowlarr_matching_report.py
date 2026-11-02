@@ -160,6 +160,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(counts["raw"], 115)
         self.assertEqual(counts["unmatched"], 90)
         self.assertEqual(counts["matched"], 25)
+        self.assertEqual(counts["passes_policy"], 0)
         self.assertEqual(counts["new_eligible"], 0)
         self.assertEqual(counts["raw_dual_audio"], 10)
         self.assertEqual(counts["matched_dual_audio"], 0)
@@ -171,7 +172,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(disps["RESOLUTION_OUT_OF_POLICY"], 4)
         self.assertEqual(disps["EPISODE_SIZE_TOO_LARGE"], 2)
         self.assertEqual(disps["INSUFFICIENT_SEEDERS"], 1)
-        self.assertEqual(disps["NEW_ELIGIBLE"], 0)
+        self.assertEqual(disps["PASSES_POLICY"], 0)
         self.assertEqual(sum(disps.values()), 115)
 
         # Save snapshot into test database for job 4282
@@ -200,7 +201,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(code, 0)
         self.assertIn("=== Prowlarr matching · Job #", output)
-        self.assertIn("115 raw · 90 unmatched · 25 EP1 matched · 0 newly eligible", output)
+        self.assertIn("115 raw · 90 unmatched · 25 EP1 matched · 0 passes policy (0 newly actionable)", output)
         self.assertIn("10 raw Dual-Audio hints; 0 matching EP1 with a Dual-Audio hint", output)
         self.assertIn("Prior database attempts: 9", output)
         self.assertIn("All releases (115 of 115):", output)
@@ -288,7 +289,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 2)  # BOTH raw rows retained!
 
         self.assertFalse(results[0]["is_duplicate"])
-        self.assertEqual(results[0]["primary_disposition"], "NEW_ELIGIBLE")
+        self.assertEqual(results[0]["primary_disposition"], "PASSES_POLICY")
 
         self.assertTrue(results[1]["is_duplicate"])
         self.assertEqual(results[1]["duplicate_of"], 1)
@@ -368,7 +369,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(code, 0)
         self.assertIn("=== Prowlarr matching · Job #", output)
-        self.assertIn("1 raw · 0 unmatched · 1 EP2 matched · 0 newly eligible", output)
+        self.assertIn("1 raw · 0 unmatched · 1 EP2 matched · 0 passes policy (0 newly actionable)", output)
 
     async def test_provenance_cached_magnet_retry_has_no_search_run(self):
         """6. Cached-magnet retry does not search provider, so no snapshot is recorded."""
