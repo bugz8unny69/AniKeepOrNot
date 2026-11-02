@@ -31,5 +31,6 @@
 
 ## Operational Guardrails & Git Rules
 
+- **Branching & PR Workflow**: Always create a new branch before starting work. Run batch tests locally (`PYTHONPATH=. pytest src/nextgen/tests/`) and fix issues as they appear. Create a PR, commit, and push.
 - **CI Runs**: Always include `[skip ci]` in commit messages and PR descriptions to avoid triggering automated CI workflows.
 - **Safety**: Never deploy, restart production services, alter production databases, or mutate/delete user media or torrents without explicit authorization.
