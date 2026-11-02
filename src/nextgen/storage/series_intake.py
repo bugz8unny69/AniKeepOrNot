@@ -10,11 +10,20 @@ from src.nextgen.history import integer, append_job_history
 from src.nextgen.storage.cancellation import CancellationStore, can_cancel_operation
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.sqlite import transaction, enqueue_job_with_receipt
-from src.nextgen.storage.sonarr_backfill import PAGE_SIZE, plan_window
+from src.nextgen.storage.sonarr_backfill import PAGE_SIZE, WAITING_FOR_DUB, plan_window
 
 
 class IntakeUnavailable(ValueError):
     reason_code = 'MANAGEMENT_ACTION_UNAVAILABLE'
+
+
+def _waiting_for_dub(db, plan_id):
+    """episode -> (job_id, attempt) of held 'Waiting for dub' backfill jobs."""
+    rows = db.execute(
+        "SELECT json_extract(payload_json,'$.exhausted_episode'),job_id,attempt_count FROM jobs "
+        "WHERE kind='DISCOVER_SONARR_BACKFILL' AND state='ON_HOLD' AND last_reason_code=? "
+        "AND json_extract(payload_json,'$.plan_id')=?", (WAITING_FOR_DUB, plan_id)).fetchall()
+    return {episode: (job, attempt) for episode, job, attempt in rows if type(episode) is int}
 
 
 def detail(db, anidb_id, language='english'):
@@ -95,13 +104,14 @@ def detail(db, anidb_id, language='english'):
         observed = dict(db.execute(
             'SELECT tvdb_episode,status FROM sonarr_backfill_results WHERE plan_id=?',
             (plan_id,)).fetchall())
+        waiting = _waiting_for_dub(db, plan_id)
         for episode in plan_window(db, plan_id, anchor, backfill, following):
             if (season, episode) in staged_episodes:
                 continue
-            status = observed.get(episode, 'NOT_SEARCHED')
+            status = WAITING_FOR_DUB if episode in waiting else observed.get(episode, 'NOT_SEARCHED')
             result['missing'].append({
                 'season': season, 'episode': episode, 'status': status,
-                'can_retry': rejected is None and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED', 'MAPPING_MISSING')
+                'can_retry': rejected is None and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED', 'MAPPING_MISSING', WAITING_FOR_DUB)
             })
     return result
 
@@ -122,6 +132,7 @@ def list_items(db, before, limit, language='english', match=None):
             'staged_count': sum(x['status'] == 'Staged' for x in item['episodes']),
             'kept_count': sum(x['status'] == 'Kept' for x in item['episodes']),
             'missing_count': sum(x['can_retry'] for x in item['missing']),
+            'waiting_for_dub': sum(x['status'] == WAITING_FOR_DUB for x in item['missing']),
             'season_count': len({x['season'] for x in item['episodes'] + item['missing']}),
             'rejection': item['rejection']
         })
@@ -254,10 +265,11 @@ def retry_episode(database, anidb_id, season, episode):
         numbers = plan_window(db, plan_id, anchor, backfill, following)
         if episode not in numbers:
             raise IntakeUnavailable()
+        held = _waiting_for_dub(db, plan_id).get(episode)
         prior = db.execute(
             'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND tvdb_episode=?',
             (plan_id, episode)).fetchone()
-        if prior and prior[0] not in ('NO_RESULTS', 'NOT_AIRED', 'MAPPING_MISSING'):
+        if held is None and prior and prior[0] not in ('NO_RESULTS', 'NOT_AIRED', 'MAPPING_MISSING'):
             raise IntakeUnavailable()
         for table in ('episode_reservations', 'batch_episode_reservations'):
             if db.execute(
@@ -265,19 +277,32 @@ def retry_episode(database, anidb_id, season, episode):
                 "AND tvdb_episode=? AND state='ACTIVE' LIMIT 1",
                 (anidb_id, season, episode)).fetchone():
                 raise IntakeUnavailable()
-        pending = db.execute(
-            "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
-            "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
-            "AND json_extract(payload_json,'$.plan_id')=? "
-            "AND (json_extract(payload_json,'$.retry_episode')=? "
-            "OR json_extract(payload_json,'$.retry_episode') IS NULL) LIMIT 1",
-            (plan_id, episode)).fetchone()
-        if pending:
-            return {'job_id': pending[0], 'reused': True}
-        start = (numbers.index(episode) // PAGE_SIZE) * PAGE_SIZE + 1
-        job, _ = enqueue_job_with_receipt(
-            db, kind='DISCOVER_SONARR_BACKFILL',
-            payload={'plan_id': plan_id, 'start': start, 'retry_episode': episode},
-            event_id=event_id, created_by_job_id=parent_job, component='api'
-        )
-        return {'job_id': job, 'reused': False}
+        if held is None:
+            return _search_episode(db, plan_id, numbers, episode, event_id, parent_job)
+    # Waiting for dub: "Search again" is the held job's existing Retry.
+    from src.nextgen.storage.review_retry import request_review_retry, RetryNotAllowed, RetryStale
+    try:
+        receipt = request_review_retry(database, held[0], expected_attempt=held[1],
+                                       expected_reason=WAITING_FOR_DUB)
+    except (RetryNotAllowed, RetryStale):
+        raise IntakeUnavailable() from None
+    return {'job_id': receipt.job_id, 'reused': receipt.outcome == 'ALREADY_QUEUED'}
+
+
+def _search_episode(db, plan_id, numbers, episode, event_id, parent_job):
+    pending = db.execute(
+        "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
+        "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
+        "AND json_extract(payload_json,'$.plan_id')=? "
+        "AND (json_extract(payload_json,'$.retry_episode')=? "
+        "OR json_extract(payload_json,'$.retry_episode') IS NULL) LIMIT 1",
+        (plan_id, episode)).fetchone()
+    if pending:
+        return {'job_id': pending[0], 'reused': True}
+    start = (numbers.index(episode) // PAGE_SIZE) * PAGE_SIZE + 1
+    job, _ = enqueue_job_with_receipt(
+        db, kind='DISCOVER_SONARR_BACKFILL',
+        payload={'plan_id': plan_id, 'start': start, 'retry_episode': episode},
+        event_id=event_id, created_by_job_id=parent_job, component='api'
+    )
+    return {'job_id': job, 'reused': False}

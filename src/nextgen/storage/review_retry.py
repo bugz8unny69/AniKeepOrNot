@@ -42,6 +42,9 @@ class RetryReceipt:
 
 def _retryable_state(kind, state, reason):
     return state == 'NEEDS_REVIEW' or (
+        # Waiting for dub: Retry is "Search again".
+        kind == 'DISCOVER_SONARR_BACKFILL' and state == 'ON_HOLD'
+        and reason == 'WAITING_FOR_DUB') or (
         kind == 'DISCOVER_SONARR_BACKFILL' and state == 'BLOCKED'
         and reason in ('PROWLARR_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE',
                        # Jobs stopped before the Prowlarr search existed.

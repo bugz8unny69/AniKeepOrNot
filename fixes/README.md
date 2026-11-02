@@ -100,3 +100,30 @@ means the scan was accepted, not that every Jellyfin item has reloaded its
 metadata. NFOs already removed by post-Keep cleanup cannot be updated by this
 script. If exclusive maintenance is unavailable or a repair fails, investigate
 the pending maintenance state before restarting workers.
+
+## Move audio-stuck backfill jobs to "Waiting for dub"
+
+When English audio is required and every release of an episode failed only the
+audio check, backfill now waits for a dub (job On hold, Intake shows
+"Waiting for dub" with a Search again button) instead of stopping in Needs
+review. This retries the backfill jobs that stopped in review that way before
+the update. Each one searches Prowlarr once more: a new Dual/Multi Audio
+release is tried normally, otherwise the job shows "Waiting for dub". Jobs
+that failed for any other reason stay in review. Nothing is downloaded or
+deleted by the script itself.
+
+After merging and running anime-discovery-install --upgrade, preview
+(read-only):
+
+```sh
+sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/requeue_waiting_for_dub.py
+```
+
+Then apply (backs up the database first; services can stay running):
+
+```sh
+sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/requeue_waiting_for_dub.py --apply
+```
+
+It refuses to apply when the Audio check setting does not require English. A
+second run does nothing.

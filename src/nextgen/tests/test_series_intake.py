@@ -20,7 +20,7 @@ class SeriesIntakeTests(unittest.TestCase):
             CREATE TABLE job_operation_members(job_id INTEGER,operation_id INTEGER);
             CREATE TABLE job_operations(operation_id INTEGER,state TEXT);
             CREATE TABLE management_actions(operation_id INTEGER,action TEXT,job_id INTEGER);
-            CREATE TABLE jobs(job_id INTEGER,state TEXT);
+            CREATE TABLE jobs(job_id INTEGER,state TEXT,kind TEXT,payload_json TEXT,last_reason_code TEXT,attempt_count INTEGER);
             CREATE TABLE anime_review_decisions(anidb_id INTEGER,job_id INTEGER,
                 reason_text TEXT,cleanup_state TEXT);
             CREATE TABLE batch_staging_publications(plan_id INTEGER,file_index INTEGER,
@@ -64,7 +64,7 @@ class SeriesIntakeTests(unittest.TestCase):
             keep_targets(self.db, 10, [11, 13])
 
     def test_kept_episodes_are_not_resubmitted(self):
-        self.db.execute("INSERT INTO jobs VALUES(401,'DONE')")
+        self.db.execute("INSERT INTO jobs(job_id,state) VALUES(401,'DONE')")
         self.db.execute("INSERT INTO management_actions VALUES(11,'KEEP',401)")
         info = detail(self.db, 10)
         self.assertEqual(info['keep_operations'], [12])
@@ -74,7 +74,7 @@ class SeriesIntakeTests(unittest.TestCase):
             keep_targets(self.db, 10, [11])
 
     def test_rejected_series_remains_visible_but_blocks_keep_and_retry(self):
-        self.db.execute("INSERT INTO jobs VALUES(900,'DONE')")
+        self.db.execute("INSERT INTO jobs(job_id,state) VALUES(900,'DONE')")
         self.db.execute("INSERT INTO anime_review_decisions VALUES"
                         "(10,900,'Not interested: Not my cup of tea','COMPLETE')")
         info=detail(self.db,10)

@@ -2,6 +2,7 @@
 
 The job kind keeps its historical name so existing jobs and history stay valid.
 """
+from src.nextgen.acquisition.audio import audio_tagged, wants_english
 from src.nextgen.acquisition.prowlarr_search import (
     Client, CandidateSelection, SearchConfiguration, SearchUnauthorized, SearchReview,
     SearchUnavailable, _magnet_hash,
@@ -20,11 +21,25 @@ from src.nextgen.storage.sonarr_backfill import (
     load_batch, persist_observations, FallbackCompletion, load_fallback,
     persist_fallback, FallbackMissing, persist_fallback_missing,
     AUTOMATIC_RETRY_MS, automatic_retry_used,
+    WAITING_FOR_DUB, DubFound, load_dub_search, persist_dub_found,
 )
 from src.nextgen.worker import blocking
 
 KIND = 'DISCOVER_SONARR_BACKFILL'
 DEFINITION = HandlerDefinition(KIND, 'Search Prowlarr for backfill and continue episodes')
+
+
+def _new_dub_releases(result, policy, tried):
+    """Accepted Dual/Multi Audio releases not tried before, best first."""
+    found = []
+    for release in policy.rank(result.candidates):
+        digest = release.info_hash
+        if (policy.accepts(release) and audio_tagged(release.title) and digest
+                and digest not in tried and digest not in found
+                and release.tvdb_episode_id == result.tvdb_episode_id
+                and _magnet_hash(release.magnet_url) == digest):
+            found.append(digest)
+    return tuple(found)
 
 
 def registration(secrets, *, catalog_factory=None, client_factory=None,
@@ -62,14 +77,32 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
         try:
             plan = await blocking(load_batch,
                 context.configuration.value('storage.database_path'),plan_id,start,retry_episode)
+            def connect():
+                client = client_factory(context.configuration,secrets)
+                if isinstance(client, Client): client.logger = log
+                return client
             if exhausted_episode is not None:
                 if not acquire_candidates or exhausted_episode not in plan.numbers:
                     raise BackfillConflict()
-                return Outcome('review','SONARR_CANDIDATES_EXHAUSTED')
+                # Only when English is required and every release failed audio:
+                # wait for a dub instead of review. Retry runs this again.
+                target = (await blocking(load_dub_search,
+                    context.configuration.value('storage.database_path'),plan_id,exhausted_episode)
+                    if wants_english(context.configuration.value('acquisition.audio_check')) else None)
+                if target is None:
+                    return Outcome('review','SONARR_CANDIDATES_EXHAUSTED')
+                client = connect()
+                result = await blocking(client.search,plan.anidb_id,target.identity)
+                fresh = _new_dub_releases(result,client.policy,target.tried)
+                if not fresh:
+                    log.info('Backfill episode %s: waiting for a dub', exhausted_episode)
+                    return Outcome('hold',WAITING_FOR_DUB)
+                log.info('Backfill episode %s: %s new Dual/Multi Audio release(s)',
+                         exhausted_episode, len(fresh))
+                return Outcome(value=DubFound(plan,exhausted_episode,target,fresh))
             log.info('Backfill search: anidb_id=%s tvdb_series_id=%s season=%s episodes=%s reserved=%s',
                      plan.anidb_id, plan.tvdb_series_id, plan.season, plan.numbers, plan.reserved)
-            client = client_factory(context.configuration,secrets)
-            if isinstance(client, Client): client.logger = log
+            client = connect()
             if fallback_episode is not None:
                 if not acquire_candidates or fallback_episode not in plan.numbers:
                     raise BackfillConflict()
@@ -132,12 +165,14 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_fallback(db,claim,value)
             if type(value) is FallbackMissing:
                 return persist_fallback_missing(db,claim,value)
+            if type(value) is DubFound:
+                return persist_dub_found(db,claim,value)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
         except BackfillConflict:
             raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
 
     def route(value):
-        if type(value) in (FallbackCompletion,FallbackMissing): return ()
+        if type(value) in (FallbackCompletion,FallbackMissing,DubFound): return ()
         if type(value) is not BackfillCompletion: raise ValueError('typed backfill result required')
         if value.retry_episode is not None: return ()
         next_start=value.plan.start+len(value.plan.numbers)
