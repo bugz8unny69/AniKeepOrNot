@@ -64,8 +64,6 @@ def _data(db, configuration, overrides):
         plan, proofs = json.loads(manifest), json.loads(receipts)
         if plan.get('root') != configuration.value('storage.trial_root'):
             raise ValueError('Published staging root differs from configured staging root')
-        if not isinstance(plan.get('root_identity'), list) or len(plan['root_identity']) != 2:
-            raise ValueError('Missing staging root proof')
         entries = plan['entries']
         if len(entries) != 3 or len(proofs) != 3:
             raise ValueError('Unexpected publication layout')
@@ -83,20 +81,19 @@ def _data(db, configuration, overrides):
                 raise ValueError('NFO publication content is not authentic')
             desired = relabel(entry['text'], entry['role'], titles[aid])
             path = (plan['root'], entry['path'])
-            group = groups.setdefault(path, {'old': old, 'new': desired,
-                                             'root_identity': plan['root_identity'],
-                                             'refs': []})
-            if group['new'] != desired or group['old'] != old or group['root_identity'] != plan['root_identity']:
-                raise ValueError('Conflicting published series NFO proofs')
+            # An NFS remount can change reported device/inode values without
+            # changing a shared NFO. The application owns its path and recorded
+            # content; historical filesystem identities are not part of that.
+            group = groups.setdefault(path, {'old': old, 'new': desired, 'refs': []})
+            if group['new'] != desired or group['old'] != old:
+                raise ValueError('Conflicting published series NFO content')
             group['refs'].append((key, position))
     return groups, publications
 
 
-def _inspect(root_path, relative, expected_root):
+def _inspect(root_path, relative):
     """Read one previously published NFO using directory FDs, never symlinks."""
     with directory(root_path) as root:
-        if [os.fstat(root).st_dev, os.fstat(root).st_ino] != expected_root:
-            raise ValueError('Staging root changed')
         try:
             with parent(root, relative) as (folder, name):
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -115,10 +112,8 @@ def _inspect(root_path, relative, expected_root):
             return None
 
 
-def _replace(root_path, relative, expected_root, content, previous):
+def _replace(root_path, relative, content, previous):
     with directory(root_path) as root:
-        if [os.fstat(root).st_dev, os.fstat(root).st_ino] != expected_root:
-            raise ValueError('Staging root changed')
         with parent(root, relative) as (folder, name):
             sig = signature(os.stat(name, dir_fd=folder, follow_symlinks=False))
             if list(sig) != previous:
@@ -155,7 +150,7 @@ def repair(db, configuration, *, apply=False, overrides=None):
     missing = 0
     unchanged = 0
     for (root, relative), group in sorted(groups.items()):
-        current = _inspect(root, relative, group['root_identity'])
+        current = _inspect(root, relative)
         if current is None:  # Episode NFO removed after Keep/Reject.
             missing += 1
             continue
@@ -165,16 +160,12 @@ def repair(db, configuration, *, apply=False, overrides=None):
             continue
         if existing not in (group['old'], group['new']):
             raise ValueError('NFO has been modified outside NextGen; refusing overwrite')
-        for key, index in group['refs']:
-            proof = publications[key]['receipts'][index]
-            if existing == group['old'] and current_sig != proof['file']:
-                raise ValueError('NFO no longer matches its publication signature')
         updates.append((root, relative, group, current_sig, existing))
     if not apply:
         return {'changed': len(updates), 'missing': missing, 'unchanged': unchanged}
     artifacts = []
     for root, relative, group, before, existing in updates:
-        changed_sig = (_replace(root, relative, group['root_identity'], group['new'], before)
+        changed_sig = (_replace(root, relative, group['new'], before)
                        if existing != group['new'] else before)
         checksum = hashlib.sha256(group['new']).hexdigest()
         for key, index in group['refs']:
@@ -182,8 +173,7 @@ def repair(db, configuration, *, apply=False, overrides=None):
             entry = row['plan']['entries'][index]
             proof = row['receipts'][index]
             if proof['artifact'] is not None:
-                artifacts.append((proof['artifact'], proof['file'][0], proof['file'][1],
-                                  changed_sig[0], changed_sig[1]))
+                artifacts.append((proof['artifact'], changed_sig[0], changed_sig[1]))
             entry.update(text=group['new'].decode('utf-8'), sha256=checksum,
                          size=len(group['new']))
             proof.update(sha256=checksum, file=changed_sig)
@@ -202,11 +192,14 @@ def repair(db, configuration, *, apply=False, overrides=None):
                  row['old_manifest'], row['old_receipts'])).rowcount
             if updated != 1:
                 raise ValueError('Publication changed during NFO repair')
-        for artifact, old_dev, old_ino, new_dev, new_ino in set(artifacts):
+        for artifact, new_dev, new_ino in set(artifacts):
+            # Refresh the compatibility receipt without requiring stale NFS
+            # inode values to match. Cleanup authorization uses the artifact ID
+            # and operation ownership; no file is deleted here.
             updated = db.execute(
                 "UPDATE staging_cleanup_artifacts SET file_device=?,file_inode=? "
-                "WHERE artifact_id=? AND file_device=? AND file_inode=? AND phase='PUBLISHED'",
-                (new_dev, new_ino, artifact, old_dev, old_ino)).rowcount
+                "WHERE artifact_id=? AND phase='PUBLISHED'",
+                (new_dev, new_ino, artifact)).rowcount
             if updated != 1:
                 raise ValueError('NFO artifact proof changed during repair')
     return {'changed': len(updates), 'missing': missing, 'unchanged': unchanged}

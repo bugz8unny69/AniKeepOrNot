@@ -127,3 +127,18 @@ sudo -u anime-discovery python3 /opt/anime-discovery/current/fixes/requeue_waiti
 
 It refuses to apply when the Audio check setting does not require English. A
 second run does nothing.
+
+## NFS mount identity and title backfill
+
+NextGen no longer requires persisted device/inode numbers to match when
+repairing NFO titles or cleaning up already-staged files. A verified
+publication path and the NFO's saved content hash identify the expected NFO;
+large videos use inexpensive size/mtime checks in the ordinary case. Staging
+retries similarly do not block solely because NFS reports new device/inode
+values after remounting. The published ownership records and symlink-safe path
+traversal are retained.
+
+After installing this update, run the documented title-backfill dry run first.
+Do not use `--apply` if it reports a genuine content/hash mismatch or a
+foreign edited NFO. Successful `--apply` still backs up the database and
+holds exclusive maintenance while files and receipts are updated.

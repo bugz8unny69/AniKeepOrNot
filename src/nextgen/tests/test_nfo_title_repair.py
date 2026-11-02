@@ -117,6 +117,48 @@ class NfoTitleRepairTests(unittest.TestCase):
         self.assertFalse(self.episode.exists())
         self.assertTrue(self.series.exists())
 
+    def test_shared_series_nfo_survives_historical_nfs_identity_changes(self):
+        # Three episode publications reuse the same tvshow.nfo, with root and
+        # file inode data recorded before/after an NFS remount. This must not
+        # block a title-only repair.
+        old_manifest=json.loads(json.dumps(self.manifest))
+        old_receipts=json.loads(json.dumps(self.receipts))
+        for plan_id,root_device in ((23,12345),(24,98765)):
+            manifest=json.loads(json.dumps(old_manifest))
+            receipts=json.loads(json.dumps(old_receipts))
+            manifest['root_identity']=[root_device,999]
+            receipts[2]['root']=[root_device,999]
+            receipts[2]['file'][0]=root_device
+            receipts[2]['file'][1]=888
+            self.db.execute('INSERT INTO acquisition_plans VALUES(?,33)',(plan_id,))
+            self.db.execute("INSERT INTO staging_publications VALUES(?,?,?,'PUBLISHED')",
+                            (plan_id,json.dumps(manifest),json.dumps(receipts)))
+        self.db.commit()
+        self.assertEqual(repair(self.db,self.config)['changed'],2)
+        self.assertEqual(repair(self.db,self.config,apply=True)['changed'],2)
+        self.assertEqual(repair(self.db,self.config)['changed'],0)
+        rows=self.db.execute('SELECT manifest_json,receipts_json FROM staging_publications').fetchall()
+        self.assertEqual(len(rows),3)
+        for manifest,receipts in rows:
+            self.assertEqual(json.loads(manifest)['entries'][2]['text'],
+                             self.series.read_text())
+            self.assertEqual(json.loads(receipts)[2]['sha256'],
+                             hashlib.sha256(self.series.read_bytes()).hexdigest())
+
+    def test_cleanup_of_staged_nfo_ignores_saved_nfs_device_inode(self):
+        repair(self.db,self.config,apply=True)
+        row=self.db.execute('SELECT manifest_json,receipts_json FROM staging_publications').fetchone()
+        manifest,receipts=map(json.loads,row)
+        manifest['root_identity']=[9999,8888]
+        receipts[1]['root']=[9999,8888]
+        receipts[1]['file'][:2]=[9999,8888]
+        from src.nextgen.storage.review_decisions import remove_selected
+        remove_selected(json.dumps(manifest),json.dumps(receipts),lambda:None,
+                        '/unrelated-permanent-library')
+        self.assertFalse(self.video.exists())
+        self.assertFalse(self.episode.exists())
+        self.assertTrue(self.series.exists())
+
     def test_foreign_nfo_changes_are_never_overwritten(self):
         self.series.write_text('<tvshow><title>Externally Modified</title></tvshow>')
         with self.assertRaises(ValueError):

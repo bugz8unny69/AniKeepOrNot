@@ -122,6 +122,26 @@ class StagingPublicationTests(unittest.TestCase):
         self.assertFalse(partial.exists())
         self.assertFalse(self.file.exists())
 
+    def test_stale_nfs_signatures_do_not_block_new_publication(self):
+        # Re-mounted shares can report different device/inode values for the
+        # exact same source file and staging root. Do not re-hash the video.
+        self.plan['root_identity']=[999999,888888]
+        self.plan['source']['root']=[999999,777777]
+        self.plan['source']['file'][:2]=[999999,666666]
+        receipts=self.publisher.publish(self.plan)
+        self.assertEqual(len(receipts),3)
+        self.assertEqual(self.video().read_bytes(),b'x'*100)
+        self.assertFalse(self.file.exists())
+
+    def test_retried_publication_ignores_stale_artifact_inode(self):
+        self.publisher.publish(self.plan)
+        for record in self.journal.rows.values():
+            record['root']=[999999,999999]
+            record['file']=[888888,888888]
+        receipts=self.publisher.publish(self.plan)
+        self.assertEqual(len(receipts),3)
+        self.assertEqual(self.video().read_bytes(),b'x'*100)
+
     def test_unknown_existing_video_is_never_overwritten_even_with_matching_bytes(self):
         target=self.video();target.parent.mkdir(parents=True);target.write_bytes(b'x'*100)
         inode=target.stat().st_ino

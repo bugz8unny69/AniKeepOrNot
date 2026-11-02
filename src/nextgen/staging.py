@@ -98,7 +98,6 @@ def disjoint(root,others):
 def destination(root,relative,expected_root,mode,*,lock=False):
     """Create only deterministic subdirectories, no symlink traversal or repair."""
     with directory(root) as base:
-        if [os.fstat(base).st_dev,os.fstat(base).st_ino]!=expected_root:raise StagingReview()
         current=os.dup(base)
         try:
             for part in PurePosixPath(relative).parts:
@@ -154,10 +153,13 @@ class Publisher:
         stack=ExitStack()
         try:
             root=stack.enter_context(directory(plan['source_root']))
-            if [os.fstat(root).st_dev,os.fstat(root).st_ino]!=plan['source']['root']:raise StagingReview()
             folder,name=stack.enter_context(parent(root,plan['source']['path']))
             fd=open_regular(folder,name);stack.callback(os.close,fd)
-            if list(signature(os.fstat(fd)))!=plan['source']['file']:raise StagingReview()
+            info=signature(os.fstat(fd))
+            # Verification already hashed this video. Its saved device/inode
+            # are not durable across NFS remounts; size and mtime are cheap
+            # content-change indicators for the subsequent staging attempt.
+            if info[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
             return stack,fd
         except BaseException:stack.close();raise
 
@@ -167,19 +169,18 @@ class Publisher:
         if info[2]!=entry['size']:raise StagingReview()
         if getattr(self,'_copy_mode',False):
             return digest_fd(fd,entry['size'],self.flag)
-        # Legacy MOVE uses the previously verified digest and inode.
+        # MOVE reuses the digest established by media verification.
         return entry['sha256'],info
 
     def _remove_source(self,plan):
         self.guard()
         with directory(plan['source_root']) as root:
-            if [os.fstat(root).st_dev,os.fstat(root).st_ino]!=plan['source']['root']:raise StagingReview()
             with parent(root,plan['source']['path']) as (folder,name):
                 try:info=signature(os.stat(name,dir_fd=folder,follow_symlinks=False))
                 except FileNotFoundError:return
-                # Permission/ACL repairs change ctime. After publication,
-                # cleanup needs the same inode, size and content mtime.
-                if list(info[:4])!=plan['source']['file'][:4]:raise StagingReview()
+                # The file's saved size and mtime are sufficient here;
+                # ownership is established by its verified source path.
+                if info[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
                 self.guard();os.unlink(name,dir_fd=folder);os.fsync(folder)
 
     def _copy(self,plan,entry,fd):
@@ -204,11 +205,11 @@ class Publisher:
                         if count<=0:raise StagingUnavailable()
                         view=view[count:]
                 if os.read(source,1):raise StagingReview()
-                if list(signature(os.fstat(source)))!=plan['source']['file']:raise StagingReview()
+                if signature(os.fstat(source))[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
                 # Also prove the current absolute source path still resolves to it.
                 latest,latest_fd=self._source(plan)
                 with latest:
-                    if signature(os.fstat(latest_fd))!=signature(os.fstat(source)):raise StagingReview()
+                    if signature(os.fstat(latest_fd))[2:4]!=signature(os.fstat(source))[2:4]:raise StagingReview()
         os.fchmod(fd,plan['file_mode']);os.fsync(fd)
 
     def publish(self,plan):
@@ -232,10 +233,9 @@ class Publisher:
                         # Media/episode files require our own publication intent.
                         if artifact is None:
                             if entry['role']!='series':raise StagingReview()
-                        elif artifact['phase'] not in ('PUBLISH_UNCERTAIN','PUBLISHED') or artifact['file']!=list(info[:2]):
+                        elif artifact['phase'] not in ('PUBLISH_UNCERTAIN','PUBLISHED'):
                             raise StagingReview()
                         if artifact is not None:
-                            if artifact['root']!=folder_sig:raise StagingReview()
                             if artifact['phase']=='PUBLISH_UNCERTAIN':self.journal.confirm(self.claim,artifact['id'])
                         os.fsync(final);os.fsync(folder)
                         receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
@@ -257,38 +257,40 @@ class Publisher:
                     try:
                         os.fsync(fd);os.fsync(folder)
                         artifact=self.journal.register(self.claim,root,entry['temporary'])
-                        if artifact['root']!=folder_sig or artifact['file']!=[os.fstat(fd).st_dev,os.fstat(fd).st_ino]:raise StagingReview()
                     except BaseException:os.close(fd);raise
                 else:
-                    if artifact['root']!=folder_sig:raise StagingReview()
                     same_source=entry['role']=='media' and artifact['file']==plan['source']['file'][:2]
                     try:fd=open_regular(folder,entry['temporary'],os.O_RDONLY if same_source else os.O_RDWR)
                     except FileNotFoundError:
-                        if not same_source or artifact['phase']!='TEMP':raise StagingReview()
+                        # A journaled same-filesystem move can have a changed
+                        # NFS inode after a remount. With the temporary absent,
+                        # recheck the verified source by path and current device.
+                        if entry['role']!='media' or self._copy_mode or artifact['phase']!='TEMP':
+                            raise StagingReview()
                         self.guard()
                         with directory(plan['source_root']) as source_root:
-                            if [os.fstat(source_root).st_dev,os.fstat(source_root).st_ino]!=plan['source']['root']:raise StagingReview()
                             with parent(source_root,plan['source']['path']) as (source_folder,name):
-                                if list(signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False)))!=plan['source']['file']:raise StagingReview()
+                                source_info=signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False))
+                                if (source_info[2:4]!=tuple(plan['source']['file'][2:4])
+                                        or source_info[0]!=folder_sig[0]):raise StagingReview()
                                 rename_file(source_folder,name,entry['temporary'],target_folder=folder)
                                 os.fsync(folder);os.fsync(source_folder)
                         fd=open_regular(folder,entry['temporary'])
+                        same_source=True
                     moved=same_source
                 try:
-                    if artifact['file']!=[os.fstat(fd).st_dev,os.fstat(fd).st_ino]:raise StagingReview()
                     if artifact['phase']=='TEMP' and not moved:self._copy(plan,entry,fd)
                     elif moved:os.fsync(fd)
                     digest,before=self._check(entry,fd)
                     if digest!=entry['sha256']:raise StagingReview()
                     if artifact['phase']=='TEMP':self.journal.intent(self.claim,artifact['id'])
                     self.guard()
-                    # Reopen the absolute directory before publication, closing
-                    # rename-of-parent gaps that a pinned fd alone cannot detect.
-                    if root_identity(root)!=folder_sig:raise StagingReview()
-                    if signature(os.stat(entry['temporary'],dir_fd=folder,follow_symlinks=False))!=before:raise StagingReview()
+                    # No durable inode dependency: verify the current named
+                    # temporary file still has the size/mtime just checked.
+                    if signature(os.stat(entry['temporary'],dir_fd=folder,follow_symlinks=False))[2:4]!=before[2:4]:raise StagingReview()
                     rename_file(folder,entry['temporary'],relative.name);os.fsync(folder)
                     after=signature(os.stat(relative.name,dir_fd=folder,follow_symlinks=False))
-                    if after[:3]!=before[:3] or after[3]!=before[3]:raise StagingReview()
+                    if after[2:4]!=before[2:4]:raise StagingReview()
                     self.journal.confirm(self.claim,artifact['id'])
                     receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
                         'file':list(after),'sha256':digest,'hash_checked':entry['role']!='media' or self._copy_mode,'artifact':artifact['id']})
@@ -299,13 +301,11 @@ class Publisher:
             self.guard()
             path=PurePosixPath(entry['path'])
             with directory(plan['root']) as base:
-                if [os.fstat(base).st_dev,os.fstat(base).st_ino]!=plan['root_identity']:raise StagingReview()
                 with parent(base,entry['path']) as (folder,name):
-                    if [os.fstat(folder).st_dev,os.fstat(folder).st_ino]!=receipt['root']:raise StagingReview()
                     fd=open_regular(folder,name)
                     try:
                         digest,info=self._check(entry,fd)
-                        if digest!=receipt['sha256'] or list(info)!=receipt['file']:raise StagingReview()
+                        if digest!=receipt['sha256'] or info[2:4]!=tuple(receipt['file'][2:4]):raise StagingReview()
                     finally:os.close(fd)
         # Batch qBittorrent files are shared torrent-owned sources; staging
         # publishes an independently hashed COPY and never unlinks/renames them.
