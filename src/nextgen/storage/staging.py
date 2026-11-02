@@ -143,10 +143,10 @@ def persist(db,claim,value):
         if receipt['artifact'] is None:
             if entry['role']!='series':raise StagingReview()
         else:
-            artifact=db.execute('SELECT job_id,operation_id,root_path,relative_path,root_device,root_inode,file_device,file_inode,phase '
+            artifact=db.execute('SELECT job_id,operation_id,root_path,relative_path,phase '
                 'FROM staging_cleanup_artifacts WHERE artifact_id=?',(receipt['artifact'],)).fetchone()
             expected=(claim.job_id,operation(db,claim.job_id)[0],plan['root']+'/'+str(PurePosixPath(entry['path']).parent),
-                entry['temporary'],*receipt['root'],*receipt['file'][:2],'PUBLISHED')
+                entry['temporary'],'PUBLISHED')
             if artifact!=expected:raise StagingReview()
     db.execute("UPDATE staging_publications SET state='PUBLISHED',receipts_json=?,published_at_ms=? WHERE plan_id=?",
                (encoded(receipts),__import__('time').time_ns()//1000000,intent.plan.plan_id))

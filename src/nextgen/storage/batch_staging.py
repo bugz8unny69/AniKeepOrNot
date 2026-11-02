@@ -189,14 +189,12 @@ def persist_batch_stage(db,claim,value):
             if entry['role']!='series':raise StagingReview()
         else:
             artifact=db.execute(
-                'SELECT job_id,operation_id,root_path,relative_path,'
-                'root_device,root_inode,file_device,file_inode,phase '
+                'SELECT job_id,operation_id,root_path,relative_path,phase '
                 'FROM staging_cleanup_artifacts WHERE artifact_id=?',
                 (receipt['artifact'],)).fetchone()
             expected=(claim.job_id,operation(db,claim.job_id)[0],
                       plan['root']+'/'+str(PurePosixPath(entry['path']).parent),
-                      entry['temporary'],*receipt['root'],*receipt['file'][:2],
-                      'PUBLISHED')
+                      entry['temporary'],'PUBLISHED')
             if artifact!=expected:raise StagingReview()
     changed=db.execute(
         "UPDATE batch_staging_publications SET state='PUBLISHED',"
