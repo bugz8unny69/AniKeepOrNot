@@ -80,6 +80,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'050_series_rejection_reasons.sql').read_text())
             db.executescript((SQL_DIR/'051_batch_early_metadata.sql').read_text())
             db.executescript((SQL_DIR/'052_anime_title_metadata.sql').read_text())
+            db.executescript((SQL_DIR/'053_waiting_for_dub_results.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM sonarr_magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()
