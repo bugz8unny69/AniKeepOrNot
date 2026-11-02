@@ -103,14 +103,14 @@ the pending maintenance state before restarting workers.
 
 ## Move audio-stuck backfill jobs to "Waiting for dub"
 
-When English audio is required and every release of an episode failed only the
-audio check, backfill now waits for a dub (job On hold, Intake shows
-"Waiting for dub" with a Search again button) instead of stopping in Needs
-review. This retries the backfill jobs that stopped in review that way before
+When English audio is required and every release of an episode failed (at
+least one on the audio check), backfill now waits for a dub (job On hold,
+Intake shows "Waiting for dub" with a Search again button) instead of stopping
+in Needs review. This retries the backfill jobs that stopped in review that way before
 the update. Each one searches Prowlarr once more: a new Dual/Multi Audio
 release is tried normally, otherwise the job shows "Waiting for dub". Jobs
-that failed for any other reason stay in review. Nothing is downloaded or
-deleted by the script itself.
+where no release failed the audio check stay in review. Nothing is downloaded
+or deleted by the script itself.
 
 After merging and running anime-discovery-install --upgrade, preview
 (read-only):

@@ -91,8 +91,13 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         episode = next(x for x in self.series()['missing'] if x['episode'] == 2)
         self.assertEqual((episode['status'], episode['can_retry']), ('WAITING_FOR_DUB', True))
 
-    async def test_other_failures_still_need_review(self):
-        await self.exhausted(reasons=('MEDIA_AUDIO_REQUIRED', 'ACQUISITION_METADATA_INVALID'))
+    async def test_mixed_failures_with_one_audio_failure_wait_for_dub(self):
+        await self.exhausted(reasons=('TORRENT_METADATA_TIMEOUT', 'MEDIA_AUDIO_REQUIRED'))
+        await self.run_worker(self.fake)
+        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+
+    async def test_no_audio_failure_still_needs_review(self):
+        await self.exhausted(reasons=('TORRENT_METADATA_TIMEOUT', 'EPISODE_RESERVATION_CONFLICT'))
         await self.run_worker(self.fake)
         self.assertEqual(self.state(), ('NEEDS_REVIEW', 'SONARR_CANDIDATES_EXHAUSTED'))
         self.assertEqual(self.fake.searches, 0)
@@ -161,8 +166,12 @@ class RequeueFixTests(WaitingForDubTests):
         self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
         self.assertEqual(fix.execute(self.database, 'japanese_english', apply=True)['requeued'], 0)
 
-    async def test_other_failures_are_left_in_review(self):
-        await self.stuck(reasons=('MEDIA_AUDIO_REQUIRED', 'ACQUISITION_METADATA_INVALID'))
+    async def test_mixed_failures_are_requeued(self):
+        await self.stuck(reasons=('TORRENT_METADATA_TIMEOUT', 'MEDIA_AUDIO_REQUIRED'))
+        self.assertEqual(fix.execute(self.database, 'japanese_english')['eligible_jobs'], [self.job])
+
+    async def test_no_audio_failure_is_left_in_review(self):
+        await self.stuck(reasons=('TORRENT_METADATA_TIMEOUT', 'STAGING_REVIEW'))
         report = fix.execute(self.database, 'japanese_english', apply=True)
         self.assertEqual((report['eligible_jobs'], report['left_in_review']), ([], 1))
 
@@ -173,7 +182,8 @@ class RequeueFixTests(WaitingForDubTests):
 
     # The worker tests above also run for this subclass; skip the duplicates.
     test_audio_only_failures_wait_for_dub_instead_of_review = None
-    test_other_failures_still_need_review = None
+    test_mixed_failures_with_one_audio_failure_wait_for_dub = None
+    test_no_audio_failure_still_needs_review = None
     test_check_only_runs_when_english_is_required = None
     test_search_again_tries_only_new_dual_audio_releases = None
     test_search_again_with_nothing_new_waits_again = None

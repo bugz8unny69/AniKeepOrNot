@@ -2,13 +2,13 @@
 """One-time: move backfill jobs stuck in review for audio to "Waiting for dub".
 
 Before this fix, when English audio was required and every release of an
-episode failed the audio check, the backfill job stopped in Needs review
-(SONARR_CANDIDATES_EXHAUSTED). Now such an episode waits for a dub instead.
+episode failed (at least one on the audio check), the backfill job stopped in
+Needs review (SONARR_CANDIDATES_EXHAUSTED). Now it waits for a dub instead.
 
 This presses the existing Retry on each of those jobs. The worker then searches
 Prowlarr once more: a new Dual/Multi Audio release is tried normally, otherwise
-the job goes On hold as "Waiting for dub". Jobs whose releases failed for any
-other reason are left in review. Nothing is downloaded or deleted here.
+the job goes On hold as "Waiting for dub". Jobs where no release failed the
+audio check are left in review. Nothing is downloaded or deleted here.
 
 Preview by default. --apply backs up the database first. Services can stay
 running. A second --apply does nothing.
