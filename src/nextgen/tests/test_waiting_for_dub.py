@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
 from src.nextgen.job_contracts import Registry, Policy
@@ -11,6 +12,7 @@ from src.nextgen.jobs.discover_sonarr_backfill_job import (
 )
 from src.nextgen.jobs.evaluate_trial_job import registration as trial_registration
 from src.nextgen.storage.series_intake import detail, retry_episode
+from src.nextgen.storage.sonarr_cached_retry import CachedTorrent
 from src.nextgen.storage.sqlite import connect, enqueue_job, transaction
 from src.nextgen.tests import test_backfill_discovery as backfill
 from src.nextgen.worker import Worker
@@ -162,6 +164,48 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([json.loads(p) for p, in payloads],
                          [{'plan_id': 1, 'start': 1, 'fallback_episode': 2}])
         self.assertGreater(attempt, 0)
+
+    async def test_search_again_prefers_eligible_cached_magnet_without_prowlarr(self):
+        await self.exhausted()
+        await self.run_worker(self.fake)
+        before = self.fake.searches
+        cached = CachedTorrent(TRIED[0], '[Group] Test - 02 [Dual Audio]',
+                               'Test - 02', 'magnet:?xt=urn:btih:' + TRIED[0])
+        retry_episode(self.database, 123, 1, 2, delete_cache=False)
+        # Verify only branch selection; cache journal safety has its own tests.
+        with patch('src.nextgen.jobs.discover_sonarr_backfill_job.load_cached',
+                   return_value=cached), patch(
+                   'src.nextgen.jobs.discover_sonarr_backfill_job.persist_cached',
+                   return_value=()):
+            await self.run_worker(self.fake)
+        self.assertEqual(self.fake.searches, before)
+        self.assertEqual(self.state()[0], 'DONE')
+
+    async def test_search_again_without_cache_searches_prowlarr_for_new_dub(self):
+        # Regression: job #5775 (plan #19, episode 1) previously went straight
+        # back to WAITING_FOR_DUB without making any Prowlarr request.
+        await self.exhausted()
+        await self.run_worker(self.fake)
+        before = self.fake.searches
+        self.fake.releases = (release('[Group] Test - 02 [Dual Audio]', DUBBED),)
+        receipt = retry_episode(self.database, 123, 1, 2, delete_cache=False)
+        self.assertFalse(receipt['reused'])
+        await self.run_worker(self.fake)
+        self.assertEqual(self.fake.searches, before + 1)
+        self.assertEqual(self.state()[0], 'DONE')
+        self.assertEqual(self.rows(
+            "SELECT rank,info_hash,state FROM sonarr_episode_candidates "
+            "WHERE plan_id=1 AND tvdb_episode=2 AND rank=3"
+        ), [(3, DUBBED, 'READY')])
+
+    async def test_search_again_without_cache_and_without_new_release_did_search(self):
+        await self.exhausted()
+        await self.run_worker(self.fake)
+        before = self.fake.searches
+        retry_episode(self.database, 123, 1, 2, delete_cache=False)
+        await self.run_worker(self.fake)
+        self.assertEqual(self.fake.searches, before + 1)
+        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
 
     async def test_search_again_with_nothing_new_waits_again(self):
         await self.exhausted()

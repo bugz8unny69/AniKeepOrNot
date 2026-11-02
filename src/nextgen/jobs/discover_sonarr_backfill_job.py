@@ -102,11 +102,14 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     cached = await blocking(
                         load_cached,context.configuration.value('storage.database_path'),
                         plan_id,exhausted_episode,True)
-                    if cached is None:
-                        log.info('Backfill episode %s: no eligible cached magnet remains',exhausted_episode)
-                        return Outcome('hold',WAITING_FOR_DUB)
-                    log.info('Backfill episode %s: retrying cached metadata source',exhausted_episode)
-                    return Outcome(value=(plan,exhausted_episode,cached))
+                    if cached is not None:
+                        log.info('Backfill episode %s: retrying cached metadata source',exhausted_episode)
+                        return Outcome(value=(plan,exhausted_episode,cached))
+                    # A cache miss is not proof that there is no dub. Search
+                    # Prowlarr instead of putting the same episode back on hold
+                    # without ever checking for new releases.
+                    log.info('Backfill episode %s: no eligible cached magnet; searching Prowlarr',
+                             exhausted_episode)
                 client = connect('exhausted')
                 result = await blocking(client.search,plan.anidb_id,target.identity)
                 fresh = _new_dub_releases(result,client.policy,target.tried)

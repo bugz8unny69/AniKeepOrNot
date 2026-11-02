@@ -89,7 +89,14 @@ When the configured audio check requires Japanese and English, a searchable
 episode with no Dual/Multi Audio titles (including no results at all) is
 persisted as `WAITING_FOR_DUB`. The Intake series view shows **Waiting for dub**
 with **Search again**, which reuses the existing one-episode Prowlarr retry.
-This search outcome does not create an ON_HOLD job or a torrent. A tagged
+This search outcome does not create an ON_HOLD job or a torrent. For held
+WAITING_FOR_DUB acquisitions, Search again first tries an eligible fully cleaned
+cached magnet when Delete cache is unchecked. If no such magnet is available,
+it queries Prowlarr for new Dual/Multi Audio releases instead of silently
+returning to ON_HOLD. Checking Delete cache skips cache replay, scrubs reusable
+magnet URIs without removing the original release history, and queries
+Prowlarr directly. Previously tried hashes are never chosen as new Prowlarr
+releases. A tagged
 release disqualified for an unrelated reason (such as size) is not incorrectly
 reported as a missing dub. Existing downloaded-release audio failures still
 use the held-job WAITING_FOR_DUB path.
