@@ -16,7 +16,8 @@ from src.nextgen.acquisition.prowlarr_search import BackfillObservation, Candida
 
 PAGE_SIZE = 4
 MAX_EPISODE = 1000
-STATUSES = ('IN_PROGRESS', 'NOT_AIRED', 'MAPPING_MISSING', 'CANDIDATES', 'NO_RESULTS')
+STATUSES = ('IN_PROGRESS', 'NOT_AIRED', 'MAPPING_MISSING', 'CANDIDATES', 'NO_RESULTS',
+            'WAITING_FOR_DUB')
 
 
 class BackfillConflict(ValueError):
@@ -374,14 +375,17 @@ def persist_observations(db, claim, value, *, dispatch=False):
         if (type(item) is not BackfillObservation or item.number != number
                 or item.status not in STATUSES
                 or not 0 <= item.accepted <= item.candidates <= 1000
-                or item.status != 'CANDIDATES' and (item.candidates or item.accepted)):
+                or item.status == WAITING_FOR_DUB and (item.accepted or item.selection is not None)
+                or item.status not in ('CANDIDATES', WAITING_FOR_DUB)
+                   and (item.candidates or item.accepted)):
             raise BackfillConflict()
         previous = db.execute(
             'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND tvdb_episode=?',
             (plan.plan_id,number)
         ).fetchone()
         if previous and (value.retry_episode != number or
-                         previous[0] not in ('NO_RESULTS','NOT_AIRED','MAPPING_MISSING')):
+                         previous[0] not in ('NO_RESULTS','NOT_AIRED','MAPPING_MISSING',
+                                             WAITING_FOR_DUB)):
             raise BackfillConflict()
     now = integer(time.time_ns() // 1000000)
     # Selection is an opt-in side effect of the same fenced worker completion.
@@ -430,8 +434,9 @@ def persist_observations(db, claim, value, *, dispatch=False):
 
 
 # --- Waiting for dub -------------------------------------------------------
-# English audio is required, every ranked release of an episode failed, and at
-# least one failed the audio check. The exhausted job goes ON_HOLD with this
+# Unavailable Dual/Multi Audio is recorded as a per-episode search result.
+# Separately, when every attempted release fails and at least one failed
+# the audio probe, the exhausted job goes ON_HOLD with this
 # reason instead of NEEDS_REVIEW; other failures (stalled torrents, conflicts)
 # are just releases that did not work. Retry ("Search again") searches Prowlarr
 # once more and appends only new Dual/Multi Audio releases; the existing

@@ -269,7 +269,8 @@ def retry_episode(database, anidb_id, season, episode):
         prior = db.execute(
             'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND tvdb_episode=?',
             (plan_id, episode)).fetchone()
-        if held is None and prior and prior[0] not in ('NO_RESULTS', 'NOT_AIRED', 'MAPPING_MISSING'):
+        if held is None and prior and prior[0] not in ('NO_RESULTS', 'NOT_AIRED',
+                                                         'MAPPING_MISSING', WAITING_FOR_DUB):
             raise IntakeUnavailable()
         for table in ('episode_reservations', 'batch_episode_reservations'):
             if db.execute(

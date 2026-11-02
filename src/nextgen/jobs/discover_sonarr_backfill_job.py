@@ -2,7 +2,7 @@
 
 The job kind keeps its historical name so existing jobs and history stay valid.
 """
-from src.nextgen.acquisition.audio import audio_tagged, wants_english
+from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
 from src.nextgen.acquisition.prowlarr_search import (
     Client, CandidateSelection, SearchConfiguration, SearchUnauthorized, SearchReview,
     SearchUnavailable, _magnet_hash,
@@ -34,7 +34,7 @@ def _new_dub_releases(result, policy, tried):
     found = []
     for release in policy.rank(result.candidates):
         digest = release.info_hash
-        if (policy.accepts(release) and audio_tagged(release.title) and digest
+        if (policy.accepts(release) and dual_audio_tagged(release.title) and digest
                 and digest not in tried and digest not in found
                 and release.tvdb_episode_id == result.tvdb_episode_id
                 and _magnet_hash(release.magnet_url) == digest):

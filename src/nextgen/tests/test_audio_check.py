@@ -2,7 +2,7 @@
 import json
 import unittest
 
-from src.nextgen.acquisition.audio import audio_tagged, required_languages
+from src.nextgen.acquisition.audio import audio_tagged, dual_audio_tagged, required_languages
 from src.nextgen.acquisition.media import AudioMissing, parse_probe
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release
 from src.nextgen.jobs.evaluate_trial_job import (
@@ -32,6 +32,16 @@ class AudioTagTests(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertFalse(audio_tagged(title))
 
+    def test_dual_audio_hint_requires_both_audio_languages(self):
+        for title in ('Show - 01 [Dual Audio]', 'Show - 01 MULTi',
+                      'Show S01E01 JPN+ENG', 'Show (Japanese, English)'):
+            with self.subTest(title=title):
+                self.assertTrue(dual_audio_tagged(title))
+        for title in ('Show - 01 [English Dub]', 'Show - 01 [Dubbed]',
+                      'Show - 01 [Multi-Subs]', '[SubsPlease] Show - 01', ''):
+            with self.subTest(title=title):
+                self.assertFalse(dual_audio_tagged(title))
+
 
 class ProbeLanguageTests(unittest.TestCase):
     def test_extra_audio_tracks_are_fine(self):
@@ -58,11 +68,14 @@ def release(title, resolution=1080, seeders=50):
 
 
 class AudioRankingTests(unittest.TestCase):
-    def test_tagged_releases_go_first_but_untagged_stay(self):
+    def test_english_required_excludes_untagged_and_dub_only_candidates(self):
         plain = release('[A] Show - 01 (1080p)', seeders=500)
         dual = release('[B] Show - 01 (720p) [Dual Audio]', resolution=720, seeders=10)
         ranked = DiscoveryPolicy(prefer_audio_tag=True).rank((plain, dual))
         self.assertEqual(ranked, (dual, plain))
+        self.assertTrue(DiscoveryPolicy(prefer_audio_tag=True).accepts(dual))
+        self.assertFalse(DiscoveryPolicy(prefer_audio_tag=True).accepts(plain))
+        self.assertFalse(DiscoveryPolicy(prefer_audio_tag=True).accepts(release('Show - 01 [English Dub]')))
         self.assertEqual(DiscoveryPolicy().rank((plain, dual)), (plain, dual))
 
 
@@ -129,6 +142,11 @@ class IntakeAudioSearchTests(unittest.IsolatedAsyncioTestCase):
         calls, marked = await self.run_pages('[Group] Test - 10 (1080p) [Dual Audio]')
         self.assertEqual(calls, [(1, 2, 3, 4), (5, 6)])
         self.assertEqual(marked, [])
+
+    async def test_english_only_autobrr_release_falls_back_to_prowlarr(self):
+        calls, marked = await self.run_pages('[Group] Test - 10 (1080p) [English Dub]')
+        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 10)])
+        self.assertEqual(marked, [('RELEASE_AUDIO_UNTAGGED',)])
 
     async def test_japanese_only_mode_never_skips_the_delivery(self):
         calls, marked = await self.run_pages('[SubsPlease] Test - 10 (1080p)', audio='japanese')

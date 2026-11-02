@@ -83,6 +83,43 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         try: return detail(db, 123)
         finally: db.close()
 
+    async def test_no_eligible_releases_show_waiting_and_search_again(self):
+        from src.nextgen.acquisition.prowlarr_search import BackfillObservation
+
+        self.source(10)
+        fake = backfill.FakeDiscovery()
+        original = fake.backfill
+
+        def no_dub(*args, **kwargs):
+            return tuple(
+                BackfillObservation(n, 2000+n, 'WAITING_FOR_DUB', 4, 0)
+                if n == 2 else item
+                for n, item in zip(args[3], original(*args, **kwargs)))
+
+        fake.backfill = no_dub
+        worker = backfill.BackfillWorkerTests.worker(self, fake)
+        await worker.attempt()  # Evaluate -> page 1
+        await worker.attempt()  # Page 1 -> page 2
+        await worker.attempt()  # Page 2
+        self.assertEqual(self.rows(
+            "SELECT status,candidates,approved FROM sonarr_backfill_results "
+            "WHERE tvdb_episode=2"), [('WAITING_FOR_DUB', 4, 0)])
+        self.assertEqual(self.rows(
+            "SELECT count(*) FROM jobs WHERE kind=? AND state='ON_HOLD'",
+            (DISCOVER_KIND,)), [(0,)])
+        episode = next(x for x in self.series()['missing'] if x['episode'] == 2)
+        self.assertEqual((episode['status'], episode['can_retry']), ('WAITING_FOR_DUB', True))
+        fake.backfill = original
+        retried = retry_episode(self.database, 123, 1, 2)
+        self.assertFalse(retried['reused'])
+        self.assertEqual(retry_episode(self.database, 123, 1, 2)['reused'], True)
+        await worker.attempt()
+        self.assertEqual(self.rows(
+            "SELECT status,approved FROM sonarr_backfill_results WHERE tvdb_episode=2"),
+            [('CANDIDATES', 1)])
+        episode = next(x for x in self.series()['missing'] if x['episode'] == 2)
+        self.assertEqual(episode['status'], 'CANDIDATES')
+
     async def test_audio_only_failures_wait_for_dub_instead_of_review(self):
         await self.exhausted()
         await self.run_worker(self.fake)
