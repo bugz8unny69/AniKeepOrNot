@@ -16,6 +16,7 @@ from src.nextgen.tests.test_stage_media_job import StageMediaJobTests
 from src.nextgen.tests.test_torrent_submission import Secrets
 from src.nextgen.tests.test_torrent_transfer import TorrentTransferTests
 from src.nextgen.tests.test_verify_media_job import VerifyMediaJobTests
+from src.nextgen.worker import Worker
 
 
 class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
@@ -60,6 +61,15 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
                         raise ClientUnavailable()
         factory=partial(Service,client_factory=Client)
         worker.registry=Registry((*worker.registry.entries.values(),registration(Secrets(),service_factory=factory)))
+
+    def restart(self,previous,mode):
+        # The normal fixture factory seeds configuration at revision 1. A true
+        # restart reuses the persisted settings and handler registry instead
+        # of trying to apply the initial configuration for a second time.
+        restarted=Worker(self.store,self.startup,previous.registry,policy=previous.policy)
+        self.addAsyncCleanup(restarted.close)
+        self.attach(restarted,mode=mode,preserve_controls=True)
+        return restarted
 
     async def download_ready(self,action='keep',mode='normal'):
         worker,fake,actions,target,decision,staging_cleanup=await self.cleanup_ready()
@@ -142,8 +152,7 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('STOP_UNCERTAIN',)])
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('RETRY_WAIT',)])
         # A new Worker and Client resume against the same durable journal.
-        restarted=StageMediaJobTests.worker(self)
-        self.attach(restarted,mode='stop_delayed',preserve_controls=True)
+        restarted=self.restart(worker,mode='stop_delayed')
         await self.make_due(job)
         await restarted.attempt()
         self.assertEqual(self.controls,['stop','stop','remove'])
@@ -173,8 +182,7 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(self.controls,['stop','remove'])
         self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
-        restarted=StageMediaJobTests.worker(self)
-        self.attach(restarted,mode='remove_delayed',preserve_controls=True)
+        restarted=self.restart(worker,mode='remove_delayed')
         await self.make_due(job)
         await restarted.attempt()
         self.assertEqual(self.controls,['stop','remove','remove'])
