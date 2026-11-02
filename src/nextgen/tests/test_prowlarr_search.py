@@ -289,7 +289,7 @@ class ProwlarrSettingsTests(unittest.TestCase):
             'base_url': 'http://sonarr.local:8989', 'discovery_max_resolution': 720,
             'discovery_min_seeders': 12, 'discovery_rank_by': 'seeders'}}}
         upgraded = convert_document(doc)
-        self.assertEqual((upgraded.schema_version, upgraded.revision), (12, 6))
+        self.assertEqual((upgraded.schema_version, upgraded.revision), (13, 7))
         self.assertEqual((upgraded.value('prowlarr.max_resolution'), upgraded.value('prowlarr.min_seeders'),
                           upgraded.value('prowlarr.rank_by')), (720, 12, 'seeders'))
         self.assertEqual(upgraded.value('prowlarr.base_url'), '')

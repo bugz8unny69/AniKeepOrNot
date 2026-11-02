@@ -23,7 +23,7 @@ class DownloadSettingsTests(unittest.TestCase):
             self.assertNotIn('acquisition',doc['settings'])
             self.assertNotIn('download_root',doc['settings']['storage'])
         current=convert_document(doc)
-        self.assertEqual((current.schema_version,current.revision),(12,12))
+        self.assertEqual((current.schema_version,current.revision),(13,13))
         self.assertEqual(current.value('acquisition.max_episode_mb'),600)
         self.assertEqual(current.value('acquisition.max_plan_mb'),3000)
         with self.assertRaises(DownloadConfigurationError):download_options(current)
