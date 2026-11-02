@@ -337,18 +337,200 @@ def save(text, name, *, dest=None, compress=False):
     return target
 
 
+def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False):
+    from src.nextgen.storage.prowlarr_snapshots import load_latest_snapshot
+    snapshot = load_latest_snapshot(db, job_id, attempt=attempt)
+    if snapshot is None:
+        if is_short:
+            out(f'=== Prowlarr matching · Job #{job_id}')
+        else:
+            out('=== Prowlarr matching')
+        out('Prowlarr matching: Not recorded for this attempt (older search or capture unavailable). No Prowlarr request was made.')
+        return 0
+
+    att = snapshot.get('attempt', 1)
+    out(f'=== Prowlarr matching · Job #{job_id} · attempt {att}')
+    observed = when(snapshot.get('captured_at_ms'))
+    status_suffix = f' (status: {snapshot["status"]})' if snapshot.get('status') != 'COMPLETE' else ''
+    out(f'Search observed: {observed} local{status_suffix}')
+
+    target = snapshot.get('target') or {}
+    anime_titles = target.get('anime_titles') or []
+    anime_name = anime_titles[0] if anime_titles else 'Anime'
+    season = target.get('season') or snapshot.get('season') or 1
+    episode = target.get('episode') or snapshot.get('episode') or 1
+    anidb_ep = target.get('anidb_episode') or episode
+    out(f'Anime: {anime_name} · TVDB S{season:02d}E{episode:02d} · AniDB episode {anidb_ep}')
+    out('Source: recorded search snapshot (NO live provider request)')
+
+    policy = snapshot.get('policy') or {}
+    max_res = policy.get('max_resolution', 1080)
+    min_seeders = policy.get('min_seeders', 5)
+    max_mb = policy.get('max_episode_mb')
+    prefer_audio = policy.get('prefer_audio_tag', False)
+    audio_req = 'Japanese+English required' if prefer_audio else 'Any audio'
+    mb_str = f'max {max_mb} MB' if max_mb else 'no size limit'
+    out(f'Policy: max {max_res}p | min {min_seeders} seeders | {mb_str} | {audio_req}')
+
+    queries = snapshot.get('queries') or []
+    out(f'\nQueries ({len(queries)}):')
+    for q in queries:
+        status_note = f' ({q["status"]})' if q.get('status') != 'SUCCESS' else ''
+        out(f'  [{q["index"]}] {q["query"]:<30} {q["result_count"]} raw results{status_note}')
+
+    plan_id = snapshot.get('plan_id') or target.get('plan_id')
+    prior_attempts = 0
+    if plan_id is not None and episode is not None:
+        have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sonarr_episode_candidates'").fetchone()
+        if have_candidates:
+            row_prior = db.execute("SELECT count(*) FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=?",
+                                   (plan_id, episode)).fetchone()
+            if row_prior:
+                prior_attempts = row_prior[0]
+
+    counts = snapshot.get('counts') or {}
+    raw_count = counts.get('raw', 0)
+    unmatched_count = counts.get('unmatched', 0)
+    matched_count = counts.get('matched', 0)
+    eligible_count = counts.get('new_eligible', 0)
+    raw_dual_count = counts.get('raw_dual_audio', 0)
+    matched_dual_count = counts.get('matched_dual_audio', 0)
+
+    out('\nSearch results:')
+    out(f'  {raw_count} raw · {unmatched_count} unmatched · {matched_count} EP{episode} matched · {eligible_count} newly eligible')
+    out(f'  {raw_dual_count} raw Dual-Audio hints; {matched_dual_count} matching EP{episode} with a Dual-Audio hint')
+    out(f'  Prior database attempts: {prior_attempts} (historical; separately counted)')
+
+    disps = counts.get('dispositions') or {}
+    out('\nDispositions for this run (mutually exclusive primary classifications):')
+    standard_order = (
+        'UNMATCHED_TITLE_OR_EPISODE',
+        'MISSING_DUAL_AUDIO_HINT',
+        'MISSING_INFO_HASH',
+        'RESOLUTION_OUT_OF_POLICY',
+        'EPISODE_SIZE_TOO_LARGE',
+        'INSUFFICIENT_SEEDERS',
+        'DUPLICATE_RESULT',
+        'NEW_ELIGIBLE',
+        'MAGNET_HASH_CONFLICT',
+        'INVALID_TITLE',
+        'NON_TORRENT_PROTOCOL',
+    )
+    for code in standard_order:
+        if code in disps or (code in ('UNMATCHED_TITLE_OR_EPISODE', 'NEW_ELIGIBLE') and raw_count > 0):
+            out(f'  {code:<28} {disps.get(code, 0):>4}')
+    for code, val in disps.items():
+        if code not in standard_order:
+            out(f'  {code:<28} {val:>4}')
+    out(f'  {"TOTAL":<28} {raw_count:>4}')
+
+    results = snapshot.get('results') or []
+    out(f'\nAll releases ({len(results)} of {raw_count}):')
+    res_hdr = f'{max_res}p?'
+    out(f'  #    Query  Episode hint  {res_hdr:<6}  Seeders  Size MB  Dual?  Disposition                 Title')
+    for r in results:
+        num = f'{r.get("row_number", 0):03d}'
+        q_idx = str(r.get('query_index', 1))
+        ep_hint = r.get('parsed_episode_hint') or '-'
+        res_val = r.get('resolution', 0)
+        res_str = 'Yes' if res_val == max_res else ('No' if res_val == 0 else f'{res_val}p')
+        seeders_str = str(r.get('seeders')) if r.get('seeders') is not None else '-'
+        size_bytes = r.get('size_bytes') or 0
+        size_str = str(size_bytes // 1_000_000) if size_bytes else '-'
+        dual_str = 'Yes' if r.get('has_dual_audio_hint') else 'No'
+        disp_str = r.get('primary_disposition') or '-'
+        title_str = r.get('title') or ''
+        out(f'  {num:<4} {q_idx:<6} {ep_hint:<13} {res_str:<7} {seeders_str:<8} {size_str:<8} {dual_str:<6} {disp_str:<27} {title_str}')
+
+    out('\nDetailed reasons:')
+    for r in results:
+        num = f'{r.get("row_number", 0):03d}'
+        reason_str = r.get('reason') or ''
+        out(f'  #{num} {reason_str}')
+    return 0
+
+
+def prowlarr_matching_json(db, job_id, attempt=None):
+    from src.nextgen.storage.prowlarr_snapshots import load_latest_snapshot
+    snapshot = load_latest_snapshot(db, job_id, attempt=attempt)
+    if snapshot is None:
+        return {
+            'recorded': False,
+            'message': 'Not recorded for this attempt (older search or capture unavailable). No Prowlarr request was made.',
+        }
+    target = snapshot.get('target') or {}
+    episode = target.get('episode') or snapshot.get('episode')
+    plan_id = snapshot.get('plan_id') or target.get('plan_id')
+    prior_attempts = 0
+    if plan_id is not None and episode is not None:
+        have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sonarr_episode_candidates'").fetchone()
+        if have_candidates:
+            row_prior = db.execute("SELECT count(*) FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=?",
+                                   (plan_id, episode)).fetchone()
+            if row_prior:
+                prior_attempts = row_prior[0]
+    return {
+        'recorded': True,
+        'snapshot_id': snapshot.get('snapshot_id'),
+        'job_id': snapshot.get('job_id'),
+        'attempt': snapshot.get('attempt'),
+        'captured_at_ms': snapshot.get('captured_at_ms'),
+        'captured_at': when(snapshot.get('captured_at_ms')),
+        'search_mode': snapshot.get('search_mode'),
+        'status': snapshot.get('status'),
+        'target': snapshot.get('target'),
+        'policy': snapshot.get('policy'),
+        'queries': snapshot.get('queries'),
+        'counts': snapshot.get('counts'),
+        'prior_database_attempts': prior_attempts,
+        'releases': snapshot.get('results'),
+        'truncated': snapshot.get('truncated', False),
+    }
+
+
 def main(argv):
     import argparse
+    # Short form alias support: if 'job' is omitted but '--id' is present, insert 'job'
+    if 'job' not in argv and any(arg == '--id' or arg.startswith('--id=') for arg in argv):
+        for idx, arg in enumerate(argv):
+            if arg == '--id' or arg.startswith('--id='):
+                argv = argv[:idx] + ['job'] + argv[idx:]
+                break
+
     parser = argparse.ArgumentParser(prog='adm report', description='Read-only reports')
     parser.add_argument('--compress', action='store_true',
                         help='Save as a .tar.gz (default /tmp/<kind>-report-<id>.tar.gz)')
     parser.add_argument('--dest', help='File or directory to save the report to')
     parser.add_argument('--config-dir', default='/etc/anime-discovery')
+    parser.add_argument('--json', action='store_true', default=False,
+                        help='Print diagnostics or matching report as JSON')
+    parser.add_argument('--short', action='store_true', default=False,
+                        help='Output only the selected matching report section')
+    parser.add_argument('--include-matching', choices=('prowlarr',), default=None,
+                        help='Include matching section for provider')
+    parser.add_argument('--attempt', type=int, default=None,
+                        help='Specific captured search attempt')
     kinds = parser.add_subparsers(dest='what', required=True, metavar='{job}')
     job = kinds.add_parser('job', help='Everything about one job: history, failed check, paths')
     job.add_argument('--id', dest='job_id', type=int, required=True, help='Job number, e.g. 2593')
-    job.add_argument('--json', action='store_true', help='Print the diagnostics as JSON instead of text')
+    job.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
+                     help='Print the diagnostics as JSON instead of text')
+    job.add_argument('--short', action='store_true', default=argparse.SUPPRESS,
+                     help='Output only the selected matching report section')
+    job.add_argument('--include-matching', choices=('prowlarr',), default=argparse.SUPPRESS,
+                     help='Include matching section for provider')
+    job.add_argument('--attempt', type=int, default=argparse.SUPPRESS,
+                     help='Specific captured search attempt')
     args = parser.parse_args(argv)
+
+    is_json = getattr(args, 'json', False)
+    is_short = getattr(args, 'short', False)
+    include_matching = getattr(args, 'include_matching', None)
+    attempt = getattr(args, 'attempt', None)
+
+    if is_short and not include_matching:
+        parser.error('--short requires --include-matching <section>')
+
     try:
         db = connect(args.config_dir)
     except Exception as exc:  # Explain plainly; the usual cause is permissions.
@@ -357,16 +539,41 @@ def main(argv):
     lines = []
     printing = not (args.compress or args.dest)
     out = print if printing else lines.append
-    with db:
-        if args.json:
-            from src.nextgen.job_diagnostics import diagnose
-            data = diagnose(db, args.job_id)
-            out(json.dumps(data, indent=2, default=str) if data else json.dumps({'error': 'job not found'}))
-            status = 0 if data else 1
-        else:
-            status = report(db, args.job_id, out=out)
-    if not printing:
-        saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{args.job_id}',
-                     dest=args.dest, compress=args.compress)
-        print(f'Report saved to {saved}')
+    try:
+        with db:
+            if is_json:
+                if is_short:
+                    matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
+                    result_data = {
+                        'job_id': args.job_id,
+                        'matching': {
+                            'prowlarr': matching_doc,
+                        }
+                    }
+                    out(json.dumps(result_data, indent=2, default=str))
+                    status = 0
+                else:
+                    from src.nextgen.job_diagnostics import diagnose
+                    data = diagnose(db, args.job_id)
+                    if data and include_matching:
+                        matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
+                        data['matching'] = {
+                            include_matching: matching_doc,
+                        }
+                    out(json.dumps(data, indent=2, default=str) if data else json.dumps({'error': 'job not found'}))
+                    status = 0 if data else 1
+            else:
+                if is_short:
+                    status = report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=True)
+                else:
+                    status = report(db, args.job_id, out=out)
+                    if status == 0 and include_matching == 'prowlarr':
+                        out('')
+                        report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
+        if not printing:
+            saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{args.job_id}',
+                         dest=args.dest, compress=args.compress)
+            print(f'Report saved to {saved}')
+    finally:
+        db.close()
     return status

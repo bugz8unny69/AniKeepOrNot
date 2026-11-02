@@ -742,6 +742,22 @@ CREATE TABLE IF NOT EXISTS sonarr_magnet_intents (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_magnet_active_hash ON sonarr_magnet_intents(info_hash) WHERE state<>'RELEASED';
 
+CREATE TABLE IF NOT EXISTS prowlarr_search_snapshots (
+ snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+ job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+ attempt INTEGER NOT NULL CHECK(attempt >= 0),
+ captured_at_ms INTEGER NOT NULL CHECK(captured_at_ms >= 0),
+ plan_id INTEGER CHECK(plan_id IS NULL OR plan_id > 0),
+ tvdb_series_id INTEGER CHECK(tvdb_series_id IS NULL OR tvdb_series_id > 0),
+ season INTEGER CHECK(season IS NULL OR season >= 0),
+ episode INTEGER CHECK(episode IS NULL OR episode > 0),
+ search_mode TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('COMPLETE', 'PARTIAL', 'ERROR')),
+ snapshot_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_job ON prowlarr_search_snapshots(job_id, attempt);
+CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_plan ON prowlarr_search_snapshots(plan_id, episode);
+
 """
 
 def connect(path):
@@ -781,13 +797,13 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v53; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema v54; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.
     """
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version == 53:
+    if version == 54:
         return
     if version != 0:
         raise ValueError("existing NextGen database requires versioned SQL upgrade")
@@ -797,7 +813,7 @@ def initialize(db):
     if db.in_transaction:
         raise ValueError("initialization requires no active transaction")
     try:
-        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=53;\nCOMMIT;")
+        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=54;\nCOMMIT;")
     except BaseException:
         db.rollback()
         raise

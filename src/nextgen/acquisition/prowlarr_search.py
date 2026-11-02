@@ -302,8 +302,17 @@ class Client:
         self.logger = None
         self.policy = policy or DiscoveryPolicy()
         self._sleep = sleep
+        self.snapshots = []
+        self._plan_id = None
+        self._search_mode = 'initial'
+        self._current_anidb_id = None
+        self._current_tvdb_series_id = None
         opener = urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}))
         self._transport = transport or (lambda request, timeout: opener.open(request, timeout=timeout))
+
+    def set_context(self, plan_id=None, search_mode='initial'):
+        self._plan_id = plan_id
+        self._search_mode = search_mode
 
     @classmethod
     def from_context(cls, configuration, secrets, *, catalog, transport=None):
@@ -374,26 +383,304 @@ class Client:
 
     def _search(self, catalog, season, target):
         """All matching releases for one searchable episode, ranked by policy."""
-        from src.nextgen.acquisition.release_titles import AnimeTitles, search_queries
+        from src.nextgen.acquisition.release_titles import AnimeTitles, search_queries, read_release, matches
+        from src.nextgen.storage.prowlarr_snapshots import sanitize_text
         prepared = AnimeTitles.build(catalog.titles, season)
+        queries = search_queries(catalog.titles, prepared, target)
         found, seen = [], set()
-        for query in search_queries(catalog.titles, prepared, target):
-            for row in self._get(query):
-                release = _release(row, catalog.titles, target, season, prepared)
-                if release is None: continue
-                key = release.info_hash or release.title
-                if key in seen: continue
-                seen.add(key)
-                found.append(release)
-        oversized = sum(self.policy.oversized(r) for r in found)
-        if oversized and self.logger is not None:
+
+        captured_queries = []
+        captured_results = []
+        counts_dispositions = {
+            'UNMATCHED_TITLE_OR_EPISODE': 0,
+            'MISSING_DUAL_AUDIO_HINT': 0,
+            'MISSING_INFO_HASH': 0,
+            'RESOLUTION_OUT_OF_POLICY': 0,
+            'EPISODE_SIZE_TOO_LARGE': 0,
+            'INSUFFICIENT_SEEDERS': 0,
+            'NEW_ELIGIBLE': 0,
+        }
+        raw_count = 0
+        raw_dual_audio_count = 0
+        matched_dual_audio_count = 0
+        unmatched_count = 0
+        matched_count = 0
+        new_eligible_count = 0
+
+        snapshot = {
+            'plan_id': getattr(self, '_plan_id', None),
+            'anidb_id': getattr(self, '_current_anidb_id', None),
+            'tvdb_series_id': getattr(self, '_current_tvdb_series_id', None),
+            'season': season,
+            'episode': target.tvdb_episode,
+            'tvdb_episode_id': target.tvdb_episode_id,
+            'anidb_episode': target.anidb_episode,
+            'search_mode': getattr(self, '_search_mode', 'initial'),
+            'target': {
+                'plan_id': getattr(self, '_plan_id', None),
+                'anidb_id': getattr(self, '_current_anidb_id', None),
+                'tvdb_series_id': getattr(self, '_current_tvdb_series_id', None),
+                'season': season,
+                'episode': target.tvdb_episode,
+                'tvdb_episode_id': target.tvdb_episode_id,
+                'anidb_episode': target.anidb_episode,
+                'anime_titles': list(catalog.titles),
+            },
+            'policy': {
+                'max_resolution': self.policy.max_resolution,
+                'min_seeders': self.policy.min_seeders,
+                'rank_by': self.policy.rank_by,
+                'max_episode_mb': self.policy.max_episode_mb,
+                'prefer_audio_tag': self.policy.prefer_audio_tag,
+            },
+            'queries': captured_queries,
+            'results': captured_results,
+            'counts': {},
+            'status': 'COMPLETE',
+            'error': None,
+            'truncated': False,
+        }
+        self.snapshots.append(snapshot)
+
+        row_number = 0
+        seen_keys = {}
+        for query_idx, query in enumerate(queries, 1):
+            q_start = time.monotonic()
+            try:
+                rows = self._get(query)
+                q_elapsed = time.monotonic() - q_start
+                captured_queries.append({
+                    'index': query_idx,
+                    'query': query,
+                    'result_count': len(rows),
+                    'status': 'SUCCESS',
+                    'elapsed_seconds': round(q_elapsed, 3),
+                })
+            except Exception as exc:
+                q_elapsed = time.monotonic() - q_start
+                status_code = getattr(exc, 'reason_code', exc.__class__.__name__)
+                captured_queries.append({
+                    'index': query_idx,
+                    'query': query,
+                    'result_count': 0,
+                    'status': status_code,
+                    'elapsed_seconds': round(q_elapsed, 3),
+                })
+                snapshot['status'] = 'PARTIAL'
+                snapshot['error'] = status_code
+                snapshot['counts'] = {
+                    'raw': raw_count,
+                    'unmatched': unmatched_count,
+                    'matched': matched_count,
+                    'new_eligible': new_eligible_count,
+                    'raw_dual_audio': raw_dual_audio_count,
+                    'matched_dual_audio': matched_dual_audio_count,
+                    'dispositions': counts_dispositions,
+                }
+                raise
+
+            for row in rows:
+                row_number += 1
+                raw_count += 1
+                if type(row) is not dict:
+                    raise SearchReview()
+                title = row.get('title')
+                title_clean = sanitize_text(title)
+                indexer = sanitize_text(row.get('indexer', ''))[:256]
+                protocol = row.get('protocol')
+                seeders = row.get('seeders') if type(row.get('seeders')) is int and row['seeders'] >= 0 else None
+                size = row.get('size') if type(row.get('size')) is int and row['size'] >= 0 else 0
+                has_dual = dual_audio_tagged(title_clean)
+                if has_dual:
+                    raw_dual_audio_count += 1
+
+                valid_title = (type(title) is str and 1 <= len(title) <= 2048
+                               and not any(ord(c) < 32 or ord(c) == 127 for c in title))
+                is_torrent = protocol in ('torrent', None)
+                parsed, parse_reason = read_release(title_clean) if valid_title else (None, 'INVALID_TITLE')
+                episode_hint = None
+                if parsed is not None:
+                    if parsed.season is not None:
+                        episode_hint = f'S{parsed.season:02d}E{parsed.episode:02d}'
+                    else:
+                        episode_hint = f'E{parsed.episode:02d}'
+
+                is_match = valid_title and is_torrent and matches(parsed, prepared, target, season)
+                if not is_match:
+                    unmatched_count += 1
+                    if not valid_title:
+                        primary_disp = 'INVALID_TITLE'
+                        reason = 'invalid release title characters or length'
+                    elif not is_torrent:
+                        primary_disp = 'NON_TORRENT_PROTOCOL'
+                        reason = f"protocol '{protocol}' is not torrent"
+                    else:
+                        primary_disp = 'UNMATCHED_TITLE_OR_EPISODE'
+                        if parsed is not None:
+                            reason = f"parsed episode {episode_hint}; requested S{season:02d}E{target.tvdb_episode:02d}; excluded before policy"
+                        else:
+                            reason = f"unparseable title ({parse_reason}); excluded before policy"
+                    counts_dispositions[primary_disp] = counts_dispositions.get(primary_disp, 0) + 1
+                    failed_checks = [primary_disp]
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title_clean,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': resolution(title_clean),
+                        'info_hash': None,
+                        'info_hash_prefix': None,
+                        'has_dual_audio_hint': has_dual,
+                        'parsed_episode_hint': episode_hint,
+                        'matches_episode': False,
+                        'is_duplicate': False,
+                        'duplicate_of': None,
+                        'primary_disposition': primary_disp,
+                        'failed_checks': failed_checks,
+                        'reason': reason,
+                    })
+                    continue
+
+                matched_count += 1
+                if has_dual:
+                    matched_dual_audio_count += 1
+
+                raw_hash = row.get('infoHash')
+                info_hash = (raw_hash.lower() if type(raw_hash) is str
+                             and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
+                magnet = None
+                magnet_conflict = False
+                for source in (row.get('magnetUrl'), row.get('guid')):
+                    source_hash = _magnet_hash(source)
+                    if source_hash is None: continue
+                    if info_hash is not None and source_hash != info_hash:
+                        magnet_conflict = True
+                        break
+                    info_hash, magnet = source_hash, source
+                    break
+                if info_hash is not None and magnet is None:
+                    magnet = 'magnet:?xt=urn:btih:' + info_hash
+
+                dedup_key = info_hash or title_clean
+                is_duplicate = dedup_key in seen_keys
+                dup_of = seen_keys.get(dedup_key)
+                if not is_duplicate:
+                    seen_keys[dedup_key] = row_number
+
+                row_failed_checks = []
+                detailed_reasons = []
+
+                if magnet_conflict:
+                    row_failed_checks.append('MAGNET_HASH_CONFLICT')
+                    detailed_reasons.append('conflicting info hash and magnet URI')
+                elif info_hash is None:
+                    row_failed_checks.append('MISSING_INFO_HASH')
+                    detailed_reasons.append('no usable info hash in release data')
+
+                res = resolution(title_clean)
+                if not (0 < res <= self.policy.max_resolution):
+                    row_failed_checks.append('RESOLUTION_OUT_OF_POLICY')
+                    if res > self.policy.max_resolution:
+                        detailed_reasons.append(f'resolution {res}p exceeds limit {self.policy.max_resolution}p')
+                    else:
+                        detailed_reasons.append(f'resolution unrecognized ({res})')
+
+                oversized = (self.policy.max_episode_mb is not None and size > 0
+                             and size > self.policy.max_episode_mb * 1_000_000)
+                if oversized:
+                    row_failed_checks.append('EPISODE_SIZE_TOO_LARGE')
+                    detailed_reasons.append(f'size {size // 1_000_000} MB exceeds limit {self.policy.max_episode_mb} MB')
+
+                if seeders is None or seeders < self.policy.min_seeders:
+                    row_failed_checks.append('INSUFFICIENT_SEEDERS')
+                    if seeders is None:
+                        detailed_reasons.append('seeders unknown')
+                    else:
+                        detailed_reasons.append(f'seeders {seeders} below minimum {self.policy.min_seeders}')
+
+                if self.policy.prefer_audio_tag and not has_dual:
+                    row_failed_checks.append('MISSING_DUAL_AUDIO_HINT')
+                    detailed_reasons.append('missing Dual-Audio title hint')
+
+                if is_duplicate:
+                    primary_disp = 'DUPLICATE_RESULT'
+                    counts_dispositions['DUPLICATE_RESULT'] = counts_dispositions.get('DUPLICATE_RESULT', 0) + 1
+                    reason = f"duplicate of #{dup_of:03d} (same info hash)"
+                    failed_checks = ['DUPLICATE_RESULT']
+                elif row_failed_checks:
+                    primary_disp = row_failed_checks[0]
+                    counts_dispositions[primary_disp] = counts_dispositions.get(primary_disp, 0) + 1
+                    reason = detailed_reasons[0]
+                    if len(detailed_reasons) > 1:
+                        reason += '; also: ' + '; '.join(detailed_reasons[1:])
+                    failed_checks = row_failed_checks
+                else:
+                    primary_disp = 'NEW_ELIGIBLE'
+                    new_eligible_count += 1
+                    counts_dispositions['NEW_ELIGIBLE'] += 1
+                    reason = 'eligible new candidate; meets all policy checks'
+                    failed_checks = ['NEW_ELIGIBLE']
+
+                captured_results.append({
+                    'row_number': row_number,
+                    'query_index': query_idx,
+                    'title': title_clean,
+                    'indexer': indexer,
+                    'protocol': protocol or 'torrent',
+                    'seeders': seeders,
+                    'size_bytes': size,
+                    'resolution': resolution(title_clean),
+                    'info_hash': info_hash,
+                    'info_hash_prefix': info_hash[:8] if info_hash else None,
+                    'has_dual_audio_hint': has_dual,
+                    'parsed_episode_hint': episode_hint,
+                    'matches_episode': True,
+                    'is_duplicate': is_duplicate,
+                    'duplicate_of': dup_of,
+                    'primary_disposition': primary_disp,
+                    'failed_checks': failed_checks,
+                    'reason': reason,
+                })
+
+                if not magnet_conflict and not is_duplicate:
+                    release = Release(
+                        title_clean[:2048],
+                        indexer[:256],
+                        resolution(title_clean),
+                        seeders,
+                        size,
+                        target.tvdb_episode_id,
+                        info_hash,
+                        magnet,
+                        info_hash is not None,
+                        declared_title(catalog.titles, target.anidb_episode)
+                    )
+                    found.append(release)
+
+        snapshot['counts'] = {
+            'raw': raw_count,
+            'unmatched': unmatched_count,
+            'matched': matched_count,
+            'new_eligible': new_eligible_count,
+            'raw_dual_audio': raw_dual_audio_count,
+            'matched_dual_audio': matched_dual_audio_count,
+            'dispositions': counts_dispositions,
+        }
+
+        oversized_count = sum(self.policy.oversized(r) for r in found)
+        if oversized_count and self.logger is not None:
             self.logger.info('Backfill episode %s: skipped %s release(s) over %s MB',
-                             target.tvdb_episode, oversized, self.policy.max_episode_mb)
+                             target.tvdb_episode, oversized_count, self.policy.max_episode_mb)
         return self.policy.rank(found)
 
     def backfill(self, anidb_id, tvdb_series_id, season, numbers, *, reserved=(),
                  verified_ids=None, select_candidates=False):
         """One observation per requested episode. A missing release never fails the page."""
+        self._current_anidb_id = anidb_id
+        self._current_tvdb_series_id = tvdb_series_id
         if (type(anidb_id) is not int or anidb_id <= 0 or type(tvdb_series_id) is not int
                 or tvdb_series_id <= 0 or type(season) is not int or season < 0
                 or type(numbers) is not tuple or not 1 <= len(numbers) <= 4
@@ -436,6 +723,8 @@ class Client:
     def search(self, anidb_id, identity):
         """Ranked releases for one previously selected episode (candidate fallback)."""
         if type(identity) is not VerifiedEpisode: raise SearchReview()
+        self._current_anidb_id = anidb_id
+        self._current_tvdb_series_id = identity.tvdb_series_id
         catalog = self.catalog(anidb_id, identity.tvdb_series_id, identity.tvdb_season)
         target = catalog.target(identity.tvdb_episode)
         if target.status != 'SEARCHABLE' or target.tvdb_episode_id != identity.tvdb_episode_id:

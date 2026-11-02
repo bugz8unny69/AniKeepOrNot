@@ -208,6 +208,9 @@ class JobQueue:
                     records.append(created)
             now = self.now()
             self._owns(db,claim,now)
+            if getattr(outcome, 'search_snapshots', None):
+                from src.nextgen.storage.prowlarr_snapshots import save_snapshots
+                save_snapshots(db, claim.job_id, claim.attempt, outcome.search_snapshots, now)
             records.append(self._transition(db,claim,outcome,now))
             # Failed Sonarr candidates use the existing cancellation worker,
             # never the user-facing Cancel button. Non-Sonarr jobs are untouched.
