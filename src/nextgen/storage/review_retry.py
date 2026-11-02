@@ -93,7 +93,7 @@ def capability(db, job_id):
             CATALOG.reason('MANAGEMENT_ACTION_UNAVAILABLE')}
 
 
-def request_review_retry(database, job_id, *, expected_attempt, expected_reason, clock=None):
+def request_review_retry(database, job_id, *, expected_attempt, expected_reason, clock=None, delete_cache=None):
     """Requeue the *same* reviewed job with snapshot CAS; preserve evidence/history.
 
     A duplicate request still pending is acknowledged, never scheduled twice.
@@ -104,6 +104,8 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
     if (type(expected_reason) is not str or
             safe_code(expected_reason) != expected_reason):
         raise ValueError('expected review reason required')
+    if delete_cache is not None and type(delete_cache) is not bool:
+        raise RetryNotAllowed()
     queue = JobQueue(database, clock=clock)
     with queue.connection() as db:
         target = _cleanup_target(db, job_id)
@@ -132,6 +134,17 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
         if row is None:
             raise RetryNotAllowed('job does not exist')
         kind, state, attempt, reason, token, expiry = row
+        payload = None
+        if delete_cache is not None:
+            if (kind != 'DISCOVER_SONARR_BACKFILL'
+                    or state not in ('ON_HOLD', 'PENDING')
+                    or state == 'ON_HOLD' and reason != 'WAITING_FOR_DUB'):
+                raise RetryNotAllowed()
+            payload = json.loads(db.execute(
+                'SELECT payload_json FROM jobs WHERE job_id=?',(job_id,)).fetchone()[0])
+            if type(payload.get('exhausted_episode')) is not int:
+                raise RetryNotAllowed()
+            payload['delete_cache'] = delete_cache
         if attempt != expected_attempt:
             raise RetryStale('job attempt changed')
         if (state == 'PENDING' and kind in RETRY_KINDS and token is None
@@ -145,7 +158,8 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
                 (job_id,)).fetchone()
             if previous is not None:
                 details = json.loads(previous[1])
-                if details.get('attempt') == attempt and details.get('cause_reason_code') == expected_reason:
+                if (details.get('attempt') == attempt and details.get('cause_reason_code') == expected_reason
+                        and (delete_cache is None or details.get('delete_cache') is delete_cache)):
                     return RetryReceipt(job_id, attempt, 'ALREADY_QUEUED', previous[0])
         if not _retryable_state(kind, state, reason):
             raise RetryNotAllowed('job is not stopped for review')
@@ -155,13 +169,22 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
             raise RetryNotAllowed('this job cannot be resumed')
         updated = db.execute(
             "UPDATE jobs SET state='PENDING',available_at_ms=?,updated_at_ms=?,"
-            "last_reason_code=NULL,activity_code=NULL WHERE job_id=? "
+            "last_reason_code=NULL,activity_code=NULL,"
+            "payload_json=COALESCE(?,payload_json) WHERE job_id=? "
             "AND state=? AND attempt_count=? AND last_reason_code=? "
             "AND lease_token IS NULL AND lease_expires_at_ms IS NULL",
-            (now, now, job_id, state, attempt, reason))
+            (now, now, json.dumps(payload,sort_keys=True,separators=(',',':')) if payload else None,
+             job_id, state, attempt, reason))
         if updated.rowcount != 1:
             raise RetryStale('job changed while requesting retry')
+        facts = {'attempt': attempt, 'cause_reason_code': reason}
+        if delete_cache is not None:
+            from src.nextgen.storage.sonarr_cached_retry import clear_cached, expire_cached
+            expire_cached(db, now)
+            facts['delete_cache'] = delete_cache
+            if delete_cache:
+                facts['cache_entries_deleted'] = clear_cached(
+                    db, payload['plan_id'], payload['exhausted_episode'])
         audit = append_job_history(db, job_id=job_id, event_code='RETRY_REQUESTED',
-            component='api', occurred_at_ms=now,
-            details={'attempt': attempt, 'cause_reason_code': reason})
+            component='api', occurred_at_ms=now, details=facts)
         return RetryReceipt(job_id, attempt, 'QUEUED', audit.history_id)

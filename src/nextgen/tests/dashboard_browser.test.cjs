@@ -482,3 +482,34 @@ test('Intake status filter is sent to the API and labels come from status', asyn
   const row = h.elements.get('job-rows').children[0];
   assert.equal(row.children[3].children[0].textContent, 'Waiting for dub');
 });
+
+
+test('Search again defaults to cached magnets and checks Delete cache only on request', async () => {
+  for (const deleteCache of [false, true]) {
+    const h = await harness();
+    const calls = [];
+    h.ctx.fetch = async (url, options = {}) => {
+      calls.push({url, options});
+      if (url === '/api/v1/intake/series/123')
+        return response({anidb_id:123,title:'Example Anime',english_title:null,
+          episodes:[],missing:[{season:1,episode:1,status:'WAITING_FOR_DUB',can_retry:true}],
+          keep_operations:[],reject_operations:[],rejection:null});
+      return response({job_id:42,reused:false,items:[],next_before_id:null});
+    };
+    await h.run('openSeries(123)');
+    const row = h.elements.get('series-missing').children[0];
+    const retry = row.children[2].children[0];
+    assert.equal(retry.textContent, 'Search again');
+    const submitted = retry.listeners.click();
+    const dialog = h.elements.get('search-again-dialog');
+    assert.equal(dialog.open, true);
+    assert.equal(h.elements.get('search-again-delete').checked, false);
+    h.elements.get('search-again-delete').checked = deleteCache;
+    dialog.returnValue = 'search'; dialog.close();
+    await submitted;
+    const posts = calls.filter(x => x.options.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, '/api/v1/intake/series/123/backfill/1/1/retry');
+    assert.deepEqual(JSON.parse(posts[0].options.body), {delete_cache: deleteCache});
+  }
+});

@@ -25,7 +25,24 @@ def dispatch(db, claim, plan, choice):
             or choice.identity.tvdb_series_id != plan.tvdb_series_id
             or choice.identity.tvdb_season != plan.season):
         raise SelectionConflict()
-    identity=choice.identity
+    return _dispatch_verified(db, claim, plan, choice.identity,
+                              choice.release.declared_title, choice.release.title,
+                              choice.release.info_hash, choice.release.magnet_url)
+
+
+def dispatch_cached(db, claim, plan, identity, source):
+    """Replay a verified historical source as a NEW internal delivery."""
+    from src.nextgen.storage.sonarr_cached_retry import CachedTorrent
+    if (type(source) is not CachedTorrent or not db.in_transaction
+            or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or identity.tvdb_series_id!=plan.tvdb_series_id
+            or identity.tvdb_season!=plan.season):
+        raise SelectionConflict()
+    return _dispatch_verified(db,claim,plan,identity,source.declared_title,
+                              source.title,source.info_hash,source.magnet_uri)
+
+
+def _dispatch_verified(db,claim,plan,identity,declared_title,title,digest,source_magnet):
     row=db.execute(
         "SELECT i.series_json, r.anidb_episode_number "
         "FROM recognized_episodes e "
@@ -53,7 +70,7 @@ def dispatch(db, claim, plan, choice):
         # The release declaration is rechecked by VERIFY_RELEASE and then the
         # manifest filename gate before any stopped submission is authorized.
         from src.nextgen.providers.release_mapping import declared_episode
-        origin,season,episode=declared_episode(choice.release.declared_title)
+        origin,season,episode=declared_episode(declared_title)
         if ((origin=='tvdb' and (season,episode)!=(identity.tvdb_season,identity.tvdb_episode))
                 or (origin=='anidb' and row[1] is not None and episode!=row[1])):
             raise SelectionConflict()
@@ -64,13 +81,13 @@ def dispatch(db, claim, plan, choice):
         # The sanitized, hash-bound magnet travels with the delivery exactly
         # like a webhook magnet; qBittorrent resolves it downstream.
         from src.nextgen.acquisition.metadata import hash_magnet
-        magnet=hash_magnet(choice.release.info_hash,choice.release.magnet_url)
+        magnet=hash_magnet(digest,source_magnet)
         if magnet is None: raise SelectionConflict()
         # VERIFY_RELEASE reads the plain declared title; the group's own
         # title is kept for diagnostics only.
-        body=json.dumps({'release_name':choice.release.declared_title,
-                         'source_release_name':choice.release.title,
-                         'torrent_infohash':choice.release.info_hash,
+        body=json.dumps({'release_name':declared_title,
+                         'source_release_name':title,
+                         'torrent_infohash':digest,
                          'magnet_uri':magnet},
                         sort_keys=True,separators=(',',':')).encode('utf-8')
         if len(body)>65536: raise SelectionConflict()

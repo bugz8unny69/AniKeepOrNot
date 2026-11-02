@@ -306,7 +306,8 @@ def display_reason(code: str) -> dict:
 def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  attempt=None, max_attempts=None, cause_reason_code=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
-                 failed_check=None, failed_path=None) -> dict:
+                 failed_check=None, failed_path=None,
+                 delete_cache=None, cache_entries_deleted=None, cached_replay=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -328,6 +329,15 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
             if type(value) is not int or not 0 <= value <= _MAX_INTEGER:
                 raise ValueError("invalid diagnostic integer")
             details[key] = value
+    for key, value in (("delete_cache", delete_cache), ("cached_replay", cached_replay)):
+        if value is not None:
+            if type(value) is not bool:
+                raise ValueError("invalid diagnostic boolean")
+            details[key] = value
+    if cache_entries_deleted is not None:
+        if type(cache_entries_deleted) is not int or not 0 <= cache_entries_deleted <= _MAX_INTEGER:
+            raise ValueError("invalid cache cleanup count")
+        details["cache_entries_deleted"] = cache_entries_deleted
     # Code location of the check that stopped the work, e.g.
     # "src/nextgen/cancel_cleanup.py:80 remove_staging EACCES".
     if failed_check is not None:

@@ -1,4 +1,5 @@
 """Ranked backfill candidate facts, not acquisition permits or torrent ownership."""
+import json
 from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, SearchResult
 
@@ -152,7 +153,7 @@ def schedule_after_cleanup(db,operation_id):
         "ORDER BY h.history_id DESC LIMIT 1",(operation_id,)).fetchone()
     if issue is None:return ()
     rows=db.execute(
-        "SELECT s.plan_id,s.tvdb_episode,s.info_hash,parent.event_id,parent.job_id "
+        "SELECT s.plan_id,s.tvdb_episode,s.info_hash,parent.event_id,parent.job_id,parent.payload_json "
         "FROM job_operation_members m "
         "JOIN jobs verify ON verify.job_id=m.job_id AND verify.kind='VERIFY_RELEASE' "
         "JOIN incoming_events e ON e.event_id=verify.event_id "
@@ -169,7 +170,7 @@ def schedule_after_cleanup(db,operation_id):
         (operation_id,)).fetchall()
     if not rows:return ()
     if len(rows)!=1:raise CandidateConflict()
-    plan_id,episode,digest,parent_event,parent_job=rows[0]
+    plan_id,episode,digest,parent_event,parent_job,parent_payload=rows[0]
     if parent_event is None:raise CandidateConflict()
     # CancellationService has already confirmed cleanup and released all
     # reservations inside this transaction. Never advance before that point.
@@ -190,10 +191,13 @@ def schedule_after_cleanup(db,operation_id):
     numbers=plan_window(db,plan_id,*scope)
     if episode not in numbers:raise CandidateConflict()
     page_start=(numbers.index(episode)//PAGE_SIZE)*PAGE_SIZE+1
+    payload={'plan_id':plan_id,'start':page_start,
+             ('fallback_episode' if pending else 'exhausted_episode'):episode}
+    # Continue the user-selected cache-only attempt after safe cleanup.
+    if not pending and json.loads(parent_payload).get('delete_cache') is False:
+        payload['delete_cache']=False
     _,receipt=enqueue_job_with_receipt(
-        db,kind='DISCOVER_SONARR_BACKFILL',
-        payload={'plan_id':plan_id,'start':page_start,
-                 ('fallback_episode' if pending else 'exhausted_episode'):episode},
+        db,kind='DISCOVER_SONARR_BACKFILL',payload=payload,
         component='worker',event_id=parent_event,
         created_by_job_id=parent_job)
     return (receipt,)

@@ -366,12 +366,26 @@ async function openSeries(anidbId) {
         retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (state.seriesBusy) return;
+          const held = item.status === 'WAITING_FOR_DUB';
+          let deleteCache = true;
+          if (held) {
+            $('search-again-episode').textContent = 'S' + String(item.season).padStart(2, '0') +
+              'E' + String(item.episode).padStart(2, '0');
+            $('search-again-delete').checked = false;
+            const choice = $('search-again-dialog');
+            choice.showModal();
+            const confirmed = await new Promise(resolve => {
+              choice.addEventListener('close', () => resolve(choice.returnValue === 'search'), {once: true});
+            });
+            if (!confirmed) return;
+            deleteCache = $('search-again-delete').checked;
+          }
           state.seriesBusy = true; retry.disabled = true;
           try {
             const data = await request(API + '/intake/series/' + anidbId +
               '/backfill/' + item.season + '/' + item.episode + '/retry',
-              {method: 'POST', body: {}});
-            notice('Backfill search ' + (data.reused ? 'already queued' : 'submitted') + '.');
+              {method: 'POST', body: held ? {delete_cache: deleteCache} : {}});
+            notice('Backfill ' + (data.reused ? 'already queued' : 'submitted') + '.');
             dialog.close(); await loadActivity();
           } catch (error) { displayError(error); }
           finally { state.seriesBusy = false; retry.disabled = false; }
