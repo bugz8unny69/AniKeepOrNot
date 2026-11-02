@@ -52,8 +52,10 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
                         test.snapshot=replace(test.snapshot,observation=replace(test.snapshot.observation,state='stoppedDL'))
                     if mode in ('stop_lost','stop_present') or first_delayed:raise ClientUnavailable()
                 else:
-                    if mode!='remove_present':test.snapshot=None
-                    if mode in ('remove_lost','remove_present','changed_after_remove'):
+                    first_delayed=mode=='remove_delayed' and test.controls.count('remove')==1
+                    if mode not in ('remove_present','remove_present_ok') and not first_delayed:
+                        test.snapshot=None
+                    if mode in ('remove_lost','remove_present','changed_after_remove') or first_delayed:
                         if mode=='changed_after_remove':test.remainder.write_bytes(b'changed')
                         raise ClientUnavailable()
         factory=partial(Service,client_factory=Client)
@@ -156,10 +158,48 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controls,['stop','stop'])
         self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('STOP_UNCERTAIN',)])
 
-    async def test_uncertain_remove_still_present_never_gets_another_permit(self):
-        worker,_,_,_,_,job=await self.download_ready(mode='remove_present')
-        for _ in range(3):await self.make_due(job);await worker.attempt()
-        self.assertEqual(self.controls,['stop','remove']);self.assertTrue(self.remainder.exists())
+    async def test_uncertain_remove_still_present_is_rechecked_and_retried(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_present_ok')
+        for _ in range(3):
+            await self.make_due(job)
+            await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove','remove','remove'])
+        self.assertTrue(self.remainder.exists())
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('RETRY_WAIT',)])
+
+    async def test_remove_not_delivered_can_recover_after_worker_restart(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_delayed')
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
+        restarted=StageMediaJobTests.worker(self)
+        self.attach(restarted,mode='remove_delayed',preserve_controls=True)
+        await self.make_due(job)
+        await restarted.attempt()
+        self.assertEqual(self.controls,['stop','remove','remove'])
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
+        self.assertFalse(self.remainder.exists())
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+
+    async def test_remove_retries_require_matching_owned_torrent(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_present_ok')
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove'])
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,tags=()))
+        await self.make_due(job)
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertTrue(self.remainder.exists())
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
+
+    async def test_remove_restarted_active_torrent_is_stopped_first(self):
+        worker,_,_,_,_,job=await self.download_ready(mode='remove_present_ok')
+        await worker.attempt()
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='downloading'))
+        await self.make_due(job)
+        await worker.attempt()
+        self.assertEqual(self.controls,['stop','remove','stop','remove'])
         self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('REMOVE_UNCERTAIN',)])
 
     async def test_changed_file_after_lost_remove_is_purged_with_the_folder(self):

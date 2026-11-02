@@ -3,8 +3,9 @@
 ## Goal
 
 A worker restart, crash, client restart or hours offline must not strand an
-owned torrent at `STOP_UNCERTAIN`. A saved control intent is not proof that
-qBittorrent received a request. Recovery re-observes current client state.
+owned torrent at `STOP_UNCERTAIN` **or** `REMOVE_UNCERTAIN`. A saved
+control intent is not proof that qBittorrent received a request. Recovery
+re-observes current client state.
 
 ## Safety boundaries
 
@@ -15,12 +16,14 @@ qBittorrent received a request. Recovery re-observes current client state.
 3. When already stopped, do not send another stop. When actively transferring,
    a stop request is repeatable (including from legacy `STOP_UNCERTAIN`).
    Checking/moving states are observed later; unexpected states need review.
-4. `REMOVE_UNCERTAIN` deliberately remains *one-shot*: do not repeat the
-   torrent removal command if an earlier response was lost. Observe absence
-   before proceeding to protected file cleanup. The deletion uses
-   `deleteFiles=false`, with local files handled under separate identity
-   and directory safeguards.
-5. Do not clear ownership records, force database states, silently adopt
+4. At `REMOVE_UNCERTAIN`, first observe the exact torrent. If it still
+   exists and is owned, verify it is stopped, then retry **torrent-only**
+   removal with `deleteFiles=false`. If it resumed, stop and verify it
+   again first. This never authorizes qBittorrent to delete payload files.
+5. If the torrent is absent, advance to independently verified local file
+   cleanup using the persisted original folder identity. A mismatched owner,
+   torrent manifest or unexpected state must fail closed without deletion.
+6. Do not clear ownership records, force database states, silently adopt
    external torrents, or delete unknown files to make a job progress.
 
 Cleanup still uses the existing 30-second deferred scheduling interval.
@@ -52,8 +55,11 @@ the current cleanup checkpoint and when that checkpoint last advanced.
 - Stop request not delivered, worker restarted: find exact owned active
   torrent; send stop again; verify and continue.
 - Torrent checking: wait and observe later; do not send stop during checking.
-- Uncertain removal with torrent still present: do not send another delete.
-  Preserve data for a safe operator review/reconciliation design.
+- Uncertain removal with torrent still present and owned: if stopped, retry
+  torrent-only removal. If active, stop first. If checking, wait for a new
+  observation. Ownership mismatches require review without another command.
+- Removal response lost but torrent already absent: do not repeat removal;
+  resume safe local cleanup from the recorded folder identity.
 - Changed ownership/provenance: stop and require review; do not touch torrent.
 - Long downtime alone does not consume a retry budget; only actual attempts
   after the service resumes count. Deferred checks remain separately visible.
@@ -63,5 +69,6 @@ the current cleanup checkpoint and when that checkpoint last advanced.
 For a reported stuck cleanup, inspect `jobs.last_reason_code`,
 `cancellation_cleanup.phase`, and the exact torrent state in qBittorrent.
 The checkpoint is not a direct authorization to delete anything manually.
-Tests cover lost stop responses, a still-active stop after simulated restart,
-unchanged one-shot deletion, altered ownership, and the History count display.
+Tests cover lost stop responses, an active stop after restart, lost torrent-only
+removal after restart, ownership changes before a removal retry, a resumed
+torrent at the removal checkpoint, and the History count display.
