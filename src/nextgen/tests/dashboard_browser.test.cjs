@@ -469,3 +469,16 @@ test('Search asks the API for the current page scope and resets paging', async (
   assert.ok(calls[3].startsWith('/api/v1/search?scope=intake&q=dandadan&before_id='), calls[3]);
   assert.ok(!calls[3].includes('show_canceled'));
 });
+test('Intake status filter is sent to the API and labels come from status', async () => {
+  const h = await harness();
+  const calls = [];
+  h.ctx.fetch = async url => { calls.push(url); return response({items: [
+    {anidb_id: 1, title: 'A', status: 'WAITING_FOR_DUB', staged_count: 0, kept_count: 1, missing_count: 1}],
+    next_before_id: null}); };
+  h.run("state.page='intake'; state.cursor='55'; state.previous=['99'];");
+  h.elements.get('intake-filter').value = 'WAITING_FOR_DUB';
+  await h.elements.get('intake-filter').listeners.change();
+  assert.ok(calls[0].startsWith('/api/v1/intake/series?before_id=9223372036854775807&limit=30&status=WAITING_FOR_DUB'), calls[0]);
+  const row = h.elements.get('job-rows').children[0];
+  assert.equal(row.children[3].children[0].textContent, 'Waiting for dub');
+});
