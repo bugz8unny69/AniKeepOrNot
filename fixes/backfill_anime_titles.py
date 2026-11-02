@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Backfill English/Romaji display titles for already staged or kept NextGen anime.
+"""Backfill anime titles, repair published Jellyfin NFOs and request a scan.
 
-Dry-run by default; --apply saves only missing translations. Never edits identity
-snapshots, recognized aliases, media, acquisition jobs, or filesystem paths.
+Dry-run by default; --apply updates verified metadata with exclusive maintenance.
+Never rename media, rewrite identity snapshots, or change recognition aliases.
 Run after the NextGen schema/configuration migrations have been applied.
 """
 import argparse
@@ -15,6 +15,9 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.nextgen.configuration import ConfigurationStore
+from src.nextgen.jellyfin import request_refresh, RefreshConfiguration, RefreshUnavailable, RefreshReview
+from src.nextgen.secrets import SecretStore, SecretStorageError
+from fixes.nfo_title_repair import repair
 from src.nextgen.maintenance import MaintenanceGate
 from src.nextgen.providers.errors import (
     ProviderDeferred, ProviderInvalidResponse, ProviderUnavailable,
@@ -88,13 +91,17 @@ def main(argv=None):
                                       config.value("anidb.client_version"),
                                       config.value("providers.timeout_seconds")))
     counts = {"found": 0, "updated": 0, "unchanged": 0, "unresolved": 0, "failed": 0}
-    # Shared operation admission keeps exclusive schema upgrades from running
-    # during this script; short SQLite writes coexist with normal jobs.
-    with MaintenanceGate(database).operation():
+    gate = MaintenanceGate(database)
+    # Editing published NFOs also changes durable staging receipts. Drain all
+    # workers first; a failed repair leaves maintenance pending for safe retry.
+    ticket = gate.request() if args.apply else None
+    scope = gate.exclusive(ticket) if args.apply else gate.operation()
+    planned_titles = {}
+    with scope as lease:
         with JobQueue(database).connection() as db:
             records = db.execute(STAGED_ANIME).fetchall()
             counts["found"] = len(records)
-            if args.apply and any(not en or not ja for _, _, en, ja in records):
+            if args.apply:
                 print("Database backup:", backup(database, db))
         for aid, canonical, existing_en, existing_ja in records:
             if existing_en and existing_ja:
@@ -115,6 +122,7 @@ def main(argv=None):
             if not english:
                 counts["unresolved"] += 1
                 print(f"AniDB #{aid}: no verified English title; existing name remains available")
+            planned_titles[aid] = (english, romaji)
             if english == existing_en and romaji == existing_ja:
                 counts["unchanged"] += 1
                 continue
@@ -125,13 +133,30 @@ def main(argv=None):
                 with JobQueue(database).connection() as db, transaction(db):
                     upsert_anime_titles(db, aid, english, romaji)
             counts["updated"] += 1
+        with JobQueue(database).connection() as db:
+            nfos = repair(db, config, apply=args.apply, overrides=planned_titles)
+        print(f"NFOs: {nfos['changed']} {'repaired' if args.apply else 'would change'}, "
+              f"{nfos['unchanged']} unchanged, {nfos['missing']} already absent")
+        if args.apply:
+            lease.complete()
+    refresh_failed = False
+    if args.apply and (nfos['changed'] or counts['updated']):
+        if config.value('jellyfin.base_url'):
+            try:
+                request_refresh(config, SecretStore(args.config_dir))
+                print("Jellyfin library refresh requested (204 accepted; indexing not confirmed)")
+            except (RefreshConfiguration, RefreshUnavailable, RefreshReview, SecretStorageError) as exc:
+                refresh_failed = True
+                print(f"Jellyfin refresh failed: {exc.reason_code}; NFO repairs remain saved")
+        else:
+            print("Jellyfin address not configured; refresh skipped")
 
     label = "Applied" if args.apply else "Dry run"
     print(f"{label}: {counts['found']} staged/kept anime, {counts['updated']} "
           f"{'updated' if args.apply else 'would update'}, "
           f"{counts['unchanged']} unchanged, {counts['unresolved']} unresolved, "
           f"{counts['failed']} provider failures")
-    return 1 if counts["failed"] else 0
+    return 1 if counts["failed"] or refresh_failed else 0
 
 
 if __name__ == "__main__":

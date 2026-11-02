@@ -5,6 +5,7 @@ No new tables, provider adapters, or import jobs are needed.
 """
 import json
 
+from src.nextgen.anime_titles import preferred_title
 from src.nextgen.history import integer, append_job_history
 from src.nextgen.storage.cancellation import CancellationStore, can_cancel_operation
 from src.nextgen.storage.job_queue import JobQueue
@@ -14,15 +15,6 @@ from src.nextgen.storage.sonarr_backfill import PAGE_SIZE, plan_window
 
 class IntakeUnavailable(ValueError):
     reason_code = 'MANAGEMENT_ACTION_UNAVAILABLE'
-
-
-def preferred_title(canonical, english, romaji, language):
-    """Display-only choice; canonical IDs and recognized aliases never change."""
-    if language == 'english':
-        return english or canonical
-    if language == 'japanese':
-        return romaji or canonical
-    raise ValueError('Invalid anime title language')
 
 
 def detail(db, anidb_id, language='english'):
