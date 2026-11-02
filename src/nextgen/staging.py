@@ -52,7 +52,7 @@ def nfo(root,values,ids):
     return ET.tostring(document,encoding='utf-8',xml_declaration=True)
 
 
-def specification(intent,evidence,identity,root,revision):
+def specification(intent,evidence,identity,root,revision,*,display_title=None):
     """Pure deterministic layout from verified placement, never release paths."""
     anime,episode,series,season,number,tvdb_episode,title=identity
     from src.nextgen.history import integer
@@ -62,8 +62,10 @@ def specification(intent,evidence,identity,root,revision):
     season_folder=folder+f'/Season {season:02d}'
     basename=f'{slug(title)} - S{season:02d}E{number:02d}'
     media=season_folder+'/'+basename+PurePosixPath(evidence['path']).suffix.lower()
-    show=nfo('tvshow',[('title',title)],[('tvdb',series),('anidb',anime)])
-    episode_nfo=nfo('episodedetails',[('title',f'Episode {number}'),('showtitle',title),('season',season),('episode',number)],
+    # Display metadata can differ from the canonical filesystem naming.
+    shown = display_title or title
+    show=nfo('tvshow',[('title',shown)],[('tvdb',series),('anidb',anime)])
+    episode_nfo=nfo('episodedetails',[('title',f'Episode {number}'),('showtitle',shown),('season',season),('episode',number)],
                     [('tvdb',tvdb_episode),('anidb',episode)])
     entries=[{'role':'media','path':media,'sha256':evidence['sha256'],'size':evidence['file'][2],'text':None},
              {'role':'episode','path':season_folder+'/'+basename+'.nfo','sha256':hashlib.sha256(episode_nfo).hexdigest(),

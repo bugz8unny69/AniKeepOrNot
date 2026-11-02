@@ -1,10 +1,10 @@
 # Anime title language (NextGen)
 
 Settings → anime → **Anime title language** offers exactly **English** (default)
-or **Japanese (Romaji)**. This changes display names only. The option applies
-to subsequent API reads without a service restart. AniDB/TVDB IDs, episode
-placement, release matching, recognized aliases, staging paths and filenames
-are never renamed by this feature.
+or **Japanese (Romaji)**. It selects dashboard names and NFO show titles written
+for newly staged episodes. It applies to subsequent operations without restart.
+AniDB/TVDB IDs, episode placement, release matching, recognized aliases,
+staging paths and filenames remain unchanged.
 
 The AniDB anime response already supplies typed and language-tagged titles.
 NextGen now records available English (`en`) and romanized Japanese
@@ -44,3 +44,19 @@ node --check src/nextgen/dashboard/static/dashboard.js
 ```
 
 CI validation is performed by the NextGen GitHub Actions workflow on PR #222 before merge.
+
+## Existing Jellyfin NFO repair
+
+The backfill script also previews and repairs already-published staging NFO
+titles: `tvshow.nfo` uses the chosen series title and episode NFOs use it in
+`showtitle`. Episode numbers and provider IDs are retained; directories,
+video filenames and permanent Sonarr media are not renamed. It repairs the
+existing NextGen file hashes, receipts and inode proofs so Keep/Reject cleanup
+remains valid. It skips NFOs already removed after Keep, and fails closed for
+unrecognized or externally modified NFOs. Applying requires exclusive
+maintenance admission and creates a database backup.
+
+After a successful application it reuses the configured Jellyfin
+`/Library/Refresh` request. A successful scan request does **not** guarantee
+that Jellyfin overwrote cached item titles or permanent-media metadata; verify
+those independently. No direct Jellyfin item metadata edits are made.
