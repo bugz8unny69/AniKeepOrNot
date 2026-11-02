@@ -44,6 +44,30 @@ Remaining work includes download/torrent cleanup after Keep/Reject, optional
 Shoko integration, service lifecycle/setup and end-to-end lab validation. Existing
 cancellation download cleanup is reused, rather than being reimplemented here.
 
+## Sequential waiting-release handoff
+
+After canceled acquisition cleanup proves its owned resources are gone, releasing
+one ACTIVE episode slot wakes **only the oldest eligible** ON_HOLD /
+EPISODE_RESERVED contender, ordered by creation time and job ID. Later matches
+stay on hold. This avoids waking several candidates into the same contention
+race; it does not change exact AniDB/TVDB reservation exclusivity.
+
+The worker also reconciles unreserved episodes during startup and polling.
+If a woken claimant fails or stops *before* obtaining the reservation, and no
+other matching reservation or queued claimant exists, it wakes the next eligible
+contender. This handoff is idempotent, transactional and restart-safe. A staged
+winner still cancels all other held competitors via the existing completed-stage
+reconciliation. The worker never chooses a different episode or releases a
+reservation merely because its owner is in Needs review.
+
+Intake exposes failed ownership and a guarded **Try next release** action.
+That action is the existing operation Cancel + cleanup; the handoff occurs only
+when cleanup actually releases the reservation. **Retry acquisition** resumes
+the same stopped job and retains its slot. Explicit **cancel every contender and
+search Prowlarr again** is *not* implemented here: it requires a durable group
+recovery intent to suppress waiter wake-up and only queue a fresh search after
+all affected operations finish cleanup.
+
 ## Staged-episode competitor reconciliation
 
 When one single-episode operation reaches the durable `STAGED` milestone,

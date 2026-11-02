@@ -104,7 +104,11 @@ def published(db,owner_job_id):
 
 
 def wake_waiters(db,reservation_id,now,*,component='worker'):
-    """A released episode slot lets held duplicates of that episode try again."""
+    """Release hands the episode to ONE oldest eligible waiter at a time.
+
+    Later waiters remain held until this contender also releases its slot or
+    a successful publication cancels them. Never run all candidates at once.
+    """
     if not db.in_transaction:raise ValueError('reservation transaction required')
     row=db.execute("SELECT anidb_id,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,"
         "tvdb_episode_id FROM episode_reservations WHERE reservation_id=?",(reservation_id,)).fetchone()
@@ -113,7 +117,7 @@ def wake_waiters(db,reservation_id,now,*,component='worker'):
     waiters=db.execute("SELECT j.job_id,j.event_id,json_extract(j.payload_json,'$.evaluation_job_id'),j.attempt_count "
         "FROM jobs j JOIN job_operation_members m USING(job_id) JOIN job_operations o USING(operation_id) "
         "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' AND j.last_reason_code='EPISODE_RESERVED' "
-        "AND o.state='ACTIVE'").fetchall()
+        "AND o.state='ACTIVE' ORDER BY j.created_at_ms,j.job_id").fetchall()
     for job,event,evaluation,attempt in waiters:
         try:value=_facts(db,evaluation,event)
         except ReservationConflict:continue
@@ -124,6 +128,7 @@ def wake_waiters(db,reservation_id,now,*,component='worker'):
         records.append(append_job_history(db,job_id=job,event_code='RETRY_SCHEDULED',
             reason_code='CANCELED_RESERVATIONS_RELEASED',component=component,
             occurred_at_ms=now,details={'attempt':attempt}))
+        break  # A successful claim will keep the others held; a later release wakes the next.
     return tuple(records)
 
 
@@ -172,6 +177,78 @@ def cancel_staged_waiters(db,plan_id,now,*,only_job_id=None):
         records.extend(_cancel_staged_waiter(db,job,now))
     return tuple(records)
 
+
+
+
+def _resume_unreserved_waiters(db, now, limit=32):
+    """Recover an episode handoff when a woken contender never claimed a slot.
+
+    A failed/stale pending claimant must not strand all the later held copies.
+    This runs under the same SQLite transaction as reservation checks.
+    """
+    waiters=db.execute(
+        "SELECT j.job_id,j.event_id,json_extract(j.payload_json,'$.evaluation_job_id'),j.attempt_count "
+        "FROM jobs j JOIN job_operation_members m USING(job_id) "
+        "JOIN job_operations o USING(operation_id) "
+        "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' "
+        "AND j.last_reason_code='EPISODE_RESERVED' AND o.state='ACTIVE' "
+        "ORDER BY j.created_at_ms,j.job_id"
+    ).fetchall()
+    records=[]
+    seen=set()
+    for job,event,evaluation,attempt in waiters:
+        try: value=_facts(db,evaluation,event)
+        except (ReservationConflict,ValueError,TypeError): continue
+        if not value.selected: continue
+        key=(value.anidb_id,value.anidb_episode_id,value.tvdb_series_id,
+             value.tvdb_season,value.tvdb_episode,value.tvdb_episode_id)
+        if key in seen: continue
+        seen.add(key)
+        if any(db.execute(
+            f"SELECT 1 FROM {table} WHERE state='ACTIVE' AND "
+            "(anidb_episode_id=? OR tvdb_episode_id=? OR "
+            "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)) LIMIT 1",
+            (value.anidb_episode_id,value.tvdb_episode_id,value.tvdb_series_id,
+             value.tvdb_season,value.tvdb_episode)
+        ).fetchone() for table in ('episode_reservations','batch_episode_reservations')):
+            continue
+        # A previously awakened job may still be queued/running. Do not race it.
+        queued=db.execute(
+            "SELECT 1 FROM jobs j "
+            "JOIN job_operation_members m USING(job_id) "
+            "JOIN job_operations o USING(operation_id) "
+            "JOIN trial_evaluations t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
+            "JOIN release_verifications v ON v.verification_id=t.verification_id "
+            "WHERE j.kind='RESERVE_EPISODE' AND j.state IN ('PENDING','RUNNING','RETRY_WAIT') "
+            "AND o.state='ACTIVE' AND t.selected=1 "
+            "AND v.anidb_id=? AND v.anidb_episode_id=? AND v.tvdb_series_id=? "
+            "AND v.tvdb_season=? AND v.tvdb_episode=? AND v.tvdb_episode_id=? LIMIT 1",
+            key
+        ).fetchone()
+        if queued: continue
+        updated=db.execute(
+            "UPDATE jobs SET state='PENDING',available_at_ms=?,updated_at_ms=?,"
+            "last_reason_code=NULL,activity_code=NULL WHERE job_id=? "
+            "AND state='ON_HOLD' AND last_reason_code='EPISODE_RESERVED'",
+            (now,now,job)
+        )
+        if updated.rowcount:
+            records.append(append_job_history(
+                db,job_id=job,event_code='RETRY_SCHEDULED',
+                reason_code='CANCELED_RESERVATIONS_RELEASED',component='worker',
+                occurred_at_ms=now,details={'attempt':attempt}))
+        if len(records)>=limit: break
+    return tuple(records)
+
+
+def reconcile_unreserved_waiters(database, *, limit=32):
+    """Worker polling pass; one eligible acquisition per unreserved episode."""
+    integer(limit,positive=True)
+    from src.nextgen.storage.job_queue import JobQueue
+    from src.nextgen.storage.sqlite import transaction
+    queue=JobQueue(database)
+    with queue.connection() as db,transaction(db):
+        return _resume_unreserved_waiters(db,queue.now(),limit)
 
 def reconcile_staged_waiters(database,*,limit=32):
     """Worker pass for missed stage events; no external I/O or fix script."""
