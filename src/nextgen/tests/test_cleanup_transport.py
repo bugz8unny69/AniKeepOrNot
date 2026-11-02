@@ -11,7 +11,7 @@ from src.nextgen.tests.test_transfer_policy import example
 
 
 class CleanupTransportTests(unittest.TestCase):
-    def test_version_specific_stop_and_single_hash_delete_never_delegate_file_deletion(self):
+    def test_version_specific_stop_and_owned_torrent_payload_deletion(self):
         intent,snapshot=example()
         for major,api,endpoint in ((4,(2,8,19),'torrents/pause'),
                                    (5,(2,10,0),'torrents/pause'),
@@ -27,7 +27,7 @@ class CleanupTransportTests(unittest.TestCase):
             with self.assertRaises(CancellationError):client.cleanup_control(intent,intent.fingerprint,permit,'stop')
             client._request.reset_mock()
             client.cleanup_control(intent,intent.fingerprint,CleanupPermit(intent.fingerprint,'remove'),'remove')
-            client._request.assert_called_once_with('torrents/delete',form={'hashes':intent.plan.manifest.info_hash,'deleteFiles':'false'},limit=4096)
+            client._request.assert_called_once_with('torrents/delete',form={'hashes':intent.plan.manifest.info_hash,'deleteFiles':'true'},limit=4096)
             client._request.reset_mock()
             client.inspect=Mock(return_value=replace(snapshot.observation,state='downloading'))
             with self.assertRaises(ClientInvalid):

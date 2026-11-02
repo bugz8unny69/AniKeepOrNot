@@ -82,7 +82,7 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.payload_root=Path(self.snapshot.observation.save_path)
         self.remainder=self.payload_root/self.snapshot.observation.files[0].path
         self.remainder.parent.mkdir(parents=True,exist_ok=True)
-        # A remaining declared partial payload (selected video was moved out).
+        # A remaining declared download payload; staging now preserves the source.
         self.remainder.write_bytes(b'partial')
         self.attach(worker,mode)
         return worker,fake,actions,target,decision,job

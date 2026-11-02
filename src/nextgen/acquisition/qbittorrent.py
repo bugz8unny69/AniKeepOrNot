@@ -486,5 +486,6 @@ class Client:
             self._request(self.protocol.stop_endpoint,
                           form={'hashes':intent.plan.manifest.info_hash},limit=4096)
         else:
-            # Local files are deleted separately with a persisted exact manifest.
-            self._request('torrents/delete',form={'hashes':intent.plan.manifest.info_hash,'deleteFiles':'false'},limit=4096)
+            # Staging is already committed; qBittorrent deletes its original
+            # payload. The owned ad-* folder is removed separately if needed.
+            self._request('torrents/delete',form={'hashes':intent.plan.manifest.info_hash,'deleteFiles':'true'},limit=4096)

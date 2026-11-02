@@ -16,7 +16,9 @@ from src.nextgen.cancellation import CancellationError
 
 class StagingReview(ValueError):
     reason_code='STAGING_REVIEW'
-    def __init__(self):super().__init__('Staging needs review; existing files have been preserved.')
+    def __init__(self,*,failed_check=None,failed_path=None):
+        self.failed_check,self.failed_path=failed_check,failed_path
+        super().__init__('Staging needs review; existing files have been preserved.')
 
 
 class StagingBusy(RuntimeError):
@@ -76,7 +78,7 @@ def specification(intent,evidence,identity,root,revision,*,display_title=None):
     import uuid
     for entry in entries:entry['temporary']='.ad-'+uuid.uuid4().hex+'.partial'
     return {'root':root,'revision':revision,'source_root':intent.options.download_root,
-            'source':evidence,'entries':entries,'file_mode':0o644,'directory_mode':0o755,'transfer':'MOVE'}
+            'source':evidence,'entries':entries,'file_mode':0o644,'directory_mode':0o755,'transfer':'COPY'}
 
 
 def root_identity(root):
@@ -164,12 +166,24 @@ class Publisher:
         except BaseException:stack.close();raise
 
     def _check(self,entry,fd):
-        if entry['role']!='media':return digest_fd(fd,entry['size'],self.flag)
+        path=self._staging_root+'/'+entry['path']
+        if entry['role']!='media':
+            if os.fstat(fd).st_size!=entry['size']:
+                raise StagingReview(
+                    failed_check='src/nextgen/staging.py:166 _check NFO_SIZE',
+                    failed_path=path)
+            try:return digest_fd(fd,entry['size'],self.flag)
+            except StagingReview:
+                raise StagingReview(
+                    failed_check='src/nextgen/staging.py:166 _check NFO_VALIDATION',
+                    failed_path=path) from None
         info=signature(os.fstat(fd))
-        if info[2]!=entry['size']:raise StagingReview()
-        if getattr(self,'_copy_mode',False):
-            return digest_fd(fd,entry['size'],self.flag)
-        # MOVE reuses the digest established by media verification.
+        if info[2]!=entry['size']:
+            raise StagingReview(
+                failed_check='src/nextgen/staging.py:166 _check MEDIA_SIZE',
+                failed_path=path)
+        # The video was hashed during verification. A staging copy is checked
+        # with its byte count, size and stable source metadata, not rehashed.
         return entry['sha256'],info
 
     def _remove_source(self,plan):
@@ -215,6 +229,7 @@ class Publisher:
     def publish(self,plan):
         if plan.get('transfer') not in ('MOVE','COPY'):raise StagingReview()
         self._copy_mode=plan['transfer']=='COPY'
+        self._staging_root=plan['root']
         receipts=[]
         for entry in plan['entries']:
             self.guard()
@@ -227,22 +242,39 @@ class Publisher:
                 except FileNotFoundError:final=None
                 if final is not None:
                     try:
-                        digest,info=self._check(entry,final)
-                        if digest!=entry['sha256']:raise StagingReview()
-                        # Shared series NFO can be reused only with exact content.
-                        # Media/episode files require our own publication intent.
-                        if artifact is None:
-                            if entry['role']!='series':raise StagingReview()
-                        elif artifact['phase'] not in ('PUBLISH_UNCERTAIN','PUBLISHED'):
-                            raise StagingReview()
-                        if artifact is not None:
-                            if artifact['phase']=='PUBLISH_UNCERTAIN':self.journal.confirm(self.claim,artifact['id'])
-                        os.fsync(final);os.fsync(folder)
-                        receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
-                            'file':list(info),'sha256':digest,'hash_checked':entry['role']!='media' or self._copy_mode,'artifact':None if artifact is None else artifact['id']})
+                        try:
+                            digest,info=self._check(entry,final)
+                            if digest!=entry['sha256']:
+                                raise StagingReview(
+                                    failed_check='src/nextgen/staging.py:166 _check NFO_CONTENT',
+                                    failed_path=self._staging_root+'/'+entry['path'])
+                        except StagingReview:
+                            # NFOs are generated from the pinned manifest. Repair
+                            # our published episode NFO or the shared series NFO;
+                            # never overwrite an unowned episode or any video.
+                            if (entry['role']=='media' or
+                                    (entry['role']=='episode' and
+                                     (artifact is None or artifact['phase'] not in ('PUBLISH_UNCERTAIN','PUBLISHED'))) or
+                                    (artifact is not None and artifact['phase'] not in ('PUBLISH_UNCERTAIN','PUBLISHED'))):
+                                raise
+                        else:
+                            if artifact is None:
+                                if entry['role']!='series':raise StagingReview()
+                            elif artifact['phase'] not in ('PUBLISH_UNCERTAIN','PUBLISHED'):
+                                raise StagingReview()
+                            if artifact is not None and artifact['phase']=='PUBLISH_UNCERTAIN':
+                                self.journal.confirm(self.claim,artifact['id'])
+                            os.fsync(final);os.fsync(folder)
+                            receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
+                                'file':list(info),'sha256':digest,'hash_checked':entry['role']!='media',
+                                'artifact':None if artifact is None else artifact['id']})
+                            continue
                     finally:os.close(final)
-                    continue
-                if artifact is not None and artifact['phase'] not in ('TEMP','PUBLISH_UNCERTAIN'):raise StagingReview()
+                # Missing NFOs with confirmed receipts and mismatched existing
+                # NFOs both use the normal temporary-file publication path.
+                if (artifact is not None and artifact['phase'] not in ('TEMP','PUBLISH_UNCERTAIN')
+                        and not (entry['role']!='media' and artifact['phase']=='PUBLISHED')):
+                    raise StagingReview()
                 moved=False
                 if entry['role']=='media' and artifact is None and not self._copy_mode:
                     stack,source=self._source(plan)
@@ -262,24 +294,36 @@ class Publisher:
                     same_source=entry['role']=='media' and artifact['file']==plan['source']['file'][:2]
                     try:fd=open_regular(folder,entry['temporary'],os.O_RDONLY if same_source else os.O_RDWR)
                     except FileNotFoundError:
-                        # A journaled same-filesystem move can have a changed
-                        # NFS inode after a remount. With the temporary absent,
-                        # recheck the verified source by path and current device.
-                        if entry['role']!='media' or self._copy_mode or artifact['phase']!='TEMP':
-                            raise StagingReview()
-                        self.guard()
-                        with directory(plan['source_root']) as source_root:
-                            with parent(source_root,plan['source']['path']) as (source_folder,name):
-                                source_info=signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False))
-                                if (source_info[2:4]!=tuple(plan['source']['file'][2:4])
-                                        or source_info[0]!=folder_sig[0]):raise StagingReview()
-                                rename_file(source_folder,name,entry['temporary'],target_folder=folder)
-                                os.fsync(folder);os.fsync(source_folder)
-                        fd=open_regular(folder,entry['temporary'])
-                        same_source=True
+                        if entry['role']!='media' or self._copy_mode:
+                            # Our recorded temporary file disappeared. The NFO
+                            # can be regenerated; a COPY can restart from source.
+                            fd=os.open(entry['temporary'],os.O_RDWR|os.O_CREAT|os.O_EXCL|
+                                       os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=folder)
+                            os.fsync(fd);os.fsync(folder)
+                        else:
+                            # Legacy MOVE: the source may have been renamed
+                            # before a crash. Never manufacture a missing video.
+                            if artifact['phase']!='TEMP':raise StagingReview()
+                            self.guard()
+                            with directory(plan['source_root']) as source_root:
+                                with parent(source_root,plan['source']['path']) as (source_folder,name):
+                                    source_info=signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False))
+                                    if (source_info[2:4]!=tuple(plan['source']['file'][2:4])
+                                            or source_info[0]!=folder_sig[0]):raise StagingReview()
+                                    rename_file(source_folder,name,entry['temporary'],target_folder=folder)
+                                    os.fsync(folder);os.fsync(source_folder)
+                            fd=open_regular(folder,entry['temporary'])
+                            same_source=True
                     moved=same_source
                 try:
-                    if artifact['phase']=='TEMP' and not moved:self._copy(plan,entry,fd)
+                    # NFOs are cheap to recreate. Resume interrupted copies
+                    # from their verified source; a full uncertain temp has
+                    # already been fsynced before its publication intent.
+                    current_size=os.fstat(fd).st_size
+                    rewrite=(not moved and
+                        (entry['role']!='media' or artifact['phase']=='TEMP' or
+                         (self._copy_mode and current_size!=entry['size'])))
+                    if rewrite:self._copy(plan,entry,fd)
                     elif moved:os.fsync(fd)
                     digest,before=self._check(entry,fd)
                     if digest!=entry['sha256']:raise StagingReview()
@@ -291,9 +335,10 @@ class Publisher:
                     rename_file(folder,entry['temporary'],relative.name);os.fsync(folder)
                     after=signature(os.stat(relative.name,dir_fd=folder,follow_symlinks=False))
                     if after[2:4]!=before[2:4]:raise StagingReview()
-                    self.journal.confirm(self.claim,artifact['id'])
+                    if artifact['phase'] in ('TEMP','PUBLISH_UNCERTAIN'):
+                        self.journal.confirm(self.claim,artifact['id'])
                     receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
-                        'file':list(after),'sha256':digest,'hash_checked':entry['role']!='media' or self._copy_mode,'artifact':artifact['id']})
+                        'file':list(after),'sha256':digest,'hash_checked':entry['role']!='media','artifact':artifact['id']})
                 finally:os.close(fd)
         # Revalidate all published files, including those recovered from an old
         # attempt. No source deletion or broad cleanup is part of staging.
