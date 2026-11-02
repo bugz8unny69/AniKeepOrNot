@@ -1,6 +1,7 @@
 """Explicit rejected-anime decisions and selected staging cleanup."""
 import json
 import os
+import hashlib
 
 from src.nextgen.acquisition.cleanup import directory, parent
 from src.nextgen.acquisition.metadata import AcquisitionConflict
@@ -46,15 +47,28 @@ def remove_selected(manifest,receipts,guard,keep_root):
         if entry['role']=='series':continue
         guard()
         with directory(plan['root']) as root:
-            if [os.fstat(root).st_dev,os.fstat(root).st_ino]!=plan['root_identity']:raise StagingReview()
             with parent(root,entry['path']) as (folder,name):
-                if [os.fstat(folder).st_dev,os.fstat(folder).st_ino]!=proof['root']:raise StagingReview()
-                try:info=signature(os.stat(name,dir_fd=folder,follow_symlinks=False))
+                try:
+                    fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder)
                 except FileNotFoundError:
                     os.fsync(folder);continue
-                if list(info)!=proof['file']:raise StagingReview()
+                try:
+                    info=signature(os.fstat(fd))
+                    if info[2]!=entry['size']:raise StagingReview()
+                    # NFOs are small: verify the exact content that was
+                    # published. Videos use the already-verified path, size,
+                    # and mtime; hash only if that cheap metadata changed.
+                    if entry['role']=='episode' or info[3]!=proof['file'][3]:
+                        digest=hashlib.sha256()
+                        while True:
+                            chunk=os.read(fd,1024*1024)
+                            if not chunk:break
+                            digest.update(chunk)
+                        if digest.hexdigest()!=entry['sha256']:raise StagingReview()
+                finally:os.close(fd)
                 guard()
-                if signature(os.stat(name,dir_fd=folder,follow_symlinks=False))!=info:raise StagingReview()
+                current=signature(os.stat(name,dir_fd=folder,follow_symlinks=False))
+                if current[2]!=entry['size'] or current[3]!=info[3]:raise StagingReview()
                 os.unlink(name,dir_fd=folder);os.fsync(folder)
 
 
@@ -62,20 +76,21 @@ def _prune_series(manifests,guard):
     """After a whole-series Reject, drop empty season folders, our own
     tvshow.nfo and the then-empty series folder. Never recursive: any file we
     did not write keeps its folders in place."""
-    import errno,hashlib
+    import errno
     from pathlib import PurePosixPath
     targets={}
     for manifest in manifests:
         plan=json.loads(manifest)
         for entry in plan['entries']:
             if entry.get('role')=='series':
-                targets[(plan['root'],tuple(plan['root_identity']),entry['path'])]=entry['sha256']
-    for (root_path,identity,nfo_path),sha in targets.items():
+                targets.setdefault((plan['root'],entry['path']),set()).add(entry['sha256'])
+    for (root_path,nfo_path),hashes in targets.items():
+        if len(hashes)!=1:continue  # Disagreeing publication content is not a deletion permit.
+        sha=next(iter(hashes))
         guard()
         nfo=PurePosixPath(nfo_path)
         if len(nfo.parts)!=2 or nfo.name!='tvshow.nfo':raise StagingReview()
         with directory(root_path) as root:
-            if (os.fstat(root).st_dev,os.fstat(root).st_ino)!=identity:raise StagingReview()
             try:series=os.open(nfo.parts[0],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=root)
             except FileNotFoundError:continue
             try:
