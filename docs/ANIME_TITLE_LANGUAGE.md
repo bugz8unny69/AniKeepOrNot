@@ -43,4 +43,4 @@ python3 -m unittest src.nextgen.tests.test_anime_title_language src.nextgen.test
 node --check src/nextgen/dashboard/static/dashboard.js
 ```
 
-CI is intentionally not run for this change.
+CI validation is performed by the NextGen GitHub Actions workflow on PR #222 before merge.
