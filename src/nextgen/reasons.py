@@ -157,6 +157,7 @@ _ENTRIES = (
            "Source files have been inspected and the acquisition plan is ready.", "Complete download policy and client setup before submission.", "INFO", None),
     Reason("EPISODE_RESERVATION_GRANTED", "A selected verified episode has an exclusive durable reservation.",
            "This episode is reserved for acquisition.", "Continue with source verification before starting a download.", "INFO", None),
+    Reason('EPISODE_ALREADY_STAGED','Another operation has staged this verified episode, so competing held work was canceled.','Canceled: episode already staged.','No action needed. The competing release was skipped and only its owned resources are cleaned up; the staged episode is retained.','INFO',False),
     Reason("EPISODE_RESERVED", "Another job owns the exact verified episode reservation.",
            "Another job has reserved this episode.", "Review the existing reservation before resuming this job.", "INFO", None),
     Reason("EPISODE_RESERVATION_CONFLICT", "Episode evidence, selection or reservation identity is inconsistent.",

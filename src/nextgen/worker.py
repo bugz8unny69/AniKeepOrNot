@@ -275,6 +275,9 @@ class Worker:
                 records = await self._io(self.queue.recover_expired)
                 for record in records:
                     log_history(self.logger,record)
+                from src.nextgen.storage.episode_reservations import reconcile_staged_waiters
+                for record in await self._io(reconcile_staged_waiters,self.queue.database):
+                    log_history(self.logger,record)
         except (MaintenanceBusy, MaintenancePending):
             return
 

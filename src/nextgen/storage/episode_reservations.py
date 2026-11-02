@@ -127,29 +127,81 @@ def wake_waiters(db,reservation_id,now,*,component='worker'):
     return tuple(records)
 
 
-def skip_staged_waiters(db,plan_id,now):
-    """Close only verified, held competitors in the staging completion transaction.
+def _cancel_staged_waiter(db,job_id,now):
+    """Use the same cancellation and owned-resource cleanup as manual Cancel."""
+    from src.nextgen.storage.cancellation import operation, request_cancellation
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    row=db.execute("SELECT state,last_reason_code,event_id FROM jobs WHERE job_id=?",(job_id,)).fetchone()
+    if row is None or row[:2]!=('ON_HOLD','EPISODE_RESERVED'):return ()
+    scope=operation(db,job_id)
+    if scope[1]!='ACTIVE':return ()
+    if db.execute("SELECT 1 FROM management_actions WHERE operation_id=? AND action='CLEANUP'",(scope[0],)).fetchone():
+        return ()
+    operation_id,records=request_cancellation(db,job_id,now,component='worker',reason_code='EPISODE_ALREADY_STAGED')
+    control,audit=enqueue_job_with_receipt(db,component='worker',kind='CLEANUP_CANCELED_OPERATION',
+        event_id=row[2],payload={'target_job_id':job_id},available_at_ms=now)
+    db.execute('INSERT INTO management_actions VALUES(?,?,?,?,?)',
+               (operation_id,'CLEANUP',job_id,control,now))
+    return (*records,audit)
 
-    Running/queued contenders check publication again in persist_reservation.
-    Canceled operations and inconsistent identity facts are left untouched.
-    """
+
+def cancel_staged_waiters(db,plan_id,now,*,only_job_id=None):
+    """Cancel held competitors once the exact episode has a published STAGED winner."""
     if not db.in_transaction:raise ValueError('staging transaction required')
     row=db.execute("SELECT r.owner_job_id,r.anidb_id,r.anidb_episode_id,r.tvdb_series_id,"
         "r.tvdb_season,r.tvdb_episode,r.tvdb_episode_id FROM episode_reservations r "
         "JOIN acquisition_plans p USING(reservation_id) WHERE p.plan_id=? AND r.state='ACTIVE'",(plan_id,)).fetchone()
     if row is None or not published(db,row[0]):raise ReservationConflict()
-    records=[]
-    waiters=db.execute("SELECT j.job_id,j.event_id,json_extract(j.payload_json,'$.evaluation_job_id'),j.attempt_count "
+    winner=db.execute("SELECT o.state FROM job_operations o JOIN job_operation_members m USING(operation_id) "
+                      "WHERE m.job_id=?",(row[0],)).fetchone()
+    if winner!=('STAGED',):raise ReservationConflict()
+    query=("SELECT j.job_id,j.event_id,CASE WHEN json_valid(j.payload_json) THEN json_extract(j.payload_json,'$.evaluation_job_id') END "
         "FROM jobs j JOIN job_operation_members m USING(job_id) JOIN job_operations o USING(operation_id) "
         "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' AND j.last_reason_code='EPISODE_RESERVED' "
-        "AND o.state='ACTIVE'").fetchall()
-    for job,event,evaluation,attempt in waiters:
+        "AND o.state='ACTIVE'")
+    args=()
+    if only_job_id is not None:
+        query+=' AND j.job_id=?'
+        args=(integer(only_job_id,positive=True),)
+    records=[]
+    for job,event,evaluation in db.execute(query,args).fetchall():
         try:value=_facts(db,evaluation,event)
-        except ReservationConflict:continue
+        except (ReservationConflict,ValueError,TypeError):continue
         if not value.selected or (value.anidb_id,value.anidb_episode_id,value.tvdb_series_id,
                 value.tvdb_season,value.tvdb_episode,value.tvdb_episode_id)!=row[1:]:continue
-        db.execute("UPDATE jobs SET state='DONE',activity_code='SKIPPED_DUPLICATE',last_reason_code=NULL,"
-            "updated_at_ms=?,available_at_ms=? WHERE job_id=?",(now,now,job))
-        records.append(append_job_history(db,job_id=job,event_code='DONE',component='worker',
-            occurred_at_ms=now,details={'attempt':attempt}))
+        records.extend(_cancel_staged_waiter(db,job,now))
     return tuple(records)
+
+
+def reconcile_staged_waiters(database,*,limit=32):
+    """Worker pass for missed stage events; no external I/O or fix script."""
+    integer(limit,positive=True)
+    from src.nextgen.storage.job_queue import JobQueue
+    from src.nextgen.storage.sqlite import transaction
+    queue=JobQueue(database)
+    with queue.connection() as db,transaction(db):
+        now=queue.now()
+        waiters=db.execute("SELECT j.job_id,j.event_id,CASE WHEN json_valid(j.payload_json) THEN json_extract(j.payload_json,'$.evaluation_job_id') END "
+            "FROM jobs j JOIN job_operation_members m USING(job_id) JOIN job_operations o USING(operation_id) "
+            "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' AND j.last_reason_code='EPISODE_RESERVED' "
+            "AND o.state='ACTIVE' ORDER BY j.job_id").fetchall()
+        records=[];handled=0
+        for job,event,evaluation in waiters:
+            try:value=_facts(db,evaluation,event)
+            except (ReservationConflict,ValueError,TypeError):continue
+            if not value.selected:continue
+            plan=db.execute("SELECT p.plan_id FROM episode_reservations r "
+                "JOIN acquisition_plans p USING(reservation_id) "
+                "JOIN staging_publications s ON s.plan_id=p.plan_id AND s.state='PUBLISHED' "
+                "JOIN job_operation_members m ON m.job_id=r.owner_job_id "
+                "JOIN job_operations o ON o.operation_id=m.operation_id AND o.state='STAGED' "
+                "WHERE r.state='ACTIVE' AND r.anidb_id=? AND r.anidb_episode_id=? "
+                "AND r.tvdb_series_id=? AND r.tvdb_season=? AND r.tvdb_episode=? "
+                "AND r.tvdb_episode_id=? LIMIT 1",
+                (value.anidb_id,value.anidb_episode_id,value.tvdb_series_id,
+                 value.tvdb_season,value.tvdb_episode,value.tvdb_episode_id)).fetchone()
+            if plan is None:continue
+            records.extend(cancel_staged_waiters(db,plan[0],now,only_job_id=job))
+            handled+=1
+            if handled>=limit:break
+        return tuple(records)
