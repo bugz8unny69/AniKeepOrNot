@@ -238,45 +238,51 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
 
     queries = []
 
-    # 1. Primary queries for main title: traditional AniDB number and scene SxxEyy
     main = aliases[0]
     main_base, main_marker = season_marker(main)
     effective_scene_base = main_base if main_marker is not None else main
 
-    # Traditional AniDB episode query: "Title 01" / "Title 2nd Season 05"
-    queries.append('%s %02d' % (main, target.anidb_episode))
-    # Scene SxxEyy query: "Title S01E01" / "Title S02E05"
-    queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
-
-    # 2. English title (first other alias) queries:
     other_aliases = aliases[1:]
-    if other_aliases:
+    has_english = bool(other_aliases)
+    if has_english:
         eng = other_aliases[0]
         eng_base, eng_marker = season_marker(eng)
         eng_scene_base = eng_base if eng_marker is not None else eng
-        queries.append('%s %02d' % (eng, target.anidb_episode))
+
+    if prefer_audio and has_english:
+        # Prioritize English scene queries and audio hints when dual-audio is required
         queries.append('%s S%02dE%02d' % (eng_scene_base, current_season, target.tvdb_episode))
-
-    # 3. Audio-aware query variants when prefer_audio (prioritizing English scene title for dual-audio)
-    if prefer_audio and other_aliases:
         queries.append('%s S%02dE%02d Dual-Audio' % (eng_scene_base, current_season, target.tvdb_episode))
-
-    # 4. Broad fallback for additional aliases (e.g. short synonym "Saikyosoubi 01"):
-    for syn in other_aliases[1:]:
-        queries.append('%s %02d' % (syn, target.anidb_episode))
-
-    # 5. Additional audio-aware query variants when slots allow:
-    if prefer_audio:
+        queries.append('%s %02d' % (eng, target.anidb_episode))
+        queries.append('%s %02d' % (main, target.anidb_episode))
+        queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
+        for syn in other_aliases[1:]:
+            queries.append('%s %02d' % (syn, target.anidb_episode))
         queries.append('%s S%02dE%02d Dual-Audio' % (effective_scene_base, current_season, target.tvdb_episode))
-        if other_aliases:
-            queries.append('%s %02d Dual-Audio' % (eng, target.anidb_episode))
-        queries.append('%s %02d Dual-Audio' % (main, target.anidb_episode))
+    else:
+        # 1. Primary queries for main title: traditional AniDB number and scene SxxEyy
+        queries.append('%s %02d' % (main, target.anidb_episode))
+        queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
 
-    # 6. Scene queries for additional synonyms:
-    for syn in other_aliases[1:]:
-        s_base, s_marker = season_marker(syn)
-        s_scene_base = s_base if s_marker is not None else syn
-        queries.append('%s S%02dE%02d' % (s_scene_base, current_season, target.tvdb_episode))
+        # 2. English title (first other alias) queries:
+        if has_english:
+            queries.append('%s %02d' % (eng, target.anidb_episode))
+            queries.append('%s S%02dE%02d' % (eng_scene_base, current_season, target.tvdb_episode))
+
+        # 3. Broad fallback for additional aliases (e.g. short synonym "Saikyosoubi 01"):
+        for syn in other_aliases[1:]:
+            queries.append('%s %02d' % (syn, target.anidb_episode))
+
+        # 4. Audio-aware query variants when prefer_audio (Japanese + English required)
+        if prefer_audio:
+            queries.append('%s S%02dE%02d Dual-Audio' % (effective_scene_base, current_season, target.tvdb_episode))
+            queries.append('%s %02d Dual-Audio' % (main, target.anidb_episode))
+
+        # 5. Scene queries for additional synonyms:
+        for syn in other_aliases[1:]:
+            s_base, s_marker = season_marker(syn)
+            s_scene_base = s_base if s_marker is not None else syn
+            queries.append('%s S%02dE%02d' % (s_scene_base, current_season, target.tvdb_episode))
 
     # 7. For sequels with season bases (e.g. "Kusuriya no Hitorigoto 2nd Season" -> base "Kusuriya no Hitorigoto")
     bases = sorted({base for base, _ in season_bases(catalog_titles)})

@@ -32,15 +32,14 @@ historical job and table names are kept so existing jobs and history stay valid)
    the AniDB air date.
 2. Prowlarr is queried with GET `/api/v1/search` with a bounded, deterministic
    query budget of at most six queries per episode:
-   - Primary traditional AniDB episode number (`Title 01`) and scene-style
-     `S01E01` / `SxxEyy` formatting for the AniDB main title;
-   - Verified catalog aliases, prioritizing a known official English title
-     when available (`English 01`, `English S01E01`);
-   - Broad fallback queries for short synonyms (`Saikyosoubi 01`) so traditional
-     anime indexers are never missed;
-   - Bounded audio-aware variants (prioritizing the English scene title e.g.
-     `English S01E01 Dual-Audio`, followed by the AniDB main title) when
-     `acquisition.audio_check=japanese_english`;
+   - When `acquisition.audio_check=japanese_english` and a verified English
+     title is known, Western scene naming takes precedence: `English S01E01`,
+     followed by `English S01E01 Dual-Audio`, `English 01`, AniDB main title
+     queries (`Title 01`, `Title S01E01`), and short synonym broad fallbacks
+     (`Saikyosoubi 01`);
+   - In standard discovery (when audio check is not required), traditional
+     AniDB episode formatting (`Title 01`) and scene formatting (`Title S01E01`)
+     come first, followed by verified English aliases and short synonyms;
    - Franchise and sequel base queries (`Base 01`, `Base SxxEyy`, and absolute
      sequel numbers like `Base 29`).
    Indexer throttling and rate limiting remain Prowlarr's responsibility;
