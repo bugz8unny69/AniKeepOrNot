@@ -31,19 +31,27 @@ def tvdb_episode_ids(client, tid, secret, cancelled=None):
     return placements
 
 
-def build_catalog(client, aid, tid, secret, *, today=None):
+def build_catalog(client, aid, tid, secret=None, *, today=None):
     """AniDB episode number -> EpisodeTarget with its own TVDB placement.
 
-    AniDB decides which episodes exist and have aired. Each aired episode
-    needs one Anime-Lists placement with exactly one official TVDB episode;
-    otherwise it is MAPPING_MISSING. Placements may differ in TVDB season.
+    AniDB decides which episodes exist and have aired. TVDB placement is
+    attached when available; otherwise aired episodes are SEARCHABLE without TVDB IDs.
     """
     record = client.anime(aid)
     titles = (record['title'], *(t for t in record['titles'] if t != record['title']))
     episodes = client.episodes(aid)
     airdates = client.airdates(aid)
-    mappings = forward_mappings(client.mapping_xml(), aid, tid, episodes)
-    placements = tvdb_episode_ids(client, tid, secret)
+    mappings = {}
+    placements = {}
+    if tid is not None:
+        try:
+            mappings = forward_mappings(client.mapping_xml(), aid, tid, episodes)
+        except Exception:
+            mappings = {}
+        try:
+            placements = tvdb_episode_ids(client, tid, secret)
+        except Exception:
+            placements = {}
     today = (today or datetime.date.today()).isoformat()
     targets = {}
     for number in episodes:
@@ -66,13 +74,17 @@ def build_catalog(client, aid, tid, secret, *, today=None):
     return EpisodeCatalog(titles, targets, english_title=english_title)
 
 
-def make_catalog_factory(options, credentials, *, client_pool):
+def make_catalog_factory(options, credentials=None, *, client_pool):
     """configuration -> catalog(aid, tid), sharing the worker's provider pool."""
     def for_configuration(configuration):
         def catalog(aid, tid):
             actual = options(configuration) if callable(options) else options
-            secret = credentials()
-            if type(secret) is not Credentials: raise ProviderAuthenticationFailed()
+            secret = None
+            if callable(credentials):
+                try: secret = credentials()
+                except Exception: secret = None
+            elif credentials is not None:
+                secret = credentials
             client = client_pool.get(configuration.value('storage.database_path'), actual)
             return build_catalog(client, aid, tid, secret)
         return catalog

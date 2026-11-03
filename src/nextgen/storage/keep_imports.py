@@ -22,7 +22,7 @@ class Journal:
         if row is None:raise KeepReview()
         require_allowed(db,staged(db,operation(db,row[0])[0])[0])
 
-    def load(self,claim,target,configuration):
+    def load(self,claim,target,configuration,*,resolver=None):
         with self.queue.connection() as db,transaction(db):
             self.guard(db,claim)
             row=db.execute('SELECT phase,data_json FROM keep_imports WHERE job_id=?',(claim.job_id,)).fetchone()
@@ -40,7 +40,7 @@ class Journal:
                     db.execute('UPDATE keep_imports SET data_json=?,updated_at_ms=? WHERE job_id=?',
                                (json.dumps(data,sort_keys=True),self.queue.now(),claim.job_id))
                 return row[0],data
-            selection=load_selection(db,target);options=Options.capture(configuration,selection)
+            selection=load_selection(db,target,resolver=resolver);options=Options.capture(configuration,selection)
             from src.nextgen.staging import disjoint
             disjoint(options.keep_root,(selection.staging_root,))
             disjoint(options.library_root,(options.staging_root,))

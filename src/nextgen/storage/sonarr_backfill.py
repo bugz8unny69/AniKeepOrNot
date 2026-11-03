@@ -100,15 +100,18 @@ def _plan(db, plan_id, start, retry_episode=None):
         if retry_episode not in numbers: raise BackfillConflict()
         numbers = (retry_episode,)
     marks = ','.join('?' for _ in numbers)
-    # Reservations stay TVDB-keyed in Step 1: block by AniDB identity where it
-    # is recognized, and by TVDB placement for every target (Client.backfill).
+    # Active reservations block by AniDB identity (both via release verifications
+    # and recognized episodes) and by TVDB placement for every target (Client.backfill).
     reserved = tuple(sorted({r[0] for r in db.execute(
+        "SELECT v.anidb_episode_number FROM episode_reservations r "
+        "JOIN release_verifications v USING(verification_id) "
+        f"WHERE r.state='ACTIVE' AND r.anidb_id=? AND v.anidb_episode_number IN ({marks}) UNION "
         "SELECT e.anidb_episode_number FROM recognized_episodes e WHERE e.anidb_id=? "
         f"AND e.anidb_episode_number IN ({marks}) AND EXISTS ("
         "SELECT 1 FROM episode_reservations r WHERE r.state='ACTIVE' "
         "AND r.anidb_episode_id=e.anidb_episode_id UNION ALL "
         "SELECT 1 FROM batch_episode_reservations r WHERE r.state='ACTIVE' "
-        "AND r.anidb_episode_id=e.anidb_episode_id)", (aid, *numbers))}))
+        "AND r.anidb_episode_id=e.anidb_episode_id)", (aid, *numbers, aid, *numbers))}))
     placements = tuple(sorted(set(db.execute(
         "SELECT tvdb_season,tvdb_episode FROM episode_reservations WHERE "
         "tvdb_series_id=? AND state='ACTIVE' UNION "

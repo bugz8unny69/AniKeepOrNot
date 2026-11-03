@@ -45,7 +45,7 @@ class KeepSelection:
             raise KeepSelectionInvalid() from None
 
 
-def load_selection(db,target_job_id):
+def load_selection(db,target_job_id,*,resolver=None):
     """Read the existing staged manifest, rather than rebuilding names or NFOs."""
     op=operation(db,target_job_id)
     if op[1]!='STAGED':raise KeepSelectionInvalid()
@@ -59,6 +59,12 @@ def load_selection(db,target_job_id):
                            'WHERE anidb_id=? AND anidb_episode_id=?', (aid, eid)).fetchone()
         if known is not None:
             tvdb_eid, season, ep = known
+        elif resolver is not None:
+            resolved = resolver(db, aid, eid, tid, target_job_id)
+            if resolved is not None:
+                tvdb_eid, season, ep = resolved
+            else:
+                raise KeepSelectionInvalid()
         else:
             raise KeepSelectionInvalid()
     identity = (aid, eid, tid, tvdb_eid, season, ep)
