@@ -758,6 +758,22 @@ CREATE TABLE IF NOT EXISTS prowlarr_search_snapshots (
 CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_job ON prowlarr_search_snapshots(job_id, attempt);
 CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_plan ON prowlarr_search_snapshots(plan_id, episode);
 
+CREATE TABLE IF NOT EXISTS manual_release_submissions (
+ event_id INTEGER PRIMARY KEY REFERENCES incoming_events(event_id),
+ verify_job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(job_id),
+ anidb_id INTEGER NOT NULL REFERENCES identified_anime(anidb_id),
+ tvdb_season INTEGER NOT NULL CHECK(tvdb_season>=0 AND tvdb_season<=1000),
+ tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode BETWEEN 1 AND 1000),
+ info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^a-f0-9]*'),
+ source TEXT NOT NULL CHECK(source IN ('magnet','torrent')),
+ metainfo BLOB,
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+ UNIQUE(anidb_id,tvdb_season,tvdb_episode,info_hash),
+ CHECK((source='magnet' AND metainfo IS NULL) OR
+       (source='torrent' AND length(metainfo) BETWEEN 1 AND 4194304))
+);
+CREATE INDEX IF NOT EXISTS idx_manual_release_episode ON manual_release_submissions(anidb_id,tvdb_season,tvdb_episode);
+
 """
 
 def connect(path):
@@ -797,13 +813,13 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v54; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema v55; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.
     """
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version == 54:
+    if version == 55:
         return
     if version != 0:
         raise ValueError("existing NextGen database requires versioned SQL upgrade")
@@ -813,7 +829,7 @@ def initialize(db):
     if db.in_transaction:
         raise ValueError("initialization requires no active transaction")
     try:
-        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=54;\nCOMMIT;")
+        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=55;\nCOMMIT;")
     except BaseException:
         db.rollback()
         raise

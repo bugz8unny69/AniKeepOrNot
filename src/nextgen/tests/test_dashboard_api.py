@@ -252,6 +252,28 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
                       '/api/v1/jobs/1/history?show_completed=0'):
             self.assertEqual((await self.request('GET',route,token=ADMIN))[0],400)
 
+    async def test_related_jobs_filter_uses_verified_episode_reservations(self):
+        evaluation, reservation_job = await reserve_without_metadata(self)
+        aid, season, episode = self.rows(
+            "SELECT anidb_id,tvdb_season,tvdb_episode FROM episode_reservations")[0]
+        path = f'/api/v1/jobs?anidb_id={aid}&season={season}&episode={episode}'
+        status, result, _ = await self.request('GET', path, token=ADMIN)
+        self.assertEqual(status, 200)
+        matched = {item['job_id']: item for item in result['data']['items']}
+        self.assertIn(reservation_job, matched)
+        self.assertIn(evaluation, matched)
+        self.assertIn({'season': season, 'episode': episode},
+                      matched[reservation_job]['episode_targets'])
+        self.assertEqual(matched[reservation_job]['anime_title'], 'Test Anime')
+        status, absent, _ = await self.request('GET',
+            f'/api/v1/jobs?anidb_id={aid}&season={season}&episode={episode+1}', token=ADMIN)
+        self.assertEqual(status, 200)
+        self.assertNotIn(reservation_job, [item['job_id'] for item in absent['data']['items']])
+        for invalid in ('/api/v1/jobs?anidb_id=1',
+                        '/api/v1/jobs?anidb_id=1&season=1&episode=bad',
+                        '/api/v1/jobs?anidb_id=1&season=-1&episode=1'):
+            self.assertEqual((await self.request('GET', invalid, token=ADMIN))[0], 400)
+
     async def test_display_context_ignores_unknown_and_malformed_stored_declarations(self):
         _,result,_=await self.request('POST','/api/v1/webhook',self.release(),token=WEB)
         job=result['data']['job_id'];db=connect(self.database)

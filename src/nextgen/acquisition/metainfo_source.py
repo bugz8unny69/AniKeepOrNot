@@ -223,6 +223,14 @@ def make_reader(*, client_factory=QbClient, secrets=None):
     async def read_metainfo(source, configuration, cancelled):
         if cancelled.is_set():
             raise asyncio.CancelledError()
+        from src.nextgen.storage.manual_release import metainfo_for
+        uploaded = await blocking(
+            metainfo_for, configuration.value('storage.database_path'),
+            source.event_id, infohash(source.info_hash))
+        if uploaded is not None:
+            # Exact uploaded BEP3 bytes flow through the existing strict
+            # PREPARE -> SUBMIT_TORRENT pipeline, not a metadata-only magnet.
+            return uploaded
         from src.nextgen.storage.acquisition import source_magnet
         magnet = await blocking(
             source_magnet,configuration.value('storage.database_path'),source)

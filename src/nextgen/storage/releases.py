@@ -53,6 +53,15 @@ def persist_release(db, claim, value):
     if origin==('sonarr-discovery',):
         from src.nextgen.storage.sonarr_selection import require_verified_delivery
         require_verified_delivery(db,value)
+    if origin==('manual-release',):
+        # The user-selected placement is a request, not a verified identity.
+        # Provider verification must resolve EXACTLY that episode before any
+        # downstream reservation or torrent ownership can begin.
+        target=db.execute(
+            'SELECT anidb_id,tvdb_season,tvdb_episode FROM manual_release_submissions '
+            'WHERE event_id=?',(source.event_id,)).fetchone()
+        if target != (source.anidb_id,value.tvdb_season,value.tvdb_episode):
+            raise ReleaseConflict()
     stored=db.execute("SELECT tvdb_series_id FROM identified_anime WHERE anidb_id=?",(source.anidb_id,)).fetchone()
     if stored is None or stored[0]!=source.tvdb_series_id: raise ReleaseConflict()
     owner=db.execute("SELECT anidb_id FROM identified_episodes WHERE anidb_episode_id=?",(value.anidb_episode_id,)).fetchone()

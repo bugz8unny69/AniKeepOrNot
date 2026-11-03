@@ -50,6 +50,7 @@ class SeriesIntakeTests(unittest.TestCase):
                 tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER,
                 anidb_episode_id INTEGER,tvdb_episode_id INTEGER);
             CREATE TABLE IF NOT EXISTS job_history(job_id INTEGER,event_code TEXT);
+            CREATE TABLE IF NOT EXISTS manual_release_submissions(anidb_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
             INSERT INTO sonarr_backfill_results VALUES(300,1,'NO_RESULTS');
         """)
 

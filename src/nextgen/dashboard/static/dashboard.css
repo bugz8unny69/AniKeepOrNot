@@ -93,3 +93,18 @@ align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .credential-input .credential-eye:focus-visible{outline:2px solid #87c8ff;outline-offset:2px}
 .credential-input .credential-eye svg{pointer-events:none}
 .attempt-failed{color:#f2b8a0}.attempts{margin-bottom:1rem}
+
+/* Episode identity stays legible independently of a truncated torrent title. */
+.job-anime{display:block;max-width:300px;overflow-wrap:anywhere}
+.job-episode{display:block;margin:4px 0;font-weight:700;color:#a7d5ff}
+.job-release{display:-webkit-box;-webkit-line-clamp:1;margin-top:5px;font-size:.82rem}
+.job-release-full{white-space:pre-wrap;overflow-wrap:anywhere;max-width:450px;font-size:.84rem}
+.job-details{margin-top:5px;max-width:450px}
+.job-details summary{font-size:.82rem;max-width:none}
+.job-details p{margin:8px 0}
+
+/* One compact, in-dialog submission form; no modal stacking. */
+.manual-submission{display:grid;gap:12px;max-width:660px}
+.manual-submission label{display:grid;gap:6px}
+.manual-submission input,.manual-submission textarea,.manual-submission select{width:100%;min-width:0}
+.manual-submission textarea{resize:vertical;overflow-wrap:anywhere}

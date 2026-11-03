@@ -34,6 +34,12 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
         configuration=context.configuration
         try:
             database=configuration.value('storage.database_path')
+            from src.nextgen.storage.manual_release import metainfo_for
+            uploaded=await blocking(metainfo_for,database,source.event_id,source.info_hash)
+            if uploaded is not None:
+                # A supplied .torrent has its own original info bytes. Let
+                # PREPARE validate them, and SUBMIT add that exact file.
+                return None
             identity=await blocking(acquisition_identity,database,source)
             magnet=None
             if identity is None:

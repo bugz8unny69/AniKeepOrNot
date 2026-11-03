@@ -37,6 +37,7 @@ from src.nextgen.storage.sqlite import accept_event_and_job
 
 PREFIX='/api/v1'
 MAX_BODY=65536
+MAX_TORRENT_BODY=6*1024*1024  # base64 of a bounded 4 MiB BEP3 file
 CATALOG=MessageCatalog(handlers=HANDLERS)
 
 
@@ -162,7 +163,7 @@ class Application:
             if not self.closed:
                 notify('WATCHDOG=1')
 
-    async def _body(self,receive):
+    async def _body(self,receive,limit=MAX_BODY):
         chunks=[];size=0
         while True:
             message=await receive()
@@ -171,7 +172,7 @@ class Application:
             chunk=message.get('body',b'')
             if type(chunk) is not bytes:raise ApiError(400,'API_REQUEST_INVALID')
             size+=len(chunk)
-            if size>MAX_BODY:raise ApiError(413,'API_BODY_TOO_LARGE')
+            if size>limit:raise ApiError(413,'API_BODY_TOO_LARGE')
             if chunk:chunks.append(chunk)
             if not message.get('more_body',False):return b''.join(chunks)
 
@@ -221,14 +222,17 @@ class Application:
                 raise ApiError(400,'API_ORIGIN_INVALID')
             if 'content-encoding' in headers:raise ApiError(415,'API_MEDIA_TYPE_INVALID')
             if headers.get('transfer-encoding') not in (None,'chunked') or 'transfer-encoding' in headers and 'content-length' in headers:raise ApiError(400,'API_REQUEST_INVALID')
-            length=headers.get('content-length')
-            if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>MAX_BODY):raise ApiError(413,'API_BODY_TOO_LARGE')
             raw_query=scope.get('query_string',b'')
             path=scope.get('path','')
+            manual_upload=scope['method']=='POST' and bool(re.fullmatch(
+                PREFIX+r'/intake/series/[1-9][0-9]{0,18}/episodes/[0-9]{1,4}/[1-9][0-9]{0,3}/submit',path))
+            body_limit=MAX_TORRENT_BODY if manual_upload else MAX_BODY
+            length=headers.get('content-length')
+            if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>body_limit):raise ApiError(413,'API_BODY_TOO_LARGE')
             if len(raw_query)>2048 or len(path)>512 or '%' in path or not (path.startswith(PREFIX+'/') or path in self.assets):raise ApiError(404,'API_ROUTE_NOT_FOUND')
             if scope.get('raw_path',path.encode('utf-8'))!=path.encode('utf-8'):raise ApiError(400,'API_REQUEST_INVALID')
             query=parse_qs(raw_query.decode('ascii'),keep_blank_values=True,max_num_fields=16,strict_parsing=True) if raw_query else {}
-            raw=await asyncio.wait_for(self._body(receive),timeout=15)
+            raw=await asyncio.wait_for(self._body(receive,body_limit),timeout=15)
             if length is not None and len(raw)!=int(length):raise ApiError(400,'API_REQUEST_INVALID')
             if raw and headers.get('content-type','').lower() not in ('application/json','application/json; charset=utf-8'):raise ApiError(415,'API_MEDIA_TYPE_INVALID')
             body=object_json(raw) if raw else {}
@@ -502,7 +506,7 @@ class Application:
                     db.execute('BEGIN')
                     row=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code FROM jobs WHERE job_id=?',(job,)).fetchone()
                     if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    return 200,self._job(queue,db,row),[]
+                    return 200,self._job(queue,db,row,language=configuration.value('anime.title_language')),[]
             if path==PREFIX+'/search':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._search(configuration,query),[]
@@ -592,6 +596,31 @@ class Application:
                                 'status_url':f'/api/v1/jobs/{result["job_id"]}',
                                 'history_url':f'/api/v1/jobs/{result["job_id"]}/history'},[]
                 raise ApiError(405,'API_METHOD_INVALID')
+            manual_match=re.fullmatch(
+                PREFIX+r'/intake/series/([1-9][0-9]{0,18})/episodes/([0-9]{1,4})/([1-9][0-9]{0,3})/submit',path)
+            if manual_match:
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
+                if set(body) not in (set(('release_name','magnet_uri')),
+                                    set(('release_name','torrent_b64'))):
+                    raise ApiError(400,'API_REQUEST_INVALID')
+                from src.nextgen.storage.manual_release import (
+                    submit as manual_submit, ManualSubmissionInvalid, ManualSubmissionUnavailable)
+                try:
+                    result=manual_submit(
+                        configuration.value('storage.database_path'),
+                        *(int(value) for value in manual_match.groups()),
+                        release_name=body['release_name'],
+                        magnet_uri=body.get('magnet_uri'),
+                        torrent_b64=body.get('torrent_b64'))
+                except ManualSubmissionInvalid:
+                    raise ApiError(400,'API_REQUEST_INVALID') from None
+                except ManualSubmissionUnavailable:
+                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
+                return (200 if result['reused'] else 202),{
+                    **result,'message':'Manual release candidate ' +
+                    ('already submitted.' if result['reused'] else 'submitted.'),
+                    'status_url':f'/api/v1/jobs/{result["job_id"]}'},[]
             retry_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([0-9]{1,4})/([1-9][0-9]{0,3})/retry',path)
             if retry_match:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -658,10 +687,16 @@ class Application:
         return COOKIE+'='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+('0' if clear else str(self.sessions.ttl))+('; Secure' if secure else '')
 
     def _jobs(self,configuration,path,query,match=None):
-        if set(query)-{'after_id','before_id','limit','state','show_completed','show_canceled'} or 'after_id' in query and 'before_id' in query:raise ApiError(400,'API_REQUEST_INVALID')
+        episode_keys={'anidb_id','season','episode'}
+        selected=set(query)&episode_keys
+        if selected and selected!=episode_keys:raise ApiError(400,'API_REQUEST_INVALID')
+        if set(query)-{'after_id','before_id','limit','state','show_completed','show_canceled'}-episode_keys or 'after_id' in query and 'before_id' in query:raise ApiError(400,'API_REQUEST_INVALID')
+        episode_filter=(page_number(query,'anidb_id',0,1,(1<<63)-1),
+                        page_number(query,'season',0,0,1000),
+                        page_number(query,'episode',0,1,1000)) if selected else None
         after=page_number(query,'after_id',0,0,(1<<63)-1);limit=page_number(query,'limit',50,1,100)
         history=path.endswith('/history')
-        if history and set(query)&{'state','show_completed','show_canceled'}:raise ApiError(400,'API_REQUEST_INVALID')
+        if history and (set(query)&{'state','show_completed','show_canceled'} or episode_filter):raise ApiError(400,'API_REQUEST_INVALID')
         state_filter=query.get('state',[])
         if len(state_filter)>1 or state_filter and state_filter[0] not in ('PENDING','RUNNING','RETRY_WAIT','ON_HOLD','NEEDS_REVIEW','BLOCKED','DONE','CANCELED'):
             raise ApiError(400,'API_REQUEST_INVALID')
@@ -731,6 +766,46 @@ class Application:
                 if match:
                     criteria.append('('+match[0]+')')
                     values.extend(match[1])
+                if episode_filter:
+                    # Include all operations for exact verified episode reservations;
+                    # never infer an episode from a torrent title. Released
+                    # reservations remain visible for diagnosis.
+                    criteria.append("""(
+                        EXISTS (SELECT 1 FROM episode_reservations r
+                            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
+                            JOIN job_operation_members member ON member.operation_id=owner.operation_id
+                            WHERE member.job_id=jobs.job_id AND r.anidb_id=?
+                            AND r.tvdb_season=? AND r.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM batch_episode_reservations r
+                            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
+                            JOIN job_operation_members member ON member.operation_id=owner.operation_id
+                            WHERE member.job_id=jobs.job_id AND r.anidb_id=?
+                            AND r.tvdb_season=? AND r.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM management_actions a
+                            JOIN job_operation_members member ON member.operation_id=a.operation_id
+                            JOIN episode_reservations r ON r.owner_job_id=member.job_id
+                            WHERE a.job_id=jobs.job_id AND r.anidb_id=?
+                            AND r.tvdb_season=? AND r.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM management_actions a
+                            JOIN job_operation_members member ON member.operation_id=a.operation_id
+                            JOIN batch_episode_reservations r ON r.owner_job_id=member.job_id
+                            WHERE a.job_id=jobs.job_id AND r.anidb_id=?
+                            AND r.tvdb_season=? AND r.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM manual_release_submissions submission
+                            WHERE submission.event_id=jobs.event_id
+                            AND submission.anidb_id=? AND submission.tvdb_season=?
+                            AND submission.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM sonarr_backfill_results b
+                            JOIN trial_plans p USING(plan_id)
+                            WHERE b.job_id=jobs.job_id AND p.anidb_id=?
+                            AND p.tvdb_season=? AND b.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM trial_plans p
+                            WHERE jobs.kind='DISCOVER_SONARR_BACKFILL'
+                            AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
+                            AND p.anidb_id=? AND p.tvdb_season=?
+                            AND json_extract(jobs.payload_json,'$.exhausted_episode')=?)
+                        )""")
+                    values.extend(episode_filter*7)
                 if not show_completed:criteria.append("state<>'DONE'")
                 if not show_canceled:
                     criteria.append("state<>'CANCELED'")
@@ -739,7 +814,7 @@ class Application:
                 ordering=' ORDER BY job_id DESC' if newest else ' ORDER BY job_id'
                 rows=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code '
                                 'FROM jobs WHERE '+' AND '.join(criteria)+ordering+' LIMIT ?',(*values,limit+1)).fetchall()
-                items=[self._job(queue,db,r) for r in rows[:limit]]
+                items=[self._job(queue,db,r,language=configuration.value('anime.title_language')) for r in rows[:limit]]
                 if newest:return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
         page={'items':items,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
         return {**page,'job':about,'backfill_attempts':attempts} if history else page
@@ -797,7 +872,7 @@ class Application:
                 'JOIN jobs j ON j.job_id=(SELECT MAX(m.job_id) FROM job_operation_members m WHERE m.operation_id=o.operation_id) '
                 'WHERE o.operation_id<? AND NOT EXISTS (SELECT 1 FROM management_actions a WHERE a.job_id=j.job_id) '
                 'ORDER BY o.operation_id DESC LIMIT ?',(before,limit+1)).fetchall()
-            items=[self._job(queue,db,row[1:]) for row in rows[:limit]]
+            items=[self._job(queue,db,row[1:],language=configuration.value('anime.title_language')) for row in rows[:limit]]
         return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
 
     @staticmethod
@@ -821,7 +896,60 @@ class Application:
         else:return None
         return None if row is None else {'phase':row[0],'since_ms':row[1]}
 
-    def _job(self,queue,db,row):
+    @staticmethod
+    def _episode_targets(db,job_id,kind,event_id):
+        # Prefer verified reservations within this operation over release labels,
+        # whose numbering may not match TVDB placements.
+        records=db.execute("""
+            SELECT r.tvdb_season,r.tvdb_episode FROM episode_reservations r
+            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
+            JOIN job_operation_members member ON member.operation_id=owner.operation_id
+            WHERE member.job_id=?
+            UNION
+            SELECT r.tvdb_season,r.tvdb_episode FROM batch_episode_reservations r
+            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
+            JOIN job_operation_members member ON member.operation_id=owner.operation_id
+            WHERE member.job_id=?
+            ORDER BY 1,2 LIMIT 101
+        """,(job_id,job_id)).fetchall()
+        if not records:
+            records=db.execute("""
+                SELECT r.tvdb_season,r.tvdb_episode FROM management_actions a
+                JOIN job_operation_members member ON member.operation_id=a.operation_id
+                JOIN episode_reservations r ON r.owner_job_id=member.job_id
+                WHERE a.job_id=?
+                UNION
+                SELECT r.tvdb_season,r.tvdb_episode FROM management_actions a
+                JOIN job_operation_members member ON member.operation_id=a.operation_id
+                JOIN batch_episode_reservations r ON r.owner_job_id=member.job_id
+                WHERE a.job_id=? ORDER BY 1,2 LIMIT 101
+            """,(job_id,job_id)).fetchall()
+        if not records and event_id is not None:
+            records=db.execute(
+                "SELECT tvdb_season,tvdb_episode FROM manual_release_submissions "
+                "WHERE event_id=? LIMIT 1",(event_id,)).fetchall()
+        if not records and kind=='DISCOVER_SONARR_BACKFILL':
+            records=db.execute("""
+                SELECT p.tvdb_season,b.tvdb_episode FROM sonarr_backfill_results b
+                JOIN trial_plans p USING(plan_id) WHERE b.job_id=?
+                UNION
+                SELECT p.tvdb_season,json_extract(j.payload_json,'$.exhausted_episode')
+                FROM jobs j JOIN trial_plans p
+                ON p.plan_id=json_extract(j.payload_json,'$.plan_id')
+                WHERE j.job_id=? AND json_type(j.payload_json,'$.exhausted_episode')='integer'
+                ORDER BY 1,2 LIMIT 101
+            """,(job_id,job_id)).fetchall()
+        if not records and kind in ('VERIFY_RELEASE','EVALUATE_TRIAL','IDENTIFY_ANIME') and event_id is not None:
+            records=db.execute("""
+                SELECT DISTINCT tvdb_season,tvdb_episode FROM release_verifications
+                WHERE job_id=? OR job_id IN
+                  (SELECT job_id FROM jobs WHERE event_id=? AND kind='VERIFY_RELEASE')
+                ORDER BY tvdb_season,tvdb_episode LIMIT 101
+            """,(job_id,event_id)).fetchall()
+        return [{'season':season,'episode':episode} for season,episode in records[:100]
+                if type(season) is int and type(episode) is int]
+
+    def _job(self,queue,db,row,language='english'):
         op=db.execute('SELECT o.operation_id,o.state,o.cleanup_state,o.reason_code FROM job_operations o JOIN job_operation_members m USING(operation_id) WHERE m.job_id=?',(row[0],)).fetchone()
         actions=ManagementActions(queue.database).capabilities(db,row[0])
         actions['retry']=retry_capability(db,row[0])
@@ -843,12 +971,17 @@ class Application:
                              "json_extract(details_json,'$.failed_check') IS NOT NULL ORDER BY history_id DESC LIMIT 1",(row[0],)).fetchone()
             try:stopped=failed_detail(json.loads(found[0])) if found else None
             except (ValueError,TypeError):stopped=None
-        titles=db.execute('SELECT CASE WHEN length(CAST(a.title AS BLOB))<=1024 THEN a.title ELSE NULL END '
-                          'FROM identity_results r JOIN identified_anime a USING(anidb_id) WHERE r.event_id=? LIMIT 2',(row[1],)).fetchall()
+        titles=db.execute('SELECT a.title,t.english_title,t.romaji_title '
+                          'FROM identity_results r JOIN identified_anime a USING(anidb_id) '
+                          'LEFT JOIN anime_title_metadata t USING(anidb_id) '
+                          'WHERE r.event_id=? LIMIT 2',(row[1],)).fetchall()
+        anime_title=(preferred_title(*titles[0],language) if len(titles)==1
+                     and len(titles[0][0].encode('utf-8'))<=1024 else None)
+        targets=self._episode_targets(db,row[0],row[3],row[1])
         return {'job_id':row[0],'event_id':row[1],'created_by_job_id':row[2],'kind':row[3],'state':row[4],
                 'is_management_action':db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(row[0],)).fetchone() is not None,
                 'label':CATALOG.handler(row[3]),'created_at_ms':context[0],'received_at_ms':context[1],
-                'release_name':release,'anime_title':titles[0][0] if len(titles)==1 else None,
+                'release_name':release,'anime_title':anime_title,'episode_targets':targets,
                 'acquisition_status':CATALOG.state('acquisition',op[1]),
                 'status':CATALOG.job_status(row[4],row[5],kind=row[3]),'attempt_count':row[6],
                 'cleanup_progress':self._cleanup_progress(db,row[0]) if row[3]=='CLEANUP_DECIDED_DOWNLOAD' else None,

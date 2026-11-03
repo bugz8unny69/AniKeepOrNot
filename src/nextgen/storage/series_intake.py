@@ -114,6 +114,27 @@ def detail(db, anidb_id, language='english'):
     result['rejection'] = (None if rejected is None else {
         'job_id': rejected[0], 'reason': rejected[1],
         'cleanup_state': rejected[2], 'job_state': rejected[3]})
+    # All historical reservations are counted, including released candidates.
+    # Aggregate once rather than querying for every episode shown in Intake.
+    reservation_counts = {}
+    for season, episode, count in db.execute(
+        "SELECT tvdb_season,tvdb_episode,count(*) FROM episode_reservations "
+        "WHERE anidb_id=? GROUP BY tvdb_season,tvdb_episode "
+        "UNION ALL "
+        "SELECT tvdb_season,tvdb_episode,count(*) FROM batch_episode_reservations "
+        "WHERE anidb_id=? GROUP BY tvdb_season,tvdb_episode", (anidb_id, anidb_id)
+    ).fetchall():
+        key = (season, episode)
+        reservation_counts[key] = reservation_counts.get(key, 0) + count
+    have_manual = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_release_submissions'"
+    ).fetchone()
+    manual_counts = {
+        (season,episode):count for season,episode,count in db.execute(
+            'SELECT tvdb_season,tvdb_episode,count(*) FROM manual_release_submissions '
+            'WHERE anidb_id=? GROUP BY tvdb_season,tvdb_episode',(anidb_id,)
+        ).fetchall()
+    } if have_manual else {}
     # Existing single-episode staging (one underlying operation per release).
     single = db.execute(
         "SELECT r.tvdb_season,r.tvdb_episode,s.job_id,m.operation_id,o.state,"
@@ -147,7 +168,9 @@ def detail(db, anidb_id, language='english'):
             status = 'Rejected' if rejected[2] == 'COMPLETE' else 'Rejecting'
         result['episodes'].append({
             'season': season, 'episode': episode, 'job_id': job,
-            'operation_id': op, 'status': status
+            'operation_id': op, 'status': status,
+            'reservation_count': reservation_counts.get((season, episode), 0),
+            'manual_submission_count': manual_counts.get((season, episode), 0)
         })
         staged_episodes.add((season, episode))
         if state == 'STAGED' and keep_state != 'DONE':
@@ -184,6 +207,8 @@ def detail(db, anidb_id, language='english'):
                       WAITING_FOR_DUB if episode in waiting else observed.get(episode, 'NOT_SEARCHED'))
             result['missing'].append({
                 'season': season, 'episode': episode, 'status': status,
+                'reservation_count': reservation_counts.get((season, episode), 0),
+                'manual_submission_count': manual_counts.get((season, episode), 0),
                 'can_retry': rejected is None and work is None and episode != anchor
                              and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED',
                                             'MAPPING_MISSING', WAITING_FOR_DUB),
