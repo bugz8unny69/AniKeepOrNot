@@ -152,6 +152,26 @@ class ReleaseTitleTests(unittest.TestCase):
         self.assertIn('Saikyosoubi 01', audio_queries)
         self.assertLessEqual(len(audio_queries), 6)
 
+    def test_romanized_aliases_without_anidb_english_do_not_get_english_priority(self):
+        titles = ('Hoshizora no Shita', 'Yoru no Hoshizora')
+        target = EpisodeTarget(5, 'SEARCHABLE', 5, 9005, 5)
+        prepared = AnimeTitles.build(titles, 1)
+        for prefer_audio in (False, True):
+            with self.subTest(prefer_audio=prefer_audio):
+                queries = search_queries(titles, prepared, target, season=1, prefer_audio=prefer_audio)
+                self.assertEqual(queries[:2], ('Hoshizora no Shita 05', 'Hoshizora no Shita S01E05'))
+                self.assertIn('Yoru no Hoshizora 05', queries)
+                self.assertNotIn('Yoru no Hoshizora S01E05 Dual-Audio', queries)
+                self.assertLessEqual(len(queries), 6)
+
+    def test_anidb_english_title_gets_priority_even_when_not_second(self):
+        titles = ('Kusuriya no Hitorigoto', 'Kusuriya', 'The Apothecary Diaries')
+        target = EpisodeTarget(5, 'SEARCHABLE', 5, 9005, 5)
+        queries = search_queries(titles, AnimeTitles.build(titles, 1), target, season=1,
+                                 english_title='The Apothecary Diaries', prefer_audio=True)
+        self.assertEqual(queries[:2], ('The Apothecary Diaries S01E05',
+                                       'The Apothecary Diaries S01E05 Dual-Audio'))
+
     def test_pipe_delimited_and_season_releases_map_only_to_target_episode(self):
         titles = ('Kusuriya no Hitorigoto', 'The Apothecary Diaries')
         target = EpisodeTarget(5, 'SEARCHABLE', 5, 9005, 5)

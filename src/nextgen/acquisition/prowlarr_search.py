@@ -215,27 +215,8 @@ def _magnet_hash(uri):
         return None
 
 
-_ENGLISH_STOPWORDS = frozenset({
-    'the', 'of', 'in', 'to', 'and', 'a', 'an', 'is', 'for', 'with', 'from', 'on', 'at', 'by',
-    'i', 'me', 'my', 'you', 'your', 'we', 'our', 'he', 'his', 'she', 'her', 'it', 'its',
-    'they', 'them', 'their', 'this', 'that', 'these', 'those', 'as', 'are', 'was', 'were',
-    'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'but', 'or', 'so',
-    'if', 'not', 'no', 'up', 'out', 'about', 'into', 'after', 'before', 'between', 'under',
-    'again', 'all', 'any', 'both', 'each', 'more', 'most', 'other', 'some', 'such',
-    'only', 'own', 'same', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now',
-    'world', 'life', 'girl', 'boy', 'hero', 'king', 'lord', 'reborn', 'strongest', 'mercenary',
-    'diaries', 'ramparts', 'ice', 'apothecary', 'space'
-})
-
-
-def is_english_title(title):
-    if type(title) is not str: return False
-    words = {w.lower() for w in re.findall(r'[a-zA-Z]+', title)}
-    return bool(words & _ENGLISH_STOPWORDS)
-
-
 def search_aliases(titles, *, english_title=None):
-    """Up to three distinct Latin-script titles; AniDB main title first, then English title when known, then synonyms."""
+    """Up to three distinct Latin-script titles; AniDB main title first, then AniDB English title when known, then synonyms."""
     picked, seen = [], set()
     from src.nextgen.providers.parsing import norm
     candidates = []
@@ -254,7 +235,7 @@ def search_aliases(titles, *, english_title=None):
     # 1. Main title
     picked.append(candidates[0])
 
-    # 2. English title when known or recognized
+    # 2. English title only when AniDB gave one
     english_pick = None
     if english_title and type(english_title) is str and english_title.isascii():
         norm_eng = norm(english_title)
@@ -265,11 +246,6 @@ def search_aliases(titles, *, english_title=None):
         if english_pick is None and 2 <= len(english_title) <= 200 and not any(ord(c) < 32 for c in english_title):
             if norm(english_title) != norm(picked[0]):
                 english_pick = english_title
-    if english_pick is None:
-        for cand in candidates[1:]:
-            if is_english_title(cand):
-                english_pick = cand
-                break
 
     if english_pick and english_pick not in picked:
         picked.append(english_pick)
