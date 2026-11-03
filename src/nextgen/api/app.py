@@ -37,6 +37,7 @@ from src.nextgen.storage.sqlite import accept_event_and_job
 
 PREFIX='/api/v1'
 MAX_BODY=65536
+MAX_TORRENT_BODY=6*1024*1024  # base64 of a bounded 4 MiB BEP3 file
 CATALOG=MessageCatalog(handlers=HANDLERS)
 
 
@@ -162,7 +163,7 @@ class Application:
             if not self.closed:
                 notify('WATCHDOG=1')
 
-    async def _body(self,receive):
+    async def _body(self,receive,limit=MAX_BODY):
         chunks=[];size=0
         while True:
             message=await receive()
@@ -171,7 +172,7 @@ class Application:
             chunk=message.get('body',b'')
             if type(chunk) is not bytes:raise ApiError(400,'API_REQUEST_INVALID')
             size+=len(chunk)
-            if size>MAX_BODY:raise ApiError(413,'API_BODY_TOO_LARGE')
+            if size>limit:raise ApiError(413,'API_BODY_TOO_LARGE')
             if chunk:chunks.append(chunk)
             if not message.get('more_body',False):return b''.join(chunks)
 
@@ -221,14 +222,17 @@ class Application:
                 raise ApiError(400,'API_ORIGIN_INVALID')
             if 'content-encoding' in headers:raise ApiError(415,'API_MEDIA_TYPE_INVALID')
             if headers.get('transfer-encoding') not in (None,'chunked') or 'transfer-encoding' in headers and 'content-length' in headers:raise ApiError(400,'API_REQUEST_INVALID')
-            length=headers.get('content-length')
-            if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>MAX_BODY):raise ApiError(413,'API_BODY_TOO_LARGE')
             raw_query=scope.get('query_string',b'')
             path=scope.get('path','')
+            manual_upload=scope['method']=='POST' and bool(re.fullmatch(
+                PREFIX+r'/intake/series/[1-9][0-9]{0,18}/episodes/[0-9]{1,4}/[1-9][0-9]{0,3}/submit',path))
+            body_limit=MAX_TORRENT_BODY if manual_upload else MAX_BODY
+            length=headers.get('content-length')
+            if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>body_limit):raise ApiError(413,'API_BODY_TOO_LARGE')
             if len(raw_query)>2048 or len(path)>512 or '%' in path or not (path.startswith(PREFIX+'/') or path in self.assets):raise ApiError(404,'API_ROUTE_NOT_FOUND')
             if scope.get('raw_path',path.encode('utf-8'))!=path.encode('utf-8'):raise ApiError(400,'API_REQUEST_INVALID')
             query=parse_qs(raw_query.decode('ascii'),keep_blank_values=True,max_num_fields=16,strict_parsing=True) if raw_query else {}
-            raw=await asyncio.wait_for(self._body(receive),timeout=15)
+            raw=await asyncio.wait_for(self._body(receive,body_limit),timeout=15)
             if length is not None and len(raw)!=int(length):raise ApiError(400,'API_REQUEST_INVALID')
             if raw and headers.get('content-type','').lower() not in ('application/json','application/json; charset=utf-8'):raise ApiError(415,'API_MEDIA_TYPE_INVALID')
             body=object_json(raw) if raw else {}
@@ -592,6 +596,31 @@ class Application:
                                 'status_url':f'/api/v1/jobs/{result["job_id"]}',
                                 'history_url':f'/api/v1/jobs/{result["job_id"]}/history'},[]
                 raise ApiError(405,'API_METHOD_INVALID')
+            manual_match=re.fullmatch(
+                PREFIX+r'/intake/series/([1-9][0-9]{0,18})/episodes/([0-9]{1,4})/([1-9][0-9]{0,3})/submit',path)
+            if manual_match:
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
+                if set(body) not in (set(('release_name','magnet_uri')),
+                                    set(('release_name','torrent_b64'))):
+                    raise ApiError(400,'API_REQUEST_INVALID')
+                from src.nextgen.storage.manual_release import (
+                    submit as manual_submit, ManualSubmissionInvalid, ManualSubmissionUnavailable)
+                try:
+                    result=manual_submit(
+                        configuration.value('storage.database_path'),
+                        *(int(value) for value in manual_match.groups()),
+                        release_name=body['release_name'],
+                        magnet_uri=body.get('magnet_uri'),
+                        torrent_b64=body.get('torrent_b64'))
+                except ManualSubmissionInvalid:
+                    raise ApiError(400,'API_REQUEST_INVALID') from None
+                except ManualSubmissionUnavailable:
+                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
+                return (200 if result['reused'] else 202),{
+                    **result,'message':'Manual release candidate ' +
+                    ('already submitted.' if result['reused'] else 'submitted.'),
+                    'status_url':f'/api/v1/jobs/{result["job_id"]}'},[]
             retry_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([0-9]{1,4})/([1-9][0-9]{0,3})/retry',path)
             if retry_match:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -762,6 +791,10 @@ class Application:
                             JOIN batch_episode_reservations r ON r.owner_job_id=member.job_id
                             WHERE a.job_id=jobs.job_id AND r.anidb_id=?
                             AND r.tvdb_season=? AND r.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM manual_release_submissions submission
+                            WHERE submission.event_id=jobs.event_id
+                            AND submission.anidb_id=? AND submission.tvdb_season=?
+                            AND submission.tvdb_episode=?)
                         OR EXISTS (SELECT 1 FROM sonarr_backfill_results b
                             JOIN trial_plans p USING(plan_id)
                             WHERE b.job_id=jobs.job_id AND p.anidb_id=?
@@ -772,7 +805,7 @@ class Application:
                             AND p.anidb_id=? AND p.tvdb_season=?
                             AND json_extract(jobs.payload_json,'$.exhausted_episode')=?)
                         )""")
-                    values.extend(episode_filter*6)
+                    values.extend(episode_filter*7)
                 if not show_completed:criteria.append("state<>'DONE'")
                 if not show_canceled:
                     criteria.append("state<>'CANCELED'")
@@ -891,6 +924,10 @@ class Application:
                 JOIN batch_episode_reservations r ON r.owner_job_id=member.job_id
                 WHERE a.job_id=? ORDER BY 1,2 LIMIT 101
             """,(job_id,job_id)).fetchall()
+        if not records and event_id is not None:
+            records=db.execute(
+                "SELECT tvdb_season,tvdb_episode FROM manual_release_submissions "
+                "WHERE event_id=? LIMIT 1",(event_id,)).fetchall()
         if not records and kind=='DISCOVER_SONARR_BACKFILL':
             records=db.execute("""
                 SELECT p.tvdb_season,b.tvdb_episode FROM sonarr_backfill_results b

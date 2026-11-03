@@ -33,6 +33,7 @@ class Element {
     return result;
   }
   querySelector() { return new Element('button'); }
+  reset() {}
   showModal() { this.open = true; }
   close() { this.open = false; this.listeners.close?.(); }
 }
@@ -542,16 +543,17 @@ test('failed anchor offers guarded retry, try-next and a direct Jobs link', asyn
     const row = h.elements.get('series-missing').children[0];
     const buttons = row.children[2].children;
     assert.equal(buttons[0].textContent, 'Related jobs');
-    assert.equal(buttons[1].textContent, 'View job');
-    assert.equal(buttons[2].textContent, 'Retry acquisition');
-    assert.equal(buttons[3].textContent, 'Try next release');
+    assert.equal(buttons[1].textContent, 'Submit release');
+    assert.equal(buttons[2].textContent, 'View job');
+    assert.equal(buttons[3].textContent, 'Retry acquisition');
+    assert.equal(buttons[4].textContent, 'Try next release');
     assert.match(row.children[1].children[0].textContent, /metadata timed out/i);
     assert.match(row.children[1].children[1].textContent, /3 competing/);
     buttons[0].listeners.click();
     assert.equal(navigated, '/jobs#anidb_id=123&season=1&episode=5');
-    buttons[1].listeners.click();
+    buttons[2].listeners.click();
     assert.equal(navigated, '/jobs#job=1585');
-    await buttons[action === 'retry' ? 2 : 3].listeners.click();
+    await buttons[action === 'retry' ? 3 : 4].listeners.click();
     const posts = calls.filter(x => x.options.method === 'POST');
     assert.equal(posts.length, 1);
     assert.equal(posts[0].url, '/api/v1/jobs/1585/' + action);
@@ -577,4 +579,32 @@ test('Jobs prioritize configured anime title and verified episode, while release
   assert.equal(details.children[0].textContent, 'Release details');
   assert.equal(details.children[1].textContent, h.ctx.fixture.release_name);
   assert.match(details.children[2].textContent, /S01E05/);
+});
+
+test('manual candidate form submits the selected episode without a second modal', async () => {
+  const h = await harness();
+  const calls = [];
+  h.ctx.fetch = async (url,options={}) => {
+    calls.push({url,options});
+    if (url === '/api/v1/intake/series/123') return response({
+      anidb_id:123,title:'Example Anime',english_title:null,episodes:[],
+      missing:[{season:1,episode:5,status:'WAITING_FOR_DUB',reservation_count:1,
+        manual_submission_count:2}],keep_operations:[],reject_operations:[],rejection:null});
+    if (url.endsWith('/submit')) return response({
+      message:'Manual release candidate submitted.',job_id:1600},202);
+    return response({items:[],next_before_id:null});
+  };
+  await h.run('openSeries(123)');
+  const buttons=h.elements.get('series-missing').children[0].children[2].children;
+  buttons[1].listeners.click();
+  assert.equal(h.elements.get('series-manual-episode').textContent,'S01E05');
+  assert.equal(h.elements.get('series-manual-panel').hidden,false);
+  h.elements.get('series-manual-title').value='Example Anime S01E05';
+  h.elements.get('series-manual-magnet').value='magnet:?xt=urn:btih:'+'a'.repeat(40);
+  h.elements.get('series-manual-source').value='magnet';
+  await h.elements.get('series-manual-form').listeners.submit({preventDefault() {}});
+  const action=calls.find(x=>x.url.endsWith('/submit'));
+  assert.equal(action.url,'/api/v1/intake/series/123/episodes/1/5/submit');
+  assert.equal(JSON.parse(action.options.body).release_name,'Example Anime S01E05');
+  assert.match(h.elements.get('notice').textContent,/Job #1600/);
 });

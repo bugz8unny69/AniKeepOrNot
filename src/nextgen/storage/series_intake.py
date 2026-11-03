@@ -126,6 +126,12 @@ def detail(db, anidb_id, language='english'):
     ).fetchall():
         key = (season, episode)
         reservation_counts[key] = reservation_counts.get(key, 0) + count
+    manual_counts = {
+        (season,episode):count for season,episode,count in db.execute(
+            'SELECT tvdb_season,tvdb_episode,count(*) FROM manual_release_submissions '
+            'WHERE anidb_id=? GROUP BY tvdb_season,tvdb_episode',(anidb_id,)
+        ).fetchall()
+    }
     # Existing single-episode staging (one underlying operation per release).
     single = db.execute(
         "SELECT r.tvdb_season,r.tvdb_episode,s.job_id,m.operation_id,o.state,"
@@ -160,7 +166,8 @@ def detail(db, anidb_id, language='english'):
         result['episodes'].append({
             'season': season, 'episode': episode, 'job_id': job,
             'operation_id': op, 'status': status,
-            'reservation_count': reservation_counts.get((season, episode), 0)
+            'reservation_count': reservation_counts.get((season, episode), 0),
+            'manual_submission_count': manual_counts.get((season, episode), 0)
         })
         staged_episodes.add((season, episode))
         if state == 'STAGED' and keep_state != 'DONE':

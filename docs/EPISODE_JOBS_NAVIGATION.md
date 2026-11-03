@@ -37,21 +37,14 @@ and known TVDB placements inline. Only the most recently expanded job is kept
 expanded across the five-second polling refresh. The expander is not a new
 job status or a replacement for Matching Details / History.
 
-## Manual submission: not part of this change
+## Manual submission
 
-This change does **not** add a magnet/file upload endpoint or pretend to create
-candidate reservations. Current SQLite reservation indexes enforce at most one
-active reservation per episode; Sonarr candidate rows do not by themselves own
-downloads, and the current API JSON body is limited to 64 KiB. Supporting
-multiple user-submitted torrent candidates for one episode therefore requires
-a separately reviewed candidate/ownership model, bounded authenticated upload
-and magnet validation, worker integration, and per-candidate cleanup. A manual
-candidate must not bypass metadata, verification, size limits, durable torrent
-ownership, or staging exclusivity.
-
-Existing Retry, Cancel, Try next release, Matching Details and History actions
-continue to use their current guarded workflows. No pipeline job, SQL schema
-migration, or user-visible no-op Submit control is introduced here.
+Manual candidate submission was implemented in the follow-up:
+[Manual episode submissions](MANUAL_EPISODE_SUBMISSIONS.md).
+It creates independent acquisition jobs and leaves the exclusive reservation
+constraint intact. View Series shows manual submission counts and the existing
+Jobs table lists candidate operations. This document's navigation and release
+display changes remain unchanged.
 
 ## Offline tests
 

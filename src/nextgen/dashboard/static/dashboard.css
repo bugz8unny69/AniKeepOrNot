@@ -102,3 +102,9 @@ align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .job-details{margin-top:5px;max-width:450px}
 .job-details summary{font-size:.82rem;max-width:none}
 .job-details p{margin:8px 0}
+
+/* One compact, in-dialog submission form; no modal stacking. */
+.manual-submission{display:grid;gap:12px;max-width:660px}
+.manual-submission label{display:grid;gap:6px}
+.manual-submission input,.manual-submission textarea,.manual-submission select{width:100%;min-width:0}
+.manual-submission textarea{resize:vertical;overflow-wrap:anywhere}

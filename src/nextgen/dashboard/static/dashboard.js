@@ -40,7 +40,7 @@ const state = {
   settings: null, credentials: null, dirty: false, settingsVersion: 0,
   historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
   matchingJob: null, matchingVersion: 0,
-  seriesBusy: false, expandedJobId: null,
+  seriesBusy: false, manualTarget: null, expandedJobId: null,
   episodeFilter: (() => {
     if (location.pathname !== '/jobs') return null;
     const params = new URLSearchParams((location.hash || '').slice(1));
@@ -86,7 +86,7 @@ async function request(path, {method = 'GET', body} = {}) {
   if (!path.startsWith(API + '/')) throw new Error(COPY['dashboard.request_failed']);
   const generation = state.generation;
   const controller = new AbortController(); state.requests.add(controller);
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), path.endsWith('/submit') ? 30000 : 15000);
   try {
     const headers = {'Accept': 'application/json'};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -368,6 +368,23 @@ async function submitSelected() {
 const INTAKE_STATUS = Object.freeze({
   REJECTED: 'Rejected', STAGED: 'Ready to Keep', WAITING_FOR_DUB: 'Waiting for dub', KEPT: 'Kept', TRACKING: 'Tracking',
 });
+function openManualSubmission(anidbId, episode) {
+  state.manualTarget = {anidbId, season: episode.season, episode: episode.episode};
+  $('series-manual-episode').textContent = tvdbLabel(episode);
+  $('series-manual-form').reset();
+  $('series-manual-source').value = 'magnet';
+  $('series-manual-magnet-label').hidden = false;
+  $('series-manual-torrent-label').hidden = true;
+  $('series-manual-panel').hidden = false;
+  $('series-manual-panel').scrollIntoView?.({block: 'nearest'});
+  $('series-manual-title').focus?.();
+}
+function manualSubmissionButton(anidbId, episode) {
+  const button = node('button', 'Submit release', 'secondary');
+  button.type = 'button';
+  button.addEventListener('click', () => openManualSubmission(anidbId, episode));
+  return button;
+}
 function renderSeries() {
   const tbody = $('job-rows'); tbody.replaceChildren();
   $('no-jobs').hidden = state.jobs.length !== 0;
@@ -411,6 +428,8 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       const status = node('td', item.status);
       if (item.reservation_count) status.appendChild(node('small',
         item.reservation_count + ' reservation(s)', 'muted job-note'));
+      if (item.manual_submission_count) status.appendChild(node('small',
+        item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       tr.appendChild(status);
       const actions = node('td');
       actions.appendChild(relatedJobsButton(anidbId, item));
@@ -418,6 +437,8 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       list.appendChild(tr);
     }
     $('series-episodes-empty').hidden = series.episodes.length !== 0;
+    state.manualTarget = null;
+    $('series-manual-panel').hidden = true;
     const missing = $('series-missing'); missing.replaceChildren();
     for (const item of series.missing) {
       const tr = node('tr');
@@ -426,6 +447,8 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       const result = node('td', item.status.replaceAll('_', ' ').toLowerCase());
       if (item.reservation_count) result.appendChild(node('small',
         item.reservation_count + ' reservation(s)', 'muted job-note'));
+      if (item.manual_submission_count) result.appendChild(node('small',
+        item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       if (item.reason_code) {
         result.appendChild(node('small', item.reason_code === 'TORRENT_METADATA_TIMEOUT'
           ? 'Torrent metadata timed out' : item.reason_code.replaceAll('_', ' ').toLowerCase(), 'muted job-note'));
@@ -436,6 +459,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       tr.appendChild(result);
       const action = node('td');
       action.appendChild(relatedJobsButton(anidbId, item));
+      if (!series.rejection) action.appendChild(manualSubmissionButton(anidbId, item));
       if (item.job_id) {
         const view = node('button', 'View job', 'secondary');
         view.type = 'button';
@@ -1326,6 +1350,49 @@ $('previous-page').addEventListener('click', async () => {
 });
 $('history-close').addEventListener('click', () => $('history-dialog').close());
 $('matching-close').addEventListener('click', () => $('matching-dialog').close());
+$('series-manual-source').addEventListener('change', () => {
+  const file = $('series-manual-source').value === 'torrent';
+  $('series-manual-magnet-label').hidden = file;
+  $('series-manual-torrent-label').hidden = !file;
+});
+$('series-manual-dismiss').addEventListener('click', () => {
+  $('series-manual-panel').hidden = true;
+  state.manualTarget = null;
+});
+$('series-manual-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const target = state.manualTarget;
+  if (!target || state.seriesBusy) return;
+  state.seriesBusy = true;
+  const submit = $('series-manual-submit'); submit.disabled = true;
+  try {
+    const body = {release_name: $('series-manual-title').value.trim()};
+    if ($('series-manual-source').value === 'magnet') {
+      body.magnet_uri = $('series-manual-magnet').value.trim();
+    } else {
+      const file = $('series-manual-file').files?.[0];
+      if (!file || !file.name.toLowerCase().endsWith('.torrent') ||
+          file.size < 1 || file.size > 4194304) {
+        throw new Error('Choose a .torrent file no larger than 4 MiB.');
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      for (let index = 0; index < bytes.length; index += 16384) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + 16384));
+      }
+      body.torrent_b64 = btoa(binary);
+    }
+    const result = await request(API + '/intake/series/' + target.anidbId +
+      '/episodes/' + target.season + '/' + target.episode + '/submit',
+      {method: 'POST', body});
+    notice(result.message + ' Job #' + result.job_id + ' · Open Related jobs to track it.');
+    $('series-manual-panel').hidden = true;
+    state.manualTarget = null;
+    $('series-dialog').close();
+    await loadActivity();
+  } catch (error) { displayError(error); }
+  finally { state.seriesBusy = false; submit.disabled = false; }
+});
 $('series-close').addEventListener('click', () => $('series-dialog').close());
 $('series-dialog').addEventListener('close', () => {
   if (state.page === 'intake' && new URLSearchParams((location.hash || '').slice(1)).has('series')) {

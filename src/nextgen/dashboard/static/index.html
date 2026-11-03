@@ -89,6 +89,32 @@
       <table><thead><tr><th>Episode</th><th>Result</th><th>Action</th></tr></thead><tbody id="series-missing"></tbody></table>
       <p id="series-missing-empty" class="muted" hidden>No missing episodes in the configured search windows.</p>
     </section>
+    <section id="series-manual-panel" class="trace-section" hidden>
+      <h3>Submit release for <span id="series-manual-episode"></span></h3>
+      <p class="muted">Each submission creates a separate candidate job. Existing episode reservations remain exclusive; other releases can wait.</p>
+      <form id="series-manual-form" class="manual-submission">
+        <label>Release name (including the correct episode identifier)
+          <input id="series-manual-title" type="text" maxlength="512" required
+            placeholder="[Group] Anime Name S01E05 1080p">
+        </label>
+        <label>Source
+          <select id="series-manual-source">
+            <option value="magnet">Magnet link</option>
+            <option value="torrent">.torrent file</option>
+          </select>
+        </label>
+        <label id="series-manual-magnet-label">Magnet link
+          <textarea id="series-manual-magnet" rows="2" maxlength="8192" placeholder="magnet:?xt=urn:btih:..."></textarea>
+        </label>
+        <label id="series-manual-torrent-label" hidden>.torrent file (up to 4 MiB)
+          <input id="series-manual-file" type="file" accept=".torrent,application/x-bittorrent">
+        </label>
+        <div class="inline">
+          <button id="series-manual-submit" type="submit">Submit candidate</button>
+          <button id="series-manual-dismiss" type="button" class="secondary">Dismiss</button>
+        </div>
+      </form>
+    </section>
     <p id="series-rejected" class="muted" role="status" hidden></p>
     <section id="series-reject-controls" class="trace-section">
       <h3>Reject this series</h3>
