@@ -420,6 +420,47 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker._recover()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[('ON_HOLD',)])
 
+    async def test_plan_window_preserves_immutable_stored_results_across_anchor_shift(self):
+        from src.nextgen.storage.sonarr_backfill import plan_window, _plan
+        self.source(1157)
+        worker = self.worker(FakeDiscovery())
+        await worker.attempt()  # EVALUATE_TRIAL -> creates plan 1
+        db = connect(self.database)
+        try:
+            # Without stored results, window is computed from anchor 1157
+            self.assertEqual(plan_window(db, 1, 1157, 6, 0), (1151, 1152, 1153, 1154, 1155, 1156))
+
+            # Simulate legacy plan results stored prior to migration anchor shift
+            with transaction(db):
+                for ep in (1, 2, 3, 4, 5, 6):
+                    db.execute(
+                        "INSERT INTO sonarr_backfill_results(plan_id, anidb_episode_number, job_id, tvdb_episode_id, status, candidates, approved, exact, observed_at_ms) "
+                        "VALUES(1, ?, 1, 2000+?, 'CANDIDATES', 3, 1, 1, 0)", (ep, ep))
+
+            # With stored results that are not a subset of computed, stored results are returned
+            self.assertEqual(plan_window(db, 1, 1157, 6, 0), (1, 2, 3, 4, 5, 6))
+
+            # _plan respects the restored immutable window
+            plan_batch_1 = _plan(db, 1, 1)
+            self.assertEqual(plan_batch_1.numbers, (1, 2, 3, 4))
+            self.assertEqual(plan_batch_1.window_size, 6)
+            self.assertIn(2, plan_batch_1.numbers)
+
+            plan_batch_2 = _plan(db, 1, 5)
+            self.assertEqual(plan_batch_2.numbers, (5, 6))
+
+            # When stored results ARE a subset of computed (e.g. current in-progress discovery)
+            with transaction(db):
+                db.execute("DELETE FROM sonarr_backfill_results WHERE plan_id=1")
+                for ep in (1151, 1152):
+                    db.execute(
+                        "INSERT INTO sonarr_backfill_results(plan_id, anidb_episode_number, job_id, tvdb_episode_id, status, candidates, approved, exact, observed_at_ms) "
+                        "VALUES(1, ?, 1, 2000+?, 'CANDIDATES', 3, 1, 1, 0)", (ep, ep))
+            self.assertEqual(plan_window(db, 1, 1157, 6, 0), (1151, 1152, 1153, 1154, 1155, 1156))
+        finally:
+            db.close()
+
+
 
 class BackfillSchemaTests(unittest.TestCase):
     def test_explicit_v41_to_latest_and_fresh_schema_match(self):

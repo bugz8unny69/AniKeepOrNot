@@ -53,7 +53,16 @@ def anchor_searched(db, plan_id):
 
 
 def plan_window(db, plan_id, anchor, backfill, following):
-    return window(anchor, backfill, following, anchor_searched(db, plan_id))
+    computed = window(anchor, backfill, following, anchor_searched(db, plan_id))
+    try:
+        stored = tuple(r[0] for r in db.execute(
+            "SELECT anidb_episode_number FROM sonarr_backfill_results "
+            "WHERE plan_id=? ORDER BY anidb_episode_number", (plan_id,)).fetchall())
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        stored = ()
+    if stored and not set(stored).issubset(set(computed)):
+        return stored
+    return computed
 
 
 @dataclass(frozen=True)
