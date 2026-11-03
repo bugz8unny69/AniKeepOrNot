@@ -44,15 +44,12 @@ def window(anchor, backfill, following, include_anchor=False):
 
 def anchor_searched(db, plan_id):
     """The plan's anchor delivery was skipped for audio, so search its episode."""
-    try:
-        return db.execute(
-            "SELECT 1 FROM trial_plans p JOIN trial_evaluations t "
-            "ON t.verification_id=p.anchor_verification_id AND t.plan_id=p.plan_id "
-            "JOIN job_history h ON h.job_id=t.job_id "
-            "WHERE p.plan_id=? AND h.event_code=? LIMIT 1",
-            (plan_id, AUDIO_SEARCH_EVENT)).fetchone() is not None
-    except (sqlite3.OperationalError, sqlite3.DatabaseError):
-        return False
+    return db.execute(
+        "SELECT 1 FROM trial_plans p JOIN trial_evaluations t "
+        "ON t.verification_id=p.anchor_verification_id AND t.plan_id=p.plan_id "
+        "JOIN job_history h ON h.job_id=t.job_id "
+        "WHERE p.plan_id=? AND h.event_code=? LIMIT 1",
+        (plan_id, AUDIO_SEARCH_EVENT)).fetchone() is not None
 
 
 def plan_window(db, plan_id, anchor, backfill, following):

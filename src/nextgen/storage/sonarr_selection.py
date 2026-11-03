@@ -48,9 +48,8 @@ def select(db, *, plan_id, episode, identity, result, release, policy):
     if plan is None or plan[1] != identity.tvdb_series_id:
         raise SelectionConflict()
     aid, _, anchor, backfill, following = plan
-    from src.nextgen.trial_policy import Window
     from src.nextgen.storage.sonarr_backfill import plan_window
-    allowed = set(Window(backfill, following).anidb_episodes(anchor)) | set(plan_window(db, plan_id, anchor, backfill, following))
+    allowed = set(plan_window(db, plan_id, anchor, backfill, following))
     if episode not in allowed:
         raise SelectionConflict()
     if identity.tvdb_season is not None:

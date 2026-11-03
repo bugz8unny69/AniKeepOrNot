@@ -1,5 +1,8 @@
 """Verify one declared regular episode using AniDB, explicit mapping and TVDB."""
-from src.nextgen.providers.errors import ProviderInvalidResponse, ProviderAuthenticationFailed, ProviderUnavailable
+from src.nextgen.providers.errors import (
+    ProviderInvalidResponse, ProviderAuthenticationFailed,
+    ProviderUnavailable, ProviderConfigurationError,
+)
 from src.nextgen.providers.http import Clients, Credentials, Options
 from src.nextgen.providers.identity import ClientPool, delivery_title
 from src.nextgen.providers.release_mapping import declared_episode, forward_mappings
@@ -39,7 +42,7 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
                         hit["tvdb_episode"],hit["tvdb_episode_id"])
         actual=options(configuration) if callable(options) else options
         try: secret=credentials()
-        except Exception: secret=None
+        except ProviderConfigurationError: secret=None
         if type(secret) is not Credentials:
             if origin!="anidb": raise ProviderAuthenticationFailed()
             secret=None

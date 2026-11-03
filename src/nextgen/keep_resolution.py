@@ -5,7 +5,11 @@ from src.nextgen.providers.release_mapping import forward_mappings
 from src.nextgen.providers.http import Options
 from src.nextgen.providers.identity import ClientPool, Clients
 from src.nextgen.providers.configuration import options_from_configuration
-from src.nextgen.providers.errors import ProviderUnavailable, ProviderAuthenticationFailed
+from src.nextgen.providers.errors import (
+    ProviderUnavailable, ProviderAuthenticationFailed,
+    ProviderConfigurationError, ProviderInvalidResponse,
+)
+from src.nextgen.release_contracts import ReleaseNotReady, ReleaseConflict
 from src.nextgen.secrets import Credentials
 from src.nextgen.sonarr import KeepReview, KeepUnavailable, KeepConfiguration
 
@@ -41,14 +45,12 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
         mappings = forward_mappings(client.mapping_xml(), aid, tid, catalog)
     except (ProviderUnavailable, TimeoutError, OSError, urllib.error.URLError) as exc:
         raise KeepUnavailable() from exc
-    except ProviderAuthenticationFailed as exc:
+    except (ProviderAuthenticationFailed, ProviderConfigurationError) as exc:
         raise KeepConfiguration() from exc
-    except RuntimeError as exc:
-        if any(msg in str(exc).lower() for msg in ('network', '500', 'unavailable', 'timeout', 'connection')):
-            raise KeepUnavailable() from exc
+    except ReleaseNotReady:
         return None
-    except ValueError:
-        return None
+    except ReleaseConflict as exc:
+        raise KeepReview(failed_check='src/nextgen/keep_resolution.py:51 resolve_tvdb_placement MAPPING_CONFLICT') from exc
 
     target = mappings.get(anidb_number)
     if target is None:
@@ -71,14 +73,8 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
                 break
     except (ProviderUnavailable, TimeoutError, OSError, urllib.error.URLError) as exc:
         raise KeepUnavailable() from exc
-    except ProviderAuthenticationFailed as exc:
+    except (ProviderAuthenticationFailed, ProviderConfigurationError) as exc:
         raise KeepConfiguration() from exc
-    except RuntimeError as exc:
-        if any(msg in str(exc).lower() for msg in ('network', '500', 'unavailable', 'timeout', 'connection')):
-            raise KeepUnavailable() from exc
-        return None
-    except ValueError:
-        return None
 
     if tvdb_eid is None:
         return None
@@ -99,32 +95,48 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
         (target_season, target_episode, tvdb_eid, aid, eid)
     )
 
-    # Commit placement to sonarr_episode_selections scoped strictly to this anime's plan
+    # Commit placement to sonarr_episode_selections scoped strictly to this staged acquisition's exact plan
     target_plan = None
     if target_job_id:
         plan_row = db.execute("SELECT plan_id FROM staging_publications WHERE job_id=?", (target_job_id,)).fetchone()
         if plan_row:
             target_plan = plan_row[0]
+        else:
+            plan_row = db.execute("SELECT plan_id FROM batch_staging_publications WHERE job_id=?", (target_job_id,)).fetchone()
+            if plan_row:
+                target_plan = plan_row[0]
     if target_plan is None:
-        plan_row = db.execute("SELECT plan_id FROM trial_plans WHERE anidb_id=?", (aid,)).fetchone()
-        if plan_row:
-            target_plan = plan_row[0]
-
-    if target_plan is not None:
-        existing_sel = db.execute(
-            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections "
-            "WHERE plan_id=? AND anidb_episode_number=?",
-            (target_plan, anidb_number)
+        res_row = db.execute(
+            "SELECT plan_id FROM episode_reservations WHERE anidb_id=? AND anidb_episode_id=? AND state='ACTIVE'",
+            (aid, eid)
         ).fetchone()
-        if existing_sel is not None:
-            curr_s, curr_ep, curr_eid = existing_sel
-            if curr_eid is not None and (curr_s, curr_ep, curr_eid) != (target_season, target_episode, tvdb_eid):
-                raise KeepReview()
-        db.execute(
-            "UPDATE sonarr_episode_selections SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
-            "WHERE plan_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NULL",
-            (target_season, target_episode, tvdb_eid, target_plan, anidb_number)
-        )
+        if res_row and res_row[0] is not None:
+            target_plan = res_row[0]
+        else:
+            res_row = db.execute(
+                "SELECT plan_id FROM batch_episode_reservations WHERE anidb_id=? AND anidb_episode_id=? AND state='ACTIVE'",
+                (aid, eid)
+            ).fetchone()
+            if res_row and res_row[0] is not None:
+                target_plan = res_row[0]
+
+    if target_plan is None:
+        raise KeepReview(failed_check='src/nextgen/keep_resolution.py:120 resolve_tvdb_placement UNRESOLVED_PLAN')
+
+    existing_sel = db.execute(
+        "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections "
+        "WHERE plan_id=? AND anidb_episode_number=?",
+        (target_plan, anidb_number)
+    ).fetchone()
+    if existing_sel is not None:
+        curr_s, curr_ep, curr_eid = existing_sel
+        if curr_eid is not None and (curr_s, curr_ep, curr_eid) != (target_season, target_episode, tvdb_eid):
+            raise KeepReview(failed_check='src/nextgen/keep_resolution.py:130 resolve_tvdb_placement SELECTION_MISMATCH')
+    db.execute(
+        "UPDATE sonarr_episode_selections SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
+        "WHERE plan_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NULL",
+        (target_season, target_episode, tvdb_eid, target_plan, anidb_number)
+    )
 
     # Insert into recognized_seasons and recognized_episodes
     anime = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (aid,)).fetchone()

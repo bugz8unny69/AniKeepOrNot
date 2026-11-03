@@ -32,12 +32,14 @@ class FakeProviders:
 
     def mapping_xml(self):
         if self._fail_tvdb:
-            raise RuntimeError('Mapping network failure')
+            from src.nextgen.providers.errors import ProviderUnavailable
+            raise ProviderUnavailable()
         return self._mapping
 
     def episode_page(self, tid, page, secret):
         if self._fail_tvdb:
-            raise RuntimeError('TVDB API 500 error')
+            from src.nextgen.providers.errors import ProviderUnavailable
+            raise ProviderUnavailable()
         return self._tvdb, False
 
 
@@ -300,6 +302,88 @@ class KeepResolutionTests(unittest.TestCase):
         # Repeat with same providers/secret
         second = resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
         self.assertEqual(second, (9001, 1, 1))
+
+    def test_same_anime_multiple_plans_resolves_exact_staged_plan(self):
+        """High 2: Resolves exact plan associated with staged acquisition when anime has multiple plans."""
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+
+        # Seed plan 2 for the same anime via batch_staging_publications and sonarr_episode_selections
+        b40 = 'b' * 40
+        self.db.execute(f"""
+            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
+            VALUES(2, 1, NULL, NULL, NULL, '{b40}', 1)
+        """)
+        self.db.execute("""
+            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+            VALUES(15, 1, 'STAGE_BATCH_EPISODE', '{}', 'DONE', 0, 0, 0);
+        """)
+        self.db.execute("""
+            INSERT INTO batch_staging_publications(plan_id,file_index,job_id,verification_job_id,manifest_json,receipts_json,state,created_at_ms,published_at_ms)
+            VALUES(2, 0, 15, 13, '{"entries":[{"role":"media","path":"s/S01E01.mkv"}],"root":"/staging"}',
+                   '[{"role":"media","path":"s/S01E01.mkv"}]', 'PUBLISHED', 1, 1);
+        """)
+        self.db.commit()
+
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                   b'</anime></anime-list>')
+        providers = FakeProviders(mapping=mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        # target_job_id=14 is associated with plan_id=1 in staging_publications
+        resolved = resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+        self.assertEqual(resolved, (9001, 1, 1))
+
+        # Verify plan 1 is updated
+        sel_1 = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
+        self.assertEqual(sel_1, (1, 1, 9001))
+
+        # Verify plan 2 is UNTOUCHED
+        sel_2 = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=2").fetchone()
+        self.assertEqual(sel_2, (None, None, None))
+
+    def test_unresolved_plan_raises_keep_review_without_guessing(self):
+        """High 2: When staged acquisition cannot be linked to a plan, KeepReview is raised without guessing."""
+        from src.nextgen.sonarr import KeepReview
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                   b'</anime></anime-list>')
+        providers = FakeProviders(mapping=mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        # Remove the active reservation and provide an unknown target_job_id (999)
+        self.db.execute("DELETE FROM episode_reservations")
+        self.db.commit()
+
+        with self.assertRaises(KeepReview):
+            resolve_tvdb_placement(self.db, 50, 5001, 100, 999, client=providers, secret=secret)
+
+    def test_unexpected_provider_error_propagates_without_being_disguised_as_missing_mapping(self):
+        """Medium 4: Unexpected exceptions propagate rather than silently becoming None."""
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                   b'</anime></anime-list>')
+        providers = FakeProviders(mapping=mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        # Mock episode_page to raise an unexpected ValueError (e.g., programming bug or corrupted state)
+        providers.episode_page = MagicMock(side_effect=ValueError("corrupted internal provider state"))
+
+        with self.assertRaises(ValueError) as ctx:
+            resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+        self.assertIn("corrupted internal provider state", str(ctx.exception))
+
+    def test_mapping_conflict_raises_keep_review(self):
+        """Medium 4: Conflicting Anime-Lists mapping raises KeepReview rather than returning None."""
+        from src.nextgen.sonarr import KeepReview
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+        # Mapping specifies tvdbid 999, which conflicts with source tvdbid 100
+        conflict_mapping = b'<anime-list><anime anidbid="50" tvdbid="999" defaulttvdbseason="1"></anime></anime-list>'
+        providers = FakeProviders(mapping=conflict_mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        with self.assertRaises(KeepReview):
+            resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
 
 
 if __name__ == '__main__':

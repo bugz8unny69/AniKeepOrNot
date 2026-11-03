@@ -163,6 +163,26 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         finally:
             db.close()
 
+    async def test_unexpected_handler_error_persists_failed_check_in_durable_history(self):
+        """Medium 6: Unexpected handler error records structured failed_check in job_history."""
+        import json
+        from src.nextgen.reasons import _CHECK
+        async def handler(context):
+            raise ValueError("bad parameter")
+        self.enqueue()
+        worker = self.worker(handler)
+        await worker.attempt()
+        db = sqlite3.connect(self.database)
+        try:
+            row = db.execute("SELECT details_json FROM job_history WHERE event_code='RETRY_SCHEDULED'").fetchone()
+            self.assertIsNotNone(row)
+            details = json.loads(row[0])
+            self.assertIn("failed_check", details)
+            self.assertTrue(_CHECK.fullmatch(details["failed_check"]))
+            self.assertTrue(details["failed_check"].endswith("VALUEERROR"))
+        finally:
+            db.close()
+
     async def test_run_bounds_active_jobs_by_startup_concurrency(self):
         entered, release = asyncio.Event(),asyncio.Event()
         active = 0

@@ -168,7 +168,25 @@ class Worker:
                 exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
                           job_id=claim.job_id, event_id=claim.event_id, attempt=claim.attempt)
-                return Outcome("retry", "JOB_HANDLER_FAILED")
+                tb = exc.__traceback__
+                last_frame = None
+                while tb is not None:
+                    if "src/nextgen/" in tb.tb_frame.f_code.co_filename:
+                        last_frame = tb.tb_frame
+                    tb = tb.tb_next
+                loc = "src/nextgen/worker.py:171 _invoke"
+                tag = exc.__class__.__name__[:32].upper()
+                if last_frame is not None:
+                    filename = last_frame.f_code.co_filename
+                    if "src/nextgen/" in filename:
+                        rel = "src/nextgen/" + filename.split("src/nextgen/")[-1]
+                        func = last_frame.f_code.co_name
+                        line = last_frame.f_lineno
+                        candidate = f"{rel}:{line} {func} {tag}"
+                        from src.nextgen.reasons import _CHECK
+                        if _CHECK.fullmatch(candidate):
+                            loc = candidate
+                return Outcome("retry", "JOB_HANDLER_FAILED", facts={"failed_check": loc})
         finally:
             context.cancelled.set()
             finished.set()
