@@ -11,9 +11,10 @@ from src.nextgen.storage.staging import Journal as StageJournal
 
 class Service:
     def __init__(self,configuration,secrets,*,client_factory=Client,
-                 journal_factory=Journal):
+                 journal_factory=Journal,resolver=None):
         self.configuration,self.secrets,self.client_factory=configuration,secrets,client_factory
         self.journal=journal_factory(configuration.value('storage.database_path'))
+        self.resolver=resolver
 
     def run(self,claim,target,cancelled):
         # A stale attempt must finish its I/O before a recovered attempt may send.
@@ -25,7 +26,14 @@ class Service:
         def guard():
             if cancelled.is_set():raise KeepReview()
             journal.fence(claim)
-        phase,data=journal.load(claim,target,self.configuration)
+        resolver=self.resolver
+        if resolver is None:
+            try:
+                from src.nextgen.keep_resolution import make_keep_resolver
+                resolver=make_keep_resolver(self.configuration,self.secrets)
+            except Exception:
+                resolver=None
+        phase,data=journal.load(claim,target,self.configuration,resolver=resolver)
         if phase=='COMPLETE':return True
         selection=KeepSelection(**data['selection']);options=Options(**data['options'])
         client=self.client_factory(options,self.secrets.sonarr_api_key())
