@@ -170,3 +170,24 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LeaseLost):
             worker.queue.finish(claim,Outcome(value=value),spec=spec,invocation='a'*32,registry=worker.registry)
         self.assertEqual(self.rows('SELECT count(*) FROM trial_plans'),[(0,)])
+
+
+class AniDBWindowTests(unittest.TestCase):
+    """Spec §0: single-episode selection in AniDB numbers (season packs unchanged)."""
+    def test_spec_examples(self):
+        from src.nextgen.trial_policy import Window
+        cases = ((1, 6, 3, range(1, 7)), (5, 6, 3, range(1, 8)), (8, 6, 3, range(2, 11)),
+                 (1000, 6, 3, range(994, 1003)), (1000, 0, 6, range(1000, 1006)))
+        for anchor, backfill, following, expected in cases:
+            with self.subTest(anchor=anchor, backfill=backfill, following=following):
+                self.assertEqual(Window(backfill, following).anidb_episodes(anchor), tuple(expected))
+
+    def test_backfill_only_and_large_numbers(self):
+        from src.nextgen.trial_policy import Window
+        self.assertEqual(Window(6, 0).anidb_episodes(1000), tuple(range(994, 1000)))
+        self.assertEqual(Window(6, 0).anidb_episodes(3), tuple(range(1, 7)))
+        self.assertEqual(Window(2, 2).anidb_episodes(5000), (4998, 4999, 5000, 5001))
+
+    def test_season_pack_window_is_unchanged(self):
+        from src.nextgen.trial_policy import Window
+        self.assertEqual(Window(6, 3).episodes(10), (1, 2, 3, 4, 5, 6, 10, 11, 12))

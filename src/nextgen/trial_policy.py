@@ -34,6 +34,21 @@ class Window:
         return tuple(sorted(set(range(1,self.backfill_count+1)) |
                             set(range(anchor,anchor+self.following_count))))
 
+    def anidb_episodes(self, anidb_episode_number):
+        """Single-episode selection window in AniDB episode numbers.
+
+        Backfill is 1..N while the incoming episode is within the first N,
+        otherwise the N episodes just before it. Continue is A..A+F-1.
+        Season packs keep episodes() above; this never resets at a TVDB season.
+        """
+        anchor=anidb_episode_number
+        integer(anchor,positive=True)
+        if self.following_count and anchor>MAX_INTEGER-self.following_count+1:
+            raise TrialConflict()
+        n=self.backfill_count
+        backfill=range(1,n+1) if anchor<=n else range(anchor-n,anchor)
+        return tuple(sorted(set(backfill)|set(range(anchor,anchor+self.following_count))))
+
 
 @dataclass(frozen=True)
 class TrialSource:
