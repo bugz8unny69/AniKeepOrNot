@@ -40,9 +40,16 @@ const state = {
   settings: null, credentials: null, dirty: false, settingsVersion: 0,
   historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
   matchingJob: null, matchingVersion: 0,
-  seriesBusy: false,
-  search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams(location.search).get('job') || '')
-    ? '#' + new URLSearchParams(location.search).get('job') : '',
+  seriesBusy: false, expandedJobId: null,
+  episodeFilter: (() => {
+    if (location.pathname !== '/jobs') return null;
+    const params = new URLSearchParams((location.hash || '').slice(1));
+    const fields = ['anidb_id', 'season', 'episode'].map(name => params.get(name));
+    return fields.every(value => value !== null && /^\d{1,18}$/.test(value))
+      ? {anidb_id: fields[0], season: fields[1], episode: fields[2]} : null;
+  })(),
+  search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams((location.hash || '').slice(1)).get('job') || '')
+    ? '#' + new URLSearchParams((location.hash || '').slice(1)).get('job') : '',
   recognizedSearch: '', searchTimer: null,
 };
 function notice(message = '', error = false) {
@@ -148,6 +155,26 @@ async function submitAction(job, action) {
   // A lost response is reconciled by reading status, never by replaying a POST.
   if (state.csrf) await loadActivity();
 }
+function tvdbLabel(episode) {
+  return 'S' + String(episode.season).padStart(2, '0') +
+    'E' + String(episode.episode).padStart(2, '0');
+}
+function navigateEpisodeJobs(anidbId, episode) {
+  // Keep the episode in the previous history entry so native browser Back
+  // reopens the same series view without another navigation control.
+  const seriesUrl = '/#series=' + encodeURIComponent(anidbId) +
+    '&episode=' + encodeURIComponent(tvdbLabel(episode));
+  if (window.history?.replaceState) window.history.replaceState(null, '', seriesUrl);
+  location.assign('/jobs#anidb_id=' + encodeURIComponent(anidbId) +
+    '&season=' + encodeURIComponent(episode.season) +
+    '&episode=' + encodeURIComponent(episode.episode));
+}
+function relatedJobsButton(anidbId, episode) {
+  const button = node('button', 'Related jobs', 'secondary');
+  button.type = 'button';
+  button.addEventListener('click', () => navigateEpisodeJobs(anidbId, episode));
+  return button;
+}
 function renderJobs() {
   if (state.page === 'intake') { renderSeries(); return; }
   const tbody = $('job-rows'); tbody.replaceChildren();
@@ -175,8 +202,38 @@ function renderJobs() {
     }
     td(date(job.received_at_ms || job.created_at_ms));
     const title = td();
-    title.appendChild(node('span', job.release_name || job.anime_title || 'Management job', 'job-release'));
-    if (job.anime_title && job.anime_title !== job.release_name) title.appendChild(node('small', job.anime_title, 'muted job-note'));
+    title.appendChild(node('strong', job.anime_title || (job.release_name ? 'Anime not identified' : 'Management job'), 'job-anime'));
+    const targets = job.episode_targets || [];
+    if (targets.length) {
+      const shown = targets.slice(0, 3).map(tvdbLabel).join(', ');
+      title.appendChild(node('small', 'TVDB ' + shown +
+        (targets.length > 3 ? ' +' + (targets.length - 3) + ' more' : ''), 'job-episode'));
+    } else if (job.release_name) {
+      title.appendChild(node('small', 'Episode not determined', 'muted job-note'));
+    }
+    if (job.release_name) {
+      const release = node('span', job.release_name, 'job-release muted');
+      release.title = job.release_name;
+      title.appendChild(release);
+      const expanded = node('details', null, 'job-details');
+      const summary = node('summary', 'Release details');
+      expanded.appendChild(summary);
+      expanded.appendChild(node('p', job.release_name, 'job-release-full'));
+      expanded.appendChild(node('small', targets.length ?
+        'Verified TVDB target: ' + targets.map(tvdbLabel).join(', ') :
+        'Episode mapping has not been verified for this job.', 'muted'));
+      expanded.open = state.expandedJobId === job.job_id;
+      expanded.addEventListener('toggle', () => {
+        if (expanded.open) state.expandedJobId = job.job_id;
+        else if (state.expandedJobId === job.job_id) state.expandedJobId = null;
+        if (expanded.open) {
+          for (const other of tbody.querySelectorAll('details.job-details')) {
+            if (other !== expanded) other.open = false;
+          }
+        }
+      });
+      title.appendChild(expanded);
+    }
     td().appendChild(node('span', `#${job.job_id} · ${job.label?.message || 'Job'}`));
     const status = td(); status.appendChild(statusBadge(job));
     if (state.page === 'intake') status.appendChild(node('small', job.acquisition_status.message, 'muted job-note'));
@@ -336,7 +393,7 @@ function renderSeries() {
   $('previous-page').disabled = state.previous.length === 0;
   $('next-page').disabled = state.next === null;
 }
-async function openSeries(anidbId) {
+async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
   if (state.seriesBusy) return;
   try {
     const series = await request(API + '/intake/series/' + anidbId);
@@ -349,18 +406,26 @@ async function openSeries(anidbId) {
     const list = $('series-episodes'); list.replaceChildren();
     for (const item of series.episodes) {
       const tr = node('tr');
-      tr.appendChild(node('td', 'S' + String(item.season).padStart(2, '0') +
-        'E' + String(item.episode).padStart(2, '0')));
-      tr.appendChild(node('td', item.status));
+      tr.dataset.episode = tvdbLabel(item);
+      tr.appendChild(node('td', tvdbLabel(item)));
+      const status = node('td', item.status);
+      if (item.reservation_count) status.appendChild(node('small',
+        item.reservation_count + ' reservation(s)', 'muted job-note'));
+      tr.appendChild(status);
+      const actions = node('td');
+      actions.appendChild(relatedJobsButton(anidbId, item));
+      tr.appendChild(actions);
       list.appendChild(tr);
     }
     $('series-episodes-empty').hidden = series.episodes.length !== 0;
     const missing = $('series-missing'); missing.replaceChildren();
     for (const item of series.missing) {
       const tr = node('tr');
-      tr.appendChild(node('td', 'S' + String(item.season).padStart(2, '0') +
-        'E' + String(item.episode).padStart(2, '0')));
+      tr.dataset.episode = tvdbLabel(item);
+      tr.appendChild(node('td', tvdbLabel(item)));
       const result = node('td', item.status.replaceAll('_', ' ').toLowerCase());
+      if (item.reservation_count) result.appendChild(node('small',
+        item.reservation_count + ' reservation(s)', 'muted job-note'));
       if (item.reason_code) {
         result.appendChild(node('small', item.reason_code === 'TORRENT_METADATA_TIMEOUT'
           ? 'Torrent metadata timed out' : item.reason_code.replaceAll('_', ' ').toLowerCase(), 'muted job-note'));
@@ -370,10 +435,11 @@ async function openSeries(anidbId) {
       }
       tr.appendChild(result);
       const action = node('td');
+      action.appendChild(relatedJobsButton(anidbId, item));
       if (item.job_id) {
         const view = node('button', 'View job', 'secondary');
         view.type = 'button';
-        view.addEventListener('click', () => { location.assign('/jobs?job=' + item.job_id); });
+        view.addEventListener('click', () => { location.assign('/jobs#job=' + item.job_id); });
         action.appendChild(view);
         if (item.can_retry_job || item.can_try_next) {
           for (const [name, label] of [
@@ -494,6 +560,13 @@ async function openSeries(anidbId) {
       finally { state.seriesBusy = false; }
     };
     if (!dialog.open) dialog.showModal();
+    if (focusEpisode) {
+      const row = [...list.children, ...missing.children].find(row => row.dataset.episode === focusEpisode);
+      row?.scrollIntoView?.({block: 'nearest'});
+    }
+    if (recordLocation && window.history?.pushState) {
+      window.history.pushState(null, '', '/#series=' + encodeURIComponent(anidbId));
+    }
   } catch (error) { displayError(error); }
 }
 async function loadActivity() {
@@ -509,6 +582,11 @@ async function loadActivity() {
         path += '&status=' + encodeURIComponent($('intake-filter').value);
       }
       if (state.page === 'jobs') {
+        if (state.episodeFilter) {
+          for (const [key, value] of Object.entries(state.episodeFilter)) {
+            path += '&' + key + '=' + encodeURIComponent(value);
+          }
+        }
         const filter = $('status-filter').value;
         if (filter) path += '&state=' + encodeURIComponent(filter);
         path += '&show_completed=' + Number($('show-completed').checked);
@@ -1133,7 +1211,10 @@ async function showWorkspace() {
   $('activity-title').textContent = state.page === 'intake' ? 'Incoming anime' : 'Job activity';
   $('page-description').textContent = state.page === 'intake' ? 'Follow incoming anime through processing and staging.' : 'Track jobs and their recorded history. Status updates every five seconds.';
   $('page-note').textContent = state.page === 'intake' ?
-    COPY['dashboard.scope'] :
+    COPY['dashboard.scope'] : state.episodeFilter ?
+    'Related jobs for AniDB #' + state.episodeFilter.anidb_id + ' · TVDB ' +
+      tvdbLabel({season: state.episodeFilter.season, episode: state.episodeFilter.episode}) +
+      '. Includes released reservations and completed jobs.' :
     'Filters apply across all jobs. Up to 100 jobs can be selected across pages; up to five use individual actions, larger selections use a queued batch.';
   $('bulk-heading').hidden = state.page !== 'jobs';
   $('completed-toggle-label').hidden = state.page !== 'jobs';
@@ -1141,12 +1222,24 @@ async function showWorkspace() {
   $('status-filter-label').hidden = state.page === 'intake';
   $('intake-filter-label').hidden = state.page !== 'intake';
   $('search').placeholder = state.page === 'intake' ? 'Search anime' : 'Search jobs: release, anime, activity or #id';
+  if (state.episodeFilter) {
+    $('show-completed').checked = true;
+    $('show-canceled').checked = true;
+  }
   if (state.page === 'intake') {
     const titles = ['Received', 'Series', 'Staged', 'Status', 'Backfill', 'Actions'];
     const names = ['received', 'series', 'staged', 'status', 'backfill', 'actions'];
     for (let index = 0; index < titles.length; index++) $('activity-col-' + names[index]).textContent = titles[index];
   }
-  await loadActivity(); clearTimeout(state.timer); if (state.csrf) state.timer = setTimeout(tick, 5000);
+  await loadActivity();
+  if (state.page === 'intake') {
+    const params = new URLSearchParams((location.hash || '').slice(1));
+    const id = params.get('series');
+    if (id && /^[1-9]\d{0,17}$/.test(id)) {
+      void openSeries(id, false, params.get('episode'));
+    }
+  }
+  clearTimeout(state.timer); if (state.csrf) state.timer = setTimeout(tick, 5000);
 }
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = event.currentTarget.querySelector('button'); button.disabled = true;
@@ -1234,6 +1327,18 @@ $('previous-page').addEventListener('click', async () => {
 $('history-close').addEventListener('click', () => $('history-dialog').close());
 $('matching-close').addEventListener('click', () => $('matching-dialog').close());
 $('series-close').addEventListener('click', () => $('series-dialog').close());
+$('series-dialog').addEventListener('close', () => {
+  if (state.page === 'intake' && new URLSearchParams((location.hash || '').slice(1)).has('series')) {
+    window.history?.replaceState?.(null, '', '/');
+  }
+});
+window.addEventListener('popstate', () => {
+  if (state.page !== 'intake' || !state.csrf) return;
+  const params = new URLSearchParams((location.hash || '').slice(1));
+  const id = params.get('series');
+  if (!id && $('series-dialog').open) $('series-dialog').close();
+  else if (id && /^[1-9]\d{0,17}$/.test(id)) void openSeries(id, false, params.get('episode'));
+});
 $('matching-dialog').addEventListener('close', () => {
   state.matchingJob = null; state.matchingVersion += 1;
   $('matching-body').replaceChildren();
