@@ -85,7 +85,7 @@ test('series Reject sends the frozen operations and records the operator reason'
     calls.push({url, options});
     if (url === '/api/v1/intake/series/123') {
       return response({anidb_id: 123, title: 'Example Anime', english_title: null,
-        episodes: [], missing: [{season: 2, episode: 6, status: 'NOT_AIRED', can_retry: true}],
+        episodes: [], missing: [{anidb_episode: 6, season: 2, episode: 6, status: 'NOT_AIRED', can_retry: true}],
         keep_operations: [11, 12], reject_operations: [11, 12], rejection: null});
     }
     if (url === '/api/v1/intake/series/123/reject') {
@@ -493,7 +493,7 @@ test('Search again defaults to cached magnets and checks Delete cache only on re
       calls.push({url, options});
       if (url === '/api/v1/intake/series/123')
         return response({anidb_id:123,title:'Example Anime',english_title:null,
-          episodes:[],missing:[{season:1,episode:1,status:'WAITING_FOR_DUB',can_retry:true}],
+          episodes:[],missing:[{anidb_episode:1,season:1,episode:1,status:'WAITING_FOR_DUB',can_retry:true}],
           keep_operations:[],reject_operations:[],rejection:null});
       return response({job_id:42,reused:false,items:[],next_before_id:null});
     };
@@ -510,7 +510,7 @@ test('Search again defaults to cached magnets and checks Delete cache only on re
     await submitted;
     const posts = calls.filter(x => x.options.method === 'POST');
     assert.equal(posts.length, 1);
-    assert.equal(posts[0].url, '/api/v1/intake/series/123/backfill/1/1/retry');
+    assert.equal(posts[0].url, '/api/v1/intake/series/123/backfill/1/retry');
     assert.deepEqual(JSON.parse(posts[0].options.body), {delete_cache: deleteCache});
   }
 });
@@ -526,7 +526,7 @@ test('failed anchor offers guarded retry, try-next and a direct Jobs link', asyn
       calls.push({url, options});
       if (url === '/api/v1/intake/series/123')
         return response({anidb_id:123,title:'Example Anime',english_title:null,
-          episodes:[],missing:[{season:1,episode:5,status:'NEEDS_REVIEW',
+          episodes:[],missing:[{anidb_episode:5,season:1,episode:5,status:'NEEDS_REVIEW',
             reason_code:'TORRENT_METADATA_TIMEOUT',job_id:1585,reservation_id:99,
             waiting_job_ids:[2001,2002,2003],can_retry:false,
             can_retry_job:true,can_try_next:true}],
@@ -588,7 +588,7 @@ test('manual candidate form submits the selected episode without a second modal'
     calls.push({url,options});
     if (url === '/api/v1/intake/series/123') return response({
       anidb_id:123,title:'Example Anime',english_title:null,episodes:[],
-      missing:[{season:1,episode:5,status:'WAITING_FOR_DUB',reservation_count:1,
+      missing:[{anidb_episode:5,season:1,episode:5,status:'WAITING_FOR_DUB',reservation_count:1,
         manual_submission_count:2}],keep_operations:[],reject_operations:[],rejection:null});
     if (url.endsWith('/submit')) return response({
       message:'Manual release candidate submitted.',job_id:1600},202);
