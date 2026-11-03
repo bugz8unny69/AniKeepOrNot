@@ -242,10 +242,14 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
     main_base, main_marker = season_marker(main)
     effective_scene_base = main_base if main_marker is not None else main
 
-    other_aliases = aliases[1:]
-    has_english = bool(other_aliases)
+    # English only when AniDB gave one; a second romanized alias is just a synonym.
+    eng = None
+    if type(english_title) is str and english_title.strip():
+        wanted = norm(YEAR.sub(' ', english_title))
+        eng = next((alias for alias in aliases[1:] if norm(alias) == wanted), None)
+    has_english = eng is not None
+    synonyms = tuple(alias for alias in aliases[1:] if alias != eng)
     if has_english:
-        eng = other_aliases[0]
         eng_base, eng_marker = season_marker(eng)
         eng_scene_base = eng_base if eng_marker is not None else eng
 
@@ -256,7 +260,7 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
         queries.append('%s %02d' % (eng, target.anidb_episode))
         queries.append('%s %02d' % (main, target.anidb_episode))
         queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
-        for syn in other_aliases[1:]:
+        for syn in synonyms:
             queries.append('%s %02d' % (syn, target.anidb_episode))
         queries.append('%s S%02dE%02d Dual-Audio' % (effective_scene_base, current_season, target.tvdb_episode))
     else:
@@ -264,13 +268,13 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
         queries.append('%s %02d' % (main, target.anidb_episode))
         queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
 
-        # 2. English title (first other alias) queries:
+        # 2. AniDB English title queries:
         if has_english:
             queries.append('%s %02d' % (eng, target.anidb_episode))
             queries.append('%s S%02dE%02d' % (eng_scene_base, current_season, target.tvdb_episode))
 
         # 3. Broad fallback for additional aliases (e.g. short synonym "Saikyosoubi 01"):
-        for syn in other_aliases[1:]:
+        for syn in synonyms:
             queries.append('%s %02d' % (syn, target.anidb_episode))
 
         # 4. Audio-aware query variants when prefer_audio (Japanese + English required)
@@ -279,7 +283,7 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
             queries.append('%s %02d Dual-Audio' % (main, target.anidb_episode))
 
         # 5. Scene queries for additional synonyms:
-        for syn in other_aliases[1:]:
+        for syn in synonyms:
             s_base, s_marker = season_marker(syn)
             s_scene_base = s_base if s_marker is not None else syn
             queries.append('%s S%02dE%02d' % (s_scene_base, current_season, target.tvdb_episode))
