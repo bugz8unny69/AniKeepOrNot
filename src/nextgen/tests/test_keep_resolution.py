@@ -199,6 +199,108 @@ class KeepResolutionTests(unittest.TestCase):
         with self.assertRaises(KeepSelectionInvalid):
             load_selection(self.db, 14, resolver=mock_failing_resolver)
 
+    def test_cross_anime_plan_isolation(self):
+        """W-05: Resolving Anime A must NOT update Anime B with the same episode number."""
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+
+        # Seed Anime B (aid=60, tid=200, ep_num=1, eid=6001, plan_id=2)
+        d64 = 'e' * 64
+        a40 = 'b' * 40
+        self.db.executescript(f"""
+            INSERT INTO identified_anime VALUES(60, 200, 'Other Show');
+            INSERT INTO identity_results VALUES(2, 1, 60, 2, '{{"anime":{{"anidb_id":60,"tvdb_series_id":200}}}}', 1);
+            INSERT INTO identified_episodes VALUES(6001, 60);
+            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES(30,1,'VERIFY_RELEASE','{{}}','DONE',0,0,0);
+            INSERT INTO release_verifications(verification_id,job_id,identity_result_id,anidb_id,
+              release_sha256,verification_scope,anidb_episode_number,anidb_episode_id,tvdb_series_id,
+              tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms)
+              VALUES(3,30,2,60,'{d64}','DECLARED_SINGLE_EPISODE',1,6001,200,NULL,NULL,NULL,1);
+            INSERT INTO trial_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
+              backfill_count,following_count,configuration_revision,created_at_ms)
+              VALUES(2,60,200,1,'official',3,1,6,3,1,1);
+            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
+              VALUES(2,1,NULL,NULL,NULL,'{a40}',1);
+        """)
+        self.db.commit()
+
+        # Both plans have NULL tvdb_episode_id for ep_num=1
+        sel_a = self.db.execute("SELECT tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
+        sel_b = self.db.execute("SELECT tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=2").fetchone()
+        self.assertIsNone(sel_a[0])
+        self.assertIsNone(sel_b[0])
+
+        # Resolve Anime A's episode 1
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                   b'</anime></anime-list>')
+        providers = FakeProviders(mapping=mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        resolved = resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+        self.assertEqual(resolved, (9001, 1, 1))
+
+        # Check: Anime A is updated to (1, 1, 9001)
+        sel_a_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
+        self.assertEqual(sel_a_after, (1, 1, 9001))
+
+        # Check: Anime B is UNTOUCHED!
+        sel_b_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=2").fetchone()
+        self.assertEqual(sel_b_after, (None, None, None))
+
+    def test_provider_outage_raises_keep_unavailable(self):
+        """W-06: Provider network/500 failure raises KeepUnavailable for automatic retry."""
+        from src.nextgen.sonarr import KeepUnavailable
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+        providers = FakeProviders(mapping=b'', tvdb=(), airdates={1: '2026-10-01'}, fail_tvdb=True)
+        secret = Credentials('fake-key')
+
+        with self.assertRaises(KeepUnavailable):
+            resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+
+    def test_unconfigured_credentials_raises_keep_configuration(self):
+        """W-06: Unconfigured credentials raise KeepConfiguration for actionable user feedback."""
+        from src.nextgen.sonarr import KeepConfiguration
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+        providers = FakeProviders(mapping=b'', tvdb=(), airdates={1: '2026-10-01'})
+
+        with self.assertRaises(KeepConfiguration):
+            resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=None)
+
+    def test_conflicting_recognized_placement_raises_keep_review(self):
+        """W-06: Discovered placement that conflicts with existing recognized episode raises KeepReview."""
+        from src.nextgen.sonarr import KeepReview
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+        # Pre-seed conflicting recognized episode for aid=50, ep_num=1
+        self.db.execute(
+            "INSERT INTO recognized_seasons VALUES(100, 1, 50, 'Test Show', 1, 1)")
+        self.db.execute(
+            "INSERT INTO recognized_episodes VALUES(100, 1, 50, 1, 5001, 1, 9999, 1, 1)")
+        self.db.commit()
+
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                   b'</anime></anime-list>')
+        # Resolver tries to map to tvdb_eid 9001 instead of 9999
+        providers = FakeProviders(mapping=mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        with self.assertRaises(KeepReview):
+            resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+
+    def test_repeat_resolution_is_idempotent(self):
+        """W-06: Resolving the same placement repeatedly succeeds idempotently."""
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                   b'</anime></anime-list>')
+        providers = FakeProviders(mapping=mapping, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        first = resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+        self.assertEqual(first, (9001, 1, 1))
+
+        # Repeat with same providers/secret
+        second = resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+        self.assertEqual(second, (9001, 1, 1))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -33,6 +33,7 @@ class Provider:
         self.season_lookups = []
         self.candidates = {15105: ("Higurashi Sotsu",)}
         self.tvdb_titles = ("Higurashi Sotsu",)
+        self.tvdb_anidb_ids = frozenset({15105})
 
     def title_candidates(self, aliases):
         self.queries.append(tuple(aliases))
@@ -53,7 +54,7 @@ class Provider:
 
     def series(self, tid, credentials):
         return {"titles": self.tvdb_titles, "animation": True, "live": False,
-                "anidb_ids": frozenset({15105})}
+                "anidb_ids": self.tvdb_anidb_ids}
 
 
 class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -107,8 +108,18 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_disagreement_is_still_rejected(self):
         provider = Provider()
         provider.tvdb_titles = ("A Different Show",)
+        provider.tvdb_anidb_ids = frozenset()
         with self.assertRaises(IdentityConflict):
             await self.identify(RELEASE, provider)
+
+    async def test_verified_provider_link_allows_different_title_language(self):
+        # W-13: JoJo / Black Clover scenario: TVDB lists explicit AniDB remoteId 15105
+        # but title spelling differs ("Higurashi: When They Cry - SOTSU").
+        provider = Provider()
+        provider.tvdb_titles = ("Higurashi: When They Cry - SOTSU",)
+        result, trace = await self.identify(RELEASE, provider)
+        self.assertEqual(result["anime"]["anidb_id"], 15105)
+        self.assertEqual(result["anime"]["tvdb_series_id"], 12345)
 
     async def test_plain_s02_title_uses_anime_lists_season_entry(self):
         # No "| Sequel" suffix: identify the base series, then take its season 2 entry.
@@ -151,6 +162,7 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         provider.candidates = {15105: ("Saga of Tanya the Evil",)}
         provider.anime = lambda aid: {"title": "Youjo Senki", "titles": ("Saga of Tanya the Evil",)}
         provider.tvdb_titles = ("A Different Show",)
+        provider.tvdb_anidb_ids = frozenset()
         with self.assertRaises(IdentityConflict):
             await self.identify("Saga of Tanya the Evil S02E08 1080p", provider)
 

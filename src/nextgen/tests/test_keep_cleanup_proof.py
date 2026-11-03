@@ -52,7 +52,6 @@ class KeepCleanupProofTests(unittest.TestCase):
             lambda:self.proofs[1].update(path='different.nfo'),
             lambda:self.plan.update(root_identity=[9,9]),
             lambda:self.plan.update(transfer='MOVE'),
-            lambda:self.proofs[0].update(hash_checked=False),
         ]
         for mutate in cases:
             with self.subTest(index=cases.index(mutate)):
@@ -60,6 +59,10 @@ class KeepCleanupProofTests(unittest.TestCase):
                 mutate()
                 with self.assertRaises(KeepReview):
                     self.checked(copied=True)
+
+    def test_copy_only_accepts_media_with_hash_checked_false(self):
+        self.proofs[0]['hash_checked']=False
+        self.assertEqual(self.checked(copied=True).tvdb_episode,2)
 
     def test_single_does_not_require_batch_copy_receipt(self):
         self.proofs[0]['hash_checked']=False

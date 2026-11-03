@@ -108,6 +108,25 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(SelectionConflict):
             self.choose()
 
+    def test_migrated_frozen_window_accepted_during_selection(self):
+        # PR #250 scenario: historical stored results 1..6 differ from recomputed window.
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS sonarr_backfill_results (
+                plan_id INTEGER, anidb_episode_number INTEGER);
+            INSERT INTO sonarr_backfill_results VALUES (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6);
+            UPDATE trial_plans SET anchor_episode=1151, backfill_count=6, following_count=1 WHERE plan_id=1;
+            INSERT INTO recognized_episodes VALUES (50,100,1,2,202,2);
+        """)
+        identity = VerifiedEpisode(100, 202, 1, 2)
+        result = SearchResult(100, 202, (release(episode_id=202),))
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self.assertTrue(select(self.db, plan_id=1, episode=2, identity=identity, result=result,
+                                   release=result.candidates[0], policy=DiscoveryPolicy()))
+        self.assertEqual(self.db.execute(
+            'SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM sonarr_episode_selections WHERE plan_id=1 AND anidb_episode_number=2'
+        ).fetchone(), (2, 1, 2))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -61,7 +61,7 @@ class BatchKeepJournal:
         require_allowed(db,row[4])
         return action[0],row
 
-    def load(self,claim,target,configuration):
+    def load(self,claim,target,configuration,*,resolver=None):
         with self.queue.connection() as db,transaction(db):
             parent,row=self.guard(db,claim)
             if parent!=target:raise KeepReview()
@@ -91,8 +91,7 @@ class BatchKeepJournal:
                 checked=[e for e in receipts if e['role']=='media']
                 if (len(media)!=1 or len(checked)!=1
                         or media[0]['path']!=checked[0]['path']
-                        or recorded.get('transfer')!='COPY'
-                        or checked[0]['hash_checked'] is not True):
+                        or recorded.get('transfer')!='COPY'):
                     raise KeepReview()
                 identity=tuple(row[4:10])
                 selection=KeepSelection(

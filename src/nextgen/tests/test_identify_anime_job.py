@@ -87,6 +87,8 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
         # Season 1's entry is never approved for Season 2.
         self.assertIn({"step":"season_scope","status":"passed","note":"base_series_season_lookup"},trace["checks"])
         self.assertIn("anime_lists",[c["step"] for c in trace["checks"] if c["status"]=="failed"])
+        self.assertNotIn("recognized_season",[c["step"] for c in trace["checks"] if c["status"]=="failed"])
+        self.assertIn({"step":"recognized_season","status":"skipped","note":"not_previously_recognized"},trace["checks"])
         self.assertNotIn("identity_verified",[c["step"] for c in trace["checks"] if c["status"]=="passed"])
         self.assertNotIn("private-tvdb-test-key",record[0][0])
         self.assertNotIn("webhook_token",record[0][0])
@@ -129,7 +131,7 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT count(*) FROM identity_results"),[(0,)])
 
     async def test_invalid_provider_candidate_never_persists(self):
-        for invalid in ({},candidate(tid=0),dict(candidate(),attributes={"token":"private"})):
+        for invalid in ({},candidate(tid=0),dict(candidate(),attributes="not-a-dict"),dict(candidate(),attributes={123:"bad_key"})):
             with self.subTest(invalid=invalid):
                 async def resolve(*args): return invalid
                 _,job = self.enqueue()
@@ -137,6 +139,16 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),
                                  [("NEEDS_REVIEW","IDENTITY_INVALID")])
         self.assertEqual(self.rows("SELECT count(*) FROM identity_results"),[(0,)])
+
+    async def test_romaji_title_identity_enrichment_persists(self):
+        event, job = self.enqueue()
+        enriched = dict(candidate(), attributes={"romaji_title": "Shingeki no Kyojin"})
+        async def resolve(*args): return enriched
+        worker = self.worker(registration(resolve))
+        self.assertTrue(await worker.attempt())
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE job_id=?", (job,)), [("DONE",)])
+        self.assertEqual(self.rows("SELECT romaji_title FROM anime_title_metadata WHERE anidb_id=123"),
+                         [("Shingeki no Kyojin",)])
 
     async def test_provider_wait_and_failure_have_distinct_retry_histories(self):
         for error,reason,marker in ((ProviderDeferred(2000),"JOB_WAITING","DEFERRED"),

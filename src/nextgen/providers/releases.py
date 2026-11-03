@@ -1,5 +1,5 @@
 """Verify one declared regular episode using AniDB, explicit mapping and TVDB."""
-from src.nextgen.providers.errors import ProviderInvalidResponse, ProviderAuthenticationFailed
+from src.nextgen.providers.errors import ProviderInvalidResponse, ProviderAuthenticationFailed, ProviderUnavailable
 from src.nextgen.providers.http import Clients, Credentials, Options
 from src.nextgen.providers.identity import ClientPool, delivery_title
 from src.nextgen.providers.release_mapping import declared_episode, forward_mappings
@@ -38,8 +38,11 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
                         hit["anidb_episode_id"],hit["tvdb_season"],
                         hit["tvdb_episode"],hit["tvdb_episode_id"])
         actual=options(configuration) if callable(options) else options
-        secret=credentials()
-        if type(secret) is not Credentials: raise ProviderAuthenticationFailed()
+        try: secret=credentials()
+        except Exception: secret=None
+        if type(secret) is not Credentials:
+            if origin!="anidb": raise ProviderAuthenticationFailed()
+            secret=None
         client=pool.get(configuration.value("storage.database_path"),actual)
         catalog=client.episodes(source.anidb_id)
         if origin=="anidb":
@@ -49,7 +52,7 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
             except (ReleaseNotReady, ReleaseConflict):
                 mappings={}
             target=mappings.get(number)
-            if target is None:
+            if target is None or secret is None:
                 if cancelled.is_set(): raise ReleaseNotReady()
                 return VerifiedRelease(source,number,catalog[number],None,None,None)
         else:
@@ -74,17 +77,23 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
         seen=set()
         matches=[]
         total=0
-        for page in range(20):
-            if cancelled.is_set(): raise ReleaseNotReady()
-            records,has_next=client.episode_page(source.tvdb_series_id,page,secret)
-            total+=len(records)
-            if total>10000: raise ProviderInvalidResponse()
-            for eid,record_season,record_number in records:
-                if eid in seen: raise ProviderInvalidResponse()
-                seen.add(eid)
-                if (record_season,record_number)==target: matches.append(eid)
-            if not has_next: break
-        else: raise ProviderInvalidResponse()
+        try:
+            for page in range(20):
+                if cancelled.is_set(): raise ReleaseNotReady()
+                records,has_next=client.episode_page(source.tvdb_series_id,page,secret)
+                total+=len(records)
+                if total>10000: raise ProviderInvalidResponse()
+                for eid,record_season,record_number in records:
+                    if eid in seen: raise ProviderInvalidResponse()
+                    seen.add(eid)
+                    if (record_season,record_number)==target: matches.append(eid)
+                if not has_next: break
+            else: raise ProviderInvalidResponse()
+        except (ProviderUnavailable, ProviderInvalidResponse, ProviderAuthenticationFailed):
+            if origin=="anidb":
+                if cancelled.is_set(): raise ReleaseNotReady()
+                return VerifiedRelease(source,number,catalog[number],None,None,None)
+            raise
         if not matches:
             if origin=="anidb":
                 if cancelled.is_set(): raise ReleaseNotReady()

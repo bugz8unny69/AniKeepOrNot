@@ -15,15 +15,21 @@ SEASON_TOKEN = re.compile(r'(?<![A-Za-z0-9])S\d{1,2}(?![A-Za-z0-9])', re.I)
 SEASON_WORD = re.compile(r'\bSeason[ ._-]*S?\d{1,2}\b', re.I)
 RELEASE_TECH = re.compile(
     r'(?<![A-Za-z0-9])(?:\d{3,4}p|4K|UHD|WEB[ ._-]?DL|WEBRip|BluRay|'
-    r'BDRip|BDMV|HEVC|AV1|x264|x265|H264|H265)(?![A-Za-z0-9])', re.I)
+    r'BDRip|BDMV|BD[ ._-]?Remux|Remux|HEVC|AV1|x264|x265|H264|H265|'
+    r'Fixed|Proper)(?![A-Za-z0-9])', re.I)
 META_GROUP = re.compile(r'\(([^()]*)\)')
 TRAIL = re.compile(r'\s*(?:\[[^]]+\]\s*)+$')
 METADATA_ONLY = re.compile(
-    r'^(?:Batch|Season[ ._-]*S?\d{1,2}|Complete(?:[ ._-]*Season)?|'
-    r'Dual[ ._-]*Audio(?:,\s*Multi[ ._-]*Subs)?|'
-    r'Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
+    r'^(?:'
+    r'(?:Batch|Season[ ._-]*S?\d{1,2}|Complete(?:[ ._-]*Season)?|'
+    r'Dual[ ._-]*Audio|Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
     r'\d{3,4}p|4K|AV1|HEVC|x26[45]|'
-    r'BD|BDRip|WEB[ ._-]?DL)$', re.I)
+    r'BD(?:[ ._-]?Remux)?|Remux|BDRip|WEB[ ._-]?DL|Fixed|Proper)'
+    r'(?:[,\s]+(?:Batch|Season[ ._-]*S?\d{1,2}|Complete(?:[ ._-]*Season)?|'
+    r'Dual[ ._-]*Audio|Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
+    r'\d{3,4}p|4K|AV1|HEVC|x26[45]|'
+    r'BD(?:[ ._-]?Remux)?|Remux|BDRip|WEB[ ._-]?DL|Fixed|Proper))*'
+    r')$', re.I)
 
 
 def release_title(raw):
@@ -44,7 +50,11 @@ def release_title(raw):
         for written in parsed.titles:
             base, number = season_marker(written, roman=False)
             for alias in (base if number is not None else written,):
-                if alias and alias not in aliases: aliases.append(alias)
+                cleaned = re.sub(r'[\(\[\{][^\)\]\}]*$', '', alias).strip()
+                cleaned = re.sub(r'[\(\[\{:\-\s]+$', '', cleaned).strip()
+                cleaned = re.sub(r'[\)\]\}]+$', '', cleaned).strip()
+                if cleaned and not re.fullmatch(r'^[A-Za-z]?\d{6,}$', cleaned) and cleaned not in aliases:
+                    aliases.append(cleaned)
         if aliases:
             return aliases, parsed.episode
     value = PREFIX.sub('', raw).strip()
@@ -61,6 +71,9 @@ def release_title(raw):
                                      RELEASE_TECH.search(value)) if m]
     title = (value[:min(boundaries)] if boundaries else value).strip(' ._-')
     title = TRAIL.sub('', title).strip()
+    # Clean unbalanced open parentheses/brackets at the end
+    title = re.sub(r'[\(\[\{][^\)\]\}]*$', '', title).strip()
+    title = re.sub(r'[\(\[\{:\-\s]+$', '', title).strip()
     # Metadata-only parentheticals may occur even when no season token exists.
     parts = [part.strip() for part in META_GROUP.findall(title)]
     safe_parts = [part for part in parts
@@ -73,13 +86,34 @@ def release_title(raw):
     without_parentheses = re.sub(r'\s+', ' ', without_parentheses).strip(' ._-')
     # Provider queries never use an isolated packaging tag. Parenthetical
     # alternate names remain optional query aliases only when title-like.
-    aliases = [title, without_parentheses]
+    raw_aliases = [title, without_parentheses]
     for part in safe_parts:
         if (len(part) >= 4 and not re.fullmatch(r'\d{4}', part)
                 and not RELEASE_TECH.search(part)
                 and not SEASON_WORD.search(part)):
-            aliases.append(part)
-    return list(dict.fromkeys(x for x in aliases if x)), episode
+            raw_aliases.append(part)
+    aliases = []
+    for item in raw_aliases:
+        cleaned = item.strip()
+        # Clean unbalanced unclosed opening brackets
+        while (cleaned.count('(') > cleaned.count(')') or
+               cleaned.count('[') > cleaned.count(']') or
+               cleaned.count('{') > cleaned.count('}')):
+            m = re.search(r'[\(\[\{][^\(\)\[\]\{\}]*$', cleaned)
+            if not m: break
+            cleaned = cleaned[:m.start()].strip()
+        # Clean unbalanced closing brackets
+        while (cleaned.endswith(')') and cleaned.count(')') > cleaned.count('(')) or \
+              (cleaned.endswith(']') and cleaned.count(']') > cleaned.count('[')) or \
+              (cleaned.endswith('}') and cleaned.count('}') > cleaned.count('{')):
+            cleaned = cleaned[:-1].strip()
+        cleaned = re.sub(r'[:\-\s]+$', '', cleaned).strip()
+        if not cleaned: continue
+        if re.fullmatch(r'^[A-Za-z]?\d{6,}$', cleaned) or re.fullmatch(r'^[0-9a-fA-F]{16,}$', cleaned):
+            continue
+        if cleaned not in aliases:
+            aliases.append(cleaned)
+    return aliases, episode
 
 def norm(s):
     return ''.join(ch for ch in unicodedata.normalize('NFKC', s).casefold() if ch.isalnum())

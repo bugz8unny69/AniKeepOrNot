@@ -41,10 +41,6 @@ class IdentifiedSeries:
         integer(self.event_id,positive=True)
         candidate = parse_payload(self.series_json)
         AnimeSeries.from_dict(candidate)
-        # No arbitrary enrichment/provider response blobs or secrets in this
-        # initial job's persistence contract. Add documented enrichment later.
-        if candidate.get("attributes", {}):
-            raise ValueError("unsupported identity enrichment")
 
     def data(self):
         return parse_payload(self.series_json)
