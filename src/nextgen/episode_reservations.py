@@ -28,14 +28,19 @@ class ReservationInput:
     anidb_id: int
     anidb_episode_id: int
     tvdb_series_id: int
-    tvdb_season: int
-    tvdb_episode: int
-    tvdb_episode_id: int
-    selected: bool
+    tvdb_season: int | None = None
+    tvdb_episode: int | None = None
+    tvdb_episode_id: int | None = None
+    selected: bool = False
 
     def __post_init__(self):
         for name in ('evaluation_job_id','event_id','verification_id','plan_id','anidb_id',
-                     'anidb_episode_id','tvdb_series_id','tvdb_episode','tvdb_episode_id'):
+                     'anidb_episode_id','tvdb_series_id'):
             integer(getattr(self,name),positive=True)
-        integer(self.tvdb_season)
+        if self.tvdb_season is not None:
+            integer(self.tvdb_season)
+        if self.tvdb_episode is not None:
+            integer(self.tvdb_episode,positive=True)
+        if self.tvdb_episode_id is not None:
+            integer(self.tvdb_episode_id,positive=True)
         if type(self.selected) is not bool:raise ValueError('invalid episode selection')

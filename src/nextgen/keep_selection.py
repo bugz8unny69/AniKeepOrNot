@@ -53,6 +53,15 @@ def load_selection(db,target_job_id):
     identity=db.execute('SELECT r.anidb_id,r.anidb_episode_id,r.tvdb_series_id,r.tvdb_episode_id,r.tvdb_season,r.tvdb_episode '
         'FROM acquisition_plans p JOIN episode_reservations r USING(reservation_id) WHERE p.plan_id=?',(source[1],)).fetchone()
     if identity is None:raise KeepSelectionInvalid()
+    aid, eid, tid, tvdb_eid, season, ep = identity
+    if tvdb_eid is None or season is None or ep is None:
+        known = db.execute('SELECT tvdb_episode_id, tvdb_season, tvdb_episode FROM recognized_episodes '
+                           'WHERE anidb_id=? AND anidb_episode_id=?', (aid, eid)).fetchone()
+        if known is not None:
+            tvdb_eid, season, ep = known
+        else:
+            raise KeepSelectionInvalid()
+    identity = (aid, eid, tid, tvdb_eid, season, ep)
     manifest=json.loads(source[2]);receipts=json.loads(source[3])
     media=[entry for entry in manifest['entries'] if entry['role']=='media']
     proof=[entry for entry in receipts if entry['role']=='media']

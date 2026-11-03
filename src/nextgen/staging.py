@@ -49,8 +49,10 @@ def slug(title):
 def nfo(root,values,ids):
     document=ET.Element(root)
     for key,value in values:ET.SubElement(document,key).text=str(value)
+    has_tvdb = any(provider == 'tvdb' for provider, _ in ids)
     for provider,identity in ids:
-        ET.SubElement(document,'uniqueid',{'type':provider,'default':'true' if provider=='tvdb' else 'false'}).text=str(identity)
+        is_default = 'true' if (provider == 'tvdb' or (not has_tvdb and provider == 'anidb')) else 'false'
+        ET.SubElement(document,'uniqueid',{'type':provider,'default':is_default}).text=str(identity)
     return ET.tostring(document,encoding='utf-8',xml_declaration=True)
 
 
@@ -58,17 +60,24 @@ def specification(intent,evidence,identity,root,revision,*,display_title=None):
     """Pure deterministic layout from verified placement, never release paths."""
     anime,episode,series,season,number,tvdb_episode,title=identity
     from src.nextgen.history import integer
-    for value in (anime,episode,series,number,tvdb_episode,revision):integer(value,positive=True)
-    integer(season)
+    effective_season = 1 if season is None else season
+    for value in (anime,episode,series,number,revision):integer(value,positive=True)
+    if tvdb_episode is not None:
+        integer(tvdb_episode,positive=True)
+    integer(effective_season)
     folder=f'{slug(title)} [tvdbid-{series}] [anidbid-{anime}]'
-    season_folder=folder+f'/Season {season:02d}'
-    basename=f'{slug(title)} - S{season:02d}E{number:02d}'
+    season_folder=folder+f'/Season {effective_season:02d}'
+    basename=f'{slug(title)} - S{effective_season:02d}E{number:02d}'
     media=season_folder+'/'+basename+PurePosixPath(evidence['path']).suffix.lower()
     # Display metadata can differ from the canonical filesystem naming.
     shown = display_title or title
     show=nfo('tvshow',[('title',shown)],[('tvdb',series),('anidb',anime)])
-    episode_nfo=nfo('episodedetails',[('title',f'Episode {number}'),('showtitle',shown),('season',season),('episode',number)],
-                    [('tvdb',tvdb_episode),('anidb',episode)])
+    ids = []
+    if tvdb_episode is not None:
+        ids.append(('tvdb',tvdb_episode))
+    ids.append(('anidb',episode))
+    episode_nfo=nfo('episodedetails',[('title',f'Episode {number}'),('showtitle',shown),('season',effective_season),('episode',number)],
+                    ids)
     entries=[{'role':'media','path':media,'sha256':evidence['sha256'],'size':evidence['file'][2],'text':None},
              {'role':'episode','path':season_folder+'/'+basename+'.nfo','sha256':hashlib.sha256(episode_nfo).hexdigest(),
               'size':len(episode_nfo),'text':episode_nfo.decode()},

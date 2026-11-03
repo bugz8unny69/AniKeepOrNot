@@ -55,7 +55,7 @@ def build_catalog(client, aid, tid, secret, *, today=None):
         ids = placements.get(placement, ()) if placement else ()
         if (placement is None or len(ids) != 1
                 or sum(1 for other in mappings.values() if other == placement) != 1):
-            targets[number] = EpisodeTarget(None, 'MAPPING_MISSING', number)
+            targets[number] = EpisodeTarget(None, 'SEARCHABLE', number)
             continue
         season, episode = placement
         # Absolute number across regular seasons, as many groups number sequels.

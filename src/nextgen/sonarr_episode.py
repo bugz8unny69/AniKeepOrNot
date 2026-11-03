@@ -13,15 +13,20 @@ def _positive(value):
 @dataclass(frozen=True)
 class VerifiedEpisode:
     tvdb_series_id: int
-    tvdb_episode_id: int
-    tvdb_season: int
-    tvdb_episode: int
+    tvdb_episode_id: int | None = None
+    tvdb_season: int | None = None
+    tvdb_episode: int | None = None
 
     def __post_init__(self):
-        if (not _positive(self.tvdb_series_id) or not _positive(self.tvdb_episode_id)
-                or type(self.tvdb_season) is not int or self.tvdb_season < 0
-                or not _positive(self.tvdb_episode)):
+        if not _positive(self.tvdb_series_id):
             raise SonarrEpisodeMismatch("Verified TVDB episode identity is invalid.")
+        has_placement = (self.tvdb_episode_id is not None or self.tvdb_season is not None
+                         or self.tvdb_episode is not None)
+        if has_placement:
+            if (not _positive(self.tvdb_episode_id)
+                    or type(self.tvdb_season) is not int or self.tvdb_season < 0
+                    or not _positive(self.tvdb_episode)):
+                raise SonarrEpisodeMismatch("Verified TVDB episode identity is invalid.")
 
 
 def resolve_episode(identity, series, episodes):
@@ -29,6 +34,8 @@ def resolve_episode(identity, series, episodes):
     if (type(series) is not dict or type(episodes) is not list
             or not _positive(series.get('id')) or series.get('tvdbId') != identity.tvdb_series_id):
         raise SonarrEpisodeMismatch("Sonarr series does not match TVDB.")
+    if identity.tvdb_episode_id is None or identity.tvdb_season is None or identity.tvdb_episode is None:
+        raise SonarrEpisodeMismatch("Sonarr episode mapping is missing.")
     sid = series['id']
     matches = [
         row for row in episodes

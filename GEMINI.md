@@ -24,6 +24,7 @@
 ## Architecture & Project Boundaries
 
 - **NextGen Focus**: Active development belongs exclusively in `src/nextgen/`. Legacy code in `src/legacy/` is reference-only for domain rules and regression scenarios.
+- **Media Servers & Staging**: The staging area is designed for viewing via media servers (Jellyfin, Plex, Emby) prior to permanent Keep import into Sonarr. Staged media and NFO metadata (`tvshow.nfo`, `<episodedetails>` `.nfo`) must adhere to standard Kodi/Jellyfin/Plex local media parsing conventions.
 - **Database & Schemas**: Follow existing SQLite migration and schema patterns (`src/nextgen/`). Keep schema changes clean, immutable, and explicit.
 - **Testing**: Maintain high test reliability with `pytest`. Ensure tests run deterministically and exercise failure/cleanup paths.
 

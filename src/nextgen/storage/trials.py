@@ -63,9 +63,10 @@ def persist_trial(db,claim,proposal):
     now=integer(time.time_ns()//1000000)
     if row is None and (proposal.window.backfill_count or proposal.window.following_count):
         proposal.window.anidb_episodes(source.anidb_episode_number)
+        plan_season = source.tvdb_season if source.tvdb_season is not None else 1
         plan=db.execute("INSERT INTO trial_plans(anidb_id,tvdb_series_id,tvdb_season,anchor_verification_id,anchor_episode,"
                         "backfill_count,following_count,configuration_revision,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (source.anidb_id,source.tvdb_series_id,source.tvdb_season,source.verification_id,source.anidb_episode_number,
+                        (source.anidb_id,source.tvdb_series_id,plan_season,source.verification_id,source.anidb_episode_number,
                          proposal.window.backfill_count,proposal.window.following_count,proposal.configuration_revision,now)).lastrowid
         row=(plan,source.anidb_episode_number,proposal.window.backfill_count,proposal.window.following_count)
     if row is None:

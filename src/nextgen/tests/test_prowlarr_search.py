@@ -343,8 +343,8 @@ class BackfillCatalogTests(unittest.TestCase):
         self.assertEqual(found.target(3), EpisodeTarget(None, 'NOT_AIRED', 3))  # AniDB air date is later.
         self.assertEqual(found.target(20), EpisodeTarget(None, 'NOT_AIRED', 20))  # AniDB does not list it.
 
-    def test_anidb_episodes_keep_their_own_tvdb_season_and_missing_placement_fails_closed(self):
-        # AniDB E1-E2 are TVDB S01E11-S01E12; E3 is TVDB S02E01; E4 has no TVDB episode.
+    def test_anidb_episodes_keep_their_own_tvdb_season_and_missing_placement_is_searchable(self):
+        # AniDB E1-E2 are TVDB S01E11-S01E12; E3 is TVDB S02E01; E4 has no TVDB episode and is searchable without TVDB placement.
         mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="10">'
                    b'<mapping-list><mapping anidbseason="1" tvdbseason="2">;3-1;4-2;</mapping></mapping-list>'
                    b'</anime></anime-list>')
@@ -355,7 +355,7 @@ class BackfillCatalogTests(unittest.TestCase):
         self.assertEqual((found.target(2).tvdb_season, found.target(2).tvdb_episode), (1, 12))
         self.assertEqual((found.target(3).tvdb_season, found.target(3).tvdb_episode,
                           found.target(3).absolute_episode), (2, 1, 3))
-        self.assertEqual(found.target(4), EpisodeTarget(None, 'MAPPING_MISSING', 4))
+        self.assertEqual(found.target(4), EpisodeTarget(None, 'SEARCHABLE', 4))
 
     def test_anidb_air_dates_are_parsed_for_regular_episodes_only(self):
         payload = ('<anime id="50"><episodes>'

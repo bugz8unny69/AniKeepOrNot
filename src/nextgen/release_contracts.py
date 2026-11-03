@@ -46,12 +46,17 @@ class VerifiedRelease:
     source: ReleaseInput = field(repr=False)
     anidb_episode_number: int
     anidb_episode_id: int
-    tvdb_season: int
-    tvdb_episode: int
-    tvdb_episode_id: int
+    tvdb_season: int | None = None
+    tvdb_episode: int | None = None
+    tvdb_episode_id: int | None = None
 
     def __post_init__(self):
         if type(self.source) is not ReleaseInput: raise ValueError("release source required")
-        for value in (self.anidb_episode_number,self.anidb_episode_id,self.tvdb_episode,self.tvdb_episode_id):
+        for value in (self.anidb_episode_number,self.anidb_episode_id):
             integer(value,positive=True)
-        integer(self.tvdb_season)
+        if self.tvdb_season is not None:
+            integer(self.tvdb_season)
+        if self.tvdb_episode is not None:
+            integer(self.tvdb_episode,positive=True)
+        if self.tvdb_episode_id is not None:
+            integer(self.tvdb_episode_id,positive=True)

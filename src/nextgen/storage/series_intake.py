@@ -45,24 +45,26 @@ def _placements(db, anidb_id, plan_id):
     return {number: places.pop() for number, places in found.items() if len(places) == 1}
 
 
-def _active_episode(db, anidb_id, season, episode):
+def _active_episode(db, anidb_id, season, episode, anidb_episode_id=None):
     """Read existing acquisition ownership; never infer staged from a reservation."""
+    where_clause = "r.anidb_id=? AND r.anidb_episode_id=? AND r.state='ACTIVE'" if anidb_episode_id is not None else "r.anidb_id=? AND r.tvdb_season=? AND r.tvdb_episode=? AND r.state='ACTIVE'"
+    args = (anidb_id, anidb_episode_id) if anidb_episode_id is not None else (anidb_id, season, episode)
     owner = db.execute(
         "SELECT r.reservation_id,r.owner_job_id,m.operation_id,o.state,"
         "r.anidb_episode_id,r.tvdb_episode_id,r.tvdb_series_id "
-        "FROM episode_reservations r "
-        "JOIN job_operation_members m ON m.job_id=r.owner_job_id "
-        "JOIN job_operations o ON o.operation_id=m.operation_id "
-        "WHERE r.anidb_id=? AND r.tvdb_season=? AND r.tvdb_episode=? AND r.state='ACTIVE' "
-        "UNION ALL "
-        "SELECT r.reservation_id,r.owner_job_id,m.operation_id,o.state,"
-        "r.anidb_episode_id,r.tvdb_episode_id,r.tvdb_series_id "
-        "FROM batch_episode_reservations r "
-        "JOIN job_operation_members m ON m.job_id=r.owner_job_id "
-        "JOIN job_operations o ON o.operation_id=m.operation_id "
-        "WHERE r.anidb_id=? AND r.tvdb_season=? AND r.tvdb_episode=? AND r.state='ACTIVE' "
-        "LIMIT 1",
-        (anidb_id, season, episode, anidb_id, season, episode)
+        f"FROM episode_reservations r "
+        f"JOIN job_operation_members m ON m.job_id=r.owner_job_id "
+        f"JOIN job_operations o ON o.operation_id=m.operation_id "
+        f"WHERE {where_clause} "
+        f"UNION ALL "
+        f"SELECT r.reservation_id,r.owner_job_id,m.operation_id,o.state,"
+        f"r.anidb_episode_id,r.tvdb_episode_id,r.tvdb_series_id "
+        f"FROM batch_episode_reservations r "
+        f"JOIN job_operation_members m ON m.job_id=r.owner_job_id "
+        f"JOIN job_operations o ON o.operation_id=m.operation_id "
+        f"WHERE {where_clause} "
+        f"LIMIT 1",
+        (*args, *args)
     ).fetchone()
     if owner is None:
         return None
@@ -77,6 +79,13 @@ def _active_episode(db, anidb_id, season, episode):
         "WHEN 'RUNNING' THEN 2 WHEN 'RETRY_WAIT' THEN 3 WHEN 'PENDING' THEN 4 "
         "ELSE 5 END, j.job_id DESC LIMIT 1", (operation_id,)
     ).fetchone()
+    waiting_tvdb = ""
+    waiting_args = [anidb_id, anidb_episode_id, tvdb_series_id]
+    if season is not None and episode is not None and tvdb_episode_id is not None:
+        waiting_tvdb = "AND v.tvdb_season=? AND v.tvdb_episode=? AND v.tvdb_episode_id=? "
+        waiting_args.extend([season, episode, tvdb_episode_id])
+    else:
+        waiting_tvdb = "AND v.tvdb_season IS NULL AND v.tvdb_episode IS NULL AND v.tvdb_episode_id IS NULL "
     waiting = db.execute(
         "SELECT j.job_id FROM jobs j "
         "JOIN job_operation_members m ON m.job_id=j.job_id "
@@ -85,12 +94,10 @@ def _active_episode(db, anidb_id, season, episode):
         "JOIN release_verifications v ON v.verification_id=t.verification_id "
         "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' "
         "AND j.last_reason_code='EPISODE_RESERVED' AND o.state='ACTIVE' "
-        "AND t.selected=1 AND v.anidb_id=? AND v.anidb_episode_id=? "
-        "AND v.tvdb_series_id=? AND v.tvdb_season=? AND v.tvdb_episode=? "
-        "AND v.tvdb_episode_id=? "
+        f"AND t.selected=1 AND v.anidb_id=? AND v.anidb_episode_id=? "
+        f"AND v.tvdb_series_id=? {waiting_tvdb}"
         "ORDER BY j.created_at_ms,j.job_id",
-        (anidb_id, anidb_episode_id, tvdb_series_id, season, episode,
-         tvdb_episode_id)
+        waiting_args
     ).fetchall()
     job_id, job_state, reason = step if step else (owner_job_id, 'DONE', None)
     state = ('CLEANUP_PENDING' if operation_state != 'ACTIVE' else
@@ -156,7 +163,9 @@ def detail(db, anidb_id, language='english'):
     # Existing single-episode staging (one underlying operation per release).
     single = db.execute(
         "SELECT r.tvdb_season,r.tvdb_episode,s.job_id,m.operation_id,o.state,"
-        " k.job_id,k.state FROM staging_publications s "
+        " k.job_id,k.state,"
+        " (SELECT v.anidb_episode_number FROM release_verifications v WHERE v.anidb_id=r.anidb_id AND v.anidb_episode_id=r.anidb_episode_id LIMIT 1) "
+        "FROM staging_publications s "
         "JOIN acquisition_plans p USING(plan_id) "
         "JOIN episode_reservations r USING(reservation_id) "
         "JOIN job_operation_members m ON m.job_id=s.job_id "
@@ -168,7 +177,7 @@ def detail(db, anidb_id, language='english'):
     # Season-pack episodes use their existing batch Keep operation.
     batch = db.execute(
         "SELECT r.tvdb_season,r.tvdb_episode,s.job_id,m.operation_id,o.state,"
-        " k.job_id,k.state FROM batch_staging_publications s "
+        " k.job_id,k.state,NULL FROM batch_staging_publications s "
         "JOIN batch_episode_reservations r ON r.plan_id=s.plan_id AND r.file_index=s.file_index "
         "JOIN job_operation_members m ON m.job_id=s.job_id "
         "JOIN job_operations o ON o.operation_id=m.operation_id "
@@ -178,7 +187,11 @@ def detail(db, anidb_id, language='english'):
         (anidb_id,)).fetchall()
     operations = set()
     staged_episodes = set()
-    for season, episode, job, op, state, keep_job, keep_state in sorted(single + batch):
+    staged_anidb_numbers = set()
+    for season, episode, job, op, state, keep_job, keep_state, anidb_num in sorted(
+        single + batch,
+        key=lambda r: (r[0] is not None, r[0], r[1] is not None, r[1], r[7] is not None, r[7], r[2])
+    ):
         status = ('Kept' if keep_state == 'DONE' else
                   'Importing' if keep_job is not None else
                   'Staged' if state == 'STAGED' else state.title())
@@ -187,10 +200,14 @@ def detail(db, anidb_id, language='english'):
         result['episodes'].append({
             'season': season, 'episode': episode, 'job_id': job,
             'operation_id': op, 'status': status,
+            'anidb_episode': anidb_num,
             'reservation_count': reservation_counts.get((season, episode), 0),
             'manual_submission_count': manual_counts.get((season, episode), 0)
         })
-        staged_episodes.add((season, episode))
+        if season is not None and episode is not None:
+            staged_episodes.add((season, episode))
+        if anidb_num is not None:
+            staged_anidb_numbers.add(anidb_num)
         if state == 'STAGED' and keep_state != 'DONE':
             operations.add(op)
     result['keep_operations'] = sorted(operations) if rejected is None else []
@@ -199,10 +216,18 @@ def detail(db, anidb_id, language='english'):
     # and its summary is recomputed during polling.
     active_episodes = set(db.execute(
         "SELECT tvdb_season,tvdb_episode FROM episode_reservations "
-        "WHERE anidb_id=? AND state='ACTIVE' UNION "
+        "WHERE anidb_id=? AND state='ACTIVE' AND tvdb_season IS NOT NULL UNION "
         "SELECT tvdb_season,tvdb_episode FROM batch_episode_reservations "
         "WHERE anidb_id=? AND state='ACTIVE'", (anidb_id, anidb_id)
     ).fetchall())
+    active_anidb_eids = set(row[0] for row in db.execute(
+        "SELECT anidb_episode_id FROM episode_reservations WHERE anidb_id=? AND state='ACTIVE' UNION "
+        "SELECT anidb_episode_id FROM batch_episode_reservations WHERE anidb_id=? AND state='ACTIVE'",
+        (anidb_id, anidb_id)
+    ).fetchall())
+    anidb_eids = dict(db.execute(
+        "SELECT anidb_episode_number, anidb_episode_id FROM release_verifications WHERE anidb_id=?",
+        (anidb_id,)).fetchall())
     # One plan per AniDB anime; its window is in AniDB episode numbers.
     plans = db.execute(
         'SELECT plan_id,anchor_episode,backfill_count,following_count '
@@ -220,10 +245,15 @@ def detail(db, anidb_id, language='english'):
         visible.add(anchor)
         for number in sorted(visible):
             place = placements.get(number)
-            if place in staged_episodes:
+            if number in staged_anidb_numbers or (place is not None and place in staged_episodes):
                 continue
-            work = (_active_episode(db, anidb_id, *place)
-                    if place in active_episodes else None)
+            eid = anidb_eids.get(number)
+            if place in active_episodes:
+                work = _active_episode(db, anidb_id, *place)
+            elif eid is not None and eid in active_anidb_eids:
+                work = _active_episode(db, anidb_id, None, None, anidb_episode_id=eid)
+            else:
+                work = None
             status = (work['status'] if work else
                       WAITING_FOR_DUB if number in waiting else observed.get(number, 'NOT_SEARCHED'))
             season, episode = place or (None, None)

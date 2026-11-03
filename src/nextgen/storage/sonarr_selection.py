@@ -51,27 +51,28 @@ def select(db, *, plan_id, episode, identity, result, release, policy):
     from src.nextgen.trial_policy import Window
     if episode not in Window(backfill, following).anidb_episodes(anchor):
         raise SelectionConflict()
-    recognized = db.execute(
-        "SELECT anidb_episode_number FROM recognized_episodes WHERE anidb_id=? AND tvdb_series_id=? "
-        "AND tvdb_season=? AND tvdb_episode=? AND tvdb_episode_id=?",
-        (aid, identity.tvdb_series_id, identity.tvdb_season,
-         identity.tvdb_episode, identity.tvdb_episode_id)
-    ).fetchone()
-    # A recognized AniDB episode must keep its own recognized placement.
-    if recognized not in (None, (episode,)) or db.execute(
-            "SELECT 1 FROM recognized_episodes WHERE anidb_id=? AND anidb_episode_number=? "
-            "AND tvdb_episode_id<>?", (aid, episode, identity.tvdb_episode_id)).fetchone():
-        raise SelectionConflict()
-    # Catalog-only placements are *hints*, not proof of anime identity.
-    # VERIFY_RELEASE must independently resolve them before any reservation.
-    if recognized is None:
-        conflicting=db.execute(
-            "SELECT tvdb_episode_id FROM recognized_episodes WHERE "
-            "tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?",
-            (identity.tvdb_series_id,identity.tvdb_season,identity.tvdb_episode)
+    if identity.tvdb_season is not None:
+        recognized = db.execute(
+            "SELECT anidb_episode_number FROM recognized_episodes WHERE anidb_id=? AND tvdb_series_id=? "
+            "AND tvdb_season=? AND tvdb_episode=? AND tvdb_episode_id=?",
+            (aid, identity.tvdb_series_id, identity.tvdb_season,
+             identity.tvdb_episode, identity.tvdb_episode_id)
         ).fetchone()
-        if conflicting is not None:
+        # A recognized AniDB episode must keep its own recognized placement.
+        if recognized not in (None, (episode,)) or db.execute(
+                "SELECT 1 FROM recognized_episodes WHERE anidb_id=? AND anidb_episode_number=? "
+                "AND tvdb_episode_id<>?", (aid, episode, identity.tvdb_episode_id)).fetchone():
             raise SelectionConflict()
+        # Catalog-only placements are *hints*, not proof of anime identity.
+        # VERIFY_RELEASE must independently resolve them before any reservation.
+        if recognized is None:
+            conflicting=db.execute(
+                "SELECT tvdb_episode_id FROM recognized_episodes WHERE "
+                "tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?",
+                (identity.tvdb_series_id,identity.tvdb_season,identity.tvdb_episode)
+            ).fetchone()
+            if conflicting is not None:
+                raise SelectionConflict()
     previous = db.execute(
         "SELECT tvdb_season,tvdb_episode,tvdb_episode_id,info_hash FROM sonarr_episode_selections "
         "WHERE plan_id=? AND anidb_episode_number=?", (plan_id, episode)
@@ -82,14 +83,21 @@ def select(db, *, plan_id, episode, identity, result, release, policy):
             raise SelectionConflict()
         return False
     # The existing single and batch reservation namespaces remain authoritative.
-    args = (identity.tvdb_series_id, identity.tvdb_season, identity.tvdb_episode)
-    for table in ("episode_reservations", "batch_episode_reservations"):
-        if db.execute(
-            f"SELECT 1 FROM {table} WHERE state='ACTIVE' "
-            "AND tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=? LIMIT 1",
-            args
-        ).fetchone():
-            raise SelectionConflict()
+    if identity.tvdb_season is not None:
+        args = (identity.tvdb_series_id, identity.tvdb_season, identity.tvdb_episode)
+        for table in ("episode_reservations", "batch_episode_reservations"):
+            if db.execute(
+                f"SELECT 1 FROM {table} WHERE state='ACTIVE' "
+                "AND tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=? LIMIT 1",
+                args
+            ).fetchone():
+                raise SelectionConflict()
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='release_verifications'").fetchone():
+        anidb_eid = db.execute("SELECT anidb_episode_id FROM release_verifications WHERE anidb_id=? AND anidb_episode_number=?", (aid, episode)).fetchone()
+        if anidb_eid is not None:
+            for table in ("episode_reservations", "batch_episode_reservations"):
+                if db.execute(f"SELECT 1 FROM {table} WHERE state='ACTIVE' AND anidb_episode_id=? LIMIT 1", anidb_eid).fetchone():
+                    raise SelectionConflict()
     if db.execute("SELECT 1 FROM sonarr_episode_selections WHERE plan_id=? AND info_hash=?",
                   (plan_id,digest)).fetchone():
         raise SelectionConflict()

@@ -49,6 +49,7 @@ class AniDBFirstMigrationTests(unittest.TestCase):
     def migrate(self):
         self.db.commit()
         self.db.executescript(SCRIPT)
+        self.db.executescript((SQL_DIR / '057_anidb_first_staging.sql').read_text())
         return self.db
 
     def test_runner_applies_the_step_with_validation(self):
@@ -80,7 +81,7 @@ class AniDBFirstMigrationTests(unittest.TestCase):
                         "created_at_ms,updated_at_ms) VALUES(5,1,'DISCOVER_SONARR_BACKFILL',?,"
                         "'DONE',0,0,0)", (json.dumps({'plan_id': 1, 'start': 1, 'retry_episode': 4}),))
         db = self.migrate()
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (56,))
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (57,))
         self.assertEqual(db.execute('SELECT tvdb_season,anchor_episode FROM trial_plans').fetchall(),
                          [(2, 1000)])
         self.assertEqual(db.execute('SELECT anidb_episode_number,status FROM sonarr_backfill_results').fetchall(),
