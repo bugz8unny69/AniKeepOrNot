@@ -22,7 +22,7 @@ class FakeDiscovery:
         self.calls = []
         self.error = False
 
-    def backfill(self, anidb_id, tvdb_series_id, season, numbers, *, reserved=(), verified_ids=None):
+    def backfill(self, anidb_id, tvdb_series_id, season, numbers, *, reserved=(), verified_ids=None, **kwargs):
         self.calls.append((tvdb_series_id, season, numbers, tuple(reserved), dict(verified_ids or {})))
         if self.error: raise SearchUnavailable()
         return tuple(

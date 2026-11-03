@@ -473,6 +473,29 @@ def audio_exhausted(db, plan_id, episode):
     return _audio_only(db, plan_id, episode) is not None
 
 
+def load_tried_hashes(database, plan_id, numbers):
+    """(tvdb_episode -> frozenset of tried hashes) for episodes in numbers."""
+    if not numbers: return {}
+    db = None
+    try:
+        db = _open(database, readonly=True, timeout_ms=5000)
+        placeholders = ','.join('?' for _ in numbers)
+        rows = db.execute(
+            f"SELECT tvdb_episode, info_hash FROM sonarr_episode_candidates "
+            f"WHERE plan_id=? AND tvdb_episode IN ({placeholders})",
+            (plan_id, *numbers)
+        ).fetchall()
+        result = {}
+        for ep, h in rows:
+            if h:
+                result.setdefault(ep, set()).add(h.lower())
+        return {ep: frozenset(hs) for ep, hs in result.items()}
+    except (sqlite3.Error, OSError, MigrationError):
+        return {}
+    finally:
+        if db is not None: db.close()
+
+
 def load_dub_search(database, plan_id, episode):
     """The episode identity and tried hashes, or None if not an audio-only exhaustion."""
     from src.nextgen.sonarr_episode import VerifiedEpisode

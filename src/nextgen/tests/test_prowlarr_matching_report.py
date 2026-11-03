@@ -279,7 +279,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         options = Options("http://127.0.0.1:9696", 60)
         client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
-        client._get = lambda q: [row1] if "Senshi" in q else [row2]
+        client._get = lambda q: [row1] if q == "FX Senshi Kurumi-chan 01" else ([row2] if q == "FX Fighter Kurumi-chan 01" else [])
 
         ranked = client._search(self.catalog, 1, self.target_ep1)
         self.assertEqual(len(ranked), 1)  # Deduplicated in ranked return
@@ -334,7 +334,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
             c = Client(Options("http://127.0.0.1:9696", 60), "key",
                        catalog=lambda a, t, s: catalog_ep2, policy=policy)
             c._transport = lambda req, timeout: None
-            c._get = lambda q: [raw_row]
+            c._get = lambda q: [raw_row] if q == "FX Senshi Kurumi-chan 02" else []
             return c
 
         registry = Registry((
@@ -508,7 +508,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         client._transport = lambda req, timeout: None
 
         def mock_get(q):
-            if "Senshi" in q:
+            if q == "FX Senshi Kurumi-chan 01":
                 return [make_raw_prowlarr_row("[Sub] FX Senshi Kurumi-chan - 01 (1080p)")]
             raise SearchTimeout()
 
@@ -547,7 +547,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         rows_q1 = self.build_115_row_fixture()
         policy = DiscoveryPolicy(prefer_audio_tag=True)
         client = Client(Options("http://127.0.0.1:9696", 60), "apikey", catalog=lambda a, t, s: self.catalog, policy=policy)
-        client._get = lambda q: rows_q1 if "Senshi" in q else []
+        client._get = lambda q: rows_q1 if q == "FX Senshi Kurumi-chan 01" else []
         client._search(self.catalog, 1, self.target_ep1)
         snapshot = client.snapshots[0]
 

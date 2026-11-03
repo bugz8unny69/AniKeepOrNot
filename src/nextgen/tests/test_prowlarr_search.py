@@ -114,8 +114,10 @@ class ProwlarrClientTests(unittest.TestCase):
         self.assertEqual(choice.identity, VerifiedEpisode(100, 9001, 1, 1))
         self.assertEqual([r.info_hash for r in choice.result.candidates], [B, A, C])
         # Episodes that cannot be searched never contact Prowlarr.
-        self.assertEqual(fake.queries, ['Kusuriya no Hitorigoto 01', 'The Apothecary Diaries 01',
-                                        'Kusuriya no Hitorigoto 02', 'The Apothecary Diaries 02'])
+        self.assertEqual(fake.queries, ['Kusuriya no Hitorigoto 01', 'Kusuriya no Hitorigoto S01E01',
+                                        'The Apothecary Diaries 01', 'The Apothecary Diaries S01E01',
+                                        'Kusuriya no Hitorigoto 02', 'Kusuriya no Hitorigoto S01E02',
+                                        'The Apothecary Diaries 02', 'The Apothecary Diaries S01E02'])
 
     def test_yearless_s02e02_indexer_release_is_returned_by_prowlarr(self):
         titles = ('Koori no Jouheki (2026)', 'The Ramparts of Ice (2026)')
@@ -358,6 +360,58 @@ class ProwlarrSettingsTests(unittest.TestCase):
             'max_resolution': 2160, 'min_seeders': 1, 'rank_by': 'seeders'}})
         self.assertEqual(Options.capture(current), Options('http://prowlarr.local:9696', 90))
         self.assertEqual(DiscoveryPolicy.capture(current), DiscoveryPolicy(2160, 1, 'seeders', 600, True))
+
+    def test_narrow_search_returning_failed_hashes_proceeds_to_next_fallback(self):
+        failed_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        fresh_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        fake = FakeProwlarr({
+            'Kusuriya no Hitorigoto 01': [
+                row('[Group] Kusuriya no Hitorigoto - 01 (1080p)', failed_hash, seeders=20),
+            ],
+            'The Apothecary Diaries 01': [
+                row('[Group] The Apothecary Diaries - 01 (1080p)', fresh_hash, seeders=25),
+            ],
+        })
+        cli = client(fake, SEARCHABLE[0])
+        # Backfill called with tried_by_episode marking failed_hash as already tried
+        observed = cli.backfill(50, 100, 1, (1,), select_candidates=True,
+                                tried_by_episode={1: frozenset({failed_hash})})
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].status, 'CANDIDATES')
+        snapshot = cli.snapshots[0]
+        # Query 1 (Kusuriya 01) returned failed_hash -> 0 actionable
+        q1 = next(q for q in snapshot['queries'] if q['query'] == 'Kusuriya no Hitorigoto 01')
+        self.assertEqual(q1['exact_matches'], 1)
+        self.assertEqual(q1['policy_eligible'], 1)
+        self.assertEqual(q1['new_actionable'], 0)
+
+        # Query for The Apothecary Diaries 01 returned fresh_hash -> 1 actionable
+        q_eng = next(q for q in snapshot['queries'] if q['query'] == 'The Apothecary Diaries 01')
+        self.assertEqual(q_eng['exact_matches'], 1)
+        self.assertEqual(q_eng['policy_eligible'], 1)
+        self.assertEqual(q_eng['new_actionable'], 1)
+
+        # Newly actionable candidate count
+        self.assertEqual(snapshot['counts']['passes_policy'], 2)
+        self.assertEqual(snapshot['counts']['newly_actionable'], 1)
+
+    def test_general_search_fallback_preserves_valid_results_when_specific_query_empty(self):
+        # When specific queries (like S01E01) return empty, general search (Title 01) preserves results
+        fresh_hash = "cccccccccccccccccccccccccccccccccccccccc"
+        fake = FakeProwlarr({
+            'Kusuriya no Hitorigoto S01E01': [],
+            'Kusuriya no Hitorigoto 01': [
+                row('[Group] Kusuriya no Hitorigoto - 01 (1080p)', fresh_hash, seeders=50),
+            ],
+        })
+        cli = client(fake, SEARCHABLE[0])
+        observed = cli.backfill(50, 100, 1, (1,), select_candidates=True)
+        self.assertEqual(observed[0].status, 'CANDIDATES')
+        self.assertEqual(observed[0].selection.release.info_hash, fresh_hash)
+        snapshot = cli.snapshots[0]
+        self.assertEqual(snapshot['counts']['matched'], 1)
+        self.assertEqual(snapshot['counts']['passes_policy'], 1)
+        self.assertEqual(snapshot['counts']['newly_actionable'], 1)
 
     def test_secret_store_keeps_the_prowlarr_key_private(self):
         import tempfile, os

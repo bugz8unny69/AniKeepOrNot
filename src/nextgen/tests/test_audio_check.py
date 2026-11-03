@@ -22,7 +22,8 @@ class AudioTagTests(unittest.TestCase):
         for title in ('[Group] Show - 01 (1080p) [Dual Audio]', 'Show.S01E01.1080p.Dual-Audio.x265',
                       'Show S01E01 DUAL 1080p', 'Show - 01 [Multi-Audio]', 'Show S01E01 MULTi 1080p',
                       'Show - 01 [English Dub]', 'Show - 01 (Dubbed)', 'Show S01E01 JPN+ENG',
-                      'Show - 01 [Eng-Jpn]', 'Show - 01 (Japanese, English)'):
+                      'Show - 01 [Eng-Jpn]', 'Show - 01 (Japanese, English)',
+                      'Show - 01 [MULTi AD]', '[SubsPlease] Some Show - 01 (720p) [MULTi AD].mkv'):
             with self.subTest(title=title):
                 self.assertTrue(audio_tagged(title))
 
@@ -34,6 +35,8 @@ class AudioTagTests(unittest.TestCase):
 
     def test_dual_audio_hint_requires_both_audio_languages(self):
         for title in ('Show - 01 [Dual Audio]', 'Show - 01 MULTi',
+                      'Show - 01 [Multi-Audio]', 'Show - 01 [MULTi AD]',
+                      '[SubsPlease] Some Show - 01 (720p) [MULTi AD].mkv',
                       'Show S01E01 JPN+ENG', 'Show (Japanese, English)'):
             with self.subTest(title=title):
                 self.assertTrue(dual_audio_tagged(title))
@@ -61,6 +64,29 @@ class ProbeLanguageTests(unittest.TestCase):
     def test_off_skips_the_language_check_only(self):
         self.assertEqual(parse_probe(probe_bytes(languages=('und',)), '.mkv', 'off')[1], ())
         self.assertEqual(required_languages('off'), frozenset())
+
+    def test_multi_ad_hint_still_requires_actual_dual_audio_in_probe(self):
+        title = '[SubsPlease] Some Show - 01 (720p) [MULTi AD].mkv'
+        self.assertTrue(dual_audio_tagged(title))
+
+        # 1. Probe contains both jpn and eng -> passes
+        both = probe_bytes(languages=('jpn', 'eng'))
+        self.assertEqual(parse_probe(both, '.mkv')[1], ('eng', 'jpn'))
+
+        # 2. Probe contains only jpn -> fails
+        jpn_only = probe_bytes(languages=('jpn',))
+        with self.assertRaises(AudioMissing):
+            parse_probe(jpn_only, '.mkv')
+
+        # 3. Probe contains only eng -> fails
+        eng_only = probe_bytes(languages=('eng',))
+        with self.assertRaises(AudioMissing):
+            parse_probe(eng_only, '.mkv')
+
+        # 4. Probe contains French / other language only -> fails
+        fre_only = probe_bytes(languages=('fre',))
+        with self.assertRaises(AudioMissing):
+            parse_probe(fre_only, '.mkv')
 
 
 def release(title, resolution=1080, seeders=50):

@@ -22,6 +22,7 @@ from src.nextgen.storage.sonarr_backfill import (
     persist_fallback, FallbackMissing, persist_fallback_missing,
     AUTOMATIC_RETRY_MS, automatic_retry_used,
     WAITING_FOR_DUB, DubFound, load_dub_search, persist_dub_found,
+    load_tried_hashes,
 )
 from src.nextgen.storage.sonarr_cached_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
@@ -111,7 +112,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     log.info('Backfill episode %s: no eligible cached magnet; searching Prowlarr',
                              exhausted_episode)
                 client = connect('exhausted')
-                result = await blocking(client.search,plan.anidb_id,target.identity)
+                search_kwargs = {'tried': target.tried} if isinstance(client, Client) else {}
+                result = await blocking(client.search,plan.anidb_id,target.identity,**search_kwargs)
                 fresh = _new_dub_releases(result,client.policy,target.tried)
                 snapshots = getattr(client, 'snapshots', None)
                 if not fresh:
@@ -129,7 +131,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 target=await blocking(load_fallback,
                     context.configuration.value('storage.database_path'),
                     plan_id,fallback_episode)
-                result=await blocking(client.search,plan.anidb_id,target.identity)
+                search_kwargs = {'tried': {target.failed_hash}, 'target_hash': target.next_hash} if isinstance(client, Client) else {}
+                result=await blocking(client.search,plan.anidb_id,target.identity,**search_kwargs)
                 release=next((row for row in result.candidates
                     if row.info_hash==target.next_hash
                     and client.policy.accepts(row)
@@ -142,10 +145,17 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     plan,fallback_episode,target,
                     CandidateSelection(target.identity,result,release,client.policy)),search_snapshots=snapshots)
             client = connect('initial')
+            tried_by_ep = await blocking(load_tried_hashes,
+                context.configuration.value('storage.database_path'),plan.plan_id,plan.numbers)
+            backfill_kwargs = {}
+            if select_candidates:
+                backfill_kwargs['select_candidates'] = True
+            if isinstance(client, Client) and tried_by_ep:
+                backfill_kwargs['tried_by_episode'] = tried_by_ep
             observed = await blocking(
                 client.backfill,plan.anidb_id,plan.tvdb_series_id,plan.season,plan.numbers,
                 reserved=plan.reserved,verified_ids=dict(plan.verified),
-                **({'select_candidates': True} if select_candidates else {}))
+                **backfill_kwargs)
             if len(observed) != len(plan.numbers):
                 raise BackfillConflict()
             # Report each episode's actual result; unavailable episodes never

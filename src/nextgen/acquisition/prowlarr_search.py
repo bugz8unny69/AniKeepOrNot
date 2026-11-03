@@ -159,6 +159,7 @@ class EpisodeTarget:
 class EpisodeCatalog:
     titles: tuple[str, ...]
     episodes: dict = field(repr=False)   # tvdb episode number -> EpisodeTarget
+    english_title: str | None = None
 
     def target(self, number):
         return self.episodes.get(number) or EpisodeTarget(number, 'NOT_AIRED')
@@ -209,10 +210,30 @@ def _magnet_hash(uri):
         return None
 
 
-def search_aliases(titles):
-    """Up to three distinct Latin-script titles; the AniDB main title comes first."""
+_ENGLISH_STOPWORDS = frozenset({
+    'the', 'of', 'in', 'to', 'and', 'a', 'an', 'is', 'for', 'with', 'from', 'on', 'at', 'by',
+    'i', 'me', 'my', 'you', 'your', 'we', 'our', 'he', 'his', 'she', 'her', 'it', 'its',
+    'they', 'them', 'their', 'this', 'that', 'these', 'those', 'as', 'are', 'was', 'were',
+    'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'but', 'or', 'so',
+    'if', 'not', 'no', 'up', 'out', 'about', 'into', 'after', 'before', 'between', 'under',
+    'again', 'all', 'any', 'both', 'each', 'more', 'most', 'other', 'some', 'such',
+    'only', 'own', 'same', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now',
+    'world', 'life', 'girl', 'boy', 'hero', 'king', 'lord', 'reborn', 'strongest', 'mercenary',
+    'diaries', 'ramparts', 'ice', 'apothecary', 'space'
+})
+
+
+def is_english_title(title):
+    if type(title) is not str: return False
+    words = {w.lower() for w in re.findall(r'[a-zA-Z]+', title)}
+    return bool(words & _ENGLISH_STOPWORDS)
+
+
+def search_aliases(titles, *, english_title=None):
+    """Up to three distinct Latin-script titles; AniDB main title first, then English title when known, then synonyms."""
     picked, seen = [], set()
     from src.nextgen.providers.parsing import norm
+    candidates = []
     for title in titles:
         if (type(title) is not str or not 2 <= len(title) <= 200 or not title.isascii()
                 or any(ord(c) < 32 for c in title)):
@@ -220,8 +241,40 @@ def search_aliases(titles):
         key = norm(title)
         if key and key not in seen:
             seen.add(key)
-            picked.append(title)
+            candidates.append(title)
+
+    if not candidates:
+        return ()
+
+    # 1. Main title
+    picked.append(candidates[0])
+
+    # 2. English title when known or recognized
+    english_pick = None
+    if english_title and type(english_title) is str and english_title.isascii():
+        norm_eng = norm(english_title)
+        for cand in candidates[1:]:
+            if norm(cand) == norm_eng:
+                english_pick = cand
+                break
+        if english_pick is None and 2 <= len(english_title) <= 200 and not any(ord(c) < 32 for c in english_title):
+            if norm(english_title) != norm(picked[0]):
+                english_pick = english_title
+    if english_pick is None:
+        for cand in candidates[1:]:
+            if is_english_title(cand):
+                english_pick = cand
+                break
+
+    if english_pick and english_pick not in picked:
+        picked.append(english_pick)
+
+    # 3. Remaining aliases up to MAX_ALIASES
+    for cand in candidates[1:]:
+        if cand not in picked:
+            picked.append(cand)
         if len(picked) == MAX_ALIASES: break
+
     return tuple(picked)
 
 
@@ -321,7 +374,7 @@ class Client:
         return cls(Options.capture(configuration), key, catalog=catalog, transport=transport,
                    policy=DiscoveryPolicy.capture(configuration))
 
-    def _get(self, query):
+    def _get(self, query, *, search_type='search', params=None):
         """One search; timeouts, 429 and 5xx get two more tries (15 s, then 60 s).
 
         A 429 Retry-After header replaces the wait, capped at two minutes.
@@ -329,7 +382,7 @@ class Client:
         """
         for attempt, delay in enumerate((*RETRY_DELAYS_SECONDS, None), 1):
             try:
-                return self._get_once(query)
+                return self._get_once(query, search_type=search_type, params=params)
             except SearchUnavailable as exc:      # includes SearchTimeout
                 if delay is None: raise
                 if exc.retry_after is not None: delay = min(exc.retry_after, MAX_RETRY_AFTER_SECONDS)
@@ -339,18 +392,19 @@ class Client:
                                         len(RETRY_DELAYS_SECONDS) + 1, delay)
                 self._sleep(delay)
 
-    def _get_once(self, query):
+    def _get_once(self, query, *, search_type='search', params=None):
         if type(query) is not str or not 1 <= len(query) <= 256:
             raise SearchReview()
-        url = (self.options.base_url + '/api/v1/search?'
-               + urllib.parse.urlencode({'query': query, 'type': 'search', 'limit': 100}))
+        query_params = {'query': query, 'type': search_type, 'limit': 100}
+        if params: query_params.update(params)
+        url = (self.options.base_url + '/api/v1/search?' + urllib.parse.urlencode(query_params))
         request = urllib.request.Request(url, method='GET', headers={
             'X-Api-Key': self._key, 'Accept': 'application/json',
             'User-Agent': 'AnimeDiscoveryNextGen/1'})
         started = time.monotonic()
         if self.logger is not None:
-            self.logger.info('Prowlarr search started: query=%r timeout_seconds=%s',
-                             query, self.options.timeout_seconds)
+            self.logger.info('Prowlarr search started: query=%r type=%s timeout_seconds=%s',
+                             query, search_type, self.options.timeout_seconds)
         try:
             with self._transport(request, self.options.timeout_seconds) as response:
                 code = response.getcode()
@@ -381,13 +435,16 @@ class Client:
                              len(payload), time.monotonic() - started)
         return payload
 
-    def _search(self, catalog, season, target):
+    def _search(self, catalog, season, target, *, tried=(), target_hash=None):
         """All matching releases for one searchable episode, ranked by policy."""
         from src.nextgen.acquisition.release_titles import AnimeTitles, search_queries, read_release, matches
         from src.nextgen.storage.prowlarr_snapshots import sanitize_text
         prepared = AnimeTitles.build(catalog.titles, season)
-        queries = search_queries(catalog.titles, prepared, target)
+        english_title = getattr(catalog, 'english_title', None)
+        queries = search_queries(catalog.titles, prepared, target, season=season,
+                                 english_title=english_title, prefer_audio=self.policy.prefer_audio_tag)
         found, seen = [], set()
+        tried_set = {h.lower() for h in tried if h}
 
         captured_queries = []
         captured_results = []
@@ -406,6 +463,7 @@ class Client:
         unmatched_count = 0
         matched_count = 0
         passes_policy_count = 0
+        newly_actionable_count = 0
 
         snapshot = {
             'plan_id': getattr(self, '_plan_id', None),
@@ -446,23 +504,23 @@ class Client:
         seen_keys = {}
         for query_idx, query in enumerate(queries, 1):
             q_start = time.monotonic()
+            query_matched = 0
+            query_policy_eligible = 0
+            query_new_actionable = 0
             try:
                 rows = self._get(query)
                 q_elapsed = time.monotonic() - q_start
-                captured_queries.append({
-                    'index': query_idx,
-                    'query': query,
-                    'result_count': len(rows),
-                    'status': 'SUCCESS',
-                    'elapsed_seconds': round(q_elapsed, 3),
-                })
             except Exception as exc:
                 q_elapsed = time.monotonic() - q_start
                 status_code = getattr(exc, 'reason_code', exc.__class__.__name__)
                 captured_queries.append({
                     'index': query_idx,
                     'query': query,
+                    'search_type': 'search',
                     'result_count': 0,
+                    'exact_matches': 0,
+                    'policy_eligible': 0,
+                    'new_actionable': 0,
                     'status': status_code,
                     'elapsed_seconds': round(q_elapsed, 3),
                 })
@@ -474,6 +532,7 @@ class Client:
                     'matched': matched_count,
                     'passes_policy': passes_policy_count,
                     'new_eligible': passes_policy_count,
+                    'newly_actionable': newly_actionable_count,
                     'raw_dual_audio': raw_dual_audio_count,
                     'matched_dual_audio': matched_dual_audio_count,
                     'dispositions': counts_dispositions,
@@ -546,6 +605,7 @@ class Client:
                     continue
 
                 matched_count += 1
+                query_matched += 1
                 if has_dual:
                     matched_dual_audio_count += 1
 
@@ -624,6 +684,10 @@ class Client:
                     counts_dispositions['PASSES_POLICY'] += 1
                     reason = 'passes policy checks (resolution, seeders, size, audio hint)'
                     failed_checks = ['PASSES_POLICY']
+                    query_policy_eligible += 1
+                    if info_hash and info_hash.lower() not in tried_set:
+                        query_new_actionable += 1
+                        newly_actionable_count += 1
 
                 captured_results.append({
                     'row_number': row_number,
@@ -661,12 +725,33 @@ class Client:
                     )
                     found.append(release)
 
+            captured_queries.append({
+                'index': query_idx,
+                'query': query,
+                'search_type': 'search',
+                'result_count': len(rows),
+                'exact_matches': query_matched,
+                'policy_eligible': query_policy_eligible,
+                'new_actionable': query_new_actionable,
+                'status': 'SUCCESS',
+                'elapsed_seconds': round(q_elapsed, 3),
+            })
+            if self.logger is not None:
+                self.logger.info(
+                    'Prowlarr query [%s/%s] %r: raw=%s matched=%s eligible=%s actionable=%s in %.3fs',
+                    query_idx, len(queries), query, len(rows), query_matched, query_policy_eligible, query_new_actionable, q_elapsed
+                )
+
+            if target_hash and any(r.info_hash == target_hash for r in found):
+                break
+
         snapshot['counts'] = {
             'raw': raw_count,
             'unmatched': unmatched_count,
             'matched': matched_count,
             'passes_policy': passes_policy_count,
             'new_eligible': passes_policy_count,
+            'newly_actionable': newly_actionable_count,
             'raw_dual_audio': raw_dual_audio_count,
             'matched_dual_audio': matched_dual_audio_count,
             'dispositions': counts_dispositions,
@@ -679,7 +764,7 @@ class Client:
         return self.policy.rank(found)
 
     def backfill(self, anidb_id, tvdb_series_id, season, numbers, *, reserved=(),
-                 verified_ids=None, select_candidates=False):
+                 verified_ids=None, select_candidates=False, tried_by_episode=None):
         """One observation per requested episode. A missing release never fails the page."""
         self._current_anidb_id = anidb_id
         self._current_tvdb_series_id = tvdb_series_id
@@ -704,7 +789,8 @@ class Client:
             if verified_ids.get(number) not in (None, target.tvdb_episode_id):
                 output.append(BackfillObservation(number, target.tvdb_episode_id, 'MAPPING_MISSING'))
                 continue
-            ranked = self._search(catalog, season, target)
+            tried = (tried_by_episode or {}).get(number, ())
+            ranked = self._search(catalog, season, target, tried=tried)
             accepted = sum(self.policy.accepts(r) for r in ranked)
             status = 'CANDIDATES' if ranked else 'NO_RESULTS'
             # A searchable episode with no Dual/Multi Audio releases is an
@@ -722,7 +808,7 @@ class Client:
                           status, len(ranked), accepted, choice))
         return tuple(output)
 
-    def search(self, anidb_id, identity):
+    def search(self, anidb_id, identity, *, tried=(), target_hash=None):
         """Ranked releases for one previously selected episode (candidate fallback)."""
         if type(identity) is not VerifiedEpisode: raise SearchReview()
         self._current_anidb_id = anidb_id
@@ -732,4 +818,4 @@ class Client:
         if target.status != 'SEARCHABLE' or target.tvdb_episode_id != identity.tvdb_episode_id:
             raise SearchReview()
         return SearchResult(identity.tvdb_series_id, identity.tvdb_episode_id,
-                            self._search(catalog, identity.tvdb_season, target))
+                            self._search(catalog, identity.tvdb_season, target, tried=tried, target_hash=target_hash))

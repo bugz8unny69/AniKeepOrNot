@@ -52,7 +52,8 @@ def build_catalog(client, aid, tid, season, secret, *, today=None):
         status = 'SEARCHABLE' if aired is not None and aired <= today else 'NOT_AIRED'
         targets[number] = EpisodeTarget(number, status, anidb[0], ids[0],
                                         earlier + number if season >= 1 else None)
-    return EpisodeCatalog(titles, targets)
+    english_title = record.get('english_title')
+    return EpisodeCatalog(titles, targets, english_title=english_title)
 
 
 def make_catalog_factory(options, credentials, *, client_pool):

@@ -123,6 +123,54 @@ class ReleaseTitleTests(unittest.TestCase):
         self.assertIn('Kusuriya no Hitorigoto S02E05', queries)
         self.assertLessEqual(len(queries), 6)
 
+    def test_season_one_queries_generate_s01e01_traditional_and_select_english(self):
+        titles = (
+            'Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai',
+            'Saikyosoubi',
+            'Reborn as a Space Mercenary',
+        )
+        target = EpisodeTarget(1, 'SEARCHABLE', 1, 1001, 1)
+        prepared = AnimeTitles.build(titles, 1)
+
+        # 1. Season 1 without audio requirement
+        queries = search_queries(titles, prepared, target, season=1, english_title='Reborn as a Space Mercenary')
+        self.assertIn('Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai 01', queries)
+        self.assertIn('Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai S01E01', queries)
+        self.assertIn('Reborn as a Space Mercenary 01', queries)
+        self.assertIn('Reborn as a Space Mercenary S01E01', queries)
+        self.assertIn('Saikyosoubi 01', queries)
+        self.assertLessEqual(len(queries), 6)
+
+        # 2. Season 1 with audio requirement (prefer_audio=True)
+        audio_queries = search_queries(titles, prepared, target, season=1,
+                                       english_title='Reborn as a Space Mercenary', prefer_audio=True)
+        self.assertEqual(audio_queries[0], 'Reborn as a Space Mercenary S01E01')
+        self.assertEqual(audio_queries[1], 'Reborn as a Space Mercenary S01E01 Dual-Audio')
+        self.assertIn('Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai 01', audio_queries)
+        self.assertIn('Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai S01E01', audio_queries)
+        self.assertIn('Reborn as a Space Mercenary 01', audio_queries)
+        self.assertIn('Saikyosoubi 01', audio_queries)
+        self.assertLessEqual(len(audio_queries), 6)
+
+    def test_pipe_delimited_and_season_releases_map_only_to_target_episode(self):
+        titles = ('Kusuriya no Hitorigoto', 'The Apothecary Diaries')
+        target = EpisodeTarget(5, 'SEARCHABLE', 5, 9005, 5)
+        prepared = AnimeTitles.build(titles, 1)
+
+        # Pipe-delimited releases match
+        self.assertTrue(matches(parse_release('[Group] Kusuriya no Hitorigoto | The Apothecary Diaries - 05 (1080p)'),
+                                prepared, target, 1))
+        self.assertTrue(matches(parse_release('[Group] The Apothecary Diaries | Kusuriya no Hitorigoto S01E05 1080p'),
+                                prepared, target, 1))
+
+        # Different episodes or unsupported types do not match
+        self.assertFalse(matches(parse_release('[Group] Kusuriya no Hitorigoto | The Apothecary Diaries - 06 (1080p)'),
+                                 prepared, target, 1))
+        self.assertFalse(matches(parse_release('[Group] Kusuriya no Hitorigoto | The Apothecary Diaries - 01-12 Batch (1080p)'),
+                                 prepared, target, 1))
+        self.assertFalse(matches(parse_release('[Group] Kusuriya no Hitorigoto Recap - 05 (1080p)'),
+                                 prepared, target, 1))
+
 
 if __name__ == '__main__':
     unittest.main()

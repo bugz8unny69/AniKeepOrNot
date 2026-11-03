@@ -157,6 +157,7 @@ class AnimeTitles:
     marked: frozenset           # (normalized base, season) of titles with a season marker
     franchise: frozenset        # normalized bases of the marked titles
     seasons: frozenset          # season numbers this anime is known by
+    tvdb_season: int = 1
 
     @classmethod
     def build(cls, titles, tvdb_season):
@@ -177,8 +178,10 @@ class AnimeTitles:
         seasons = {number for _, number in marked}
         if type(tvdb_season) is int and tvdb_season > 1: seasons.add(tvdb_season)
         exact.discard('')
+        season_num = tvdb_season if type(tvdb_season) is int and tvdb_season >= 0 else 1
         return cls(frozenset(exact), frozenset(marked),
-                   frozenset(base for base, _ in marked), frozenset(seasons))
+                   frozenset(base for base, _ in marked), frozenset(seasons),
+                   tvdb_season=season_num)
 
     def level(self, written):
         """'exact', 'season', 'franchise' or None for one written title alternative."""
@@ -221,27 +224,74 @@ def matches(parsed, titles, target, tvdb_season):
     return episode in accepted
 
 
-def search_queries(catalog_titles, titles, target):
-    """A few indexer queries that together reach the common naming styles."""
+def search_queries(catalog_titles, titles, target, *, season=None, english_title=None, prefer_audio=False):
+    """A few indexer queries that together reach common naming styles while bounded at 6."""
     from src.nextgen.acquisition.prowlarr_search import search_aliases
-    # The catalog's publication year is not reliably present in indexer titles.
     aliases = tuple(re.sub(r'\s+', ' ', YEAR.sub(' ', alias)).strip()
-                    for alias in search_aliases(catalog_titles)[:2])
-    queries = ['%s %02d' % (alias, target.anidb_episode) for alias in aliases]
-    # Also reach scene-style releases such as "The Ramparts of Ice S02E02".
-    # The existing exact-title/episode matcher still checks every result.
-    for alias in aliases:
-        if season_marker(alias)[1] is None:
-            for season in sorted(titles.seasons)[:1]:
-                if season > 1:
-                    queries.append('%s S%02dE%02d' % (alias, season, target.tvdb_episode))
+                    for alias in search_aliases(catalog_titles, english_title=english_title))
+    if not aliases:
+        return ()
+
+    current_season = season if season is not None else getattr(titles, 'tvdb_season', 1)
+    if current_season == 1 and titles.seasons:
+        current_season = min(titles.seasons)
+
+    queries = []
+
+    main = aliases[0]
+    main_base, main_marker = season_marker(main)
+    effective_scene_base = main_base if main_marker is not None else main
+
+    other_aliases = aliases[1:]
+    has_english = bool(other_aliases)
+    if has_english:
+        eng = other_aliases[0]
+        eng_base, eng_marker = season_marker(eng)
+        eng_scene_base = eng_base if eng_marker is not None else eng
+
+    if prefer_audio and has_english:
+        # Prioritize English scene queries and audio hints when dual-audio is required
+        queries.append('%s S%02dE%02d' % (eng_scene_base, current_season, target.tvdb_episode))
+        queries.append('%s S%02dE%02d Dual-Audio' % (eng_scene_base, current_season, target.tvdb_episode))
+        queries.append('%s %02d' % (eng, target.anidb_episode))
+        queries.append('%s %02d' % (main, target.anidb_episode))
+        queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
+        for syn in other_aliases[1:]:
+            queries.append('%s %02d' % (syn, target.anidb_episode))
+        queries.append('%s S%02dE%02d Dual-Audio' % (effective_scene_base, current_season, target.tvdb_episode))
+    else:
+        # 1. Primary queries for main title: traditional AniDB number and scene SxxEyy
+        queries.append('%s %02d' % (main, target.anidb_episode))
+        queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
+
+        # 2. English title (first other alias) queries:
+        if has_english:
+            queries.append('%s %02d' % (eng, target.anidb_episode))
+            queries.append('%s S%02dE%02d' % (eng_scene_base, current_season, target.tvdb_episode))
+
+        # 3. Broad fallback for additional aliases (e.g. short synonym "Saikyosoubi 01"):
+        for syn in other_aliases[1:]:
+            queries.append('%s %02d' % (syn, target.anidb_episode))
+
+        # 4. Audio-aware query variants when prefer_audio (Japanese + English required)
+        if prefer_audio:
+            queries.append('%s S%02dE%02d Dual-Audio' % (effective_scene_base, current_season, target.tvdb_episode))
+            queries.append('%s %02d Dual-Audio' % (main, target.anidb_episode))
+
+        # 5. Scene queries for additional synonyms:
+        for syn in other_aliases[1:]:
+            s_base, s_marker = season_marker(syn)
+            s_scene_base = s_base if s_marker is not None else syn
+            queries.append('%s S%02dE%02d' % (s_scene_base, current_season, target.tvdb_episode))
+
+    # 7. For sequels with season bases (e.g. "Kusuriya no Hitorigoto 2nd Season" -> base "Kusuriya no Hitorigoto")
     bases = sorted({base for base, _ in season_bases(catalog_titles)})
     for base in bases[:1]:
         queries.append('%s %02d' % (base, target.anidb_episode))
         if target.absolute_episode and target.absolute_episode != target.anidb_episode:
             queries.append('%s %02d' % (base, target.absolute_episode))
-        for number in sorted(titles.seasons)[:1]:
-            queries.append('%s S%02dE%02d' % (base, number, target.anidb_episode))
+        queries.append('%s S%02dE%02d' % (base, current_season, target.tvdb_episode))
+
     return tuple(dict.fromkeys(q for q in queries if 1 <= len(q) <= 256))[:6]
 
 
