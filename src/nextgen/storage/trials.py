@@ -10,7 +10,8 @@ from src.nextgen.trial_policy import TrialSource, TrialProposal, TrialConflict, 
 
 
 def _source(db,verification_job_id,event_id):
-    row=db.execute("SELECT r.verification_id,r.job_id,j.event_id,r.anidb_id,r.tvdb_series_id,r.tvdb_season,r.tvdb_episode "
+    row=db.execute("SELECT r.verification_id,r.job_id,j.event_id,r.anidb_id,r.tvdb_series_id,r.tvdb_season,r.tvdb_episode,"
+                   "r.anidb_episode_number "
                    "FROM release_verifications r JOIN jobs j ON j.job_id=r.job_id "
                    "JOIN identified_anime a ON a.anidb_id=r.anidb_id JOIN incoming_events e ON e.event_id=j.event_id "
                    "WHERE r.job_id=? AND j.event_id=? AND j.state='DONE' AND j.kind='VERIFY_RELEASE' AND e.state='IDENTIFIED' "
@@ -52,26 +53,26 @@ def persist_trial(db,claim,proposal):
     source=proposal.source
     if source.event_id!=claim.event_id or _source(db,source.verification_job_id,claim.event_id)!=source:
         raise TrialConflict()
+    # One frozen plan per AniDB anime; later deliveries reuse it in any TVDB season.
     row=db.execute("SELECT plan_id,anchor_episode,backfill_count,following_count,anchor_verification_id FROM trial_plans "
-                   "WHERE anidb_id=? AND tvdb_series_id=? AND tvdb_season=? AND tvdb_order='official'",
-                   (source.anidb_id,source.tvdb_series_id,source.tvdb_season)).fetchone()
+                   "WHERE anidb_id=? AND tvdb_order='official'",(source.anidb_id,)).fetchone()
     if row is not None:
-        anchor=db.execute("SELECT anidb_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_order FROM release_verifications WHERE verification_id=?",(row[4],)).fetchone()
-        if anchor!=(source.anidb_id,source.tvdb_series_id,source.tvdb_season,row[1],'official'):raise TrialConflict()
+        anchor=db.execute("SELECT anidb_id,tvdb_series_id,anidb_episode_number,tvdb_order FROM release_verifications WHERE verification_id=?",(row[4],)).fetchone()
+        if anchor!=(source.anidb_id,source.tvdb_series_id,row[1],'official'):raise TrialConflict()
         row=row[:4]
     now=integer(time.time_ns()//1000000)
     if row is None and (proposal.window.backfill_count or proposal.window.following_count):
-        proposal.window.episodes(source.tvdb_episode)
+        proposal.window.anidb_episodes(source.anidb_episode_number)
         plan=db.execute("INSERT INTO trial_plans(anidb_id,tvdb_series_id,tvdb_season,anchor_verification_id,anchor_episode,"
                         "backfill_count,following_count,configuration_revision,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (source.anidb_id,source.tvdb_series_id,source.tvdb_season,source.verification_id,source.tvdb_episode,
+                        (source.anidb_id,source.tvdb_series_id,source.tvdb_season,source.verification_id,source.anidb_episode_number,
                          proposal.window.backfill_count,proposal.window.following_count,proposal.configuration_revision,now)).lastrowid
-        row=(plan,source.tvdb_episode,proposal.window.backfill_count,proposal.window.following_count)
+        row=(plan,source.anidb_episode_number,proposal.window.backfill_count,proposal.window.following_count)
     if row is None:
         raise TrialConflict()
     else:
         plan,anchor,backfill,following=row
-        selected=source.tvdb_episode in Window(backfill,following).episodes(anchor)
+        selected=source.anidb_episode_number in Window(backfill,following).anidb_episodes(anchor)
         reason='TRIAL_SELECTED' if selected else 'TRIAL_OUTSIDE_WINDOW'
     db.execute("INSERT INTO trial_evaluations(job_id,verification_id,plan_id,selected,reason_code,evaluated_at_ms) VALUES(?,?,?,?,?,?)",
                (claim.job_id,source.verification_id,plan,int(selected),reason,now))

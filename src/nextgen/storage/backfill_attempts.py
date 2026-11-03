@@ -42,7 +42,7 @@ def _episode(db, job_id):
     if parent is None or type(digest) is not str: return None
     try: plan_id = json.loads(parent[0])['plan_id']
     except (ValueError, KeyError, TypeError): return None
-    found = db.execute('SELECT tvdb_episode FROM sonarr_episode_candidates '
+    found = db.execute('SELECT anidb_episode_number FROM sonarr_episode_candidates '
                        'WHERE plan_id=? AND info_hash=?', (plan_id, digest.lower())).fetchone()
     return (plan_id, found[0]) if found else None
 
@@ -85,7 +85,7 @@ def backfill_attempts(db, job_id):
     attempts = []
     for rank, digest, state, reason_code in db.execute(
             'SELECT rank,info_hash,state,reason_code FROM sonarr_episode_candidates '
-            'WHERE plan_id=? AND tvdb_episode=? ORDER BY rank', (plan_id, episode)).fetchall():
+            'WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank', (plan_id, episode)).fetchall():
         event_id, name = deliveries.get(digest, (None, None))
         stop, details = _stop(db, event_id) if event_id is not None else (None, {})
         attempts.append({

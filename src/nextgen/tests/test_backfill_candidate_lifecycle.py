@@ -16,12 +16,12 @@ class CandidateStateTests(unittest.TestCase):
         self.db=sqlite3.connect(':memory:')
         self.db.execute(
             "CREATE TABLE sonarr_episode_candidates("
-            "plan_id INTEGER,tvdb_episode INTEGER,rank INTEGER,info_hash TEXT,"
+            "plan_id INTEGER,anidb_episode_number INTEGER,rank INTEGER,info_hash TEXT,"
             "state TEXT DEFAULT 'READY',reason_code TEXT,"
-            "PRIMARY KEY(plan_id,tvdb_episode,rank))")
+            "PRIMARY KEY(plan_id,anidb_episode_number,rank))")
         self.db.executemany(
             "INSERT INTO sonarr_episode_candidates"
-            "(plan_id,tvdb_episode,rank,info_hash) VALUES(1,2,?,?)",
+            "(plan_id,anidb_episode_number,rank,info_hash) VALUES(1,2,?,?)",
             ((1,FIRST),(2,SECOND)))
         self.db.commit()
 
@@ -53,7 +53,7 @@ class CandidateStateTests(unittest.TestCase):
                               created_by_job_id INTEGER,payload_json TEXT);
             CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
             CREATE TABLE sonarr_episode_selections(
-                plan_id INTEGER,tvdb_episode INTEGER,info_hash TEXT);
+                plan_id INTEGER,anidb_episode_number INTEGER,info_hash TEXT);
             INSERT INTO incoming_events VALUES(25,'sonarr-discovery');
             INSERT INTO incoming_events VALUES(26,'other');
             INSERT INTO jobs VALUES(2,25,'DISCOVER_SONARR_BACKFILL',NULL,'{"plan_id":1}');
@@ -103,7 +103,7 @@ class FallbackWiringTests(unittest.TestCase):
             CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
             CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
-                tvdb_episode INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
             CREATE TABLE episode_reservations(reservation_id INTEGER,
                 state TEXT);
             CREATE TABLE acquisition_plans(reservation_id INTEGER,
@@ -178,7 +178,7 @@ class FallbackWiringTests(unittest.TestCase):
                 created_by_job_id INTEGER,payload_json TEXT);
             CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
-                tvdb_episode INTEGER,info_hash TEXT);
+                anidb_episode_number INTEGER,info_hash TEXT);
             CREATE TABLE job_operation_members(job_id INTEGER,operation_id INTEGER);
             CREATE TABLE job_operations(operation_id INTEGER,state TEXT,cleanup_state TEXT,reason_code TEXT);
             CREATE TABLE management_actions(operation_id INTEGER,action TEXT,
@@ -237,7 +237,7 @@ class FallbackWiringTests(unittest.TestCase):
             CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
             CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
-                tvdb_episode INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
             CREATE TABLE episode_reservations(reservation_id INTEGER,state TEXT);
             CREATE TABLE acquisition_plans(reservation_id INTEGER,info_hash TEXT);
             INSERT INTO trial_plans VALUES(1,5,6,3);
@@ -281,7 +281,7 @@ class FallbackWiringTests(unittest.TestCase):
             CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
             CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
-                tvdb_episode INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
             CREATE TABLE episode_reservations(reservation_id INTEGER,state TEXT);
             CREATE TABLE acquisition_plans(reservation_id INTEGER,info_hash TEXT);
             INSERT INTO trial_plans VALUES(1,5,6,3);
@@ -327,13 +327,14 @@ class FallbackWiringTests(unittest.TestCase):
             CREATE TABLE trial_plans(plan_id INTEGER,tvdb_series_id INTEGER,
                 tvdb_season INTEGER);
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
-                tvdb_episode INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,info_hash TEXT,
+                tvdb_season INTEGER,tvdb_episode INTEGER);
         """)
         self.db.execute("INSERT INTO trial_plans VALUES(1,456,1)")
         self.db.execute(
-            "INSERT INTO sonarr_episode_selections VALUES(1,2,901,?)",(FIRST,))
+            "INSERT INTO sonarr_episode_selections VALUES(1,2,901,?,1,2)",(FIRST,))
         self.db.execute(
-            "INSERT INTO sonarr_episode_candidates(plan_id,tvdb_episode,rank,info_hash) "
+            "INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash) "
             "VALUES(1,2,3,?)",(third,))
         self.db.commit()
         with self.db:
@@ -341,7 +342,7 @@ class FallbackWiringTests(unittest.TestCase):
             activate_candidate(self.db,plan_id=1,episode=2,info_hash=FIRST)
             fail_candidate(self.db,plan_id=1,episode=2,info_hash=FIRST,
                            reason_code='ACQUISITION_METADATA_INVALID')
-        plan=BackfillBatch(1,123,456,1,4,1,(1,2,3,4),(),())
+        plan=BackfillBatch(1,123,456,4,1,(1,2,3,4),(),())
         identity=VerifiedEpisode(456,901,1,2)
         value=FallbackMissing(plan,2,FallbackTarget(identity,FIRST,SECOND))
         claim=SimpleNamespace(kind='DISCOVER_SONARR_BACKFILL',
@@ -371,15 +372,17 @@ class FallbackWiringTests(unittest.TestCase):
         from src.nextgen.sonarr_episode import VerifiedEpisode
         self.db.executescript("""
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
-                tvdb_episode INTEGER,tvdb_episode_id INTEGER,
-                info_hash TEXT,selected_at_ms INTEGER);
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,
+                info_hash TEXT,selected_at_ms INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
+            CREATE TABLE trial_plans(plan_id INTEGER,tvdb_series_id INTEGER);
+            INSERT INTO trial_plans VALUES(1,456);
             CREATE TABLE episode_reservations(state TEXT,
                 tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
             CREATE TABLE batch_episode_reservations(state TEXT,
                 tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
         """)
         self.db.execute(
-            "INSERT INTO sonarr_episode_selections VALUES(1,2,901,?,1)",
+            "INSERT INTO sonarr_episode_selections VALUES(1,2,901,?,1,1,2)",
             (FIRST,))
         self.db.commit()
         with self.db:
@@ -387,7 +390,7 @@ class FallbackWiringTests(unittest.TestCase):
             activate_candidate(self.db,plan_id=1,episode=2,info_hash=FIRST)
             fail_candidate(self.db,plan_id=1,episode=2,info_hash=FIRST,
                            reason_code='ACQUISITION_METADATA_INVALID')
-        plan=BackfillBatch(1,123,456,1,4,1,(1,2,3,4),(),())
+        plan=BackfillBatch(1,123,456,4,1,(1,2,3,4),(),())
         identity=VerifiedEpisode(456,901,1,2)
         release=Release('Example S01E02 1080p','Nyaa',1080,9,123456789,901,
                         SECOND,'magnet:?xt=urn:btih:'+SECOND,True)

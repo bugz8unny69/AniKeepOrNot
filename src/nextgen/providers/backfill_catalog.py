@@ -1,4 +1,4 @@
-"""Which TVDB episodes of a verified season can be searched, and as which AniDB number.
+"""Which AniDB episodes can be searched, and at which verified TVDB placement.
 
 Uses the same cached AniDB record, Anime-Lists mapping and TVDB official episode
 pages as VERIFY_RELEASE, so search only targets placements that verification
@@ -31,7 +31,13 @@ def tvdb_episode_ids(client, tid, secret, cancelled=None):
     return placements
 
 
-def build_catalog(client, aid, tid, season, secret, *, today=None):
+def build_catalog(client, aid, tid, secret, *, today=None):
+    """AniDB episode number -> EpisodeTarget with its own TVDB placement.
+
+    AniDB decides which episodes exist and have aired. Each aired episode
+    needs one Anime-Lists placement with exactly one official TVDB episode;
+    otherwise it is MAPPING_MISSING. Placements may differ in TVDB season.
+    """
     record = client.anime(aid)
     titles = (record['title'], *(t for t in record['titles'] if t != record['title']))
     episodes = client.episodes(aid)
@@ -39,31 +45,35 @@ def build_catalog(client, aid, tid, season, secret, *, today=None):
     mappings = forward_mappings(client.mapping_xml(), aid, tid, episodes)
     placements = tvdb_episode_ids(client, tid, secret)
     today = (today or datetime.date.today()).isoformat()
-    # Absolute number across regular seasons, as many groups number sequels.
-    earlier = sum(1 for (record_season, _) in placements if 1 <= record_season < season)
     targets = {}
-    for (record_season, number), ids in placements.items():
-        if record_season != season: continue
-        anidb = [a for a, placement in mappings.items() if placement == (season, number)]
-        if len(ids) != 1 or len(anidb) != 1:
-            targets[number] = EpisodeTarget(number, 'MAPPING_MISSING')
+    for number in episodes:
+        aired = airdates.get(number)
+        if aired is None or aired > today:
+            targets[number] = EpisodeTarget(None, 'NOT_AIRED', number)
             continue
-        aired = airdates.get(anidb[0])
-        status = 'SEARCHABLE' if aired is not None and aired <= today else 'NOT_AIRED'
-        targets[number] = EpisodeTarget(number, status, anidb[0], ids[0],
-                                        earlier + number if season >= 1 else None)
+        placement = mappings.get(number)
+        ids = placements.get(placement, ()) if placement else ()
+        if (placement is None or len(ids) != 1
+                or sum(1 for other in mappings.values() if other == placement) != 1):
+            targets[number] = EpisodeTarget(None, 'MAPPING_MISSING', number)
+            continue
+        season, episode = placement
+        # Absolute number across regular seasons, as many groups number sequels.
+        earlier = sum(1 for (record_season, _) in placements if 1 <= record_season < season)
+        targets[number] = EpisodeTarget(episode, 'SEARCHABLE', number, ids[0],
+                                        earlier + episode if season >= 1 else None, season)
     english_title = record.get('english_title')
     return EpisodeCatalog(titles, targets, english_title=english_title)
 
 
 def make_catalog_factory(options, credentials, *, client_pool):
-    """configuration -> catalog(aid, tid, season), sharing the worker's provider pool."""
+    """configuration -> catalog(aid, tid), sharing the worker's provider pool."""
     def for_configuration(configuration):
-        def catalog(aid, tid, season):
+        def catalog(aid, tid):
             actual = options(configuration) if callable(options) else options
             secret = credentials()
             if type(secret) is not Credentials: raise ProviderAuthenticationFailed()
             client = client_pool.get(configuration.value('storage.database_path'), actual)
-            return build_catalog(client, aid, tid, season, secret)
+            return build_catalog(client, aid, tid, secret)
         return catalog
     return for_configuration

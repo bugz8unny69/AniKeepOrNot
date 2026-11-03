@@ -31,6 +31,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.titles = ("Some Show", "Some Show Alt")
         self.target_ep1 = EpisodeTarget(
             tvdb_episode=1,
+            tvdb_season=1,
             status="SEARCHABLE",
             anidb_episode=1,
             tvdb_episode_id=1001,
@@ -82,7 +83,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
 
         policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, prefer_audio_tag=True)
         options = Options("http://127.0.0.1:9696", 60)
-        client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(options, "apikey123", catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
         client._get = lambda q: rows_q1 if q == "Some Show 01" else []
         client.set_context(plan_id=19, search_mode="exhausted")
@@ -104,7 +105,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r29["resolution"], 720)
 
         # Seed plan #19 and historical failed candidate in DB
-        self.source(10)
+        self.source(7)
         db = connect(self.database)
         try:
             with transaction(db):
@@ -173,7 +174,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         """Worker executing DISCOVER_SONARR_BACKFILL on exhausted Job #5775 remains ON_HOLD/WAITING_FOR_DUB without reacquiring."""
         self.setUpFixture()
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
-        self.source(10)
+        self.source(7)
 
         # Initialize trial plan and first page
         reg_eval = Registry((trial_registration(discovery_kind=DISCOVER_KIND),))
@@ -192,7 +193,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
                     "INSERT INTO sonarr_episode_candidates VALUES(1, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
                     (failed_hash,)
                 )
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 1, 1001, ?, 1)", (failed_hash,))
+                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 1, 1, 1, 1001, ?, 1)", (failed_hash,))
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, component="worker", event_id=event_id,
                                      payload={"plan_id": 1, "start": 1, "exhausted_episode": 1, "delete_cache": True},
                                      available_at_ms=0)
@@ -209,7 +210,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         def client_factory(conf, sec):
             policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, prefer_audio_tag=True)
             c = Client(Options("http://127.0.0.1:9696", 60), "key",
-                       catalog=lambda a, t, s: self.catalog, policy=policy)
+                       catalog=lambda a, t: self.catalog, policy=policy)
             c._transport = lambda req, timeout: None
             c._get = lambda q: [raw_row]
             return c
@@ -229,7 +230,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_state, ("ON_HOLD", "WAITING_FOR_DUB"))
 
         # Verify candidate table still has only 1 row (the failed hash) and was NOT reacquired
-        candidates = self.rows("SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates WHERE plan_id=1 AND tvdb_episode=1")
+        candidates = self.rows("SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates WHERE plan_id=1 AND anidb_episode_number=1")
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0], (1, failed_hash, "FAILED", "MEDIA_AUDIO_REQUIRED"))
 
@@ -247,7 +248,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
 
         policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, prefer_audio_tag=True)
         client = Client(Options("http://127.0.0.1:9696", 60), "key",
-                        catalog=lambda a, t, s: self.catalog, policy=policy)
+                        catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
         client._get = lambda q: [raw_row] if "01" in q else []
         client.set_context(plan_id=1, search_mode="exhausted")
@@ -255,7 +256,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         client._search(self.catalog, 1, self.target_ep1)
         snapshot = client.snapshots[0]
 
-        self.source(10)
+        self.source(7)
         db = connect(self.database)
         try:
             with transaction(db):

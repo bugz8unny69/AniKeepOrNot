@@ -390,8 +390,8 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
         if have_candidates:
             candidate_rows = db.execute(
                 "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
-                "WHERE plan_id=? AND tvdb_episode=? ORDER BY rank",
-                (plan_id, episode)
+                "WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
+                (plan_id, target.get('anidb_episode') or episode)
             ).fetchall()
             prior_attempts = len(candidate_rows)
 
@@ -598,8 +598,8 @@ def prowlarr_matching_json(db, job_id, attempt=None):
         if have_candidates:
             candidate_rows = db.execute(
                 "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
-                "WHERE plan_id=? AND tvdb_episode=? ORDER BY rank",
-                (plan_id, episode)
+                "WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
+                (plan_id, target.get('anidb_episode') or episode)
             ).fetchall()
             prior_attempts = len(candidate_rows)
 

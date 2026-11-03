@@ -28,16 +28,16 @@ def _cached(db, plan_id, episode, english, now=None):
     rows = db.execute(
         "SELECT c.info_hash,e.raw_body FROM sonarr_episode_candidates c "
         "JOIN sonarr_magnet_intents i ON i.plan_id=c.plan_id "
-        "AND i.tvdb_episode=c.tvdb_episode AND i.info_hash=c.info_hash "
+        "AND i.anidb_episode_number=c.anidb_episode_number AND i.info_hash=c.info_hash "
         "JOIN incoming_events e ON e.event_id=i.event_id AND e.source='sonarr-discovery' "
         "JOIN job_operation_members m ON m.job_id=i.job_id "
         "JOIN job_operations o ON o.operation_id=m.operation_id "
-        "WHERE c.plan_id=? AND c.tvdb_episode=? AND c.state='FAILED' "
+        "WHERE c.plan_id=? AND c.anidb_episode_number=? AND c.state='FAILED' "
         "AND c.reason_code='TORRENT_METADATA_TIMEOUT' AND i.state='RELEASED' "
         "AND o.state='CANCELED' AND o.cleanup_state='COMPLETE' "
         "AND i.created_at_ms>=? "
         "AND (SELECT count(*) FROM sonarr_magnet_intents previous "
-        "WHERE previous.plan_id=i.plan_id AND previous.tvdb_episode=i.tvdb_episode "
+        "WHERE previous.plan_id=i.plan_id AND previous.anidb_episode_number=i.anidb_episode_number "
         "AND previous.info_hash=i.info_hash)=1 "
         "ORDER BY c.rank,i.event_id", (plan_id, episode, now-RETENTION_MS)
     ).fetchall()
@@ -84,7 +84,7 @@ def _scrub(db, condition, args):
 
 
 def clear_cached(db,plan_id,episode):
-    return _scrub(db,"i.plan_id=? AND i.tvdb_episode=?",(plan_id,episode))
+    return _scrub(db,"i.plan_id=? AND i.anidb_episode_number=?",(plan_id,episode))
 
 
 def expire_cached(db,now):
@@ -102,20 +102,21 @@ def persist_cached(db,claim,plan,episode,expected,english):
             or episode not in plan.numbers or type(expected) is not CachedTorrent):
         raise BackfillConflict()
     frozen=_plan(db,plan.plan_id,plan.start)
-    if (frozen.anidb_id,frozen.tvdb_series_id,frozen.season,frozen.numbers) != (
-            plan.anidb_id,plan.tvdb_series_id,plan.season,plan.numbers):
+    if (frozen.anidb_id,frozen.tvdb_series_id,frozen.numbers) != (
+            plan.anidb_id,plan.tvdb_series_id,plan.numbers):
         raise BackfillConflict()
     if next(_cached(db,plan.plan_id,episode,english),None)!=expected:
         raise BackfillConflict()
     current=db.execute(
-        "SELECT s.tvdb_episode_id,s.info_hash,c.state FROM sonarr_episode_selections s "
+        "SELECT s.tvdb_episode_id,s.info_hash,c.state,s.tvdb_season,s.tvdb_episode "
+        "FROM sonarr_episode_selections s "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        "AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=s.info_hash "
-        "WHERE s.plan_id=? AND s.tvdb_episode=?",(plan.plan_id,episode)).fetchone()
+        "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
+        "WHERE s.plan_id=? AND s.anidb_episode_number=?",(plan.plan_id,episode)).fetchone()
     if current is None or current[2]!='FAILED':
         raise BackfillConflict()
     if db.execute(
-        "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=? "
+        "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? AND anidb_episode_number=? "
         "AND state IN ('READY','ACTIVE','SUCCEEDED') LIMIT 1",
         (plan.plan_id,episode)).fetchone():
         raise BackfillConflict()
@@ -123,22 +124,22 @@ def persist_cached(db,claim,plan,episode,expected,english):
         if db.execute(
             f"SELECT 1 FROM {table} WHERE tvdb_series_id=? AND tvdb_season=? "
             "AND tvdb_episode=? AND state='ACTIVE' LIMIT 1",
-            (plan.tvdb_series_id,plan.season,episode)).fetchone():
+            (plan.tvdb_series_id,current[3],current[4])).fetchone():
             raise BackfillConflict()
     change=db.execute(
         "UPDATE sonarr_episode_candidates SET state='ACTIVE',reason_code=NULL "
-        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=? "
+        "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=? "
         "AND state='FAILED' AND reason_code='TORRENT_METADATA_TIMEOUT'",
         (plan.plan_id,episode,expected.info_hash))
     if change.rowcount!=1:
         raise BackfillConflict()
     change=db.execute(
         "UPDATE sonarr_episode_selections SET info_hash=?,selected_at_ms=? "
-        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=?",
+        "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=?",
         (expected.info_hash,time.time_ns()//1000000,plan.plan_id,episode,current[1]))
     if change.rowcount!=1:
         raise BackfillConflict()
-    identity=VerifiedEpisode(plan.tvdb_series_id,current[0],plan.season,episode)
+    identity=VerifiedEpisode(plan.tvdb_series_id,current[0],current[3],current[4])
     routed=dispatch_cached(db,claim,plan,identity,expected)
     audit=append_job_history(
         db,job_id=claim.job_id,event_code='SONARR_BACKFILL_OBSERVED',

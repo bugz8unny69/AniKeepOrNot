@@ -33,7 +33,13 @@ class SeriesIntakeTests(unittest.TestCase):
                 anidb_episode_id INTEGER,tvdb_episode_id INTEGER);
             CREATE TABLE trial_plans(plan_id INTEGER,anidb_id INTEGER,tvdb_season INTEGER,
                 anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
-            CREATE TABLE sonarr_backfill_results(plan_id INTEGER,tvdb_episode INTEGER,status TEXT);
+            CREATE TABLE sonarr_backfill_results(plan_id INTEGER,anidb_episode_number INTEGER,status TEXT);
+            CREATE TABLE sonarr_episode_selections(plan_id INTEGER,anidb_episode_number INTEGER,
+                tvdb_season INTEGER,tvdb_episode INTEGER);
+            -- AniDB E4/E5 are verified as TVDB S02E04/S02E05; E1-E3 have no placement yet.
+            CREATE TABLE recognized_episodes(anidb_id INTEGER,anidb_episode_number INTEGER,
+                tvdb_season INTEGER,tvdb_episode INTEGER);
+            INSERT INTO recognized_episodes VALUES(10,4,2,4),(10,5,2,5);
             INSERT INTO identified_anime VALUES(10,200,'Example Anime');
             INSERT INTO identity_results VALUES(10,
                 '{"anime":{"english_title":"Example English","type":"TV","year":2026}}',1);
@@ -48,7 +54,8 @@ class SeriesIntakeTests(unittest.TestCase):
             CREATE TABLE IF NOT EXISTS trial_evaluations(job_id INTEGER,verification_id INTEGER,plan_id INTEGER,selected INTEGER);
             CREATE TABLE release_verifications(verification_id INTEGER,anidb_id INTEGER,
                 tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER,
-                anidb_episode_id INTEGER,tvdb_episode_id INTEGER);
+                anidb_episode_id INTEGER,tvdb_episode_id INTEGER,
+                anidb_episode_number INTEGER,tvdb_order TEXT);
             CREATE TABLE IF NOT EXISTS job_history(job_id INTEGER,event_code TEXT);
             CREATE TABLE IF NOT EXISTS manual_release_submissions(anidb_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
             INSERT INTO sonarr_backfill_results VALUES(300,1,'NO_RESULTS');
@@ -78,7 +85,7 @@ class SeriesIntakeTests(unittest.TestCase):
         info = detail(self.db, 10)
         self.assertEqual(info['keep_operations'], [12])
         self.assertEqual(info['episodes'][0]['status'], 'Kept')
-        self.assertTrue(any(x['episode']==1 and x['can_retry'] for x in info['missing']))
+        self.assertTrue(any(x['anidb_episode']==1 and x['can_retry'] for x in info['missing']))
         with self.assertRaises(IntakeUnavailable):
             keep_targets(self.db, 10, [11])
 
@@ -110,7 +117,7 @@ class SeriesIntakeTests(unittest.TestCase):
         self.db.execute("INSERT INTO sonarr_backfill_results VALUES"
                         "(300,2,'WAITING_FOR_DUB')")
         info = detail(self.db, 10)
-        episode = next(x for x in info['missing'] if x['episode'] == 2)
+        episode = next(x for x in info['missing'] if x['anidb_episode'] == 2)
         self.assertEqual((episode['status'], episode['can_retry']),
                          ('WAITING_FOR_DUB', True))
         self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 1)
@@ -129,8 +136,8 @@ class SeriesIntakeTests(unittest.TestCase):
                 VALUES(882,'DONE','RESERVE_EPISODE',NULL,1),
                       (1585,'NEEDS_REVIEW','PREPARE_ACQUISITION','TORRENT_METADATA_TIMEOUT',1);
             INSERT INTO episode_reservations VALUES(99,10,200,2,5,882,'ACTIVE',10005,20005);
-            INSERT INTO release_verifications VALUES(51,10,200,2,5,10005,20005),
-                (52,10,200,2,5,10005,20005),(53,10,200,2,5,10005,20005);
+            INSERT INTO release_verifications VALUES(51,10,200,2,5,10005,20005,5,'official'),
+                (52,10,200,2,5,10005,20005,5,'official'),(53,10,200,2,5,10005,20005,5,'official');
             INSERT INTO trial_evaluations VALUES(901,51,300,1),(902,52,300,1),(903,53,300,1);
             INSERT INTO jobs(job_id,state,kind,payload_json,last_reason_code,attempt_count,created_at_ms)
                 VALUES(2001,'ON_HOLD','RESERVE_EPISODE','{"evaluation_job_id":901}',
@@ -141,7 +148,7 @@ class SeriesIntakeTests(unittest.TestCase):
                     'EPISODE_RESERVED',1,300);
         """)
         info = detail(self.db, 10)
-        anchor = next(x for x in info['missing'] if x['episode'] == 5)
+        anchor = next(x for x in info['missing'] if x['anidb_episode'] == 5)
         self.assertEqual(anchor['status'], 'NEEDS_REVIEW')
         self.assertEqual(anchor['reason_code'], 'TORRENT_METADATA_TIMEOUT')
         self.assertEqual(anchor['job_id'], 1585)
@@ -152,6 +159,24 @@ class SeriesIntakeTests(unittest.TestCase):
         self.assertFalse(anchor['can_retry'])
         self.assertEqual(list_items(self.db,100,30)['items'][0]['missing_count'],
                          len(info['missing']))
+
+    def test_window_follows_anidb_numbers_across_a_tvdb_boundary(self):
+        # AniDB E1000 (TVDB S02E01) anchors the plan: Intake lists AniDB E994-E1002.
+        self.db.executescript("""
+            DELETE FROM trial_plans;
+            DELETE FROM sonarr_backfill_results;
+            INSERT INTO trial_plans VALUES(300,10,2,1000,6,3,NULL);
+            INSERT INTO recognized_episodes VALUES(10,999,1,999),(10,1000,2,1);
+            INSERT INTO sonarr_episode_selections VALUES(300,1001,2,2);
+            INSERT INTO sonarr_backfill_results VALUES(300,995,'NO_RESULTS');
+        """)
+        missing = detail(self.db, 10)['missing']
+        self.assertEqual([x['anidb_episode'] for x in missing], list(range(994, 1003)))
+        labels = {x['anidb_episode']: (x['season'], x['episode']) for x in missing}
+        self.assertEqual((labels[999], labels[1000], labels[1001], labels[994]),
+                         ((1, 999), (2, 1), (2, 2), (None, None)))
+        self.assertEqual(next(x for x in missing if x['anidb_episode'] == 995)['status'], 'NO_RESULTS')
+        self.assertFalse(next(x for x in missing if x['anidb_episode'] == 1000)['can_retry'])
 
     def test_missing_series_is_not_invented(self):
         self.assertIsNone(detail(self.db, 999))

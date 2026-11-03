@@ -18,11 +18,11 @@ class CachedRetryTests(unittest.TestCase):
         self.addCleanup(self.db.close)
         self.db.executescript("""
             CREATE TABLE sonarr_episode_candidates (
-                plan_id INTEGER,tvdb_episode INTEGER,rank INTEGER,
+                plan_id INTEGER,anidb_episode_number INTEGER,rank INTEGER,
                 info_hash TEXT,state TEXT,reason_code TEXT
             );
             CREATE TABLE sonarr_magnet_intents (
-                event_id INTEGER,job_id INTEGER,plan_id INTEGER,tvdb_episode INTEGER,
+                event_id INTEGER,job_id INTEGER,plan_id INTEGER,anidb_episode_number INTEGER,
                 info_hash TEXT,state TEXT,created_at_ms INTEGER
             );
             CREATE TABLE incoming_events (

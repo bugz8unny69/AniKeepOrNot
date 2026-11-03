@@ -74,7 +74,7 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
         try:return db.execute(sql,args).fetchall()
         finally:db.close()
 
-    def source(self,episode,season=1):
+    def source(self,episode,season=1,anidb=None):
         db=connect(self.database)
         try:
             event,release_job=accept_event_and_job(db,'test',b'declared release',kind='VERIFY_RELEASE',payload={'anidb_id':123})
@@ -86,7 +86,7 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("INSERT INTO release_verifications(job_id,identity_result_id,anidb_id,release_sha256,verification_scope,"
                            "anidb_episode_number,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms) "
                            "VALUES(?,?,123,?,'DECLARED_SINGLE_EPISODE',?,?,456,?,?,?,1)",
-                           (release_job,identity,'a'*64,episode,eid,season,episode,eid+100000))
+                           (release_job,identity,'a'*64,anidb or episode,eid,season,episode,eid+100000))
                 job=enqueue_job(db,kind='EVALUATE_TRIAL',payload={'verification_job_id':release_job},
                                 component='worker',event_id=event,created_by_job_id=release_job,available_at_ms=0)
             return event,release_job,job
@@ -97,7 +97,7 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(worker.close)
         return worker
 
-    async def test_received_episode_10_keeps_first_six_and_trigger_without_sliding(self):
+    async def test_received_episode_10_backfills_the_six_before_it(self):
         self.source(10)
         worker=self.worker()
         audits=[]
@@ -108,12 +108,13 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
         self.source(1)
         await worker.attempt()
         self.assertEqual(self.rows('SELECT anchor_episode,backfill_count,following_count FROM trial_plans'),[(10,6,1)])
+        # AniDB window: backfill 4-9 and the trigger 10; E01 is outside it.
         self.assertEqual(self.rows('SELECT selected,reason_code FROM trial_evaluations ORDER BY evaluation_id'),
-                         [(1,'TRIAL_SELECTED'),(0,'TRIAL_OUTSIDE_WINDOW'),(1,'TRIAL_SELECTED')])
+                         [(1,'TRIAL_SELECTED'),(0,'TRIAL_OUTSIDE_WINDOW'),(0,'TRIAL_OUTSIDE_WINDOW')])
         self.assertIn(('TRIAL_EVALUATED','TRIAL_SELECTED'),[(row.event_code,row.reason_code) for row in audits])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','EVALUATE_TRIAL')"),[(0,)])
 
-    async def test_live_changes_apply_only_to_new_plans_and_each_season_is_separate(self):
+    async def test_live_changes_apply_only_to_new_plans_and_later_seasons_reuse_the_plan(self):
         self.store.update({'trial':{'backfill_count':0,'following_count':2}},expected_revision=1)
         worker=self.worker()
         self.source(10)
@@ -125,9 +126,22 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.source(20,season=2)
         await worker.attempt()
+        # One frozen plan per AniDB anime, even for a delivery in another TVDB season.
         self.assertEqual(self.rows('SELECT tvdb_season,anchor_episode,following_count,configuration_revision FROM trial_plans ORDER BY plan_id'),
-                         [(1,10,2,2),(2,20,100,3)])
-        self.assertEqual(self.rows('SELECT selected FROM trial_evaluations ORDER BY evaluation_id'),[(1,),(1,),(0,),(1,)])
+                         [(1,10,2,2)])
+        self.assertEqual(self.rows('SELECT selected FROM trial_evaluations ORDER BY evaluation_id'),[(1,),(1,),(0,),(0,)])
+
+    async def test_anidb_anchor_across_a_tvdb_season_boundary(self):
+        # AniDB E1000 verified as TVDB S02E01: the window stays at AniDB 994-1000.
+        worker=self.worker()
+        self.source(1,season=2,anidb=1000)
+        await worker.attempt()
+        self.source(2,season=1,anidb=999)
+        await worker.attempt()
+        self.source(3,season=2,anidb=3)
+        await worker.attempt()
+        self.assertEqual(self.rows('SELECT tvdb_season,anchor_episode FROM trial_plans'),[(2,1000)])
+        self.assertEqual(self.rows('SELECT selected FROM trial_evaluations ORDER BY evaluation_id'),[(1,),(1,),(0,)])
 
     async def test_zero_counts_rejected_before_saving_or_creating_work(self):
         before=self.store.read()

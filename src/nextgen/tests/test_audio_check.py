@@ -107,8 +107,10 @@ class AudioRankingTests(unittest.TestCase):
 
 class AnchorWindowTests(unittest.TestCase):
     def test_include_anchor_adds_the_delivered_episode(self):
-        self.assertEqual(window(10, 6, 1), (1, 2, 3, 4, 5, 6))
-        self.assertEqual(window(10, 6, 1, True), (1, 2, 3, 4, 5, 6, 10))
+        self.assertEqual(window(7, 6, 1), (1, 2, 3, 4, 5, 6))
+        self.assertEqual(window(7, 6, 1, True), (1, 2, 3, 4, 5, 6, 7))
+        # AniDB window: a later anchor backfills the episodes just before it.
+        self.assertEqual(window(10, 6, 1), (4, 5, 6, 7, 8, 9))
 
     def test_untagged_delivery_does_not_route_to_reservation(self):
         spec = trial_registration(reservation_kind='RESERVE_EPISODE', discovery_kind=DISCOVER_KIND)
@@ -151,31 +153,31 @@ class IntakeAudioSearchTests(unittest.IsolatedAsyncioTestCase):
     async def run_pages(self, title, *, audio=None):
         if audio is not None:
             self.store.update({'acquisition': {'audio_check': audio}}, expected_revision=1)
-        self.autobrr(10, title)
+        self.autobrr(7, title)
         fake = backfill.FakeDiscovery()
         worker = self.worker(fake)
         for _ in range(3):
             await worker.attempt()
         marked = self.rows("SELECT reason_code FROM job_history WHERE event_code='TRIAL_AUDIO_SEARCH'")
-        return [call[2] for call in fake.calls], marked
+        return [call[1] for call in fake.calls], marked
 
     async def test_untagged_release_searches_its_own_episode(self):
-        calls, marked = await self.run_pages('[SubsPlease] Test - 10 (1080p)')
-        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 10)])
+        calls, marked = await self.run_pages('[SubsPlease] Test - 07 (1080p)')
+        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 7)])
         self.assertEqual(marked, [('RELEASE_AUDIO_UNTAGGED',)])
 
     async def test_dual_audio_release_is_downloaded_as_before(self):
-        calls, marked = await self.run_pages('[Group] Test - 10 (1080p) [Dual Audio]')
+        calls, marked = await self.run_pages('[Group] Test - 07 (1080p) [Dual Audio]')
         self.assertEqual(calls, [(1, 2, 3, 4), (5, 6)])
         self.assertEqual(marked, [])
 
     async def test_english_only_autobrr_release_falls_back_to_prowlarr(self):
-        calls, marked = await self.run_pages('[Group] Test - 10 (1080p) [English Dub]')
-        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 10)])
+        calls, marked = await self.run_pages('[Group] Test - 07 (1080p) [English Dub]')
+        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 7)])
         self.assertEqual(marked, [('RELEASE_AUDIO_UNTAGGED',)])
 
     async def test_japanese_only_mode_never_skips_the_delivery(self):
-        calls, marked = await self.run_pages('[SubsPlease] Test - 10 (1080p)', audio='japanese')
+        calls, marked = await self.run_pages('[SubsPlease] Test - 07 (1080p)', audio='japanese')
         self.assertEqual(calls, [(1, 2, 3, 4), (5, 6)])
         self.assertEqual(marked, [])
 

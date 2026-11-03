@@ -27,24 +27,25 @@ class SelectionTests(unittest.TestCase):
               anchor_episode INTEGER, backfill_count INTEGER, following_count INTEGER);
             CREATE TABLE recognized_episodes (
               anidb_id INTEGER, tvdb_series_id INTEGER, tvdb_season INTEGER,
-              tvdb_episode INTEGER, tvdb_episode_id INTEGER);
+              tvdb_episode INTEGER, tvdb_episode_id INTEGER, anidb_episode_number INTEGER);
             CREATE TABLE episode_reservations (
               state TEXT, tvdb_series_id INTEGER, tvdb_season INTEGER, tvdb_episode INTEGER);
             CREATE TABLE batch_episode_reservations (
               state TEXT, tvdb_series_id INTEGER, tvdb_season INTEGER, tvdb_episode INTEGER);
             CREATE TABLE sonarr_episode_selections (
-              plan_id INTEGER, tvdb_episode INTEGER, tvdb_episode_id INTEGER,
+              plan_id INTEGER, anidb_episode_number INTEGER, tvdb_season INTEGER,
+              tvdb_episode INTEGER, tvdb_episode_id INTEGER,
               info_hash TEXT, selected_at_ms INTEGER,
-              PRIMARY KEY(plan_id,tvdb_episode), UNIQUE(plan_id,info_hash));
+              PRIMARY KEY(plan_id,anidb_episode_number), UNIQUE(plan_id,info_hash));
             INSERT INTO trial_plans VALUES (1,50,100,1,'official',10,6,1);
-            INSERT INTO recognized_episodes VALUES (50,100,1,10,200);
+            INSERT INTO recognized_episodes VALUES (50,100,1,10,200,10);
         """)
         self.db.commit()
 
-    def choose(self, selected=None, *, result=None, identity=EP):
+    def choose(self, selected=None, *, result=None, identity=EP, episode=10):
         chosen = selected or release()
         results = result or SearchResult(100, 200, (chosen,))
-        return select(self.db,plan_id=1,identity=identity,result=results,
+        return select(self.db,plan_id=1,episode=episode,identity=identity,result=results,
                       release=chosen,policy=DiscoveryPolicy())
 
     def test_selection_is_idempotent(self):
@@ -53,8 +54,26 @@ class SelectionTests(unittest.TestCase):
             self.assertTrue(self.choose())
             self.assertFalse(self.choose())
         self.assertEqual(self.db.execute(
-            'SELECT tvdb_episode,tvdb_episode_id,info_hash FROM sonarr_episode_selections'
-        ).fetchall(), [(10,200,HASH)])
+            'SELECT anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash '
+            'FROM sonarr_episode_selections').fetchall(), [(10,1,10,200,HASH)])
+
+    def test_selection_crosses_tvdb_seasons_by_anidb_number(self):
+        # AniDB E8 at TVDB S02E02: in the AniDB window (anchor 10, backfill 6 -> 4-9).
+        identity = VerifiedEpisode(100, 300, 2, 2)
+        result = SearchResult(100, 300, (release(episode_id=300),))
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self.assertTrue(select(self.db, plan_id=1, episode=8, identity=identity, result=result,
+                                   release=result.candidates[0], policy=DiscoveryPolicy()))
+        self.assertEqual(self.db.execute(
+            'SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM sonarr_episode_selections'
+        ).fetchall(), [(8,2,2)])
+        # AniDB E3 is outside the window even though TVDB S02E03 "looks" early.
+        with self.db, self.assertRaises(SelectionConflict):
+            self.db.execute('BEGIN IMMEDIATE')
+            select(self.db, plan_id=1, episode=3, identity=VerifiedEpisode(100, 301, 2, 3),
+                   result=SearchResult(100, 301, (release(OTHER, episode_id=301),)),
+                   release=release(OTHER, episode_id=301), policy=DiscoveryPolicy())
 
     def test_conflict_does_not_replace_prior_selection(self):
         with self.db:
