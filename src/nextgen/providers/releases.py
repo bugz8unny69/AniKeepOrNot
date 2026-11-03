@@ -42,12 +42,18 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
         if type(secret) is not Credentials: raise ProviderAuthenticationFailed()
         client=pool.get(configuration.value("storage.database_path"),actual)
         catalog=client.episodes(source.anidb_id)
-        mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog)
         if origin=="anidb":
             if number not in catalog: raise ReleaseNotReady("RELEASE_ANIDB_EPISODE_MISSING")
-            if number not in mappings: raise ReleaseNotReady("RELEASE_EPISODE_MAPPING_MISSING")
-            target=mappings[number]
+            try:
+                mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog)
+            except (ReleaseNotReady, ReleaseConflict):
+                mappings={}
+            target=mappings.get(number)
+            if target is None:
+                if cancelled.is_set(): raise ReleaseNotReady()
+                return VerifiedRelease(source,number,catalog[number],None,None,None)
         else:
+            mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog)
             candidates=[n for n,target in mappings.items() if target==(season,number)]
             if not candidates:
                 # Only explicitly mapped regular AniDB episodes can verify
@@ -60,7 +66,11 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
             target=mappings[number]
         # Detect merged mappings even in the forward case. A single declared
         # episode never authorizes an ambiguous split/merged coverage assertion.
-        if sum(value==target for value in mappings.values())!=1: raise ReleaseConflict()
+        if sum(value==target for value in mappings.values())!=1:
+            if origin=="anidb":
+                if cancelled.is_set(): raise ReleaseNotReady()
+                return VerifiedRelease(source,number,catalog[number],None,None,None)
+            raise ReleaseConflict()
         seen=set()
         matches=[]
         total=0
@@ -75,8 +85,16 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
                 if (record_season,record_number)==target: matches.append(eid)
             if not has_next: break
         else: raise ProviderInvalidResponse()
-        if not matches: raise ReleaseNotReady("RELEASE_TVDB_EPISODE_MISSING")
-        if len(matches)!=1: raise ReleaseConflict()
+        if not matches:
+            if origin=="anidb":
+                if cancelled.is_set(): raise ReleaseNotReady()
+                return VerifiedRelease(source,number,catalog[number],None,None,None)
+            raise ReleaseNotReady("RELEASE_TVDB_EPISODE_MISSING")
+        if len(matches)!=1:
+            if origin=="anidb":
+                if cancelled.is_set(): raise ReleaseNotReady()
+                return VerifiedRelease(source,number,catalog[number],None,None,None)
+            raise ReleaseConflict()
         if cancelled.is_set(): raise ReleaseNotReady()
         return VerifiedRelease(source,number,catalog[number],target[0],target[1],matches[0])
 

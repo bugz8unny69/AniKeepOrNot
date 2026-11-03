@@ -33,10 +33,16 @@ def facts(db,claim,verification):
             tuple(evidence['file']),evidence['sha256'],evidence['duration_ms'],tuple(evidence['languages']))
         if value.json()!=row[4]:raise StagingReview()
     except (ValueError,KeyError,TypeError):raise StagingReview() from None
-    identity=db.execute('SELECT r.anidb_id,r.anidb_episode_id,r.tvdb_series_id,r.tvdb_season,r.tvdb_episode,r.tvdb_episode_id,a.title '
+    identity_row=db.execute('SELECT r.anidb_id,r.anidb_episode_id,r.tvdb_series_id,r.tvdb_season,r.tvdb_episode,r.tvdb_episode_id,a.title,'
+        '(SELECT v.anidb_episode_number FROM release_verifications v WHERE v.anidb_id=r.anidb_id AND v.anidb_episode_id=r.anidb_episode_id LIMIT 1) '
         'FROM acquisition_plans p JOIN episode_reservations r USING(reservation_id) '
         'JOIN identified_anime a ON a.anidb_id=r.anidb_id WHERE p.plan_id=?',(row[0],)).fetchone()
-    if identity is None:raise StagingReview()
+    if identity_row is None:raise StagingReview()
+    aid,eid,tid,season,episode,tveid,title,anidb_number=identity_row
+    effective_season = 1 if season is None else season
+    effective_number = anidb_number if episode is None else episode
+    if effective_number is None: effective_number = 1
+    identity = (aid,eid,tid,effective_season,effective_number,tveid,title)
     return intent,evidence,identity
 
 

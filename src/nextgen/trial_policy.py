@@ -61,15 +61,18 @@ class TrialSource:
     event_id: int
     anidb_id: int
     tvdb_series_id: int
-    tvdb_season: int
-    tvdb_episode: int
-    anidb_episode_number: int
+    tvdb_season: int | None = None
+    tvdb_episode: int | None = None
+    anidb_episode_number: int = 1
 
     def __post_init__(self):
         for value in (self.verification_id,self.verification_job_id,self.event_id,
-                      self.anidb_id,self.tvdb_series_id,self.tvdb_episode,
+                      self.anidb_id,self.tvdb_series_id,
                       self.anidb_episode_number):integer(value,positive=True)
-        integer(self.tvdb_season)
+        if self.tvdb_season is not None:
+            integer(self.tvdb_season)
+        if self.tvdb_episode is not None:
+            integer(self.tvdb_episode,positive=True)
 
 
 @dataclass(frozen=True)

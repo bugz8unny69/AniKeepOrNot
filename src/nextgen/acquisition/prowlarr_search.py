@@ -129,7 +129,7 @@ class Release:
     resolution: int
     seeders: int | None
     size: int
-    tvdb_episode_id: int
+    tvdb_episode_id: int | None
     info_hash: str | None
     magnet_url: str | None = field(default=None, repr=False)
     eligible_for_handoff: bool = False
@@ -141,7 +141,7 @@ class Release:
 @dataclass(frozen=True)
 class SearchResult:
     tvdb_series_id: int
-    tvdb_episode_id: int
+    tvdb_episode_id: int | None
     candidates: tuple[Release, ...]
 
 
@@ -768,6 +768,7 @@ class Client:
         for number in numbers:
             target = catalog.target(number)
             if number in reserved or (target.status == 'SEARCHABLE' and
+                    target.tvdb_season is not None and
                     (target.tvdb_season, target.tvdb_episode) in reserved_placements):
                 output.append(BackfillObservation(number, verified_ids.get(number) or target.tvdb_episode_id,
                                                   'IN_PROGRESS'))

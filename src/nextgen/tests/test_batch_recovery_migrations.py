@@ -48,7 +48,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'sonarr_backfill_results_v53',  # v53 allows WAITING_FOR_DUB results
             'prowlarr_search_snapshots',  # v54 adds durable Prowlarr matching snapshots
             'manual_release_submissions',  # v55 adds manual release submissions
-            'trial_plans_v56')  # v56 keys trial selection by AniDB episode
+            'trial_plans_v56',  # v56 keys trial selection by AniDB episode
+            'release_verifications_v57')  # v57 allows acquiring and staging without TVDB placement
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

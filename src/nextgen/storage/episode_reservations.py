@@ -71,16 +71,23 @@ def persist_reservation(db,claim,value):
     key=(value.tvdb_series_id,value.tvdb_season,value.tvdb_episode)
     # Check the batch namespace in this same fenced SQLite transaction,
     # before the existing single-episode reservation is inserted.
+    tvdb_check = ""
+    check_args = [value.anidb_episode_id]
+    if value.tvdb_episode_id is not None:
+        tvdb_check += " OR tvdb_episode_id=?"
+        check_args.append(value.tvdb_episode_id)
+    if value.tvdb_season is not None and value.tvdb_episode is not None:
+        tvdb_check += " OR (tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)"
+        check_args.extend([value.tvdb_series_id, value.tvdb_season, value.tvdb_episode])
+
     if db.execute(
-        "SELECT 1 FROM batch_episode_reservations WHERE state='ACTIVE' AND "
-        "(anidb_episode_id=? OR tvdb_episode_id=? OR "
-        "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)) LIMIT 1",
-        (value.anidb_episode_id,value.tvdb_episode_id,*key)).fetchone():
+        f"SELECT 1 FROM batch_episode_reservations WHERE state='ACTIVE' AND (anidb_episode_id=?{tvdb_check}) LIMIT 1",
+        check_args).fetchone():
         raise EpisodeReserved()
     rows=db.execute("SELECT owner_job_id,evaluation_job_id,anidb_id,anidb_episode_id,"
                     "tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id FROM episode_reservations "
-                    "WHERE state='ACTIVE' AND ((tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=? AND tvdb_order='official') "
-                    "OR anidb_episode_id=? OR tvdb_episode_id=?)",(*key,value.anidb_episode_id,value.tvdb_episode_id)).fetchall()
+                    f"WHERE state='ACTIVE' AND (anidb_episode_id=?{tvdb_check})",
+                    check_args).fetchall()
     expected=(value.anidb_id,value.anidb_episode_id,*key,value.tvdb_episode_id)
     prior=db.execute('SELECT state FROM episode_reservations WHERE owner_job_id=?',(claim.job_id,)).fetchone()
     if prior==('RELEASED',):raise ReservationConflict()
@@ -206,15 +213,28 @@ def _resume_unreserved_waiters(db, now, limit=32):
              value.tvdb_season,value.tvdb_episode,value.tvdb_episode_id)
         if key in seen: continue
         seen.add(key)
+        tvdb_filter = ""
+        check_args = [value.anidb_episode_id]
+        if value.tvdb_episode_id is not None:
+            tvdb_filter += " OR tvdb_episode_id=?"
+            check_args.append(value.tvdb_episode_id)
+        if value.tvdb_season is not None and value.tvdb_episode is not None:
+            tvdb_filter += " OR (tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)"
+            check_args.extend([value.tvdb_series_id, value.tvdb_season, value.tvdb_episode])
+
         if any(db.execute(
-            f"SELECT 1 FROM {table} WHERE state='ACTIVE' AND "
-            "(anidb_episode_id=? OR tvdb_episode_id=? OR "
-            "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)) LIMIT 1",
-            (value.anidb_episode_id,value.tvdb_episode_id,value.tvdb_series_id,
-             value.tvdb_season,value.tvdb_episode)
+            f"SELECT 1 FROM {table} WHERE state='ACTIVE' AND (anidb_episode_id=?{tvdb_filter}) LIMIT 1",
+            check_args
         ).fetchone() for table in ('episode_reservations','batch_episode_reservations')):
             continue
         # A previously awakened job may still be queued/running. Do not race it.
+        queued_tvdb = ""
+        queued_args = [value.anidb_id, value.anidb_episode_id, value.tvdb_series_id]
+        if value.tvdb_season is not None and value.tvdb_episode is not None and value.tvdb_episode_id is not None:
+            queued_tvdb = "AND v.tvdb_season=? AND v.tvdb_episode=? AND v.tvdb_episode_id=? "
+            queued_args.extend([value.tvdb_season, value.tvdb_episode, value.tvdb_episode_id])
+        else:
+            queued_tvdb = "AND v.tvdb_season IS NULL AND v.tvdb_episode IS NULL AND v.tvdb_episode_id IS NULL "
         queued=db.execute(
             "SELECT 1 FROM jobs j "
             "JOIN job_operation_members m USING(job_id) "
@@ -222,10 +242,10 @@ def _resume_unreserved_waiters(db, now, limit=32):
             "JOIN trial_evaluations t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
             "JOIN release_verifications v ON v.verification_id=t.verification_id "
             "WHERE j.kind='RESERVE_EPISODE' AND j.state IN ('PENDING','RUNNING','RETRY_WAIT') "
-            "AND o.state='ACTIVE' AND t.selected=1 "
-            "AND v.anidb_id=? AND v.anidb_episode_id=? AND v.tvdb_series_id=? "
-            "AND v.tvdb_season=? AND v.tvdb_episode=? AND v.tvdb_episode_id=? LIMIT 1",
-            key
+            f"AND o.state='ACTIVE' AND t.selected=1 "
+            f"AND v.anidb_id=? AND v.anidb_episode_id=? AND v.tvdb_series_id=? "
+            f"{queued_tvdb}LIMIT 1",
+            queued_args
         ).fetchone()
         if queued: continue
         updated=db.execute(
@@ -269,16 +289,30 @@ def reconcile_staged_waiters(database,*,limit=32):
             try:value=_facts(db,evaluation,event)
             except (ReservationConflict,ValueError,TypeError):continue
             if not value.selected:continue
+            staged_tvdb = ""
+            staged_args = [value.anidb_id, value.anidb_episode_id]
+            if value.tvdb_series_id is not None:
+                staged_tvdb += "AND r.tvdb_series_id=? "
+                staged_args.append(value.tvdb_series_id)
+            if value.tvdb_season is not None and value.tvdb_episode is not None:
+                staged_tvdb += "AND r.tvdb_season=? AND r.tvdb_episode=? "
+                staged_args.extend([value.tvdb_season, value.tvdb_episode])
+            else:
+                staged_tvdb += "AND r.tvdb_season IS NULL AND r.tvdb_episode IS NULL "
+            if value.tvdb_episode_id is not None:
+                staged_tvdb += "AND r.tvdb_episode_id=? "
+                staged_args.append(value.tvdb_episode_id)
+            else:
+                staged_tvdb += "AND r.tvdb_episode_id IS NULL "
+
             plan=db.execute("SELECT p.plan_id FROM episode_reservations r "
                 "JOIN acquisition_plans p USING(reservation_id) "
                 "JOIN staging_publications s ON s.plan_id=p.plan_id AND s.state='PUBLISHED' "
                 "JOIN job_operation_members m ON m.job_id=r.owner_job_id "
                 "JOIN job_operations o ON o.operation_id=m.operation_id AND o.state='STAGED' "
-                "WHERE r.state='ACTIVE' AND r.anidb_id=? AND r.anidb_episode_id=? "
-                "AND r.tvdb_series_id=? AND r.tvdb_season=? AND r.tvdb_episode=? "
-                "AND r.tvdb_episode_id=? LIMIT 1",
-                (value.anidb_id,value.anidb_episode_id,value.tvdb_series_id,
-                 value.tvdb_season,value.tvdb_episode,value.tvdb_episode_id)).fetchone()
+                f"WHERE r.state='ACTIVE' AND r.anidb_id=? AND r.anidb_episode_id=? "
+                f"{staged_tvdb}LIMIT 1",
+                staged_args).fetchone()
             if plan is None:continue
             records.extend(cancel_staged_waiters(db,plan[0],now,only_job_id=job))
             handled+=1
