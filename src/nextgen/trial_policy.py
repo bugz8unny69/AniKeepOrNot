@@ -1,4 +1,8 @@
-"""Bounded trial selection intents. Following count includes the trigger."""
+"""Bounded trial selection intents. Following count includes the trigger.
+
+Single-episode trials select AniDB episode numbers (anidb_episodes); season
+packs keep their TVDB-season window (episodes).
+"""
 from dataclasses import dataclass
 
 from src.nextgen.history import integer, MAX_INTEGER
@@ -59,10 +63,12 @@ class TrialSource:
     tvdb_series_id: int
     tvdb_season: int
     tvdb_episode: int
+    anidb_episode_number: int
 
     def __post_init__(self):
         for value in (self.verification_id,self.verification_job_id,self.event_id,
-                      self.anidb_id,self.tvdb_series_id,self.tvdb_episode):integer(value,positive=True)
+                      self.anidb_id,self.tvdb_series_id,self.tvdb_episode,
+                      self.anidb_episode_number):integer(value,positive=True)
         integer(self.tvdb_season)
 
 

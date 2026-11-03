@@ -6,30 +6,41 @@ import is unchanged and still uses Sonarr.
 
 ## Episode selection
 
+AniDB decides which episodes are selected. Episode numbers here are AniDB
+episode numbers of the verified anime; TVDB seasons never reset the window.
+
 The searched window is the union of:
 
-- backfill: episodes 1 through X of the verified TVDB season (`trial.backfill_count`);
+- backfill (`trial.backfill_count` = N): episodes 1 through N while the incoming
+  episode is within the first N, otherwise the N episodes just before it;
 - continue: the incoming episode and the following ones (`trial.following_count`
   includes the incoming episode).
 
 Overlaps count once. The incoming episode itself is never searched: its own
-delivery is already acquiring it. Example: backfill=6, incoming=5,
-following_count=3 searches 1, 2, 3, 4, 6 and 7.
+delivery is already acquiring it. Examples with N=6 and following_count=3:
+incoming 5 searches 1-4, 6, 7; incoming 1000 searches 994-999, 1001, 1002 even
+when AniDB 1000 is TVDB S02E01.
+
+Each selected AniDB episode is searched, matched and acquired at its own
+verified TVDB placement, so one page can span TVDB seasons. An episode without
+a unique verified placement is `MAPPING_MISSING` and is not acquired (Step 1:
+reservations, staging and Keep still need TVDB).
 
 Episodes with an active reservation (single or batch) are skipped and reported
 as `IN_PROGRESS`. Staged and kept episodes keep their reservation, so they are
 skipped too. A canceled episode releases its reservation and is searched again.
 
-Frozen plans keep their captured counts and season. The window is searched in
+There is one frozen plan per AniDB anime; it keeps its captured counts and
+anchor, and later deliveries in any TVDB season reuse it. The window is searched in
 pages of four episodes; each page is one `DISCOVER_SONARR_BACKFILL` job (the
 historical job and table names are kept so existing jobs and history stay valid).
 
 ## How an episode is searched
 
-1. The episode catalog (`providers/backfill_catalog.py`) maps the TVDB episode
-   to its AniDB episode number with the same cached AniDB record, Anime-Lists
-   offsets and TVDB official episode list that VERIFY_RELEASE uses, and reads
-   the AniDB air date.
+1. The episode catalog (`providers/backfill_catalog.py`) lists the AniDB
+   episodes and their AniDB air dates (`NOT_AIRED` until aired), and maps each
+   aired one to its TVDB placement with the same cached AniDB record,
+   Anime-Lists offsets and TVDB official episode list that VERIFY_RELEASE uses.
 2. Prowlarr is queried with GET `/api/v1/search` with a bounded, deterministic
    query budget of at most six queries per episode:
    - When `acquisition.audio_check=japanese_english` and a verified English

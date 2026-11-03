@@ -27,6 +27,24 @@ def _waiting_for_dub(db, plan_id):
 
 
 
+def _placements(db, anidb_id, plan_id):
+    """AniDB episode number -> verified TVDB (season, episode), from stored evidence only.
+
+    Used for labels and the TVDB-keyed reservation/staging lookups of Step 1.
+    Unknown placements stay unknown; nothing is inferred.
+    """
+    found = {}
+    for number, season, episode in db.execute(
+            "SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM recognized_episodes "
+            "WHERE anidb_id=? UNION "
+            "SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM release_verifications "
+            "WHERE anidb_id=? AND tvdb_order='official' UNION "
+            "SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM sonarr_episode_selections "
+            "WHERE plan_id=?", (anidb_id, anidb_id, plan_id)).fetchall():
+        found.setdefault(number, set()).add((season, episode))
+    return {number: places.pop() for number, places in found.items() if len(places) == 1}
+
+
 def _active_episode(db, anidb_id, season, episode):
     """Read existing acquisition ownership; never infer staged from a reservation."""
     owner = db.execute(
@@ -185,31 +203,37 @@ def detail(db, anidb_id, language='english'):
         "SELECT tvdb_season,tvdb_episode FROM batch_episode_reservations "
         "WHERE anidb_id=? AND state='ACTIVE'", (anidb_id, anidb_id)
     ).fetchall())
+    # One plan per AniDB anime; its window is in AniDB episode numbers.
     plans = db.execute(
-        'SELECT plan_id,tvdb_season,anchor_episode,backfill_count,following_count '
-        'FROM trial_plans WHERE anidb_id=? ORDER BY tvdb_season', (anidb_id,)
+        'SELECT plan_id,anchor_episode,backfill_count,following_count '
+        'FROM trial_plans WHERE anidb_id=?', (anidb_id,)
     ).fetchall()
-    for plan_id, season, anchor, backfill, following in plans:
+    for plan_id, anchor, backfill, following in plans:
         observed = dict(db.execute(
-            'SELECT tvdb_episode,status FROM sonarr_backfill_results WHERE plan_id=?',
+            'SELECT anidb_episode_number,status FROM sonarr_backfill_results WHERE plan_id=?',
             (plan_id,)).fetchall())
         waiting = _waiting_for_dub(db, plan_id)
+        placements = _placements(db, anidb_id, plan_id)
         # The anchor is intentionally excluded from automatic backfill, but
         # it is NOT excluded from Intake: its original acquisition may fail.
         visible = set(plan_window(db, plan_id, anchor, backfill, following))
         visible.add(anchor)
-        for episode in sorted(visible):
-            if (season, episode) in staged_episodes:
+        for number in sorted(visible):
+            place = placements.get(number)
+            if place in staged_episodes:
                 continue
-            work = (_active_episode(db, anidb_id, season, episode)
-                    if (season, episode) in active_episodes else None)
+            work = (_active_episode(db, anidb_id, *place)
+                    if place in active_episodes else None)
             status = (work['status'] if work else
-                      WAITING_FOR_DUB if episode in waiting else observed.get(episode, 'NOT_SEARCHED'))
+                      WAITING_FOR_DUB if number in waiting else observed.get(number, 'NOT_SEARCHED'))
+            season, episode = place or (None, None)
             result['missing'].append({
+                'anidb_episode': number,
+                # Verified TVDB placement is a label only; None when not yet known.
                 'season': season, 'episode': episode, 'status': status,
-                'reservation_count': reservation_counts.get((season, episode), 0),
-                'manual_submission_count': manual_counts.get((season, episode), 0),
-                'can_retry': rejected is None and work is None and episode != anchor
+                'reservation_count': reservation_counts.get(place, 0),
+                'manual_submission_count': manual_counts.get(place, 0),
+                'can_retry': rejected is None and work is None and number != anchor
                              and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED',
                                             'MAPPING_MISSING', WAITING_FOR_DUB),
                 **(work or {})
@@ -231,7 +255,8 @@ def _summary(db, aid, language):
         'kept_count': sum(x['status'] == 'Kept' for x in item['episodes']),
         'missing_count': len(item['missing']),
         'waiting_for_dub': sum(x['status'] == WAITING_FOR_DUB for x in item['missing']),
-        'season_count': len({x['season'] for x in item['episodes'] + item['missing']}),
+        'season_count': len({x['season'] for x in item['episodes'] + item['missing']
+                             if x['season'] is not None}),
         'rejection': item['rejection']
     }
     row['status'] = ('REJECTED' if row['rejection'] else 'STAGED' if row['staged_count'] else
@@ -366,11 +391,11 @@ def reject_series(database, anidb_id, operation_ids, reason, note):
         return {'job_id': control, 'reused': False}
 
 
-def retry_episode(database, anidb_id, season, episode, *, delete_cache=True):
+def retry_episode(database, anidb_id, episode, *, delete_cache=True):
+    """Search one missing AniDB episode of the anime's plan again."""
     integer(anidb_id, positive=True)
-    integer(season)
     integer(episode, positive=True)
-    if season < 0 or type(delete_cache) is not bool:
+    if type(delete_cache) is not bool:
         raise IntakeUnavailable()
     queue = JobQueue(database)
     with queue.connection() as db, transaction(db):
@@ -379,8 +404,8 @@ def retry_episode(database, anidb_id, season, episode, *, delete_cache=True):
             " j.event_id,j.job_id FROM trial_plans p "
             "JOIN release_verifications v ON v.verification_id=p.anchor_verification_id "
             "JOIN jobs j ON j.job_id=v.job_id "
-            "WHERE p.anidb_id=? AND p.tvdb_season=?",
-            (anidb_id, season)).fetchone()
+            "WHERE p.anidb_id=?",
+            (anidb_id,)).fetchone()
         if row is None:
             raise IntakeUnavailable()
         if db.execute("SELECT 1 FROM anime_review_decisions WHERE anidb_id=?", (anidb_id,)).fetchone():
@@ -400,16 +425,17 @@ def retry_episode(database, anidb_id, season, episode, *, delete_cache=True):
         if active_retry:
             return {'job_id':active_retry[0], 'reused':True}
         prior = db.execute(
-            'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND tvdb_episode=?',
+            'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND anidb_episode_number=?',
             (plan_id, episode)).fetchone()
         if held is None and prior and prior[0] not in ('NO_RESULTS', 'NOT_AIRED',
                                                          'MAPPING_MISSING', WAITING_FOR_DUB):
             raise IntakeUnavailable()
+        place = _placements(db, anidb_id, plan_id).get(episode)
         for table in ('episode_reservations', 'batch_episode_reservations'):
-            if db.execute(
+            if place is not None and db.execute(
                 f"SELECT 1 FROM {table} WHERE anidb_id=? AND tvdb_season=? "
                 "AND tvdb_episode=? AND state='ACTIVE' LIMIT 1",
-                (anidb_id, season, episode)).fetchone():
+                (anidb_id, *place)).fetchone():
                 raise IntakeUnavailable()
         if held is None:
             return _search_episode(db, plan_id, numbers, episode, event_id, parent_job)

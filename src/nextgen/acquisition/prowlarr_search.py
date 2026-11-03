@@ -147,22 +147,27 @@ class SearchResult:
 
 @dataclass(frozen=True)
 class EpisodeTarget:
-    """Provider-verified placement of one TVDB episode (see providers.backfill_catalog)."""
-    tvdb_episode: int
+    """One AniDB episode and its own verified TVDB placement (see providers.backfill_catalog).
+
+    TVDB fields are set only for SEARCHABLE targets.
+    """
+    tvdb_episode: int | None
     status: str                  # SEARCHABLE, NOT_AIRED or MAPPING_MISSING
     anidb_episode: int | None = None
     tvdb_episode_id: int | None = None
     absolute_episode: int | None = None
+    tvdb_season: int | None = None
 
 
 @dataclass(frozen=True)
 class EpisodeCatalog:
     titles: tuple[str, ...]
-    episodes: dict = field(repr=False)   # tvdb episode number -> EpisodeTarget
+    episodes: dict = field(repr=False)   # AniDB episode number -> EpisodeTarget
     english_title: str | None = None
 
     def target(self, number):
-        return self.episodes.get(number) or EpisodeTarget(number, 'NOT_AIRED')
+        # AniDB does not list this number yet; its cached record refreshes daily.
+        return self.episodes.get(number) or EpisodeTarget(None, 'NOT_AIRED', number)
 
 
 @dataclass(frozen=True)
@@ -473,6 +478,8 @@ class Client:
             'episode': target.tvdb_episode,
             'tvdb_episode_id': target.tvdb_episode_id,
             'anidb_episode': target.anidb_episode,
+            # season/episode are the target's TVDB placement; anidb_episode is the window key.
+            'numbering': {'season': 'tvdb', 'episode': 'tvdb', 'anidb_episode': 'anidb'},
             'search_mode': getattr(self, '_search_mode', 'initial'),
             'target': {
                 'plan_id': getattr(self, '_plan_id', None),
@@ -760,29 +767,35 @@ class Client:
         oversized_count = sum(self.policy.oversized(r) for r in found)
         if oversized_count and self.logger is not None:
             self.logger.info('Backfill episode %s: skipped %s release(s) over %s MB',
-                             target.tvdb_episode, oversized_count, self.policy.max_episode_mb)
+                             target.anidb_episode, oversized_count, self.policy.max_episode_mb)
         return self.policy.rank(found)
 
-    def backfill(self, anidb_id, tvdb_series_id, season, numbers, *, reserved=(),
+    def backfill(self, anidb_id, tvdb_series_id, numbers, *, reserved=(), reserved_placements=(),
                  verified_ids=None, select_candidates=False, tried_by_episode=None):
-        """One observation per requested episode. A missing release never fails the page."""
+        """One observation per requested AniDB episode. A missing release never fails the page.
+
+        Each target is searched and matched at its own verified TVDB placement,
+        so one page may span TVDB seasons.
+        """
         self._current_anidb_id = anidb_id
         self._current_tvdb_series_id = tvdb_series_id
         if (type(anidb_id) is not int or anidb_id <= 0 or type(tvdb_series_id) is not int
-                or tvdb_series_id <= 0 or type(season) is not int or season < 0
+                or tvdb_series_id <= 0
                 or type(numbers) is not tuple or not 1 <= len(numbers) <= 4
                 or any(type(n) is not int or n <= 0 for n in numbers)
                 or len(set(numbers)) != len(numbers)
                 or type(select_candidates) is not bool):
             raise SearchReview()
         verified_ids = verified_ids or {}
-        catalog = self.catalog(anidb_id, tvdb_series_id, season)
+        catalog = self.catalog(anidb_id, tvdb_series_id)
         output = []
         for number in numbers:
-            if number in reserved:
-                output.append(BackfillObservation(number, verified_ids.get(number), 'IN_PROGRESS'))
-                continue
             target = catalog.target(number)
+            if number in reserved or (target.status == 'SEARCHABLE' and
+                    (target.tvdb_season, target.tvdb_episode) in reserved_placements):
+                output.append(BackfillObservation(number, verified_ids.get(number) or target.tvdb_episode_id,
+                                                  'IN_PROGRESS'))
+                continue
             if target.status != 'SEARCHABLE':
                 output.append(BackfillObservation(number, target.tvdb_episode_id, target.status))
                 continue
@@ -790,7 +803,7 @@ class Client:
                 output.append(BackfillObservation(number, target.tvdb_episode_id, 'MAPPING_MISSING'))
                 continue
             tried = (tried_by_episode or {}).get(number, ())
-            ranked = self._search(catalog, season, target, tried=tried)
+            ranked = self._search(catalog, target.tvdb_season, target, tried=tried)
             accepted = sum(self.policy.accepts(r) for r in ranked)
             status = 'CANDIDATES' if ranked else 'NO_RESULTS'
             # A searchable episode with no Dual/Multi Audio releases is an
@@ -800,7 +813,8 @@ class Client:
                 status = 'WAITING_FOR_DUB'
             choice = None
             if select_candidates and accepted:
-                identity = VerifiedEpisode(tvdb_series_id, target.tvdb_episode_id, season, number)
+                identity = VerifiedEpisode(tvdb_series_id, target.tvdb_episode_id,
+                                           target.tvdb_season, target.tvdb_episode)
                 choice = CandidateSelection(identity,
                     SearchResult(tvdb_series_id, target.tvdb_episode_id, ranked),
                     ranked[0], self.policy)
@@ -808,14 +822,17 @@ class Client:
                           status, len(ranked), accepted, choice))
         return tuple(output)
 
-    def search(self, anidb_id, identity, *, tried=(), target_hash=None):
-        """Ranked releases for one previously selected episode (candidate fallback)."""
-        if type(identity) is not VerifiedEpisode: raise SearchReview()
+    def search(self, anidb_id, episode, identity, *, tried=(), target_hash=None):
+        """Ranked releases for one previously selected AniDB episode (candidate fallback)."""
+        if type(identity) is not VerifiedEpisode or type(episode) is not int or episode <= 0:
+            raise SearchReview()
         self._current_anidb_id = anidb_id
         self._current_tvdb_series_id = identity.tvdb_series_id
-        catalog = self.catalog(anidb_id, identity.tvdb_series_id, identity.tvdb_season)
-        target = catalog.target(identity.tvdb_episode)
-        if target.status != 'SEARCHABLE' or target.tvdb_episode_id != identity.tvdb_episode_id:
+        catalog = self.catalog(anidb_id, identity.tvdb_series_id)
+        target = catalog.target(episode)
+        # The same AniDB target as the initial search, still at its selected placement.
+        if (target.status != 'SEARCHABLE' or target.tvdb_episode_id != identity.tvdb_episode_id
+                or (target.tvdb_season, target.tvdb_episode) != (identity.tvdb_season, identity.tvdb_episode)):
             raise SearchReview()
         return SearchResult(identity.tvdb_series_id, identity.tvdb_episode_id,
-                            self._search(catalog, identity.tvdb_season, target, tried=tried, target_hash=target_hash))
+                            self._search(catalog, target.tvdb_season, target, tried=tried, target_hash=target_hash))

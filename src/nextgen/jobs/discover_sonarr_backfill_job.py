@@ -113,7 +113,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                              exhausted_episode)
                 client = connect('exhausted')
                 search_kwargs = {'tried': target.tried} if isinstance(client, Client) else {}
-                result = await blocking(client.search,plan.anidb_id,target.identity,**search_kwargs)
+                result = await blocking(client.search,plan.anidb_id,exhausted_episode,target.identity,**search_kwargs)
                 fresh = _new_dub_releases(result,client.policy,target.tried)
                 snapshots = getattr(client, 'snapshots', None)
                 if not fresh:
@@ -122,8 +122,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 log.info('Backfill episode %s: %s new Dual/Multi Audio release(s)',
                          exhausted_episode, len(fresh))
                 return Outcome(value=DubFound(plan,exhausted_episode,target,fresh),search_snapshots=snapshots)
-            log.info('Backfill search: anidb_id=%s tvdb_series_id=%s season=%s episodes=%s reserved=%s',
-                     plan.anidb_id, plan.tvdb_series_id, plan.season, plan.numbers, plan.reserved)
+            log.info('Backfill search: anidb_id=%s tvdb_series_id=%s anidb_episodes=%s reserved=%s',
+                     plan.anidb_id, plan.tvdb_series_id, plan.numbers, plan.reserved)
             if fallback_episode is not None:
                 if not acquire_candidates or fallback_episode not in plan.numbers:
                     raise BackfillConflict()
@@ -132,7 +132,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     context.configuration.value('storage.database_path'),
                     plan_id,fallback_episode)
                 search_kwargs = {'tried': {target.failed_hash}, 'target_hash': target.next_hash} if isinstance(client, Client) else {}
-                result=await blocking(client.search,plan.anidb_id,target.identity,**search_kwargs)
+                result=await blocking(client.search,plan.anidb_id,fallback_episode,target.identity,**search_kwargs)
                 release=next((row for row in result.candidates
                     if row.info_hash==target.next_hash
                     and client.policy.accepts(row)
@@ -153,8 +153,9 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             if isinstance(client, Client) and tried_by_ep:
                 backfill_kwargs['tried_by_episode'] = tried_by_ep
             observed = await blocking(
-                client.backfill,plan.anidb_id,plan.tvdb_series_id,plan.season,plan.numbers,
-                reserved=plan.reserved,verified_ids=dict(plan.verified),
+                client.backfill,plan.anidb_id,plan.tvdb_series_id,plan.numbers,
+                reserved=plan.reserved,reserved_placements=plan.reserved_placements,
+                verified_ids=dict(plan.verified),
                 **backfill_kwargs)
             if len(observed) != len(plan.numbers):
                 raise BackfillConflict()

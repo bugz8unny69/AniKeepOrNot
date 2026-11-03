@@ -621,16 +621,17 @@ class Application:
                     **result,'message':'Manual release candidate ' +
                     ('already submitted.' if result['reused'] else 'submitted.'),
                     'status_url':f'/api/v1/jobs/{result["job_id"]}'},[]
-            retry_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([0-9]{1,4})/([1-9][0-9]{0,3})/retry',path)
+            # Missing episodes are addressed by AniDB episode number.
+            retry_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([1-9][0-9]{0,8})/retry',path)
             if retry_match:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
                 if set(body) not in (set(), {'delete_cache'}) or (
                         'delete_cache' in body and type(body['delete_cache']) is not bool):
                     raise ApiError(400,'API_REQUEST_INVALID')
-                aid,season,episode=map(int,retry_match.groups())
+                aid,episode=map(int,retry_match.groups())
                 return 202,retry_missing_episode(
-                    configuration.value('storage.database_path'),aid,season,episode,
+                    configuration.value('storage.database_path'),aid,episode,
                     delete_cache=body.get('delete_cache',True)),[]
             if path==PREFIX+'/intake':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
@@ -797,13 +798,23 @@ class Application:
                             AND submission.tvdb_episode=?)
                         OR EXISTS (SELECT 1 FROM sonarr_backfill_results b
                             JOIN trial_plans p USING(plan_id)
+                            JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
+                                  FROM recognized_episodes UNION
+                                  SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
+                                  FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)) x
+                            ON x.anidb_id=p.anidb_id AND x.anidb_episode_number=b.anidb_episode_number
                             WHERE b.job_id=jobs.job_id AND p.anidb_id=?
-                            AND p.tvdb_season=? AND b.tvdb_episode=?)
+                            AND x.tvdb_season=? AND x.tvdb_episode=?)
                         OR EXISTS (SELECT 1 FROM trial_plans p
+                            JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
+                                  FROM recognized_episodes UNION
+                                  SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
+                                  FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)) x
+                            ON x.anidb_id=p.anidb_id
+                            AND x.anidb_episode_number=json_extract(jobs.payload_json,'$.exhausted_episode')
                             WHERE jobs.kind='DISCOVER_SONARR_BACKFILL'
                             AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
-                            AND p.anidb_id=? AND p.tvdb_season=?
-                            AND json_extract(jobs.payload_json,'$.exhausted_episode')=?)
+                            AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
                         )""")
                     values.extend(episode_filter*7)
                 if not show_completed:criteria.append("state<>'DONE'")
@@ -929,13 +940,22 @@ class Application:
                 "SELECT tvdb_season,tvdb_episode FROM manual_release_submissions "
                 "WHERE event_id=? LIMIT 1",(event_id,)).fetchall()
         if not records and kind=='DISCOVER_SONARR_BACKFILL':
-            records=db.execute("""
-                SELECT p.tvdb_season,b.tvdb_episode FROM sonarr_backfill_results b
-                JOIN trial_plans p USING(plan_id) WHERE b.job_id=?
+            # Discovery keys are AniDB numbers; show their verified TVDB placement.
+            placed="""(SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
+                FROM recognized_episodes UNION
+                SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
+                FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)) x"""
+            records=db.execute(f"""
+                SELECT x.tvdb_season,x.tvdb_episode FROM sonarr_backfill_results b
+                JOIN trial_plans p USING(plan_id) JOIN {placed}
+                ON x.anidb_id=p.anidb_id AND x.anidb_episode_number=b.anidb_episode_number
+                WHERE b.job_id=?
                 UNION
-                SELECT p.tvdb_season,json_extract(j.payload_json,'$.exhausted_episode')
+                SELECT x.tvdb_season,x.tvdb_episode
                 FROM jobs j JOIN trial_plans p
-                ON p.plan_id=json_extract(j.payload_json,'$.plan_id')
+                ON p.plan_id=json_extract(j.payload_json,'$.plan_id') JOIN {placed}
+                ON x.anidb_id=p.anidb_id
+                AND x.anidb_episode_number=json_extract(j.payload_json,'$.exhausted_episode')
                 WHERE j.job_id=? AND json_type(j.payload_json,'$.exhausted_episode')='integer'
                 ORDER BY 1,2 LIMIT 101
             """,(job_id,job_id)).fetchall()

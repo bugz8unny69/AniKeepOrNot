@@ -59,6 +59,22 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
         db=connect(self.database)
         try:
             with transaction(db):db.execute("UPDATE sonarr_magnet_intents SET state='REVIEW'")
+            # Undo v56 (AniDB-keyed trial tables) so the v46 shape below is exact.
+            reference=sqlite3.connect(':memory:')
+            for name in SCRIPTS[:55]:reference.executescript((SQL_DIR/name).read_text())
+            undo=['PRAGMA foreign_keys=OFF;','BEGIN IMMEDIATE;']
+            for table,columns in (
+                    ('trial_plans','*'),('sonarr_backfill_results','*'),('sonarr_episode_candidates','*'),
+                    ('sonarr_magnet_intents','*'),
+                    ('sonarr_episode_selections','plan_id,anidb_episode_number,tvdb_episode_id,info_hash,selected_at_ms')):
+                ddl=reference.execute("SELECT sql FROM sqlite_master WHERE name=?",(table,)).fetchone()[0]
+                undo+=[ddl.replace(table,table+'_v55',1)+';',
+                       f'INSERT INTO {table}_v55 SELECT {columns} FROM {table};',
+                       f'DROP TABLE {table};',f'ALTER TABLE {table}_v55 RENAME TO {table};']
+            undo+=["CREATE UNIQUE INDEX idx_magnet_active_hash ON sonarr_magnet_intents(info_hash) WHERE state<>'RELEASED';",
+                   'PRAGMA user_version=55;','COMMIT;','PRAGMA foreign_keys=ON;']
+            reference.close()
+            db.executescript('\n'.join(undo))
             # Install the published v46 table shape with this nonempty journal,
             # then exercise the real upgrade before attempting readmission.
             before=db.execute('SELECT * FROM sonarr_magnet_intents').fetchall()
@@ -85,6 +101,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'053_waiting_for_dub_results.sql').read_text())
             db.executescript((SQL_DIR/'054_prowlarr_search_snapshots.sql').read_text())
             db.executescript((SQL_DIR/'055_manual_release_submissions.sql').read_text())
+            db.executescript((SQL_DIR/'056_anidb_first_selection.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM sonarr_magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

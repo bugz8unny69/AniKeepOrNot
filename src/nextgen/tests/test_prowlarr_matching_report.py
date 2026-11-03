@@ -53,6 +53,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.titles = ("FX Senshi Kurumi-chan", "FX Fighter Kurumi-chan")
         self.target_ep1 = EpisodeTarget(
             tvdb_episode=1,
+            tvdb_season=1,
             status="SEARCHABLE",
             anidb_episode=1,
             tvdb_episode_id=4201,
@@ -146,7 +147,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
 
         policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, max_episode_mb=1500, prefer_audio_tag=True)
         options = Options("http://127.0.0.1:9696", 60)
-        client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(options, "apikey123", catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
         client._get = lambda q: query_results.get(q, [])
         client.set_context(plan_id=1)
@@ -176,7 +177,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(disps.values()), 115)
 
         # Save snapshot into test database for job 4282
-        self.source(10)
+        self.source(7)
         db = connect(self.database)
         try:
             with transaction(db):
@@ -220,7 +221,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         rows_q1 = self.build_115_row_fixture()
         policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, max_episode_mb=1500, prefer_audio_tag=True)
         options = Options("http://127.0.0.1:9696", 60)
-        client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(options, "apikey123", catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
         client._get = lambda q: rows_q1 if "01" in q else []
 
@@ -244,7 +245,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
 
         policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, max_episode_mb=1500, prefer_audio_tag=True)
         options = Options("http://127.0.0.1:9696", 60)
-        client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(options, "apikey123", catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
         client._get = lambda q: rows_q1 if "01" in q else []
 
@@ -277,7 +278,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
 
         policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, prefer_audio_tag=False)
         options = Options("http://127.0.0.1:9696", 60)
-        client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(options, "apikey123", catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
         client._get = lambda q: [row1] if q == "FX Senshi Kurumi-chan 01" else ([row2] if q == "FX Fighter Kurumi-chan 01" else [])
 
@@ -300,7 +301,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         """5. Search that goes to ON_HOLD / WAITING_FOR_DUB retains its snapshot."""
         self.setUpFixture()
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
-        self.source(10)
+        self.source(7)
 
         # Run EVALUATE_TRIAL to create trial_plans and first page job
         reg_eval = Registry((trial_registration(discovery_kind=DISCOVER_KIND),))
@@ -314,7 +315,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
                 event_id = db.execute("SELECT event_id FROM jobs WHERE kind=?", (DISCOVER_KIND,)).fetchone()[0]
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
                 db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'MEDIA_AUDIO_REQUIRED')")
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
+                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, component="worker", event_id=event_id,
                                      payload={"plan_id": 1, "start": 1, "exhausted_episode": 2, "delete_cache": True},
                                      available_at_ms=0)
@@ -326,13 +327,13 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
                                         seeders=10, size=500_000_000,
                                         info_hash="2222222222222222222222222222222222222222")
         catalog_ep2 = EpisodeCatalog(("FX Senshi Kurumi-chan",), {
-            2: EpisodeTarget(tvdb_episode=2, status="SEARCHABLE", anidb_episode=2, tvdb_episode_id=2002, absolute_episode=2)
+            2: EpisodeTarget(tvdb_episode=2, status="SEARCHABLE", anidb_episode=2, tvdb_episode_id=2002, absolute_episode=2, tvdb_season=1)
         })
 
         def fake_client_factory(conf, sec):
             policy = DiscoveryPolicy(prefer_audio_tag=True)
             c = Client(Options("http://127.0.0.1:9696", 60), "key",
-                       catalog=lambda a, t, s: catalog_ep2, policy=policy)
+                       catalog=lambda a, t: catalog_ep2, policy=policy)
             c._transport = lambda req, timeout: None
             c._get = lambda q: [raw_row] if q == "FX Senshi Kurumi-chan 02" else []
             return c
@@ -374,7 +375,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_provenance_cached_magnet_retry_has_no_search_run(self):
         """6. Cached-magnet retry does not search provider, so no snapshot is recorded."""
         self.setUpFixture()
-        self.source(10)
+        self.source(7)
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
 
         # Run EVALUATE_TRIAL to create trial_plans and first page job
@@ -390,10 +391,10 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
                 # Seed candidate failed for metadata timeout
                 db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'TORRENT_METADATA_TIMEOUT')")
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
+                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
                 # Seed cached torrent intent
                 db.execute("""INSERT INTO sonarr_magnet_intents (
-                    job_id, plan_id, tvdb_episode, info_hash, marker, api_major, base_url, save_path, category, timeout_seconds, state, created_at_ms, updated_at_ms
+                    job_id, plan_id, anidb_episode_number, info_hash, marker, api_major, base_url, save_path, category, timeout_seconds, state, created_at_ms, updated_at_ms
                 ) VALUES (1, 1, 2, '1111111111111111111111111111111111111111', '0123456789abcdef0123456789abcdef', 4, 'http://qb', '/downloads', 'test', 15, 'RELEASED', 0, 0)""")
 
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, component="worker", event_id=event_id,
@@ -405,7 +406,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         searched = []
         def fake_client_factory(conf, sec):
             c = Client(Options("http://127.0.0.1:9696", 60), "key",
-                       catalog=lambda a, t, s: self.catalog, policy=DiscoveryPolicy())
+                       catalog=lambda a, t: self.catalog, policy=DiscoveryPolicy())
             c.search = lambda *args: searched.append(args)
             return c
 
@@ -504,7 +505,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.setUpFixture()
         policy = DiscoveryPolicy()
         options = Options("http://127.0.0.1:9696", 60)
-        client = Client(options, "apikey123", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(options, "apikey123", catalog=lambda a, t: self.catalog, policy=policy)
         client._transport = lambda req, timeout: None
 
         def mock_get(q):
@@ -546,7 +547,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.setUpFixture()
         rows_q1 = self.build_115_row_fixture()
         policy = DiscoveryPolicy(prefer_audio_tag=True)
-        client = Client(Options("http://127.0.0.1:9696", 60), "apikey", catalog=lambda a, t, s: self.catalog, policy=policy)
+        client = Client(Options("http://127.0.0.1:9696", 60), "apikey", catalog=lambda a, t: self.catalog, policy=policy)
         client._get = lambda q: rows_q1 if q == "FX Senshi Kurumi-chan 01" else []
         client._search(self.catalog, 1, self.target_ep1)
         snapshot = client.snapshots[0]

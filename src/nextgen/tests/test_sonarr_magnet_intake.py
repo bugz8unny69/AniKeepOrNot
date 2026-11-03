@@ -34,7 +34,7 @@ class MagnetJournalTests(unittest.TestCase):
             INSERT INTO job_operations VALUES(7,'ACTIVE','NONE');
             CREATE TABLE sonarr_magnet_intents (
                 event_id INTEGER PRIMARY KEY,job_id INTEGER,plan_id INTEGER,
-                tvdb_episode INTEGER,info_hash TEXT,marker TEXT,
+                anidb_episode_number INTEGER,info_hash TEXT,marker TEXT,
                 api_major INTEGER,base_url TEXT,save_path TEXT,
                 category TEXT,timeout_seconds INTEGER,inventory_json TEXT,state TEXT,
                 created_at_ms INTEGER,updated_at_ms INTEGER

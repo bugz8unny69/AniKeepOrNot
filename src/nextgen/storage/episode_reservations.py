@@ -28,17 +28,19 @@ def _facts(db,evaluation_job_id,event_id):
     try:
         source=trial_source(db,release_job,event_id)
         original=release_source(db,event_id,aid)
-        expected=episode in Window(backfill,following).episodes(anchor)
+        # The window is in AniDB numbers; TVDB placement stays per episode.
+        expected=source.anidb_episode_number in Window(backfill,following).anidb_episodes(anchor)
     except (TrialConflict,ReleaseNotReady,ValueError,TypeError):raise ReservationConflict() from None
     if (source.verification_id!=verification or original.identity_result_id!=identity or
             original.release_sha256!=digest or original.tvdb_series_id!=tid or
-            (plan_aid,plan_tid,plan_season,order)!=(aid,tid,season,'official') or
+            (source.tvdb_season,source.tvdb_episode)!=(season,episode) or
+            (plan_aid,plan_tid,order)!=(aid,tid,'official') or
             bool(selected)!=expected or reason!=('TRIAL_SELECTED' if expected else 'TRIAL_OUTSIDE_WINDOW')):
         raise ReservationConflict()
-    anchor_row=db.execute("SELECT anidb_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_order "
+    anchor_row=db.execute("SELECT anidb_id,tvdb_series_id,anidb_episode_number,tvdb_order "
                           "FROM release_verifications WHERE verification_id=?",(anchor_id,)).fetchone()
     owner=db.execute('SELECT anidb_id FROM identified_episodes WHERE anidb_episode_id=?',(eid,)).fetchone()
-    if anchor_row!=(aid,tid,season,anchor,'official') or owner!=(aid,):raise ReservationConflict()
+    if anchor_row!=(aid,tid,anchor,'official') or owner!=(aid,):raise ReservationConflict()
     return ReservationInput(evaluation_job_id,event_id,verification,plan,aid,eid,tid,season,episode,tveid,expected)
 
 

@@ -73,15 +73,16 @@ def _verified_candidate(db,source):
     if origin is None:raise AcquisitionConflict()
     if origin[0]!='sonarr-discovery':
         rows=db.execute(
-            "SELECT plan_id,tvdb_episode FROM episode_reservations "
+            "SELECT plan_id FROM episode_reservations "
             "WHERE reservation_id=? AND evaluation_job_id=? AND state='ACTIVE' "
             "AND tvdb_season=? AND tvdb_episode=?",
             (source.reservation_id,source.evaluation_job_id,
              source.tvdb_season,source.tvdb_episode)).fetchall()
         if len(rows)!=1:raise AcquisitionConflict()
-        return rows[0]
+        # Intents are keyed like the trial plan: by AniDB episode number.
+        return rows[0][0],source.anidb_episode_number
     rows=db.execute(
-        "SELECT p.plan_id,c.tvdb_episode FROM incoming_events e "
+        "SELECT p.plan_id,c.anidb_episode_number FROM incoming_events e "
         "JOIN jobs verification ON verification.event_id=e.event_id "
         " AND verification.kind='VERIFY_RELEASE' AND verification.state='DONE' "
         "JOIN jobs parent ON parent.job_id=verification.created_by_job_id "
@@ -89,11 +90,11 @@ def _verified_candidate(db,source):
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections selected ON selected.plan_id=p.plan_id "
         "JOIN sonarr_episode_candidates c ON c.plan_id=selected.plan_id "
-        " AND c.tvdb_episode=selected.tvdb_episode AND c.info_hash=selected.info_hash "
+        " AND c.anidb_episode_number=selected.anidb_episode_number AND c.info_hash=selected.info_hash "
         "WHERE e.event_id=? AND e.source='sonarr-discovery' "
-        "AND p.tvdb_season=? AND selected.tvdb_episode=? "
-        "AND selected.info_hash=? AND c.state='ACTIVE'",
-        (source.event_id,source.tvdb_season,source.tvdb_episode,
+        "AND selected.anidb_episode_number=? AND selected.tvdb_season=? "
+        "AND selected.tvdb_episode=? AND selected.info_hash=? AND c.state='ACTIVE'",
+        (source.event_id,source.anidb_episode_number,source.tvdb_season,source.tvdb_episode,
          source.info_hash)).fetchall()
     if len(rows)!=1:raise AcquisitionConflict()
     return rows[0]
@@ -220,7 +221,7 @@ class MagnetJournal:
             state='EXTERNAL' if present else 'UNCERTAIN'
             db.execute(
                 "INSERT INTO sonarr_magnet_intents"
-                "(event_id,job_id,plan_id,tvdb_episode,info_hash,marker,api_major,"
+                "(event_id,job_id,plan_id,anidb_episode_number,info_hash,marker,api_major,"
                 "base_url,save_path,category,state,created_at_ms,updated_at_ms,"
                 "timeout_seconds) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (source.event_id,claim.job_id,plan_id,episode,source.info_hash,

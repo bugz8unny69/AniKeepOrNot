@@ -22,8 +22,7 @@ def dispatch(db, claim, plan, choice):
     """
     if (not db.in_transaction or type(choice) is not CandidateSelection
             or claim.event_id is None or claim.kind != 'DISCOVER_SONARR_BACKFILL'
-            or choice.identity.tvdb_series_id != plan.tvdb_series_id
-            or choice.identity.tvdb_season != plan.season):
+            or choice.identity.tvdb_series_id != plan.tvdb_series_id):
         raise SelectionConflict()
     return _dispatch_verified(db, claim, plan, choice.identity,
                               choice.release.declared_title, choice.release.title,
@@ -35,8 +34,7 @@ def dispatch_cached(db, claim, plan, identity, source):
     from src.nextgen.storage.sonarr_cached_retry import CachedTorrent
     if (type(source) is not CachedTorrent or not db.in_transaction
             or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
-            or identity.tvdb_series_id!=plan.tvdb_series_id
-            or identity.tvdb_season!=plan.season):
+            or identity.tvdb_series_id!=plan.tvdb_series_id):
         raise SelectionConflict()
     return _dispatch_verified(db,claim,plan,identity,source.declared_title,
                               source.title,source.info_hash,source.magnet_uri)
@@ -56,13 +54,14 @@ def _dispatch_verified(db,claim,plan,identity,declared_title,title,digest,source
          identity.tvdb_episode,identity.tvdb_episode_id)).fetchone()
     if row is None:
         # Newly discovered backfill episodes have no incoming verification yet.
-        # Copy only the already verified series identity from the frozen anchor.
+        # Copy only the already verified series identity from the frozen anchor;
+        # never its TVDB season. VERIFY_RELEASE still checks this episode.
         row=db.execute(
             "SELECT i.series_json, NULL FROM trial_plans p "
             "JOIN release_verifications r ON r.verification_id=p.anchor_verification_id "
             "JOIN identity_results i ON i.result_id=r.identity_result_id "
             "WHERE p.plan_id=? AND p.anidb_id=r.anidb_id "
-            "AND p.tvdb_series_id=r.tvdb_series_id AND p.tvdb_season=r.tvdb_season",
+            "AND p.tvdb_series_id=r.tvdb_series_id",
             (plan.plan_id,)
         ).fetchone()
     if row is None: raise SelectionConflict()

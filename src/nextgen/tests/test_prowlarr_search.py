@@ -56,7 +56,11 @@ class FakeProwlarr:
 
 
 def catalog(*targets):
-    return EpisodeCatalog(TITLES, {t.tvdb_episode: t for t in targets})
+    """Keyed by AniDB episode; searchable targets default to TVDB season 1."""
+    from dataclasses import replace
+    targets = [replace(t, tvdb_season=1) if t.status == 'SEARCHABLE' and t.tvdb_season is None
+               else t for t in targets]
+    return EpisodeCatalog(TITLES, {t.anidb_episode or t.tvdb_episode: t for t in targets})
 
 
 SEARCHABLE = (EpisodeTarget(1, 'SEARCHABLE', 1, 9001), EpisodeTarget(2, 'SEARCHABLE', 2, 9002))
@@ -65,7 +69,7 @@ SEARCHABLE = (EpisodeTarget(1, 'SEARCHABLE', 1, 9001), EpisodeTarget(2, 'SEARCHA
 def client(fake, *targets, policy=None, sleeps=None):
     found = catalog(*(targets or SEARCHABLE))
     return Client(Options('http://prowlarr.local:9696', 45), 'private-prowlarr-key',
-                  catalog=lambda aid, tid, season: found, transport=fake,
+                  catalog=lambda aid, tid: found, transport=fake,
                   policy=policy or DiscoveryPolicy(),
                   sleep=(sleeps.append if sleeps is not None else lambda seconds: None))
 
@@ -103,9 +107,8 @@ class ProwlarrClientTests(unittest.TestCase):
                 row('[D] Kusuriya no Hitorigoto - 02 (1080p)', 'd' * 40)],
             'The Apothecary Diaries 01': [row('[B] Kusuriya no Hitorigoto - 01 (1080p)', B, seeders=20)],
         })
-        targets = SEARCHABLE + (EpisodeTarget(3, 'NOT_AIRED'), EpisodeTarget(4, 'MAPPING_MISSING'))
-        observed = client(fake, *targets).backfill(
-            50, 100, 1, (1, 2, 3, 4), select_candidates=True)
+        targets = SEARCHABLE + (EpisodeTarget(None, 'NOT_AIRED', 3), EpisodeTarget(None, 'MAPPING_MISSING', 4))
+        observed = client(fake, *targets).backfill(50, 100, (1, 2, 3, 4), select_candidates=True)
         self.assertEqual([(o.number, o.status, o.candidates, o.accepted) for o in observed],
                          [(1, 'CANDIDATES', 3, 2), (2, 'NO_RESULTS', 0, 0),
                           (3, 'NOT_AIRED', 0, 0), (4, 'MAPPING_MISSING', 0, 0)])
@@ -119,9 +122,29 @@ class ProwlarrClientTests(unittest.TestCase):
                                         'Kusuriya no Hitorigoto 02', 'Kusuriya no Hitorigoto S01E02',
                                         'The Apothecary Diaries 02', 'The Apothecary Diaries S01E02'])
 
+    def test_one_page_spans_tvdb_seasons_by_anidb_number(self):
+        # AniDB E999 is TVDB S01E999 and AniDB E1001 is TVDB S02E02: one AniDB page.
+        fake = FakeProwlarr({
+            'Kusuriya no Hitorigoto S01E999': [row('[A] Kusuriya no Hitorigoto S01E999 1080p', A)],
+            'Kusuriya no Hitorigoto S02E02': [row('[B] Kusuriya no Hitorigoto S02E02 1080p', B)],
+        })
+        targets = (EpisodeTarget(999, 'SEARCHABLE', 999, 8999, 999, 1),
+                   EpisodeTarget(2, 'SEARCHABLE', 1001, 9102, 1001, 2))
+        observed = client(fake, *targets).backfill(50, 100, (999, 1001), select_candidates=True,
+                                                   reserved_placements=((2, 1),))
+        self.assertEqual([(o.number, o.status) for o in observed],
+                         [(999, 'CANDIDATES'), (1001, 'CANDIDATES')])
+        self.assertEqual([o.selection.identity for o in observed],
+                         [VerifiedEpisode(100, 8999, 1, 999), VerifiedEpisode(100, 9102, 2, 2)])
+        self.assertIn('Kusuriya no Hitorigoto S02E02', fake.queries)
+        self.assertNotIn('Kusuriya no Hitorigoto S01E02', fake.queries)
+        # A reservation at the target's own TVDB placement blocks it.
+        blocked = client(FakeProwlarr(), *targets).backfill(50, 100, (1001,), reserved_placements=((2, 2),))
+        self.assertEqual([(o.number, o.status) for o in blocked], [(1001, 'IN_PROGRESS')])
+
     def test_yearless_s02e02_indexer_release_is_returned_by_prowlarr(self):
         titles = ('Koori no Jouheki (2026)', 'The Ramparts of Ice (2026)')
-        target = EpisodeTarget(2, 'SEARCHABLE', 2, 9002, 14)
+        target = EpisodeTarget(2, 'SEARCHABLE', 2, 9002, 14, 2)
         fake = FakeProwlarr({
             'The Ramparts of Ice S02E02': [
                 row('[ToonsHub] The Ramparts of Ice S02E02 1080p WEB', A)
@@ -129,9 +152,9 @@ class ProwlarrClientTests(unittest.TestCase):
         })
         test_client = Client(Options('http://prowlarr.local:9696', 45),
                              'private-prowlarr-key',
-                             catalog=lambda aid, tid, season: EpisodeCatalog(titles, {2: target}),
+                             catalog=lambda aid, tid: EpisodeCatalog(titles, {2: target}),
                              transport=fake)
-        observed = test_client.backfill(20168, 459627, 2, (2,), select_candidates=True)
+        observed = test_client.backfill(20168, 459627, (2,), select_candidates=True)
         self.assertEqual([(v.status, v.candidates, v.accepted) for v in observed],
                          [('CANDIDATES', 1, 1)])
         self.assertEqual(observed[0].selection.release.info_hash, A)
@@ -143,7 +166,7 @@ class ProwlarrClientTests(unittest.TestCase):
             row('[Dub] Kusuriya no Hitorigoto - 01 (1080p) [English Dub]', B),
             row('[Dual] Kusuriya no Hitorigoto - 01 (720p) [Dual Audio]', C)]})
         policy = DiscoveryPolicy(prefer_audio_tag=True)
-        observed = client(fake, policy=policy).backfill(50, 100, 1, (1,), select_candidates=True)
+        observed = client(fake, policy=policy).backfill(50, 100, (1,), select_candidates=True)
         self.assertEqual((observed[0].candidates, observed[0].accepted), (3, 1))
         self.assertEqual(observed[0].selection.release.info_hash, C)
         self.assertEqual([r.info_hash for r in observed[0].selection.result.candidates
@@ -152,8 +175,7 @@ class ProwlarrClientTests(unittest.TestCase):
     def test_no_dual_audio_release_does_not_start_acquisition(self):
         fake = FakeProwlarr({'Kusuriya no Hitorigoto 01': [
             row('[SubsPlease] Kusuriya no Hitorigoto - 01 (1080p)', A)]})
-        observed = client(fake, policy=DiscoveryPolicy(prefer_audio_tag=True)).backfill(
-            50, 100, 1, (1,), select_candidates=True)
+        observed = client(fake, policy=DiscoveryPolicy(prefer_audio_tag=True)).backfill(50, 100, (1,), select_candidates=True)
         self.assertEqual((observed[0].candidates, observed[0].accepted), (1, 0))
         self.assertIsNone(observed[0].selection)
 
@@ -163,18 +185,16 @@ class ProwlarrClientTests(unittest.TestCase):
             row(title, A),
             row('[Group] Kusuriya no Hitorigoto - 01 (1080p) [English Dub]', B)]})
         policy = DiscoveryPolicy(prefer_audio_tag=True)
-        result = client(fake, policy=policy).backfill(
-            50, 100, 1, (1,), select_candidates=True)[0]
+        result = client(fake, policy=policy).backfill(50, 100, (1,), select_candidates=True)[0]
         self.assertEqual((result.status, result.candidates, result.accepted),
                          ('WAITING_FOR_DUB', 2, 0))
         self.assertIsNone(result.selection)
 
-        empty = client(FakeProwlarr(), policy=policy).backfill(
-            50, 100, 1, (1,), select_candidates=True)[0]
+        empty = client(FakeProwlarr(), policy=policy).backfill(50, 100, (1,), select_candidates=True)[0]
         self.assertEqual((empty.status, empty.candidates, empty.accepted),
                          ('WAITING_FOR_DUB', 0, 0))
 
-        normal = client(fake).backfill(50, 100, 1, (1,), select_candidates=True)[0]
+        normal = client(fake).backfill(50, 100, (1,), select_candidates=True)[0]
         self.assertEqual(normal.status, 'CANDIDATES')
         self.assertEqual(normal.accepted, 2)
 
@@ -183,19 +203,18 @@ class ProwlarrClientTests(unittest.TestCase):
             row('[Group] Kusuriya no Hitorigoto - 01 (1080p) [Dual Audio]',
                 A, size=2_000_000_000)]})
         result = client(fake, policy=DiscoveryPolicy(max_episode_mb=600,
-                                                     prefer_audio_tag=True)).backfill(
-            50, 100, 1, (1,), select_candidates=True)[0]
+                                                     prefer_audio_tag=True)).backfill(50, 100, (1,), select_candidates=True)[0]
         self.assertEqual((result.status, result.accepted), ('CANDIDATES', 0))
 
     def test_reserved_episode_is_not_searched(self):
         fake = FakeProwlarr()
-        observed = client(fake).backfill(50, 100, 1, (1, 2), reserved=(1, 2))
+        observed = client(fake).backfill(50, 100, (1, 2), reserved=(1, 2))
         self.assertEqual([o.status for o in observed], ['IN_PROGRESS', 'IN_PROGRESS'])
         self.assertEqual(fake.queries, [])
 
     def test_conflicting_known_episode_id_is_not_searched(self):
         fake = FakeProwlarr()
-        observed = client(fake).backfill(50, 100, 1, (1,), verified_ids={1: 777})
+        observed = client(fake).backfill(50, 100, (1,), verified_ids={1: 777})
         self.assertEqual(observed[0].status, 'MAPPING_MISSING')
         self.assertEqual(fake.queries, [])
 
@@ -205,8 +224,7 @@ class ProwlarrClientTests(unittest.TestCase):
             row(title + '(1080p)', A, size=1_420_000_000, seeders=900),
             row(title + '[1080p HEVC]', B, size=380_000_000, seeders=40),
             row(title + '(720p)', C, size=0, seeders=40)]})   # Unknown size is not skipped.
-        observed = client(fake, policy=DiscoveryPolicy(1080, 5, 'resolution', 600)).backfill(
-            50, 100, 1, (1,), select_candidates=True)
+        observed = client(fake, policy=DiscoveryPolicy(1080, 5, 'resolution', 600)).backfill(50, 100, (1,), select_candidates=True)
         self.assertEqual((observed[0].candidates, observed[0].accepted), (3, 2))
         self.assertEqual([r.info_hash for r in observed[0].selection.result.candidates], [B, C, A])
         self.assertEqual(observed[0].selection.release.info_hash, B)
@@ -219,20 +237,20 @@ class ProwlarrClientTests(unittest.TestCase):
             row(title, C, infoHash=A),
             row(title, 'e' * 40, protocol='usenet'),
         ]})
-        ranked = client(fake).search(50, VerifiedEpisode(100, 9001, 1, 1)).candidates
+        ranked = client(fake).search(50, 1, VerifiedEpisode(100, 9001, 1, 1)).candidates
         self.assertEqual([(r.info_hash, r.magnet_url) for r in ranked],
                          [(A, 'magnet:?xt=urn:btih:' + A), (B, 'magnet:?xt=urn:btih:' + B)])
 
     def test_search_rejects_a_changed_episode_identity(self):
         with self.assertRaises(SearchReview):
-            client(FakeProwlarr()).search(50, VerifiedEpisode(100, 1234, 1, 1))
+            client(FakeProwlarr()).search(50, 1, VerifiedEpisode(100, 1234, 1, 1))
 
     def test_policy_limits(self):
         title = '[A] Kusuriya no Hitorigoto - 01 '
         fake = FakeProwlarr({'Kusuriya no Hitorigoto 01': [
             row(title + '(2160p)', A), row(title + '(1080p)', B, seeders=None),
             row(title + '[WEB]', C)]})
-        observed = client(fake, policy=DiscoveryPolicy(1080, 5, 'resolution')).backfill(50, 100, 1, (1,))
+        observed = client(fake, policy=DiscoveryPolicy(1080, 5, 'resolution')).backfill(50, 100, (1,))
         self.assertEqual((observed[0].status, observed[0].candidates, observed[0].accepted),
                          ('CANDIDATES', 3, 0))
 
@@ -244,7 +262,7 @@ class ProwlarrClientTests(unittest.TestCase):
             fake, sleeps = FakeProwlarr(), []
             fake.error = error
             with self.subTest(error=error), self.assertRaises(expected):
-                client(fake, sleeps=sleeps).backfill(50, 100, 1, (1, 2))
+                client(fake, sleeps=sleeps).backfill(50, 100, (1, 2))
             self.assertEqual(len(fake.queries), 3)
             self.assertEqual(sleeps, [15, 60])
 
@@ -252,7 +270,7 @@ class ProwlarrClientTests(unittest.TestCase):
         fake, sleeps = FakeProwlarr(), []
         fake.error = urllib.error.HTTPError('u', 401, 'x', {}, io.BytesIO())
         with self.assertRaises(SearchUnauthorized):
-            client(fake, sleeps=sleeps).backfill(50, 100, 1, (1,))
+            client(fake, sleeps=sleeps).backfill(50, 100, (1,))
         self.assertEqual((len(fake.queries), sleeps), (1, []))
 
     def test_rate_limit_honors_retry_after_and_recovers(self):
@@ -264,7 +282,7 @@ class ProwlarrClientTests(unittest.TestCase):
                                                  io.BytesIO())
                 return super().__call__(request, timeout)
         fake, sleeps = Busy({'Kusuriya no Hitorigoto 01': [row('[A] Kusuriya no Hitorigoto - 01 (1080p)', A)]}), []
-        observed = client(fake, sleeps=sleeps).backfill(50, 100, 1, (1,))
+        observed = client(fake, sleeps=sleeps).backfill(50, 100, (1,))
         self.assertEqual(sleeps, [120, 7])       # Retry-After, capped at two minutes.
         self.assertEqual(observed[0].status, 'CANDIDATES')
 
@@ -273,7 +291,7 @@ class ProwlarrClientTests(unittest.TestCase):
             def __call__(self, request, timeout):
                 return Response({'not': 'a list'})
         with self.assertRaises(SearchReview):
-            client(Bad()).backfill(50, 100, 1, (1,))
+            client(Bad()).backfill(50, 100, (1,))
 
     def test_configuration_and_secret_hygiene(self):
         for options in (('', 30), ('ftp://host', 30), ('http://user:pw@host', 30),
@@ -317,13 +335,27 @@ class BackfillCatalogTests(unittest.TestCase):
             mapping=mapping,
             tvdb=((9013, 1, 13), (9014, 1, 14), (9015, 1, 15), (9016, 1, 16), (8001, 2, 1)),
             airdates={1: '2026-10-01', 2: '2026-10-08', 3: '2026-11-05'})
-        found = build_catalog(providers, 50, 100, 1, None, today=datetime.date(2026, 10, 29))
+        found = build_catalog(providers, 50, 100, None, today=datetime.date(2026, 10, 29))
         self.assertEqual(found.titles, TITLES)
-        self.assertEqual(found.target(13), EpisodeTarget(13, 'SEARCHABLE', 1, 9013, 13))
-        self.assertEqual(found.target(14), EpisodeTarget(14, 'SEARCHABLE', 2, 9014, 14))
-        self.assertEqual(found.target(15), EpisodeTarget(15, 'NOT_AIRED', 3, 9015, 15))
-        self.assertEqual(found.target(16).status, 'MAPPING_MISSING')  # TVDB lists it; AniDB does not.
-        self.assertEqual(found.target(20).status, 'NOT_AIRED')        # Not listed anywhere yet.
+        # Keyed by AniDB episode, each with its own TVDB placement.
+        self.assertEqual(found.target(1), EpisodeTarget(13, 'SEARCHABLE', 1, 9013, 13, 1))
+        self.assertEqual(found.target(2), EpisodeTarget(14, 'SEARCHABLE', 2, 9014, 14, 1))
+        self.assertEqual(found.target(3), EpisodeTarget(None, 'NOT_AIRED', 3))  # AniDB air date is later.
+        self.assertEqual(found.target(20), EpisodeTarget(None, 'NOT_AIRED', 20))  # AniDB does not list it.
+
+    def test_anidb_episodes_keep_their_own_tvdb_season_and_missing_placement_fails_closed(self):
+        # AniDB E1-E2 are TVDB S01E11-S01E12; E3 is TVDB S02E01; E4 has no TVDB episode.
+        mapping = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="10">'
+                   b'<mapping-list><mapping anidbseason="1" tvdbseason="2">;3-1;4-2;</mapping></mapping-list>'
+                   b'</anime></anime-list>')
+        providers = FakeProviders(
+            mapping=mapping, tvdb=((9011, 1, 11), (9012, 1, 12), (9101, 2, 1)),
+            airdates={1: '2026-10-01', 2: '2026-10-08', 3: '2026-10-15', 4: '2026-10-22'})
+        found = build_catalog(providers, 50, 100, None, today=datetime.date(2026, 10, 29))
+        self.assertEqual((found.target(2).tvdb_season, found.target(2).tvdb_episode), (1, 12))
+        self.assertEqual((found.target(3).tvdb_season, found.target(3).tvdb_episode,
+                          found.target(3).absolute_episode), (2, 1, 3))
+        self.assertEqual(found.target(4), EpisodeTarget(None, 'MAPPING_MISSING', 4))
 
     def test_anidb_air_dates_are_parsed_for_regular_episodes_only(self):
         payload = ('<anime id="50"><episodes>'
@@ -374,7 +406,7 @@ class ProwlarrSettingsTests(unittest.TestCase):
         })
         cli = client(fake, SEARCHABLE[0])
         # Backfill called with tried_by_episode marking failed_hash as already tried
-        observed = cli.backfill(50, 100, 1, (1,), select_candidates=True,
+        observed = cli.backfill(50, 100, (1,), select_candidates=True,
                                 tried_by_episode={1: frozenset({failed_hash})})
         self.assertEqual(len(observed), 1)
         self.assertEqual(observed[0].status, 'CANDIDATES')
@@ -405,7 +437,7 @@ class ProwlarrSettingsTests(unittest.TestCase):
             ],
         })
         cli = client(fake, SEARCHABLE[0])
-        observed = cli.backfill(50, 100, 1, (1,), select_candidates=True)
+        observed = cli.backfill(50, 100, (1,), select_candidates=True)
         self.assertEqual(observed[0].status, 'CANDIDATES')
         self.assertEqual(observed[0].selection.release.info_hash, fresh_hash)
         snapshot = cli.snapshots[0]

@@ -159,6 +159,11 @@ function tvdbLabel(episode) {
   return 'S' + String(episode.season).padStart(2, '0') +
     'E' + String(episode.episode).padStart(2, '0');
 }
+// Missing episodes are AniDB-numbered; the verified TVDB placement is a label when known.
+function missingLabel(item) {
+  return 'E' + String(item.anidb_episode).padStart(2, '0') +
+    (item.season == null ? '' : ' · TVDB ' + tvdbLabel(item));
+}
 function navigateEpisodeJobs(anidbId, episode) {
   // Keep the episode in the previous history entry so native browser Back
   // reopens the same series view without another navigation control.
@@ -442,8 +447,9 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
     const missing = $('series-missing'); missing.replaceChildren();
     for (const item of series.missing) {
       const tr = node('tr');
-      tr.dataset.episode = tvdbLabel(item);
-      tr.appendChild(node('td', tvdbLabel(item)));
+      const placed = item.season != null;
+      tr.dataset.episode = placed ? tvdbLabel(item) : 'E' + item.anidb_episode;
+      tr.appendChild(node('td', missingLabel(item)));
       const result = node('td', item.status.replaceAll('_', ' ').toLowerCase());
       if (item.reservation_count) result.appendChild(node('small',
         item.reservation_count + ' reservation(s)', 'muted job-note'));
@@ -458,8 +464,8 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       }
       tr.appendChild(result);
       const action = node('td');
-      action.appendChild(relatedJobsButton(anidbId, item));
-      if (!series.rejection) action.appendChild(manualSubmissionButton(anidbId, item));
+      if (placed) action.appendChild(relatedJobsButton(anidbId, item));
+      if (placed && !series.rejection) action.appendChild(manualSubmissionButton(anidbId, item));
       if (item.job_id) {
         const view = node('button', 'View job', 'secondary');
         view.type = 'button';
@@ -508,8 +514,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           const held = item.status === 'WAITING_FOR_DUB';
           let deleteCache = true;
           if (held) {
-            $('search-again-episode').textContent = 'S' + String(item.season).padStart(2, '0') +
-              'E' + String(item.episode).padStart(2, '0');
+            $('search-again-episode').textContent = missingLabel(item);
             $('search-again-delete').checked = false;
             const choice = $('search-again-dialog');
             choice.showModal();
@@ -522,7 +527,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           state.seriesBusy = true; retry.disabled = true;
           try {
             const data = await request(API + '/intake/series/' + anidbId +
-              '/backfill/' + item.season + '/' + item.episode + '/retry',
+              '/backfill/' + item.anidb_episode + '/retry',
               {method: 'POST', body: held ? {delete_cache: deleteCache} : {}});
             notice('Backfill ' + (data.reused ? 'already queued' : 'submitted') + '.');
             dialog.close(); await loadActivity();

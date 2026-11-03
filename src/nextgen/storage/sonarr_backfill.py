@@ -15,7 +15,6 @@ from src.nextgen.storage.sqlite import enqueue_job_with_receipt
 from src.nextgen.acquisition.prowlarr_search import BackfillObservation, CandidateSelection
 
 PAGE_SIZE = 4
-MAX_EPISODE = 1000
 STATUSES = ('IN_PROGRESS', 'NOT_AIRED', 'MAPPING_MISSING', 'CANDIDATES', 'NO_RESULTS',
             'WAITING_FOR_DUB')
 
@@ -30,17 +29,17 @@ AUDIO_SEARCH_EVENT = 'TRIAL_AUDIO_SEARCH'
 
 
 def window(anchor, backfill, following, include_anchor=False):
-    """Episodes to search: backfill 1..X plus continue anchor..anchor+F-1, overlaps once.
+    """AniDB episodes to search: the plan's selection window (trial_policy.Window).
 
     The anchor is normally excluded: its own delivery is already acquiring it,
     and its reservation may not exist yet when this search runs. include_anchor
     is for a delivery that was not downloaded (no Dual/Multi Audio tag).
     """
-    numbers = set(range(1, backfill + 1))
-    if following: numbers |= set(range(anchor, min(anchor + following, MAX_EPISODE + 1)))
+    from src.nextgen.trial_policy import Window
+    numbers = set(Window(backfill, following).anidb_episodes(anchor))
     if include_anchor: numbers.add(anchor)
     else: numbers.discard(anchor)
-    return tuple(n for n in sorted(numbers) if n <= MAX_EPISODE)
+    return tuple(sorted(numbers))
 
 
 def anchor_searched(db, plan_id):
@@ -59,15 +58,17 @@ def plan_window(db, plan_id, anchor, backfill, following):
 
 @dataclass(frozen=True)
 class BackfillBatch:
+    """One page of a plan's AniDB window. numbers are AniDB episode numbers."""
     plan_id: int
     anidb_id: int
     tvdb_series_id: int
-    season: int
     window_size: int
     start: int
     numbers: tuple[int, ...]
     reserved: tuple[int, ...]
     verified: tuple[tuple[int, int], ...]
+    # Active single/batch reservations of this series, as TVDB (season, episode).
+    reserved_placements: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,19 +79,19 @@ class BackfillCompletion:
 
 
 def _plan(db, plan_id, start, retry_episode=None):
-    """start is a 1-based position in the plan's combined episode window."""
+    """start is a 1-based position in the plan's combined AniDB episode window."""
     integer(plan_id, positive=True)
     integer(start, positive=True)
     row = db.execute(
-        "SELECT p.anidb_id,p.tvdb_series_id,p.tvdb_season,p.backfill_count,"
-        "p.anchor_episode,p.following_count,v.anidb_id,v.tvdb_series_id,v.tvdb_season,"
-        "v.tvdb_episode FROM trial_plans p JOIN release_verifications v ON "
+        "SELECT p.anidb_id,p.tvdb_series_id,p.backfill_count,"
+        "p.anchor_episode,p.following_count,v.anidb_id,v.tvdb_series_id,"
+        "v.anidb_episode_number FROM trial_plans p JOIN release_verifications v ON "
         "v.verification_id=p.anchor_verification_id WHERE p.plan_id=? "
         "AND p.tvdb_order='official' AND v.tvdb_order='official'", (plan_id,)
     ).fetchone()
-    if row is None or (row[0],row[1],row[2],row[4]) != tuple(row[6:]):
+    if row is None or (row[0],row[1],row[3]) != tuple(row[5:]):
         raise BackfillConflict()
-    aid, tid, season, backfill, anchor, following = row[:6]
+    aid, tid, backfill, anchor, following = row[:5]
     episodes = plan_window(db, plan_id, anchor, backfill, following)
     if not episodes or start > len(episodes) or (start - 1) % PAGE_SIZE:
         raise BackfillConflict()
@@ -98,22 +99,26 @@ def _plan(db, plan_id, start, retry_episode=None):
     if retry_episode is not None:
         if retry_episode not in numbers: raise BackfillConflict()
         numbers = (retry_episode,)
-    reserved = tuple(sorted(set(r[0] for r in db.execute(
-        "SELECT tvdb_episode FROM episode_reservations WHERE "
-        "tvdb_series_id=? AND tvdb_season=? AND state='ACTIVE' "
-        "AND tvdb_episode BETWEEN ? AND ? UNION "
-        "SELECT tvdb_episode FROM batch_episode_reservations WHERE "
-        "tvdb_series_id=? AND tvdb_season=? AND state='ACTIVE' "
-        "AND tvdb_episode BETWEEN ? AND ?",
-        (tid, season, numbers[0], numbers[-1], tid, season, numbers[0], numbers[-1])
-    )) & set(numbers)))
-    known = tuple(row for row in db.execute(
-        "SELECT tvdb_episode,tvdb_episode_id FROM recognized_episodes WHERE "
-        "anidb_id=? AND tvdb_series_id=? AND tvdb_season=? AND "
-        "tvdb_episode BETWEEN ? AND ? ORDER BY tvdb_episode",
-        (aid, tid, season, numbers[0], numbers[-1])
-    ).fetchall() if row[0] in numbers)
-    return BackfillBatch(plan_id,aid,tid,season,len(episodes),start,numbers,reserved,known)
+    marks = ','.join('?' for _ in numbers)
+    # Reservations stay TVDB-keyed in Step 1: block by AniDB identity where it
+    # is recognized, and by TVDB placement for every target (Client.backfill).
+    reserved = tuple(sorted({r[0] for r in db.execute(
+        "SELECT e.anidb_episode_number FROM recognized_episodes e WHERE e.anidb_id=? "
+        f"AND e.anidb_episode_number IN ({marks}) AND EXISTS ("
+        "SELECT 1 FROM episode_reservations r WHERE r.state='ACTIVE' "
+        "AND r.anidb_episode_id=e.anidb_episode_id UNION ALL "
+        "SELECT 1 FROM batch_episode_reservations r WHERE r.state='ACTIVE' "
+        "AND r.anidb_episode_id=e.anidb_episode_id)", (aid, *numbers))}))
+    placements = tuple(sorted(set(db.execute(
+        "SELECT tvdb_season,tvdb_episode FROM episode_reservations WHERE "
+        "tvdb_series_id=? AND state='ACTIVE' UNION "
+        "SELECT tvdb_season,tvdb_episode FROM batch_episode_reservations WHERE "
+        "tvdb_series_id=? AND state='ACTIVE'", (tid, tid)).fetchall())))
+    known = tuple(db.execute(
+        "SELECT anidb_episode_number,tvdb_episode_id FROM recognized_episodes WHERE "
+        f"anidb_id=? AND tvdb_series_id=? AND anidb_episode_number IN ({marks}) "
+        "ORDER BY anidb_episode_number", (aid, tid, *numbers)).fetchall())
+    return BackfillBatch(plan_id,aid,tid,len(episodes),start,numbers,reserved,known,placements)
 
 
 AUTOMATIC_RETRY_MS = 30 * 60 * 1000
@@ -155,10 +160,9 @@ def schedule_first(db, claim, source, *, kind):
     if not db.in_transaction: raise ValueError('worker transaction required')
     row = db.execute(
         "SELECT p.plan_id,p.backfill_count,p.anchor_episode,p.following_count "
-        "FROM trial_plans p WHERE "
-        "p.anidb_id=? AND p.tvdb_series_id=? AND p.tvdb_season=? "
+        "FROM trial_plans p WHERE p.anidb_id=? AND p.tvdb_series_id=? "
         "AND p.tvdb_order='official'",
-        (source.anidb_id,source.tvdb_series_id,source.tvdb_season)
+        (source.anidb_id,source.tvdb_series_id)
     ).fetchone()
     if row is None: raise BackfillConflict()
     plan_id,backfill,anchor,following = row
@@ -217,21 +221,14 @@ def persist_fallback_missing(db,claim,value):
             or episode not in plan.numbers):
         raise BackfillConflict()
     frozen=_plan(db,plan.plan_id,plan.start)
-    if (frozen.anidb_id,frozen.tvdb_series_id,frozen.season,
-            frozen.numbers)!=(plan.anidb_id,plan.tvdb_series_id,
-                              plan.season,plan.numbers):
+    if (frozen.anidb_id,frozen.tvdb_series_id,
+            frozen.numbers)!=(plan.anidb_id,plan.tvdb_series_id,plan.numbers):
         raise BackfillConflict()
-    row=db.execute(
-        "SELECT p.tvdb_series_id,p.tvdb_season,s.tvdb_episode_id,s.info_hash "
-        "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
-        "WHERE p.plan_id=? AND s.tvdb_episode=?",
-        (plan.plan_id,episode)).fetchone()
-    if row!=(target.identity.tvdb_series_id,target.identity.tvdb_season,
-             target.identity.tvdb_episode_id,target.failed_hash):
+    if _selected(db,plan.plan_id,episode)!=(target.identity,target.failed_hash):
         raise BackfillConflict()
     prior=db.execute(
         "SELECT state FROM sonarr_episode_candidates WHERE plan_id=? "
-        "AND tvdb_episode=? AND info_hash=?",
+        "AND anidb_episode_number=? AND info_hash=?",
         (plan.plan_id,episode,target.failed_hash)).fetchone()
     pending=next_candidate(db,plan_id=plan.plan_id,episode=episode)
     if (prior!=('FAILED',) or pending is None
@@ -253,6 +250,16 @@ def persist_fallback_missing(db,claim,value):
     return (created,)
 
 
+def _selected(db,plan_id,episode):
+    """(VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
+    from src.nextgen.sonarr_episode import VerifiedEpisode
+    row=db.execute(
+        "SELECT p.tvdb_series_id,s.tvdb_episode_id,s.tvdb_season,s.tvdb_episode,s.info_hash "
+        "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
+        "WHERE p.plan_id=? AND s.anidb_episode_number=?",(plan_id,episode)).fetchone()
+    return None if row is None else (VerifiedEpisode(*row[:4]),row[4])
+
+
 def load_fallback(database,plan_id,episode):
     """Read the next candidate without changing any selection or sending."""
     from src.nextgen.sonarr_episode import VerifiedEpisode
@@ -263,21 +270,16 @@ def load_fallback(database,plan_id,episode):
         db.execute('BEGIN')
         if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
             raise QueueUnavailable()
-        row=db.execute(
-            "SELECT p.tvdb_series_id,p.tvdb_season,s.tvdb_episode_id,s.info_hash "
-            "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
-            "WHERE p.plan_id=? AND s.tvdb_episode=?",
-            (plan_id,episode)).fetchone()
-        if row is None:raise BackfillConflict()
+        selected=_selected(db,plan_id,episode)
+        if selected is None:raise BackfillConflict()
+        identity,digest=selected
         failed=db.execute(
             "SELECT state FROM sonarr_episode_candidates WHERE plan_id=? "
-            "AND tvdb_episode=? AND info_hash=?",
-            (plan_id,episode,row[3])).fetchone()
+            "AND anidb_episode_number=? AND info_hash=?",
+            (plan_id,episode,digest)).fetchone()
         pending=next_candidate(db,plan_id=plan_id,episode=episode)
         if failed!=('FAILED',) or pending is None:raise BackfillConflict()
-        return FallbackTarget(
-            VerifiedEpisode(row[0],row[2],row[1],episode),
-            row[3],pending[1])
+        return FallbackTarget(identity,digest,pending[1])
     except (sqlite3.Error,OSError,MigrationError):
         raise QueueUnavailable() from None
     finally:
@@ -308,23 +310,22 @@ def persist_fallback(db,claim,value):
             or choice.release.tvdb_episode_id!=choice.result.tvdb_episode_id
             or choice.result.tvdb_episode_id!=target.identity.tvdb_episode_id
             or choice.identity.tvdb_series_id!=plan.tvdb_series_id
-            or choice.identity.tvdb_season!=plan.season
-            or choice.identity.tvdb_episode!=episode
-            or (frozen.anidb_id,frozen.tvdb_series_id,frozen.season,
+            or _selected(db,plan.plan_id,episode)!=(choice.identity,target.failed_hash)
+            or (frozen.anidb_id,frozen.tvdb_series_id,
                 frozen.window_size,frozen.numbers)!=(plan.anidb_id,
-                plan.tvdb_series_id,plan.season,plan.window_size,plan.numbers)):
+                plan.tvdb_series_id,plan.window_size,plan.numbers)):
         raise BackfillConflict()
     current=db.execute(
         "SELECT s.info_hash,c.state FROM sonarr_episode_selections s "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        "AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=s.info_hash "
-        "WHERE s.plan_id=? AND s.tvdb_episode=? AND s.tvdb_episode_id=?",
+        "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
+        "WHERE s.plan_id=? AND s.anidb_episode_number=? AND s.tvdb_episode_id=?",
         (plan.plan_id,episode,target.identity.tvdb_episode_id)).fetchone()
     if current!=(target.failed_hash,'FAILED'):
         raise BackfillConflict()
     if db.execute(
         "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? "
-        "AND tvdb_episode=? AND state='ACTIVE'",(plan.plan_id,episode)).fetchone():
+        "AND anidb_episode_number=? AND state='ACTIVE'",(plan.plan_id,episode)).fetchone():
         raise BackfillConflict()
     pending=next_candidate(db,plan_id=plan.plan_id,episode=episode)
     if pending is None or pending[1]!=target.next_hash:
@@ -334,11 +335,12 @@ def persist_fallback(db,claim,value):
         if db.execute(
             f"SELECT 1 FROM {table} WHERE state='ACTIVE' "
             "AND tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=? LIMIT 1",
-            (plan.tvdb_series_id,plan.season,episode)).fetchone():
+            (plan.tvdb_series_id,target.identity.tvdb_season,
+             target.identity.tvdb_episode)).fetchone():
             raise BackfillConflict()
     updated=db.execute(
         "UPDATE sonarr_episode_selections SET info_hash=?,selected_at_ms=? "
-        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=?",
+        "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=?",
         (target.next_hash,integer(time.time_ns()//1_000_000),
          plan.plan_id,episode,target.failed_hash))
     if updated.rowcount!=1:raise BackfillConflict()
@@ -366,8 +368,8 @@ def persist_observations(db, claim, value, *, dispatch=False):
     # authorization.
     current = _plan(db,plan.plan_id,plan.start,value.retry_episode)
     if (current.plan_id,current.anidb_id,current.tvdb_series_id,
-        current.season,current.window_size,current.numbers) != (
-        plan.plan_id,plan.anidb_id,plan.tvdb_series_id,plan.season,
+        current.window_size,current.numbers) != (
+        plan.plan_id,plan.anidb_id,plan.tvdb_series_id,
         plan.window_size,plan.numbers):
         raise BackfillConflict()
     if claim.event_id is None: raise BackfillConflict()
@@ -380,7 +382,7 @@ def persist_observations(db, claim, value, *, dispatch=False):
                    and (item.candidates or item.accepted)):
             raise BackfillConflict()
         previous = db.execute(
-            'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND tvdb_episode=?',
+            'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND anidb_episode_number=?',
             (plan.plan_id,number)
         ).fetchone()
         if previous and (value.retry_episode != number or
@@ -399,15 +401,13 @@ def persist_observations(db, claim, value, *, dispatch=False):
         if choice is not None:
             if (type(choice) is not CandidateSelection or item.status != 'CANDIDATES'
                     or item.tvdb_episode_id != choice.identity.tvdb_episode_id
-                    or item.number != choice.identity.tvdb_episode
                     or plan.tvdb_series_id != choice.identity.tvdb_series_id
-                    or plan.season != choice.identity.tvdb_season
                     or dict(plan.verified).get(item.number) not in (None,item.tvdb_episode_id)):
                 raise BackfillConflict()
             try:
                 save_candidates(db,plan_id=plan.plan_id,episode=item.number,
                                 result=choice.result,policy=choice.policy)
-                inserted=select(db, plan_id=plan.plan_id, identity=choice.identity,
+                inserted=select(db, plan_id=plan.plan_id, episode=item.number, identity=choice.identity,
                        result=choice.result, release=choice.release, policy=choice.policy)
                 if inserted and dispatch:
                     activate_candidate(db,plan_id=plan.plan_id,episode=item.number,
@@ -418,9 +418,9 @@ def persist_observations(db, claim, value, *, dispatch=False):
                 raise BackfillConflict() from None
         db.execute(
             "INSERT INTO sonarr_backfill_results("
-            "plan_id,tvdb_episode,job_id,sonarr_episode_id,tvdb_episode_id,status,"
+            "plan_id,anidb_episode_number,job_id,sonarr_episode_id,tvdb_episode_id,status,"
             "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,?,?,?,?,?,?) "
-            "ON CONFLICT(plan_id,tvdb_episode) DO UPDATE SET "
+            "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "
             "job_id=excluded.job_id,tvdb_episode_id=excluded.tvdb_episode_id,"
             "status=excluded.status,candidates=excluded.candidates,"
             "approved=excluded.approved,exact=excluded.exact,"
@@ -462,7 +462,7 @@ def _audio_only(db, plan_id, episode):
     """Hashes tried for this episode when all failed and one failed on audio."""
     rows = db.execute(
         'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
-        'WHERE plan_id=? AND tvdb_episode=?', (plan_id, episode)).fetchall()
+        'WHERE plan_id=? AND anidb_episode_number=?', (plan_id, episode)).fetchall()
     if (not rows or any(state != 'FAILED' for _, state, _ in rows)
             or not any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows)):
         return None
@@ -474,15 +474,15 @@ def audio_exhausted(db, plan_id, episode):
 
 
 def load_tried_hashes(database, plan_id, numbers):
-    """(tvdb_episode -> frozenset of tried hashes) for episodes in numbers."""
+    """(AniDB episode -> frozenset of tried hashes) for episodes in numbers."""
     if not numbers: return {}
     db = None
     try:
         db = _open(database, readonly=True, timeout_ms=5000)
         placeholders = ','.join('?' for _ in numbers)
         rows = db.execute(
-            f"SELECT tvdb_episode, info_hash FROM sonarr_episode_candidates "
-            f"WHERE plan_id=? AND tvdb_episode IN ({placeholders})",
+            f"SELECT anidb_episode_number, info_hash FROM sonarr_episode_candidates "
+            f"WHERE plan_id=? AND anidb_episode_number IN ({placeholders})",
             (plan_id, *numbers)
         ).fetchall()
         result = {}
@@ -507,12 +507,9 @@ def load_dub_search(database, plan_id, episode):
             raise QueueUnavailable()
         tried = _audio_only(db, plan_id, episode)
         if tried is None: return None
-        row = db.execute(
-            "SELECT p.tvdb_series_id,p.tvdb_season,s.tvdb_episode_id "
-            "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
-            "WHERE p.plan_id=? AND s.tvdb_episode=?", (plan_id, episode)).fetchone()
-        if row is None: raise BackfillConflict()
-        return DubSearch(VerifiedEpisode(row[0], row[2], row[1], episode), tried)
+        selected = _selected(db, plan_id, episode)
+        if selected is None: raise BackfillConflict()
+        return DubSearch(selected[0], tried)
     except (sqlite3.Error, OSError, MigrationError):
         raise QueueUnavailable() from None
     finally:
@@ -530,9 +527,9 @@ def persist_dub_found(db, claim, value):
     if _audio_only(db, plan.plan_id, episode) != value.target.tried or set(value.hashes) & value.target.tried:
         raise BackfillConflict()
     last = db.execute('SELECT max(rank) FROM sonarr_episode_candidates WHERE plan_id=? '
-                      'AND tvdb_episode=?', (plan.plan_id, episode)).fetchone()[0]
+                      'AND anidb_episode_number=?', (plan.plan_id, episode)).fetchone()[0]
     for rank, digest in enumerate(value.hashes, last + 1):
-        db.execute('INSERT INTO sonarr_episode_candidates(plan_id,tvdb_episode,rank,info_hash) '
+        db.execute('INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash) '
                    'VALUES(?,?,?,?)', (plan.plan_id, episode, rank, digest))
     _, created = enqueue_job_with_receipt(
         db, component='worker', kind='DISCOVER_SONARR_BACKFILL',

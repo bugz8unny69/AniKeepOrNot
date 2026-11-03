@@ -217,7 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_recognized_episodes_season ON recognized_episodes
 
 CREATE TABLE IF NOT EXISTS trial_plans (
  plan_id INTEGER PRIMARY KEY,
- anidb_id INTEGER NOT NULL REFERENCES identified_anime(anidb_id),
+ anidb_id INTEGER NOT NULL UNIQUE REFERENCES identified_anime(anidb_id),
  tvdb_series_id INTEGER NOT NULL CHECK(tvdb_series_id>0),
  tvdb_season INTEGER NOT NULL CHECK(tvdb_season>=0),
  tvdb_order TEXT NOT NULL DEFAULT 'official' CHECK(tvdb_order='official'),
@@ -227,7 +227,6 @@ CREATE TABLE IF NOT EXISTS trial_plans (
  following_count INTEGER NOT NULL CHECK(following_count BETWEEN 0 AND 1000),
  configuration_revision INTEGER NOT NULL CHECK(configuration_revision>0),
  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
- UNIQUE(anidb_id,tvdb_series_id,tvdb_season,tvdb_order),
  CHECK(backfill_count>0 OR following_count>0),
  CHECK(following_count=0 OR anchor_episode<=9223372036854775807-following_count+1)
 );
@@ -691,7 +690,7 @@ CREATE TABLE IF NOT EXISTS batch_cancellation_cleanup (
 );
 CREATE TABLE IF NOT EXISTS sonarr_backfill_results (
  plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
- tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode>0 AND tvdb_episode<=1000),
+ anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  sonarr_episode_id INTEGER CHECK(sonarr_episode_id>0),
  tvdb_episode_id INTEGER CHECK(tvdb_episode_id>0),
@@ -700,34 +699,36 @@ CREATE TABLE IF NOT EXISTS sonarr_backfill_results (
  approved INTEGER NOT NULL CHECK(approved BETWEEN 0 AND candidates),
  exact INTEGER NOT NULL CHECK(exact BETWEEN 0 AND candidates),
  observed_at_ms INTEGER NOT NULL CHECK(observed_at_ms>=0),
- PRIMARY KEY(plan_id,tvdb_episode)
+ PRIMARY KEY(plan_id,anidb_episode_number)
 );
 CREATE TABLE IF NOT EXISTS sonarr_episode_selections (
  plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
+ anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
+ tvdb_season INTEGER NOT NULL CHECK(tvdb_season>=0),
  tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode>0),
  tvdb_episode_id INTEGER NOT NULL CHECK(tvdb_episode_id>0),
  info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
  selected_at_ms INTEGER NOT NULL CHECK(selected_at_ms>=0),
- PRIMARY KEY(plan_id,tvdb_episode),
+ PRIMARY KEY(plan_id,anidb_episode_number),
  UNIQUE(plan_id,info_hash)
 );
 
 CREATE TABLE IF NOT EXISTS sonarr_episode_candidates (
  plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
- tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode>0 AND tvdb_episode<=1000),
+ anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  rank INTEGER NOT NULL CHECK(rank>0 AND rank<=1000),
  info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
  state TEXT NOT NULL DEFAULT 'READY' CHECK(state IN ('READY','ACTIVE','FAILED','SUCCEEDED')),
  reason_code TEXT,
- PRIMARY KEY(plan_id,tvdb_episode,rank),
- UNIQUE(plan_id,tvdb_episode,info_hash)
+ PRIMARY KEY(plan_id,anidb_episode_number,rank),
+ UNIQUE(plan_id,anidb_episode_number,info_hash)
 );
 
 CREATE TABLE IF NOT EXISTS sonarr_magnet_intents (
  event_id INTEGER PRIMARY KEY REFERENCES incoming_events(event_id),
  job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
- tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode BETWEEN 1 AND 1000),
+ anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
  marker TEXT NOT NULL UNIQUE CHECK(length(marker)=32 AND marker NOT GLOB '*[^0-9a-f]*'),
  api_major INTEGER NOT NULL CHECK(api_major IN (4,5)),
@@ -813,13 +814,13 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v55; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema v56; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.
     """
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version == 55:
+    if version == 56:
         return
     if version != 0:
         raise ValueError("existing NextGen database requires versioned SQL upgrade")
@@ -829,7 +830,7 @@ def initialize(db):
     if db.in_transaction:
         raise ValueError("initialization requires no active transaction")
     try:
-        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=55;\nCOMMIT;")
+        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=56;\nCOMMIT;")
     except BaseException:
         db.rollback()
         raise

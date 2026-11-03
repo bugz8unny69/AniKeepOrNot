@@ -17,13 +17,16 @@ class SelectionConflict(ValueError):
         super().__init__('Backfill candidate selection needs review.')
 
 
-def select(db, *, plan_id, identity, result, release, policy):
-    """Select once; duplicate identical attempts are idempotent.
+def select(db, *, plan_id, episode, identity, result, release, policy):
+    """Select AniDB episode `episode` once; duplicate identical attempts are idempotent.
+
+    identity is that episode's own verified TVDB placement (any TVDB season).
 
     Refuses unverified catalog-only episodes and any existing active acquisition.
     No URL, passkey, or magnet URI is persisted.
     """
     if (not db.in_transaction or type(plan_id) is not int or plan_id <= 0
+            or type(episode) is not int or episode <= 0
             or type(identity) is not VerifiedEpisode
             or type(result) is not SearchResult or type(release) is not Release
             or type(policy) is not DiscoveryPolicy
@@ -38,23 +41,27 @@ def select(db, *, plan_id, identity, result, release, policy):
     try: digest = infohash(release.info_hash)
     except ValueError: raise SelectionConflict() from None
     plan = db.execute(
-        "SELECT anidb_id,tvdb_series_id,tvdb_season,anchor_episode,"
+        "SELECT anidb_id,tvdb_series_id,anchor_episode,"
         "backfill_count,following_count FROM trial_plans "
         "WHERE plan_id=? AND tvdb_order='official'", (plan_id,)
     ).fetchone()
-    if plan is None or plan[1:3] != (identity.tvdb_series_id, identity.tvdb_season):
+    if plan is None or plan[1] != identity.tvdb_series_id:
         raise SelectionConflict()
-    aid, _, _, anchor, backfill, following = plan
-    in_window = (1 <= identity.tvdb_episode <= backfill
-                 or following > 0 and anchor <= identity.tvdb_episode < anchor + following)
-    if not in_window:
+    aid, _, anchor, backfill, following = plan
+    from src.nextgen.trial_policy import Window
+    if episode not in Window(backfill, following).anidb_episodes(anchor):
         raise SelectionConflict()
     recognized = db.execute(
-        "SELECT 1 FROM recognized_episodes WHERE anidb_id=? AND tvdb_series_id=? "
+        "SELECT anidb_episode_number FROM recognized_episodes WHERE anidb_id=? AND tvdb_series_id=? "
         "AND tvdb_season=? AND tvdb_episode=? AND tvdb_episode_id=?",
         (aid, identity.tvdb_series_id, identity.tvdb_season,
          identity.tvdb_episode, identity.tvdb_episode_id)
     ).fetchone()
+    # A recognized AniDB episode must keep its own recognized placement.
+    if recognized not in (None, (episode,)) or db.execute(
+            "SELECT 1 FROM recognized_episodes WHERE anidb_id=? AND anidb_episode_number=? "
+            "AND tvdb_episode_id<>?", (aid, episode, identity.tvdb_episode_id)).fetchone():
+        raise SelectionConflict()
     # Catalog-only placements are *hints*, not proof of anime identity.
     # VERIFY_RELEASE must independently resolve them before any reservation.
     if recognized is None:
@@ -66,11 +73,12 @@ def select(db, *, plan_id, identity, result, release, policy):
         if conflicting is not None:
             raise SelectionConflict()
     previous = db.execute(
-        "SELECT tvdb_episode_id,info_hash FROM sonarr_episode_selections "
-        "WHERE plan_id=? AND tvdb_episode=?", (plan_id, identity.tvdb_episode)
+        "SELECT tvdb_season,tvdb_episode,tvdb_episode_id,info_hash FROM sonarr_episode_selections "
+        "WHERE plan_id=? AND anidb_episode_number=?", (plan_id, episode)
     ).fetchone()
     if previous is not None:
-        if previous != (identity.tvdb_episode_id, digest):
+        if previous != (identity.tvdb_season, identity.tvdb_episode,
+                        identity.tvdb_episode_id, digest):
             raise SelectionConflict()
         return False
     # The existing single and batch reservation namespaces remain authoritative.
@@ -87,10 +95,10 @@ def select(db, *, plan_id, identity, result, release, policy):
         raise SelectionConflict()
     db.execute(
         "INSERT INTO sonarr_episode_selections "
-        "(plan_id,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) "
-        "VALUES(?,?,?,?,?)",
-        (plan_id,identity.tvdb_episode,identity.tvdb_episode_id,digest,
-         time.time_ns()//1_000_000)
+        "(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (plan_id,episode,identity.tvdb_season,identity.tvdb_episode,
+         identity.tvdb_episode_id,digest,time.time_ns()//1_000_000)
     )
     return True
 
@@ -112,17 +120,19 @@ def require_verified_delivery(db, verified):
     except (ValueError,TypeError,UnicodeError):
         raise ReleaseConflict() from None
     rows=db.execute(
-        "SELECT p.anidb_id,p.tvdb_series_id,p.tvdb_season,"
-        "s.tvdb_episode,s.tvdb_episode_id "
+        "SELECT p.anidb_id,p.tvdb_series_id,s.tvdb_season,"
+        "s.tvdb_episode,s.tvdb_episode_id,s.anidb_episode_number "
         "FROM jobs j JOIN jobs parent ON parent.job_id=j.created_by_job_id "
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
         "WHERE j.event_id=? AND j.kind='VERIFY_RELEASE' "
         "AND parent.kind='DISCOVER_SONARR_BACKFILL' AND s.info_hash=?",
         (source.event_id,digest)).fetchall()
+    # The selected AniDB episode and its own placement must both be what
+    # VERIFY_RELEASE independently resolved for this delivery.
     if len(rows)!=1 or rows[0]!=(
             source.anidb_id,source.tvdb_series_id,verified.tvdb_season,
-            verified.tvdb_episode,verified.tvdb_episode_id):
+            verified.tvdb_episode,verified.tvdb_episode_id,verified.anidb_episode_number):
         raise ReleaseConflict()
 
 def acquisition_identity(database, source):
@@ -148,12 +158,13 @@ def acquisition_identity(database, source):
             "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
             "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
             "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-            " AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=s.info_hash "
+            " AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
             "WHERE e.event_id=? AND e.source='sonarr-discovery' "
             "AND parent.kind='DISCOVER_SONARR_BACKFILL' "
-            "AND p.tvdb_season=? AND s.tvdb_episode=? "
+            "AND s.anidb_episode_number=? AND s.tvdb_season=? AND s.tvdb_episode=? "
             "AND s.info_hash=? AND c.state='ACTIVE'",
-            (source.event_id,source.tvdb_season,source.tvdb_episode,source.info_hash)
+            (source.event_id,source.anidb_episode_number,source.tvdb_season,
+             source.tvdb_episode,source.info_hash)
         ).fetchall()
     finally:
         db.close()

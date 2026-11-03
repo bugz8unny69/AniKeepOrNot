@@ -23,7 +23,7 @@ from src.nextgen.providers.release_mapping import declared_episode
 from src.nextgen.release_contracts import ReleaseNotReady
 from src.nextgen.storage.job_queue import JobQueue, QueueUnavailable
 from src.nextgen.storage.sqlite import enqueue_job_with_receipt, persist_identity, transaction
-from src.nextgen.storage.series_intake import plan_window
+from src.nextgen.storage.series_intake import plan_window, _placements
 
 
 class ManualSubmissionInvalid(ValueError):
@@ -72,12 +72,15 @@ def _admit_release(name, season, episode, known_anidb=None):
 def _candidate(db, aid, season, episode):
     row = db.execute(
         'SELECT p.plan_id,p.tvdb_series_id,p.anchor_episode,p.backfill_count,p.following_count '
-        'FROM trial_plans p WHERE p.anidb_id=? AND p.tvdb_season=?',
-        (aid, season)).fetchone()
+        'FROM trial_plans p WHERE p.anidb_id=?', (aid,)).fetchone()
     if row is None:
         raise ManualSubmissionUnavailable()
     plan_id, tvdb_id, anchor, backfill, following = row
-    if episode != anchor and episode not in plan_window(db, plan_id, anchor, backfill, following):
+    # The window is in AniDB numbers; the TVDB placement must map to one of them.
+    number = next((n for n, place in _placements(db, aid, plan_id).items()
+                   if place == (season, episode)), None)
+    if number is None or (number != anchor and
+                          number not in plan_window(db, plan_id, anchor, backfill, following)):
         raise ManualSubmissionUnavailable()
     if db.execute('SELECT 1 FROM anime_review_decisions WHERE anidb_id=?', (aid,)).fetchone():
         raise ManualSubmissionUnavailable()
@@ -148,9 +151,9 @@ def submit(database, aid, season, episode, *, release_name, magnet_uri=None, tor
             'SELECT i.series_json FROM trial_plans p '
             'JOIN release_verifications r ON r.verification_id=p.anchor_verification_id '
             'JOIN identity_results i ON i.result_id=r.identity_result_id '
-            'WHERE p.anidb_id=? AND p.tvdb_series_id=? AND p.tvdb_season=? '
+            'WHERE p.anidb_id=? AND p.tvdb_series_id=? '
             'ORDER BY i.validated_at_ms DESC LIMIT 1',
-            (aid,tvdb_id,season)).fetchone()
+            (aid,tvdb_id)).fetchone()
         if anchor is None:
             raise ManualSubmissionUnavailable()
         document = parse_payload(anchor[0])

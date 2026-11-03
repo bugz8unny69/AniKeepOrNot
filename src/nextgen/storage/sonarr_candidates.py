@@ -14,7 +14,7 @@ def save_candidates(db, *, plan_id, episode, result, policy):
     Replays must be identical. Another source cannot silently replace evidence.
     """
     if (not db.in_transaction or type(plan_id) is not int or plan_id <= 0
-            or type(episode) is not int or episode <= 0 or episode > 1000
+            or type(episode) is not int or episode <= 0
             or type(result) is not SearchResult or type(policy) is not DiscoveryPolicy):
         raise CandidateConflict()
     hashes=[]
@@ -25,7 +25,7 @@ def save_candidates(db, *, plan_id, episode, result, policy):
             if digest not in hashes:
                 hashes.append(digest)
     previous=db.execute(
-        "SELECT info_hash FROM sonarr_episode_candidates WHERE plan_id=? AND tvdb_episode=? ORDER BY rank",
+        "SELECT info_hash FROM sonarr_episode_candidates WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
         (plan_id,episode)).fetchall()
     if previous:
         if [row[0] for row in previous] != hashes:
@@ -33,7 +33,7 @@ def save_candidates(db, *, plan_id, episode, result, policy):
         return False
     for rank,digest in enumerate(hashes,1):
         db.execute(
-            "INSERT INTO sonarr_episode_candidates(plan_id,tvdb_episode,rank,info_hash) VALUES(?,?,?,?)",
+            "INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash) VALUES(?,?,?,?)",
             (plan_id,episode,rank,digest))
     return bool(hashes)
 
@@ -42,7 +42,7 @@ def next_candidate(db, *, plan_id, episode):
     """Read-only next candidate; selection does not grant a send permit."""
     row=db.execute(
         "SELECT rank,info_hash FROM sonarr_episode_candidates WHERE plan_id=? "
-        "AND tvdb_episode=? AND state='READY' ORDER BY rank LIMIT 1",
+        "AND anidb_episode_number=? AND state='READY' ORDER BY rank LIMIT 1",
         (plan_id,episode)).fetchone()
     return row
 
@@ -58,7 +58,7 @@ def activate_candidate(db, *, plan_id, episode, info_hash):
     digest=infohash(info_hash)
     active=db.execute(
         "SELECT info_hash FROM sonarr_episode_candidates "
-        "WHERE plan_id=? AND tvdb_episode=? AND state='ACTIVE'",
+        "WHERE plan_id=? AND anidb_episode_number=? AND state='ACTIVE'",
         (plan_id,episode)).fetchall()
     if active:
         if active==[(digest,)]:
@@ -69,7 +69,7 @@ def activate_candidate(db, *, plan_id, episode, info_hash):
         raise CandidateConflict()
     changed=db.execute(
         "UPDATE sonarr_episode_candidates SET state='ACTIVE' "
-        "WHERE plan_id=? AND tvdb_episode=? AND rank=? AND state='READY'",
+        "WHERE plan_id=? AND anidb_episode_number=? AND rank=? AND state='READY'",
         (plan_id,episode,next_row[0]))
     if changed.rowcount!=1:
         raise CandidateConflict()
@@ -82,7 +82,7 @@ def succeed_candidate(db, *, plan_id, episode, info_hash):
         raise CandidateConflict()
     changed=db.execute(
         "UPDATE sonarr_episode_candidates SET state='SUCCEEDED' "
-        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=? AND state='ACTIVE'",
+        "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=? AND state='ACTIVE'",
         (plan_id,episode,infohash(info_hash)))
     if changed.rowcount!=1:
         raise CandidateConflict()
@@ -94,7 +94,7 @@ def fail_candidate(db, *, plan_id, episode, info_hash, reason_code):
         raise CandidateConflict()
     result=db.execute(
         "UPDATE sonarr_episode_candidates SET state='FAILED',reason_code=? "
-        "WHERE plan_id=? AND tvdb_episode=? AND info_hash=? AND state='ACTIVE'",
+        "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=? AND state='ACTIVE'",
         (reason_code,plan_id,episode,infohash(info_hash)))
     if result.rowcount!=1:raise CandidateConflict()
 
@@ -108,14 +108,14 @@ def mark_published(db, *, event_id, info_hash):
         raise CandidateConflict()
     digest=infohash(info_hash)
     rows=db.execute(
-        "SELECT c.plan_id,c.tvdb_episode FROM incoming_events e "
+        "SELECT c.plan_id,c.anidb_episode_number FROM incoming_events e "
         "JOIN jobs verify ON verify.event_id=e.event_id AND verify.kind='VERIFY_RELEASE' "
         "JOIN jobs parent ON parent.job_id=verify.created_by_job_id "
         " AND parent.kind='DISCOVER_SONARR_BACKFILL' "
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id AND s.info_hash=? "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        " AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=? AND c.state='ACTIVE' "
+        " AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=? AND c.state='ACTIVE' "
         "WHERE e.event_id=? AND e.source='sonarr-discovery'",
         (digest,digest,event_id)).fetchall()
     if not rows:
@@ -153,7 +153,7 @@ def schedule_after_cleanup(db,operation_id):
         "ORDER BY h.history_id DESC LIMIT 1",(operation_id,)).fetchone()
     if issue is None:return ()
     rows=db.execute(
-        "SELECT s.plan_id,s.tvdb_episode,s.info_hash,parent.event_id,parent.job_id,parent.payload_json "
+        "SELECT s.plan_id,s.anidb_episode_number,s.info_hash,parent.event_id,parent.job_id,parent.payload_json "
         "FROM job_operation_members m "
         "JOIN jobs verify ON verify.job_id=m.job_id AND verify.kind='VERIFY_RELEASE' "
         "JOIN incoming_events e ON e.event_id=verify.event_id "
@@ -163,7 +163,7 @@ def schedule_after_cleanup(db,operation_id):
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        "AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=s.info_hash "
+        "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
         "AND c.state='ACTIVE' "
         "WHERE m.operation_id=? "
         "AND s.info_hash=json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash')",
@@ -227,7 +227,7 @@ def auto_cleanup_failed_candidate(db,claim):
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        "AND c.tvdb_episode=s.tvdb_episode AND c.info_hash=s.info_hash "
+        "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
         "WHERE e.event_id=? AND e.source='sonarr-discovery' "
         "AND s.info_hash=json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash')",
         (claim.job_id,claim.event_id)).fetchall()
