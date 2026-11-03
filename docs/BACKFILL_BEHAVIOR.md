@@ -40,8 +40,13 @@ historical job and table names are kept so existing jobs and history stay valid)
    - In standard discovery (when audio check is not required), traditional
      AniDB episode formatting (`Title 01`) and scene formatting (`Title S01E01`)
      come first, followed by verified English aliases and short synonyms;
-   - Franchise and sequel base queries (`Base 01`, `Base SxxEyy`, and absolute
-     sequel numbers like `Base 29`).
+   - When the mapped episode has a distinct TVDB-informed absolute number,
+     reserve one of the six searches for that convention (for example,
+     `Base 29` for S02E05). Use a verified season base where available, or the
+     yearless main title otherwise. This is only a search hint, not a season
+     guess; the existing exact matcher still validates every returned release.
+     Season 1 query priority stays unchanged when the numbers coincide.
+   - Franchise and sequel base queries (`Base 01`, `Base SxxEyy`).
    Indexer throttling and rate limiting remain Prowlarr's responsibility;
    Anime Discovery does not add an internal rate limiter, honoring HTTP 429
    `Retry-After` headers and transient backoffs directly. A query returning

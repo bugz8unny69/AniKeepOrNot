@@ -242,6 +242,17 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
     main_base, main_marker = season_marker(main)
     effective_scene_base = main_base if main_marker is not None else main
 
+    # The catalog already supplies a candidate absolute number for the verified
+    # TVDB placement. Give its distinct naming format one slot rather than
+    # losing it behind lower-priority synonyms after the six-query limit.
+    # Search wording is only a hint; matches() still checks episode identity.
+    bases = sorted({base for base, _ in season_bases(catalog_titles)})
+    absolute_query = None
+    if (target.absolute_episode is not None
+            and target.absolute_episode != target.anidb_episode):
+        absolute_base = bases[0] if bases else effective_scene_base
+        absolute_query = '%s %02d' % (absolute_base, target.absolute_episode)
+
     # English only when AniDB gave one; a second romanized alias is just a synonym.
     eng = None
     if type(english_title) is str and english_title.strip():
@@ -260,6 +271,8 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
         queries.append('%s %02d' % (eng, target.anidb_episode))
         queries.append('%s %02d' % (main, target.anidb_episode))
         queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
+        if absolute_query:
+            queries.append(absolute_query)
         for syn in synonyms:
             queries.append('%s %02d' % (syn, target.anidb_episode))
         queries.append('%s S%02dE%02d Dual-Audio' % (effective_scene_base, current_season, target.tvdb_episode))
@@ -267,6 +280,8 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
         # 1. Primary queries for main title: traditional AniDB number and scene SxxEyy
         queries.append('%s %02d' % (main, target.anidb_episode))
         queries.append('%s S%02dE%02d' % (effective_scene_base, current_season, target.tvdb_episode))
+        if absolute_query:
+            queries.append(absolute_query)
 
         # 2. AniDB English title queries:
         if has_english:
@@ -289,11 +304,8 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
             queries.append('%s S%02dE%02d' % (s_scene_base, current_season, target.tvdb_episode))
 
     # 7. For sequels with season bases (e.g. "Kusuriya no Hitorigoto 2nd Season" -> base "Kusuriya no Hitorigoto")
-    bases = sorted({base for base, _ in season_bases(catalog_titles)})
     for base in bases[:1]:
         queries.append('%s %02d' % (base, target.anidb_episode))
-        if target.absolute_episode and target.absolute_episode != target.anidb_episode:
-            queries.append('%s %02d' % (base, target.absolute_episode))
         queries.append('%s S%02dE%02d' % (base, current_season, target.tvdb_episode))
 
     return tuple(dict.fromkeys(q for q in queries if 1 <= len(q) <= 256))[:6]
