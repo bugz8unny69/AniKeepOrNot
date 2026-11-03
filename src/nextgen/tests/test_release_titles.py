@@ -152,6 +152,50 @@ class ReleaseTitleTests(unittest.TestCase):
         self.assertIn('Saikyosoubi 01', audio_queries)
         self.assertLessEqual(len(audio_queries), 6)
 
+
+    def test_audio_first_sequel_reserves_absolute_episode_in_six_query_budget(self):
+        # A separately indexed AniDB sequel maps to TVDB S02E05; some
+        # groups publish the same episode as absolute episode 29.
+        target = EpisodeTarget(5, 'SEARCHABLE', 5, 9005, 29)
+        queries = search_queries(SEQUEL, AnimeTitles.build(SEQUEL, 2), target,
+                                 season=2, english_title='The Apothecary Diaries Season 2',
+                                 prefer_audio=True)
+        self.assertEqual(len(queries), 6)
+        self.assertEqual(queries[:2], ('The Apothecary Diaries S02E05',
+                                       'The Apothecary Diaries S02E05 Dual-Audio'))
+        self.assertIn('Kusuriya no Hitorigoto 05', queries)
+        self.assertIn('Kusuriya no Hitorigoto S02E05', queries)
+        self.assertIn('Kusuriya no Hitorigoto 29', queries)
+
+    def test_year_qualified_sequel_without_season_marker_searches_absolute_number(self):
+        # An AniDB sequel may use year-qualified catalog titles but no
+        # season marker. The verified TVDB context still supplies the number.
+        titles = ('Koori no Jouheki (2026)', 'The Ramparts of Ice (2026)')
+        target = EpisodeTarget(2, 'SEARCHABLE', 2, 9002, 14)
+        prepared = AnimeTitles.build(titles, 2)
+        queries = search_queries(titles, prepared, target, season=2,
+                                 english_title='The Ramparts of Ice (2026)',
+                                 prefer_audio=True)
+        self.assertIn('The Ramparts of Ice S02E02', queries)
+        self.assertIn('Koori no Jouheki 02', queries)
+        self.assertIn('Koori no Jouheki 14', queries)
+        self.assertLessEqual(len(queries), 6)
+        self.assertTrue(matches(parse_release('[Group] Koori no Jouheki - 14 (1080p)'),
+                                prepared, target, 2))
+        self.assertFalse(matches(parse_release('[Group] Koori no Jouheki - 13 (1080p)'),
+                                 prepared, target, 2))
+
+    def test_sequel_without_english_alias_keeps_absolute_and_seasonless_formats(self):
+        titles = ('Aoi no Sekai 2nd Season', 'Aoi no Sekai', 'Ao no Sekai')
+        target = EpisodeTarget(3, 'SEARCHABLE', 1, 9003, 27)  # mapping offset: AniDB 1 -> S02E03
+        queries = search_queries(titles, AnimeTitles.build(titles, 2), target,
+                                 season=2, prefer_audio=True)
+        self.assertEqual(queries[:2], ('Aoi no Sekai 2nd Season 01',
+                                       'Aoi no Sekai S02E03'))
+        self.assertIn('Aoi no Sekai 27', queries)
+        self.assertIn('Aoi no Sekai 01', queries)
+        self.assertLessEqual(len(queries), 6)
+
     def test_romanized_aliases_without_anidb_english_do_not_get_english_priority(self):
         titles = ('Hoshizora no Shita', 'Yoru no Hoshizora')
         target = EpisodeTarget(5, 'SEARCHABLE', 5, 9005, 5)
