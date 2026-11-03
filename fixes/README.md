@@ -143,3 +143,16 @@ After installing this update, run the documented title-backfill dry run first.
 Do not use `--apply` if it reports a genuine content/hash mismatch or a
 foreign edited NFO. Successful `--apply` still backs up the database and
 holds exclusive maintenance while files and receipts are updated.
+
+
+## AniDB-first selection preflight (read-only)
+
+Before the AniDB-first trial key migration, check that every trial row converts
+to exactly one AniDB episode number using evidence already in the database.
+Nothing is written. Services can stay running:
+
+```sh
+sudo python3 /opt/anime-discovery/current/fixes/anidb_selection_preflight.py
+```
+
+Exit code 0 means the conversion is unambiguous. 1 lists each blocking row.

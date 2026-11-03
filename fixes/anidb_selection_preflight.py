@@ -1,23 +1,26 @@
-"""Read-only v54 preflight for AniDB-first episode selection (Step 1).
+#!/usr/bin/env python3
+"""Read-only check before the AniDB-first trial key migration (Step 1).
 
-Answers one question before the v55 schema change: can every TVDB-keyed trial
-row be converted to exactly one AniDB episode number using evidence already
-stored in this database? It never writes, never calls a provider, and never
-infers numbers from season offsets or release names.
+Reports whether every TVDB-keyed trial row converts to exactly one AniDB
+episode number using evidence already stored in the database. Never writes,
+never calls a provider, never infers numbers from season offsets or titles.
+Services can stay running.
 
-Run it on a COPY of the database, never the live file:
-
-    PYTHONPATH=. python -m src.nextgen.storage.anidb_selection_preflight --db /tmp/copy.sqlite3
+    sudo python3 /opt/anime-discovery/current/fixes/anidb_selection_preflight.py
 
 Exit code 0: conversion is unambiguous. 1: blocked (see report). 2: unusable input.
 """
+import argparse
 import json
+from pathlib import Path
 import sqlite3
 import sys
 
-from src.nextgen.storage.migrations import _open
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-EXPECTED_VERSION = 54
+from fixes.cleanup_legacy_not_listed import configured_database, open_database  # noqa: E402
+from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
+
 # Tables whose tvdb_episode is the trial window key today.
 KEYED_TABLES = ('sonarr_backfill_results', 'sonarr_episode_selections',
                 'sonarr_episode_candidates', 'sonarr_magnet_intents')
@@ -44,8 +47,8 @@ def preflight(db):
     report = {'schema_version': version, 'plans': 0, 'duplicate_plans': [],
               'anchors': [], 'rows': {}, 'unmapped': [], 'conflicts': [],
               'open_jobs': [], 'blocking': []}
-    if version != EXPECTED_VERSION:
-        report['blocking'].append('schema version %s, expected %s' % (version, EXPECTED_VERSION))
+    if version != SCHEMA_VERSION:
+        report['blocking'].append('schema version %s, expected %s' % (version, SCHEMA_VERSION))
         return report
     plans = db.execute(
         "SELECT p.plan_id,p.anidb_id,p.tvdb_series_id,p.tvdb_season,p.anchor_episode,"
@@ -152,21 +155,21 @@ def _text(report):
 
 
 def main(argv=None):
-    import argparse
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--db', required=True, help='Path to a COPY of the NextGen database')
+    parser.add_argument('--config-dir', type=Path, default=Path('/etc/anime-discovery'))
+    parser.add_argument('--database', type=Path, help='Override settings.json database path')
     parser.add_argument('--json', action='store_true', help='Print the report as JSON')
     args = parser.parse_args(argv)
     try:
-        db = _open(args.db, readonly=True, timeout_ms=5000)
-    except (OSError, sqlite3.Error, ValueError) as exc:
+        path = args.database or configured_database(args.config_dir)
+        db = open_database(path, readonly=True)
+    except (OSError, ValueError, KeyError, sqlite3.Error) as exc:
         print('cannot open database read-only: %s' % exc, file=sys.stderr)
         return 2
     try:
-        db.execute('BEGIN')
         report = preflight(db)
     except sqlite3.Error as exc:
-        print('database is not a NextGen v54 database: %s' % exc, file=sys.stderr)
+        print('not a NextGen database: %s' % exc, file=sys.stderr)
         return 2
     finally:
         db.close()

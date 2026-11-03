@@ -6,11 +6,10 @@ Spec §1 requires this preflight before any schema edits: we must know whether e
 
 ## What is in this change
 
-- `src/nextgen/storage/anidb_selection_preflight.py`: a read-only v54 report. Run it on a **copy** of the database:
+- `fixes/anidb_selection_preflight.py`: a read-only report. It opens the configured database read-only, and services can stay running:
 
   ```
-  cp /path/to/nextgen.sqlite3 /tmp/copy.sqlite3
-  PYTHONPATH=. python -m src.nextgen.storage.anidb_selection_preflight --db /tmp/copy.sqlite3
+  sudo python3 /opt/anime-discovery/current/fixes/anidb_selection_preflight.py
   ```
 
   Exit codes: `0` = the conversion is unambiguous, `1` = blocked (each row is listed), `2` = the file can't be read as a v54 database.

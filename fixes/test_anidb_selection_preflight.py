@@ -1,11 +1,16 @@
-"""Read-only preflight for the AniDB-first (v55) trial key conversion."""
+"""No CI required; offline test of the read-only AniDB-first preflight."""
+import importlib.util
 import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
-from src.nextgen.storage.anidb_selection_preflight import main, preflight
+spec = importlib.util.spec_from_file_location('anidb_selection_preflight',
+                                              Path(__file__).with_name('anidb_selection_preflight.py'))
+fix = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fix)
+main, preflight = fix.main, fix.preflight
 from src.nextgen.storage.sqlite import initialize
 
 HASH = 'a' * 40
@@ -85,7 +90,8 @@ class PreflightTests(unittest.TestCase):
 
     def test_wrong_version_blocks_without_reading(self):
         self.db.execute('PRAGMA user_version=53')
-        self.assertEqual(preflight(self.db)['blocking'], ['schema version 53, expected 54'])
+        self.assertEqual(preflight(self.db)['blocking'],
+                         ['schema version 53, expected %s' % fix.SCHEMA_VERSION])
 
     def test_cli_is_read_only_and_uses_exit_codes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -95,15 +101,15 @@ class PreflightTests(unittest.TestCase):
             self.db.backup(disk)
             disk.close()
             before = path.read_bytes()
-            self.assertEqual(main(['--db', str(path)]), 0)
+            self.assertEqual(main(['--database', str(path)]), 0)
             disk = sqlite3.connect(path)
             result(disk, 1, 5)
             disk.commit()
             disk.close()
             before = path.read_bytes()
-            self.assertEqual(main(['--db', str(path), '--json']), 1)
+            self.assertEqual(main(['--database', str(path), '--json']), 1)
             self.assertEqual(path.read_bytes(), before)
-            self.assertEqual(main(['--db', str(Path(tmp) / 'missing.sqlite3')]), 2)
+            self.assertEqual(main(['--database', str(Path(tmp) / 'missing.sqlite3')]), 2)
 
 
 if __name__ == '__main__':

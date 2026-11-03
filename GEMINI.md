@@ -24,6 +24,7 @@
 ## Architecture & Project Boundaries
 
 - **NextGen Focus**: Active development belongs exclusively in `src/nextgen/`. Legacy code in `src/legacy/` is reference-only for domain rules and regression scenarios.
+- **One-time scripts**: Preflight checks, data repairs and other one-time operations go in `fixes/` as a single standalone script (preview/read-only by default) with its offline test in `fixes/`, reusing helpers from existing `fixes/` scripts. Never add them as modules under `src/nextgen/`.
 - **Database & Schemas**: Follow existing SQLite migration and schema patterns (`src/nextgen/`). Keep schema changes clean, immutable, and explicit.
 - **Testing**: Maintain high test reliability with `pytest`. Ensure tests run deterministically and exercise failure/cleanup paths.
 
