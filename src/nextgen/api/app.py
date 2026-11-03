@@ -944,7 +944,9 @@ class Application:
             placed="""(SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
                 FROM recognized_episodes UNION
                 SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)) x"""
+                FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id) UNION
+                SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
+                FROM release_verifications WHERE tvdb_order='official') x"""
             records=db.execute(f"""
                 SELECT x.tvdb_season,x.tvdb_episode FROM sonarr_backfill_results b
                 JOIN trial_plans p USING(plan_id) JOIN {placed}
@@ -955,8 +957,16 @@ class Application:
                 FROM jobs j JOIN trial_plans p
                 ON p.plan_id=json_extract(j.payload_json,'$.plan_id') JOIN {placed}
                 ON x.anidb_id=p.anidb_id
-                AND x.anidb_episode_number=json_extract(j.payload_json,'$.exhausted_episode')
-                WHERE j.job_id=? AND json_type(j.payload_json,'$.exhausted_episode')='integer'
+                AND x.anidb_episode_number=COALESCE(
+                    json_extract(j.payload_json,'$.exhausted_episode'),
+                    json_extract(j.payload_json,'$.fallback_episode'),
+                    json_extract(j.payload_json,'$.retry_episode')
+                )
+                WHERE j.job_id=? AND (
+                    json_type(j.payload_json,'$.exhausted_episode')='integer' OR
+                    json_type(j.payload_json,'$.fallback_episode')='integer' OR
+                    json_type(j.payload_json,'$.retry_episode')='integer'
+                )
                 ORDER BY 1,2 LIMIT 101
             """,(job_id,job_id)).fetchall()
         if not records and kind in ('VERIFY_RELEASE','EVALUATE_TRIAL','IDENTIFY_ANIME') and event_id is not None:
