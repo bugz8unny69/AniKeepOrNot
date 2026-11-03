@@ -499,7 +499,7 @@ test('Search again defaults to cached magnets and checks Delete cache only on re
     };
     await h.run('openSeries(123)');
     const row = h.elements.get('series-missing').children[0];
-    const retry = row.children[2].children[0];
+    const retry = row.children[2].children.find(x => x.textContent === 'Search again');
     assert.equal(retry.textContent, 'Search again');
     const submitted = retry.listeners.click();
     const dialog = h.elements.get('search-again-dialog');
@@ -599,9 +599,9 @@ test('manual candidate form submits the selected episode without a second modal'
   buttons[1].listeners.click();
   assert.equal(h.elements.get('series-manual-episode').textContent,'S01E05');
   assert.equal(h.elements.get('series-manual-panel').hidden,false);
-  h.elements.get('series-manual-title').value='Example Anime S01E05';
-  h.elements.get('series-manual-magnet').value='magnet:?xt=urn:btih:'+'a'.repeat(40);
-  h.elements.get('series-manual-source').value='magnet';
+  h.ctx.document.getElementById('series-manual-title').value='Example Anime S01E05';
+  h.ctx.document.getElementById('series-manual-magnet').value='magnet:?xt=urn:btih:'+'a'.repeat(40);
+  h.ctx.document.getElementById('series-manual-source').value='magnet';
   await h.elements.get('series-manual-form').listeners.submit({preventDefault() {}});
   const action=calls.find(x=>x.url.endsWith('/submit'));
   assert.equal(action.url,'/api/v1/intake/series/123/episodes/1/5/submit');

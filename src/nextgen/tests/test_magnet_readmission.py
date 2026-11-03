@@ -73,6 +73,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
                 'DROP TABLE anime_title_metadata;\n'
                 'DROP TABLE batch_metadata_admissions;\n'
                 'DROP TABLE prowlarr_search_snapshots;\n'
+                'DROP TABLE manual_release_submissions;\n'
                 'ALTER TABLE anime_review_decisions DROP COLUMN reason_text;\n'
                 'PRAGMA user_version=46;\nCOMMIT;')
             db.executescript((SQL_DIR/'047_released_magnet_intents.sql').read_text())
@@ -83,6 +84,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'052_anime_title_metadata.sql').read_text())
             db.executescript((SQL_DIR/'053_waiting_for_dub_results.sql').read_text())
             db.executescript((SQL_DIR/'054_prowlarr_search_snapshots.sql').read_text())
+            db.executescript((SQL_DIR/'055_manual_release_submissions.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM sonarr_magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

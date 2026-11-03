@@ -21,7 +21,7 @@ from src.nextgen.history import append_event_history
 from src.nextgen.job_contracts import parse_payload
 from src.nextgen.providers.release_mapping import declared_episode
 from src.nextgen.release_contracts import ReleaseNotReady
-from src.nextgen.storage.job_queue import JobQueue
+from src.nextgen.storage.job_queue import JobQueue, QueueUnavailable
 from src.nextgen.storage.sqlite import enqueue_job_with_receipt, persist_identity, transaction
 from src.nextgen.storage.series_intake import plan_window
 
@@ -83,7 +83,9 @@ def _candidate(db, aid, season, episode):
         raise ManualSubmissionUnavailable()
     # Never add a candidate for an episode that is already staged.
     if db.execute(
-        "SELECT 1 FROM staging_publications s JOIN episode_reservations r USING(reservation_id) "
+        "SELECT 1 FROM staging_publications s "
+        "JOIN acquisition_plans p USING(plan_id) "
+        "JOIN episode_reservations r USING(reservation_id) "
         "WHERE s.state='PUBLISHED' AND r.anidb_id=? AND r.tvdb_season=? AND r.tvdb_episode=? "
         'LIMIT 1', (aid, season, episode)).fetchone():
         raise ManualSubmissionUnavailable()
@@ -183,9 +185,12 @@ def metainfo_for(database, event_id, digest):
     """The original uploaded BEP3 bytes; never supplied through a job payload."""
     if type(event_id) is not int or event_id < 1:
         return None
-    with JobQueue(database).connection() as db:
-        row = db.execute(
-            'SELECT metainfo FROM manual_release_submissions '
-            'WHERE event_id=? AND info_hash=? AND source=\'torrent\'',
-            (event_id,digest)).fetchone()
-    return None if row is None else bytes(row[0])
+    try:
+        with JobQueue(database).connection() as db:
+            row = db.execute(
+                'SELECT metainfo FROM manual_release_submissions '
+                'WHERE event_id=? AND info_hash=? AND source=\'torrent\'',
+                (event_id,digest)).fetchone()
+        return None if row is None else bytes(row[0])
+    except (QueueUnavailable, OSError, sqlite3.Error):
+        return None
