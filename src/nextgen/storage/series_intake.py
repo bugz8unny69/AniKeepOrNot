@@ -476,6 +476,11 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
                 if has_candidates:
                     return _search_episode(db, plan_id, numbers, episode, event_id, parent_job,
                                            exhausted=True, delete_cache=delete_cache)
+            elif prior and prior[0] == 'NO_RESULTS' and not delete_cache:
+                from src.nextgen.storage.sonarr_cached_retry import load_cached
+                if load_cached(database, plan_id, episode, False) is not None:
+                    return _search_episode(db, plan_id, numbers, episode, event_id, parent_job,
+                                           exhausted=True, delete_cache=False)
             return _search_episode(db, plan_id, numbers, episode, event_id, parent_job)
     # Waiting for dub: "Search again" is the held job's existing Retry.
     from src.nextgen.storage.review_retry import request_review_retry, RetryNotAllowed, RetryStale

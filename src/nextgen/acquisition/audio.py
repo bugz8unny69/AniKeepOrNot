@@ -28,15 +28,23 @@ _TAG = re.compile(
     r')(?![a-z0-9])', re.I)
 
 
-def required_languages(mode):
-    """Audio languages ffprobe must find; empty means no language check."""
+def required_languages(mode=None):
+    """Audio languages ffprobe must find.
+
+    If the configuration variable has no value (None or empty), defaults to 'japanese'.
+    Passing 'none' is an invalid mode and raises ValueError.
+    """
+    if mode is None or mode == '':
+        mode = JAPANESE
+    if mode == 'none':
+        raise ValueError("invalid audio check: 'none' is not a valid language requirement")
     try:
         return _REQUIRED[mode]
     except (KeyError, TypeError):
         raise ValueError('unknown audio check') from None
 
 
-def wants_english(mode):
+def wants_english(mode=None):
     return 'eng' in required_languages(mode)
 
 

@@ -516,6 +516,33 @@ test('Search again defaults to cached magnets and checks Delete cache only on re
 });
 
 
+test('NO_RESULTS renders as No usable candidates and offers Search again', async () => {
+  const h = await harness();
+  const calls = [];
+  h.ctx.fetch = async (url, options = {}) => {
+    calls.push({url, options});
+    if (url === '/api/v1/intake/series/123')
+      return response({anidb_id:123,title:'Example Anime',english_title:null,
+        episodes:[],missing:[{anidb_episode:2,season:1,episode:2,status:'NO_RESULTS',can_retry:true}],
+        keep_operations:[],reject_operations:[],rejection:null});
+    return response({job_id:43,reused:false,items:[],next_before_id:null});
+  };
+  await h.run('openSeries(123)');
+  const row = h.elements.get('series-missing').children[0];
+  assert.equal(row.children[1].textContent, 'No usable candidates');
+  const retry = row.children[2].children.find(x => x.textContent === 'Search again');
+  assert.ok(retry);
+  const submitted = retry.listeners.click();
+  const dialog = h.elements.get('search-again-dialog');
+  assert.equal(dialog.open, true);
+  dialog.returnValue = 'search'; dialog.close();
+  await submitted;
+  const posts = calls.filter(x => x.options.method === 'POST');
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, '/api/v1/intake/series/123/backfill/2/retry');
+});
+
+
 test('failed anchor offers guarded retry, try-next and a direct Jobs link', async () => {
   for (const action of ['retry', 'cancel']) {
     const h = await harness();

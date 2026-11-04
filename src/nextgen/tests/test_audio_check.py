@@ -2,7 +2,7 @@
 import json
 import unittest
 
-from src.nextgen.acquisition.audio import audio_tagged, dual_audio_tagged, required_languages
+from src.nextgen.acquisition.audio import audio_tagged, dual_audio_tagged, required_languages, wants_english
 from src.nextgen.acquisition.media import AudioMissing, parse_probe
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release
 from src.nextgen.jobs.evaluate_trial_job import (
@@ -64,6 +64,27 @@ class ProbeLanguageTests(unittest.TestCase):
     def test_off_skips_the_language_check_only(self):
         self.assertEqual(parse_probe(probe_bytes(languages=('und',)), '.mkv', 'off')[1], ())
         self.assertEqual(required_languages('off'), frozenset())
+
+    def test_default_and_empty_mode_defaults_to_japanese(self):
+        self.assertEqual(required_languages(), frozenset({'jpn'}))
+        self.assertEqual(required_languages(None), frozenset({'jpn'}))
+        self.assertEqual(required_languages(''), frozenset({'jpn'}))
+        self.assertFalse(wants_english(None))
+        self.assertFalse(wants_english(''))
+
+    def test_none_is_code_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            required_languages('none')
+        self.assertIn("'none' is not a valid language requirement", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            wants_english('none')
+
+    def test_configuration_audio_check_defaults_to_japanese_when_unset(self):
+        from src.nextgen.configuration_schema import ConfigurationSnapshot, ConfigurationError, validate_values
+        snap = ConfigurationSnapshot(1, {'acquisition': {'audio_check': ''}})
+        self.assertEqual(snap.value('acquisition.audio_check'), 'japanese')
+        with self.assertRaises(ConfigurationError):
+            validate_values({'acquisition': {'audio_check': 'none'}})
 
     def test_multi_ad_hint_still_requires_actual_dual_audio_in_probe(self):
         title = '[SubsPlease] Some Show - 01 (720p) [MULTi AD].mkv'

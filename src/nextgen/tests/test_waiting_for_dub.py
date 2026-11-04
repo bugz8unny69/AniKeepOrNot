@@ -144,8 +144,13 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
     async def test_check_only_runs_when_english_is_required(self):
         await self.exhausted(audio='japanese')
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('NEEDS_REVIEW', 'SONARR_CANDIDATES_EXHAUSTED'))
+        self.assertEqual(self.state(), ('CANCELED', 'SONARR_CANDIDATES_EXHAUSTED'))
         self.assertEqual(self.fake.searches, 0)
+        self.assertEqual(self.rows('SELECT status FROM sonarr_backfill_results WHERE anidb_episode_number=2'),
+                         [('NO_RESULTS',)])
+        missing = next(x for x in self.series()['missing'] if x['anidb_episode'] == 2)
+        self.assertEqual(missing['status'], 'NO_RESULTS')
+        self.assertTrue(missing['can_retry'])
 
     async def test_search_again_tries_only_new_dual_audio_releases(self):
         await self.exhausted()

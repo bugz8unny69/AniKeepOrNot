@@ -476,6 +476,12 @@ class DubExhausted:
     episode: int
 
 
+@dataclass(frozen=True)
+class CandidatesExhausted:
+    plan: BackfillBatch
+    episode: int
+
+
 def _audio_only(db, plan_id, episode):
     """Hashes tried for this episode when all candidates are failed."""
     rows = db.execute(
@@ -573,6 +579,25 @@ def persist_dub_exhausted(db, claim, value):
         "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,NULL,'WAITING_FOR_DUB',0,0,0,?) "
         "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "
         "status='WAITING_FOR_DUB',observed_at_ms=excluded.observed_at_ms",
+        (plan.plan_id, episode, claim.job_id, now)
+    )
+    return ()
+
+
+def persist_candidates_exhausted(db, claim, value):
+    """Mark the episode as NO_RESULTS after candidate exhaustion."""
+    if (not db.in_transaction or type(value) is not CandidatesExhausted
+            or claim.kind != 'DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or type(value.plan) is not BackfillBatch or value.episode not in value.plan.numbers):
+        raise BackfillConflict()
+    plan, episode = value.plan, value.episode
+    now = int(time.time() * 1000)
+    db.execute(
+        "INSERT INTO sonarr_backfill_results("
+        "plan_id,anidb_episode_number,job_id,sonarr_episode_id,tvdb_episode_id,status,"
+        "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,NULL,'NO_RESULTS',0,0,0,?) "
+        "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "
+        "status='NO_RESULTS',observed_at_ms=excluded.observed_at_ms",
         (plan.plan_id, episode, claim.job_id, now)
     )
     return ()

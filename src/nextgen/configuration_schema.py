@@ -202,7 +202,9 @@ def validate_values(value, *, fields=FIELDS):
                 if type(item) is not int or item not in (720, 1080, 2160):
                     raise ConfigurationError()
             elif spec.kind == "audio_check":
-                if type(item) is not str or item not in ("off", "japanese", "japanese_english"):
+                if item is None or item == "":
+                    item = "japanese"
+                elif type(item) is not str or item not in ("off", "japanese", "japanese_english"):
                     raise ConfigurationError()
             elif spec.kind == "title_language":
                 if type(item) is not str or item not in ("english", "japanese"):
@@ -305,7 +307,10 @@ class ConfigurationSnapshot:
         if type(path) is not str or path not in FIELDS:
             raise ConfigurationError()
         section, key = path.split(".")
-        return self.values[section][key]
+        val = self.values[section][key]
+        if path == "acquisition.audio_check" and (val is None or val == ""):
+            return "japanese"
+        return val
 
     def to_document(self):
         return {"schema_version": self.schema_version, "revision": self.revision,
@@ -642,7 +647,10 @@ class OperationConfiguration:
         if type(path) is not str or path not in FIELDS:
             raise ConfigurationError()
         section, key = path.split(".")
-        return self.values[section][key]
+        val = self.values[section][key]
+        if path == "acquisition.audio_check" and (val is None or val == ""):
+            return "japanese"
+        return val
 
     def logging_settings(self):
         return parse_settings({"logging": _plain(self.values["logging"])})

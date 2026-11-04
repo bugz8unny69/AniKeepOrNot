@@ -21,8 +21,9 @@ from src.nextgen.storage.sonarr_backfill import (
     load_batch, persist_observations, FallbackCompletion, load_fallback,
     persist_fallback, FallbackMissing, persist_fallback_missing,
     AUTOMATIC_RETRY_MS, automatic_retry_used,
-    WAITING_FOR_DUB, DubFound, DubExhausted, load_dub_search, persist_dub_found,
-    persist_dub_exhausted, load_tried_hashes,
+    WAITING_FOR_DUB, DubFound, DubExhausted, CandidatesExhausted,
+    load_dub_search, persist_dub_found, persist_dub_exhausted,
+    persist_candidates_exhausted, load_tried_hashes,
 )
 from src.nextgen.storage.sonarr_cached_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
@@ -92,25 +93,26 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             if exhausted_episode is not None:
                 if not acquire_candidates or exhausted_episode not in plan.numbers:
                     raise BackfillConflict()
-                # Only when English is required, all releases failed and one failed audio:
-                # wait for a dub instead of review. Retry runs this again.
-                target = (await blocking(load_dub_search,
-                    context.configuration.value('storage.database_path'),plan_id,exhausted_episode)
-                    if wants_english(context.configuration.value('acquisition.audio_check')) else None)
-                if target is None:
-                    return Outcome('review','SONARR_CANDIDATES_EXHAUSTED')
+                req_eng = wants_english(context.configuration.value('acquisition.audio_check'))
                 if not delete_cache:
                     cached = await blocking(
                         load_cached,context.configuration.value('storage.database_path'),
-                        plan_id,exhausted_episode,True)
+                        plan_id,exhausted_episode,req_eng)
                     if cached is not None:
                         log.info('Backfill episode %s: retrying cached metadata source',exhausted_episode)
-                        return Outcome(value=(plan,exhausted_episode,cached))
+                        return Outcome(value=(plan,exhausted_episode,cached,req_eng))
                     # A cache miss is not proof that there is no dub. Search
                     # Prowlarr instead of putting the same episode back on hold
                     # without ever checking for new releases.
                     log.info('Backfill episode %s: no eligible cached magnet; searching Prowlarr',
                              exhausted_episode)
+                target = (await blocking(load_dub_search,
+                    context.configuration.value('storage.database_path'),plan_id,exhausted_episode)
+                    if req_eng else None)
+                if target is None:
+                    log.info('Backfill episode %s: candidates exhausted without usable releases', exhausted_episode)
+                    return Outcome('cancel', 'SONARR_CANDIDATES_EXHAUSTED',
+                                   value=CandidatesExhausted(plan, exhausted_episode))
                 client = connect('exhausted')
                 search_kwargs = {'tried': target.tried} if isinstance(client, Client) else {}
                 result = await blocking(client.search,plan.anidb_id,exhausted_episode,target.identity,**search_kwargs)
@@ -209,15 +211,18 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_dub_found(db,claim,value)
             if type(value) is DubExhausted:
                 return persist_dub_exhausted(db,claim,value)
-            if type(value) is tuple and len(value)==3 and type(value[2]) is CachedTorrent:
-                return persist_cached(db,claim,*value,True)
+            if type(value) is CandidatesExhausted:
+                return persist_candidates_exhausted(db,claim,value)
+            if type(value) is tuple and len(value) in (3, 4) and type(value[2]) is CachedTorrent:
+                eng = value[3] if len(value) == 4 else True
+                return persist_cached(db,claim,value[0],value[1],value[2],eng)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
         except BackfillConflict:
             raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
 
     def route(value):
-        if (type(value) in (FallbackCompletion,FallbackMissing,DubFound,DubExhausted)
-                or type(value) is tuple and len(value)==3 and type(value[2]) is CachedTorrent): return ()
+        if (type(value) in (FallbackCompletion,FallbackMissing,DubFound,DubExhausted,CandidatesExhausted)
+                or type(value) is tuple and len(value) in (3, 4) and type(value[2]) is CachedTorrent): return ()
         if type(value) is not BackfillCompletion: raise ValueError('typed backfill result required')
         if value.retry_episode is not None: return ()
         next_start=value.plan.start+len(value.plan.numbers)
