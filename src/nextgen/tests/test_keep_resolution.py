@@ -15,16 +15,19 @@ from src.nextgen.storage.sonarr_backfill import load_batch, _plan
 
 
 class FakeProviders:
-    def __init__(self, *, mapping, tvdb, airdates, fail_tvdb=False):
+    def __init__(self, *, mapping, tvdb, airdates, episodes=None, fail_tvdb=False):
         self._mapping = mapping
         self._tvdb = tvdb
         self._airdates = airdates
+        self._episodes = episodes
         self._fail_tvdb = fail_tvdb
 
     def anime(self, aid):
         return {'anidb_id': aid, 'title': 'Test Show', 'titles': ('Test Show',)}
 
     def episodes(self, aid):
+        if self._episodes is not None:
+            return self._episodes
         return {n: 5000 + n for n in self._airdates}
 
     def airdates(self, aid):
@@ -51,48 +54,51 @@ class KeepResolutionTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def _seed_staged_unmapped(self, db, *, aid=50, tid=100, ep_num=1, eid=5001):
-        d64 = 'd' * 64
-        a40 = 'a' * 40
-        b64 = 'b' * 64
-        c32 = 'c' * 32
-        f64 = 'f' * 64
+    def _seed_staged_unmapped(self, db, *, aid=50, tid=100, ep_num=1, eid=5001,
+                              trial_plan_id=1, acq_plan_id=1, res_id=1,
+                              verification_id=1, stage_job_id=14, op_id=20):
+        d64 = f"{verification_id:064x}"
+        a40 = f"{acq_plan_id:040x}"
+        b64 = f"{acq_plan_id:064x}"
+        c32 = f"{acq_plan_id:032x}"
+        f64 = f"{acq_plan_id:064x}"
+        job_base = 1000 * aid + verification_id * 10
         db.executescript(f"""
-            INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES(1,'manual-release',X'61',1);
-            INSERT INTO identified_anime VALUES({aid},{tid},'Test Show');
-            INSERT INTO identity_results VALUES(1,1,{aid},2,'{{"anime":{{"anidb_id":{aid},"tvdb_series_id":{tid}}}}}',1);
-            INSERT INTO identified_episodes VALUES({eid}, {aid});
-            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
-              VALUES(10,1,'VERIFY_RELEASE','{{}}','DONE',0,0,0);
+            INSERT OR IGNORE INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES(1,'manual-release',X'61',1);
+            INSERT OR IGNORE INTO identified_anime VALUES({aid},{tid},'Test Show {aid}');
+            INSERT OR IGNORE INTO identity_results VALUES({verification_id},1,{aid},2,'{{"anime":{{"anidb_id":{aid},"tvdb_series_id":{tid}}}}}',1);
+            INSERT OR IGNORE INTO identified_episodes VALUES({eid}, {aid});
+            INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES({job_base + 10},1,'VERIFY_RELEASE','{{}}','DONE',0,0,0);
             INSERT INTO release_verifications(verification_id,job_id,identity_result_id,anidb_id,
               release_sha256,verification_scope,anidb_episode_number,anidb_episode_id,tvdb_series_id,
               tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms)
-              VALUES(1,10,1,{aid},'{d64}','DECLARED_SINGLE_EPISODE',{ep_num},{eid},{tid},NULL,NULL,NULL,1);
+              VALUES({verification_id},{job_base + 10},{verification_id},{aid},'{d64}','DECLARED_SINGLE_EPISODE',{ep_num},{eid},{tid},NULL,NULL,NULL,1);
             INSERT INTO trial_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
               backfill_count,following_count,configuration_revision,created_at_ms)
-              VALUES(1,{aid},{tid},1,'official',1,1,6,3,1,1);
-            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
-              VALUES(11,1,'RESERVE_EPISODE','{{}}','DONE',0,0,0);
+              VALUES({trial_plan_id},{aid},{tid},1,'official',{verification_id},{ep_num},6,3,1,1);
+            INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES({job_base + 11},1,'RESERVE_EPISODE','{{}}','DONE',0,0,0);
             INSERT INTO episode_reservations(reservation_id,owner_job_id,evaluation_job_id,verification_id,
               plan_id,anidb_id,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,
-              reserved_at_ms) VALUES(1,11,2,1,1,{aid},{eid},{tid},NULL,NULL,NULL,1);
+              reserved_at_ms) VALUES({res_id},{job_base + 11},2,{verification_id},{trial_plan_id},{aid},{eid},{tid},NULL,NULL,NULL,1);
             INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
-              VALUES(1,{ep_num},NULL,NULL,NULL,'{a40}',1);
+              VALUES({trial_plan_id},{ep_num},NULL,NULL,NULL,'{a40}',1);
             INSERT INTO acquisition_plans(plan_id,job_id,reservation_id,info_hash,info_sha256,manifest_json,
               submission_marker,state,configuration_revision,prepared_at_ms)
-              VALUES(1,11,1,'{a40}','{b64}','{{}}','{c32}','PREPARED',1,1);
-            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
-              VALUES(12,1,'DOWNLOAD_TORRENT','{{}}','DONE',0,0,0);
-            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
-              VALUES(13,1,'VERIFY_MEDIA','{{}}','DONE',0,0,0);
+              VALUES({acq_plan_id},{job_base + 11},{res_id},'{a40}','{b64}','{{}}','{c32}','PREPARED',1,1);
+            INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES({job_base + 12},1,'DOWNLOAD_TORRENT','{{}}','DONE',0,0,0);
+            INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES({job_base + 13},1,'VERIFY_MEDIA','{{}}','DONE',0,0,0);
             INSERT INTO media_verifications(plan_id,job_id,download_job_id,submission_fingerprint,transfer_fingerprint,evidence_json,verified_at_ms)
-              VALUES(1,13,12,'{f64}','{f64}','{{"path":"s/S01E01.mkv"}}',1);
-            INSERT INTO job_operations(operation_id,state,created_at_ms,updated_at_ms) VALUES(20,'STAGED',1,1);
-            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
-              VALUES(14,1,'STAGE_TRIAL_MEDIA','{{}}','DONE',0,0,0);
-            INSERT INTO job_operation_members(job_id,operation_id) VALUES(14,20);
+              VALUES({acq_plan_id},{job_base + 13},{job_base + 12},'{f64}','{f64}','{{"path":"s/S01E01.mkv"}}',1);
+            INSERT OR IGNORE INTO job_operations(operation_id,state,created_at_ms,updated_at_ms) VALUES({op_id},'STAGED',1,1);
+            INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES({stage_job_id},1,'STAGE_TRIAL_MEDIA','{{}}','DONE',0,0,0);
+            INSERT OR IGNORE INTO job_operation_members(job_id,operation_id) VALUES({stage_job_id},{op_id});
             INSERT INTO staging_publications(plan_id,job_id,verification_job_id,manifest_json,receipts_json,state,created_at_ms,published_at_ms)
-              VALUES(1,14,13,'{{"entries":[{{"role":"media","path":"s/S01E01.mkv"}}],"root":"/staging"}}',
+              VALUES({acq_plan_id},{stage_job_id},{job_base + 13},'{{"entries":[{{"role":"media","path":"s/S01E01.mkv"}}],"root":"/staging"}}',
                      '[{{"role":"media","path":"s/S01E01.mkv"}}]',
                      'PUBLISHED',1,1);
         """)
@@ -384,6 +390,131 @@ class KeepResolutionTests(unittest.TestCase):
 
         with self.assertRaises(KeepReview):
             resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers, secret=secret)
+
+    def test_plan_isolation_with_different_numeric_ids_and_cross_match(self):
+        """Instruction 1 & 3: Seed different numeric IDs for acquisition plans, trial plans, and batch plans.
+        Include an unrelated anime whose trial plan ID equals another anime's acquisition plan ID.
+        """
+        # Anime A (aid=50, tid=100): trial_plan_id=10, acq_plan_id=30, res_id=20, verification_id=1, stage_job_id=14, op_id=20
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001,
+                                   trial_plan_id=10, acq_plan_id=30, res_id=20,
+                                   verification_id=1, stage_job_id=14, op_id=20)
+
+        # Unrelated Anime B (aid=60, tid=200): trial_plan_id=30 (matches Anime A's acq_plan_id!),
+        # acq_plan_id=35, res_id=25, verification_id=2, stage_job_id=24, op_id=22
+        self._seed_staged_unmapped(self.db, aid=60, tid=200, ep_num=1, eid=6001,
+                                   trial_plan_id=30, acq_plan_id=35, res_id=25,
+                                   verification_id=2, stage_job_id=24, op_id=22)
+
+        # Batch Plan for Anime C (aid=70, tid=300): batch_plan_id=40, res_id=50, stage_job_id=15
+        d64 = f"{70:064x}"
+        c40 = f"{40:040x}"
+        self.db.executescript(f"""
+            INSERT INTO identified_anime VALUES(70, 300, 'Batch Show');
+            INSERT INTO identity_results VALUES(70, 1, 70, 2, '{{"anime":{{"anidb_id":70,"tvdb_series_id":300}}}}', 1);
+            INSERT INTO identified_episodes VALUES(7001, 70);
+            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES(701, 1, 'VERIFY_BATCH', '{{}}', 'DONE', 0, 0, 0);
+            INSERT INTO batch_verifications(batch_id,job_id,identity_result_id,anidb_id,tvdb_series_id,tvdb_season,
+              release_sha256,info_hash,info_sha256,verified_at_ms)
+              VALUES(1, 701, 70, 70, 300, 1, '{d64}', '{c40}', '{d64}', 1);
+            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES(702, 1, 'EVALUATE_BATCH', '{{}}', 'DONE', 0, 0, 0);
+            INSERT INTO batch_trial_plans(plan_id,batch_id,evaluation_job_id,anchor_episode,
+              backfill_count,following_count,configuration_revision,max_episode_bytes,max_plan_bytes,planned_size_bytes,created_at_ms)
+              VALUES(40, 1, 702, 1, 5, 0, 1, 1000000, 5000000, 1000000, 1);
+            INSERT INTO batch_trial_files(plan_id,file_index,tvdb_episode,selected_size_bytes)
+              VALUES(40, 0, 1, 1000);
+            INSERT INTO batch_verified_files(batch_id,file_index,file_path,file_size_bytes,release_episode,
+              anidb_episode_number,anidb_episode_id,tvdb_season,tvdb_episode,tvdb_episode_id)
+              VALUES(1, 0, 's/S01E01.mkv', 1000, 1, 1, 7001, 1, 1, 9999);
+            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES(703, 1, 'RESERVE_BATCH', '{{}}', 'DONE', 0, 0, 0);
+            INSERT INTO batch_episode_reservations(reservation_id,plan_id,owner_job_id,file_index,
+              anidb_id,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,state,reserved_at_ms)
+              VALUES(50, 40, 703, 0, 70, 7001, 300, 1, 1, 9999, 'ACTIVE', 1);
+            INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
+              VALUES(15, 1, 'STAGE_BATCH_EPISODE', '{{}}', 'DONE', 0, 0, 0);
+            INSERT INTO batch_staging_publications(plan_id,file_index,job_id,verification_job_id,manifest_json,receipts_json,state,created_at_ms,published_at_ms)
+              VALUES(40, 0, 15, 701, '{{"entries":[{{"role":"media","path":"s/S01E01.mkv"}}],"root":"/staging"}}',
+                     '[{{"role":"media","path":"s/S01E01.mkv"}}]', 'PUBLISHED', 1, 1);
+        """)
+        self.db.commit()
+
+        # Both single trial plans have NULL placement in sonarr_episode_selections
+        sel_a = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=10").fetchone()
+        sel_b = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=30").fetchone()
+        self.assertEqual(sel_a, (None, None, None))
+        self.assertEqual(sel_b, (None, None, None))
+
+        # 1. Resolve TVDB placement for Anime A using target_job_id=14
+        mapping_a = (b'<anime-list><anime anidbid="50" tvdbid="100" defaulttvdbseason="1" episodeoffset="0">'
+                     b'</anime></anime-list>')
+        providers_a = FakeProviders(mapping=mapping_a, tvdb=((9001, 1, 1),), airdates={1: '2026-10-01'})
+        secret = Credentials('fake-key')
+
+        res_a = resolve_tvdb_placement(self.db, 50, 5001, 100, 14, client=providers_a, secret=secret)
+        self.assertEqual(res_a, (9001, 1, 1))
+
+        # Check Anime A's selection (plan_id=10) IS updated
+        sel_a_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=10").fetchone()
+        self.assertEqual(sel_a_after, (1, 1, 9001))
+
+        # Check Anime B's selection (plan_id=30, matching Anime A's acq_plan_id) is UNTOUCHED!
+        sel_b_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=30").fetchone()
+        self.assertEqual(sel_b_after, (None, None, None))
+
+        # Check Anime A's reservation (res_id=20) IS updated
+        res_a_row = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_reservations WHERE reservation_id=20").fetchone()
+        self.assertEqual(res_a_row, (1, 1, 9001))
+
+        # Check Anime B's reservation (res_id=25) is UNTOUCHED
+        res_b_row = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_reservations WHERE reservation_id=25").fetchone()
+        self.assertEqual(res_b_row, (None, None, None))
+
+        # 2. Resolve TVDB placement for Anime C batch using target_job_id=15
+        mapping_c = (b'<anime-list><anime anidbid="70" tvdbid="300" defaulttvdbseason="1" episodeoffset="0">'
+                     b'</anime></anime-list>')
+        providers_c = FakeProviders(mapping=mapping_c, tvdb=((9002, 1, 1),), airdates={1: '2026-10-01'},
+                                    episodes={1: 7001})
+
+        res_c = resolve_tvdb_placement(self.db, 70, 7001, 300, 15, client=providers_c, secret=secret)
+        self.assertEqual(res_c, (9002, 1, 1))
+
+        # Check Anime C's batch reservation (reservation_id=50, plan_id=40) IS updated
+        batch_res_row = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM batch_episode_reservations WHERE reservation_id=50").fetchone()
+        self.assertEqual(batch_res_row, (1, 1, 9002))
+
+        # Confirm sonarr_episode_selections was NOT touched for batch plan (neither plan 40 exists nor plan 30 changed)
+        sel_b_still = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=30").fetchone()
+        self.assertEqual(sel_b_still, (None, None, None))
+        sel_c_exists = self.db.execute("SELECT 1 FROM sonarr_episode_selections WHERE plan_id=40").fetchone()
+        self.assertIsNone(sel_c_exists)
+
+    def test_missing_secret_during_keep_maps_to_keep_configuration_real_path(self):
+        """Instruction 2: Missing TVDB credentials in real SecretStore map ProviderConfigurationError to KeepConfiguration."""
+        import tempfile
+        from src.nextgen.configuration import ConfigurationStore
+        from src.nextgen.secrets import SecretStore
+        from src.nextgen.sonarr import KeepConfiguration
+
+        self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_store = ConfigurationStore(tmpdir)
+            cfg_store.initialize({"anidb": {"client_name": "testclient"}})
+            sec_store = SecretStore(tmpdir)
+
+            # Case A: Real uninitialized SecretStore without secrets file
+            resolver = make_keep_resolver(cfg_store.read(), sec_store)
+            with self.assertRaises(KeepConfiguration):
+                resolver(self.db, 50, 5001, 100, 14)
+
+            # Case B: Initialized SecretStore with empty tvdb_api_key
+            sec_store.initialize(tvdb_api_key='')
+            resolver2 = make_keep_resolver(cfg_store.read(), sec_store)
+            with self.assertRaises(KeepConfiguration):
+                resolver2(self.db, 50, 5001, 100, 14)
 
 
 if __name__ == '__main__':
