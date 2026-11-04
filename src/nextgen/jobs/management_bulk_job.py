@@ -22,7 +22,7 @@ def registration():
                 or any(type(job) is not int or not 1 <= job <= (1 << 63)-1
                        for job in payload['job_ids'])
                 or len(set(payload['job_ids'])) != len(payload['job_ids'])):
-            return Outcome('review', 'JOB_PAYLOAD_INVALID')
+            return Outcome('cancel', 'JOB_PAYLOAD_INVALID')
         action,ids=payload['action'],payload['job_ids']
         database=context.configuration.value('storage.database_path')
 
@@ -46,6 +46,6 @@ def registration():
             return rejected
 
         rejected=await blocking(apply)
-        return Outcome('review','BULK_MANAGEMENT_PARTIAL') if rejected else Outcome()
+        return Outcome('cancel','BULK_MANAGEMENT_PARTIAL') if rejected else Outcome()
 
     return Registration(KIND,DEFINITION,execute)

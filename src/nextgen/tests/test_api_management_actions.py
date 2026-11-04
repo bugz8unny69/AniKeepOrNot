@@ -179,6 +179,30 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('CANCELED',)])
         self.assertEqual(self.rows('SELECT count(*) FROM management_actions'),[(0,)])
 
+    async def test_bulk_worker_partial_failure_cancels_with_reason_not_review(self):
+        from src.nextgen.jobs.management_bulk_job import registration
+        from src.nextgen.job_contracts import Registry
+        from src.nextgen.worker import Worker
+        jobs = []
+        for index in range(6):
+            _, created, _ = await self.request('POST', '/api/v1/webhook',
+                self.release(release_name=f'Test Anime - {index}'), token=WEB)
+            jobs.append(created['data']['job_id'])
+        # Cancel one of them first so retry/cancel on it will reject
+        with connect(self.database) as db, transaction(db):
+            db.execute("UPDATE jobs SET state='CANCELED' WHERE job_id=?", (jobs[0],))
+            db.execute('UPDATE jobs SET available_at_ms=9999999999999')
+        status, result, _ = await self.request('POST', '/api/v1/jobs/bulk',
+            {'action': 'retry', 'job_ids': jobs}, token=ADMIN)
+        self.assertEqual(status, 202)
+        batch = result['data']['job_id']
+        worker = Worker(self.store, self.startup, Registry((registration(),)))
+        self.addAsyncCleanup(worker.close)
+        self.assertTrue(await worker.attempt())
+        # Bulk job must be CANCELED with BULK_MANAGEMENT_PARTIAL, never NEEDS_REVIEW
+        self.assertEqual(self.rows('SELECT state, last_reason_code FROM jobs WHERE job_id=?', (batch,)),
+                         [('CANCELED', 'BULK_MANAGEMENT_PARTIAL')])
+
 
 class ActionMessageTests(unittest.TestCase):
     def test_disabled_explanations_follow_state_not_stale_progress_reason(self):
