@@ -13,8 +13,10 @@ from src.nextgen.sonarr_episode import VerifiedEpisode
 
 class SelectionConflict(ValueError):
     reason_code = 'SONARR_SELECTION_CONFLICT'
-    def __init__(self):
-        super().__init__('Backfill candidate selection needs review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Backfill candidate selection needs review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 def select(db, *, plan_id, episode, identity, result, release, policy=None):

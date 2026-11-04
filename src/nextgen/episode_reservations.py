@@ -15,8 +15,12 @@ class EpisodeStaged(ValueError):
 
 class EpisodeReserved(ValueError):
     reason_code = 'EPISODE_RESERVED'
-    def __init__(self):
-        super().__init__('Another job has reserved this episode.')
+    def __init__(self, message=None, *, owner_job_id=None, operation_id=None, failed_check=None, failed_path=None):
+        super().__init__(message or 'Another job has reserved this episode.')
+        self.owner_job_id = owner_job_id
+        self.operation_id = operation_id
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 @dataclass(frozen=True)

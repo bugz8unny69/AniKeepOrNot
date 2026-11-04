@@ -11,22 +11,34 @@ from src.nextgen.history import integer
 
 class ClientUnavailable(RuntimeError):
     reason_code='DOWNLOAD_CLIENT_UNAVAILABLE'
-    def __init__(self):super().__init__('The download client could not be reached safely.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The download client could not be reached safely.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class ClientInvalid(ValueError):
     reason_code='DOWNLOAD_CLIENT_RESPONSE_INVALID'
-    def __init__(self):super().__init__('The download client returned information that needs review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The download client returned information that needs review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class ClientAuthenticationFailed(ValueError):
     reason_code='DOWNLOAD_CLIENT_AUTH_FAILED'
-    def __init__(self):super().__init__('The download client rejected authentication.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The download client rejected authentication.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class ClientUnsupported(ValueError):
     reason_code='DOWNLOAD_CLIENT_UNSUPPORTED'
-    def __init__(self):super().__init__('This download client version is not supported.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'This download client version is not supported.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 @dataclass(frozen=True)

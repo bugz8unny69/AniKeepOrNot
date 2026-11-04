@@ -880,10 +880,18 @@ async function openMatching(jobId) {
     const ev = result.evidence;
     const lookup = matchingSection(body, 'Release and lookup');
     const lookupGrid = node('div', null, 'trace-grid'); lookup.appendChild(lookupGrid);
+    if (result.release_name) matchingCard(lookupGrid, 'Original release name', result.release_name);
     matchingCard(lookupGrid, 'Release season', ev.season == null ? 'Not specified' : `Season ${ev.season}`);
     matchingCard(lookupGrid, 'Episode candidate', ev.episode == null ? 'Not parsed' : `Episode ${ev.episode}`);
     matchingCard(lookupGrid, 'AniDB search queries', ev.queries?.length ? ev.queries.join(' · ') : 'Not searched');
     const checks = matchingSection(body, 'Verification checks');
+    const failedCheck = (ev.checks || []).find(c => c.status === 'failed');
+    if (failedCheck) {
+      const banner = node('div', null, 'trace-card');
+      banner.appendChild(node('strong', `Blocking check: ${MATCHING_STEPS[failedCheck.step] || failedCheck.step}`));
+      if (failedCheck.note) banner.appendChild(node('p', MATCHING_NOTES[failedCheck.note] || failedCheck.note, 'muted'));
+      checks.appendChild(banner);
+    }
     if (!ev.checks?.length) checks.appendChild(node('p', 'No checks were recorded.', 'muted'));
     for (const check of ev.checks || []) {
       const line = node('div', null, 'trace-check');
@@ -895,7 +903,9 @@ async function openMatching(jobId) {
       if (check.note) content.appendChild(node('small', MATCHING_NOTES[check.note] || 'No additional details recorded.', 'muted'));
       line.appendChild(content); checks.appendChild(line);
     }
-    const candidates = matchingSection(body, 'AniDB candidates');
+    const candCount = ev.anidb_candidates?.length || 0;
+    const candIds = (ev.anidb_candidates || []).map(c => '#' + c.anidb_id).join(', ');
+    const candidates = matchingSection(body, `AniDB candidates (${candCount}` + (candCount > 0 ? ` · ${candIds})` : ')'));
     if (!ev.anidb_candidates?.length)
       candidates.appendChild(node('p', 'No AniDB candidates recorded. The worker may have stopped before querying AniDB.', 'muted'));
     for (const candidate of ev.anidb_candidates || []) {

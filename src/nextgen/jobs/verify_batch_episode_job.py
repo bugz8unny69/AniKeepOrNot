@@ -15,7 +15,7 @@ from src.nextgen.batch.media import verify_batch_episode_file
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
 from src.nextgen.job_contracts import (
-    CompletionRejected, Outcome, Registration, Successor,
+    CompletionRejected, Outcome, Registration, Successor, failure_facts,
 )
 from src.nextgen.storage.batch_episode_source import BatchEpisodeSource
 from src.nextgen.storage.batch_episode_media import persist_batch_episode_media
@@ -35,7 +35,7 @@ def _persist(db,claim,value):
             raise MediaInvalid()
         persist_batch_episode_media(db,claim,value['file_index'],value['media'])
     except (MediaInvalid,AcquisitionConflict) as exc:
-        raise CompletionRejected(Outcome('review',exc.reason_code)) from None
+        raise CompletionRejected(Outcome('review',exc.reason_code, facts=failure_facts(exc))) from None
 
 
 def registration(read_batch_metainfo,*,source_factory=BatchEpisodeSource,
@@ -78,11 +78,11 @@ def registration(read_batch_metainfo,*,source_factory=BatchEpisodeSource,
         except MetadataSourceUnavailable as exc:
             return Outcome('retry',exc.reason_code)
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except (MediaUnavailable,ProbeUnavailable):
             return Outcome('retry','MEDIA_VERIFICATION_UNAVAILABLE')
         except (MediaInvalid,AcquisitionConflict,MetadataInvalid,SourceMissing) as exc:
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
 
     def route(value):
         return () if staging_kind is None else (Successor.create(staging_kind,{

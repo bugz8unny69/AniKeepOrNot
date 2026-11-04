@@ -75,6 +75,34 @@ def _cleanup_target(db, job_id):
     return None if row is None else row[0]
 
 
+def _disabled_reason(db, job_id, row):
+    if row is None:
+        return CATALOG.reason('MANAGEMENT_ACTION_UNAVAILABLE')
+    kind, state, attempt, reason, token, expiry = row
+    if state == 'RUNNING' or token is not None or expiry is not None:
+        return CATALOG.reason('MANAGEMENT_JOB_RUNNING')
+    if state == 'PENDING':
+        return CATALOG.reason('MANAGEMENT_JOB_QUEUED')
+    if state == 'DONE':
+        return CATALOG.reason('MANAGEMENT_JOB_COMPLETE')
+    if state == 'CANCELED':
+        return CATALOG.reason('MANAGEMENT_JOB_CANCELED')
+    if db.execute('SELECT 1 FROM management_actions WHERE job_id=?', (job_id,)).fetchone():
+        return CATALOG.reason('MANAGEMENT_JOB_RUNNING')
+    if db.execute('SELECT 1 FROM jobs WHERE created_by_job_id=? LIMIT 1', (job_id,)).fetchone():
+        return CATALOG.reason('MANAGEMENT_JOB_COMPLETE')
+    op = db.execute(
+        'SELECT o.state, o.cleanup_state FROM job_operations o JOIN job_operation_members m '
+        'USING(operation_id) WHERE m.job_id=?', (job_id,)).fetchone()
+    if op is not None and op[0] in ('CANCEL_REQUESTED', 'CANCELED'):
+        return CATALOG.reason('CANCELLATION_DRAINING' if op[1] == 'RUNNING' else 'MANAGEMENT_ACTION_UNAVAILABLE')
+    if state == 'ON_HOLD' and reason == 'EPISODE_RESERVED':
+        return CATALOG.reason('MANAGEMENT_JOB_WAITING')
+    if state == 'RETRY_WAIT':
+        return CATALOG.reason('MANAGEMENT_JOB_WAITING')
+    return CATALOG.reason('MANAGEMENT_ACTION_UNAVAILABLE')
+
+
 def capability(db, job_id):
     target = _cleanup_target(db, job_id)
     if target is not None:
@@ -90,7 +118,7 @@ def capability(db, job_id):
         'FROM jobs WHERE job_id=?', (job_id,)).fetchone()
     enabled = row is not None and _allowed(db, job_id, row)
     return {'enabled': enabled, 'disabled_reason': None if enabled else
-            CATALOG.reason('MANAGEMENT_ACTION_UNAVAILABLE')}
+            _disabled_reason(db, job_id, row)}
 
 
 def request_review_retry(database, job_id, *, expected_attempt, expected_reason, clock=None, delete_cache=None):

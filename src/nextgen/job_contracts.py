@@ -88,8 +88,8 @@ class Outcome:
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
         if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "cancel")
-                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio"}
-                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio") else (type(v) is not int or v < 0)
+                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code"}
+                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code") else (type(v) is not int or v < 0)
                        for k, v in self.facts.items())):
             raise ValueError("invalid outcome facts")
         if type(self.kind) is not str or self.kind not in _STATES:
@@ -161,3 +161,41 @@ class Registry:
             raise ValueError("allowed successor is not installed")
         self.entries = MappingProxyType(entries)
         self.labels = HandlerCatalog(tuple(labels.values()))
+
+
+def failure_facts(exc):
+    """Extract standard failure diagnostics (failed_check, failed_path) from an exception.
+
+    Inspects explicit attributes (.failed_check, .failed_path) or traverses traceback
+    frames matching src/nextgen/ to construct a safe location-qualified check ID.
+    """
+    if exc is None:
+        return None
+    check = getattr(exc, "failed_check", None)
+    path = getattr(exc, "failed_path", None)
+    if not check and getattr(exc, "__traceback__", None) is not None:
+        tb = exc.__traceback__
+        last_frame = None
+        while tb is not None:
+            if "src/nextgen/" in tb.tb_frame.f_code.co_filename:
+                last_frame = tb.tb_frame
+            tb = tb.tb_next
+        if last_frame is not None:
+            filename = last_frame.f_code.co_filename
+            rel = "src/nextgen/" + filename.split("src/nextgen/")[-1]
+            func = last_frame.f_code.co_name
+            line = last_frame.f_lineno
+            tag = exc.__class__.__name__[:32].upper()
+            candidate = f"{rel}:{line} {func} {tag}"
+            from src.nextgen.reasons import _CHECK
+            if _CHECK.fullmatch(candidate):
+                check = candidate
+    facts = {}
+    if check and isinstance(check, str):
+        from src.nextgen.reasons import _CHECK
+        if _CHECK.fullmatch(check):
+            facts["failed_check"] = check
+    if path and isinstance(path, str) and path.startswith("/"):
+        facts["failed_path"] = path
+    return facts or None
+

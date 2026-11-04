@@ -24,7 +24,7 @@ class Service:
     def _run(self,claim,target,cancelled):
         journal=self.journal
         def guard():
-            if cancelled.is_set():raise KeepReview()
+            if cancelled.is_set():raise KeepReview(failed_check='src/nextgen/keep_service.py:27 guard KEEP_CANCELLED')
             journal.fence(claim)
         resolver=self.resolver
         if resolver is None:

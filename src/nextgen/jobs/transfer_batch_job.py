@@ -20,7 +20,7 @@ from src.nextgen.diagnostics import log_history
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
 from src.nextgen.job_contracts import (
-    CompletionRejected, Outcome, Registration, Successor,
+    CompletionRejected, Outcome, Registration, Successor, failure_facts,
 )
 from src.nextgen.storage.batch_transfer_journal import (
     BatchTransferJournal, _record,
@@ -157,7 +157,7 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
             if intent is not None:
                 log(await blocking(
                     journal.review,context.claim,intent,submission,exc.reason_code))
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except SnapshotChanged:
             return wait('TORRENT_SNAPSHOT_CHANGED')
         except ClientUnavailable:
@@ -167,10 +167,10 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
         except MetadataSourceUnavailable as exc:
             return Outcome('retry',exc.reason_code)
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except (AcquisitionConflict,MetadataInvalid,ClientInvalid,
                 ClientAuthenticationFailed,ClientUnsupported) as exc:
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
 
     def route(value):
         return () if verification_kind is None else (

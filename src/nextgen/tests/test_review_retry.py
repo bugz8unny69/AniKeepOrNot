@@ -219,5 +219,45 @@ class ReviewRetryApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,409)
 
 
+    async def test_retry_capability_disabled_reasons_explain_exact_causes(self):
+        """W-25: Disabled action tooltip explains exact reason, not generic unavailable."""
+        from src.nextgen.storage.review_retry import capability
+        _, response, _ = await self.request('POST', '/api/v1/webhook', self.release(), token=WEB)
+        job = response['data']['job_id']
+        with connect(self.database) as db:
+            # Initially PENDING -> MANAGEMENT_JOB_QUEUED
+            cap = capability(db, job)
+            self.assertFalse(cap['enabled'])
+            self.assertEqual(cap['disabled_reason']['code'], 'MANAGEMENT_JOB_QUEUED')
+
+            # RUNNING -> MANAGEMENT_JOB_RUNNING
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='RUNNING',lease_token='token1',lease_expires_at_ms=9999999999999 WHERE job_id=?", (job,))
+            cap = capability(db, job)
+            self.assertFalse(cap['enabled'])
+            self.assertEqual(cap['disabled_reason']['code'], 'MANAGEMENT_JOB_RUNNING')
+
+            # DONE -> MANAGEMENT_JOB_COMPLETE
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='DONE',lease_token=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (job,))
+            cap = capability(db, job)
+            self.assertFalse(cap['enabled'])
+            self.assertEqual(cap['disabled_reason']['code'], 'MANAGEMENT_JOB_COMPLETE')
+
+            # CANCELED -> MANAGEMENT_JOB_CANCELED
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='CANCELED' WHERE job_id=?", (job,))
+            cap = capability(db, job)
+            self.assertFalse(cap['enabled'])
+            self.assertEqual(cap['disabled_reason']['code'], 'MANAGEMENT_JOB_CANCELED')
+
+            # ON_HOLD with EPISODE_RESERVED -> MANAGEMENT_JOB_WAITING
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='ON_HOLD',last_reason_code='EPISODE_RESERVED' WHERE job_id=?", (job,))
+            cap = capability(db, job)
+            self.assertFalse(cap['enabled'])
+            self.assertEqual(cap['disabled_reason']['code'], 'MANAGEMENT_JOB_WAITING')
+
+
 if __name__=='__main__':
     unittest.main()

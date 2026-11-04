@@ -13,17 +13,26 @@ MAX_METAINFO=4*1024*1024
 
 class MetadataInvalid(ValueError):
     reason_code='ACQUISITION_METADATA_INVALID'
-    def __init__(self):super().__init__('The torrent file list could not be verified.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The torrent file list could not be verified.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class SourceMissing(ValueError):
     reason_code='ACQUISITION_SOURCE_MISSING'
-    def __init__(self):super().__init__('A supported torrent identity is required before acquisition.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'A supported torrent identity is required before acquisition.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class AcquisitionConflict(ValueError):
     reason_code='ACQUISITION_PLAN_CONFLICT'
-    def __init__(self):super().__init__('Acquisition details changed and need review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Acquisition details changed and need review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 def infohash(value):

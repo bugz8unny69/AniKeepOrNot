@@ -5,7 +5,7 @@ of episode-scoped journals it feeds to that service, not in its management,
 retry, review, or completion semantics. No feature switch exists.
 """
 from src.nextgen.async_io import blocking
-from src.nextgen.job_contracts import Outcome
+from src.nextgen.job_contracts import Outcome, failure_facts
 from src.nextgen.storage.management_actions import ManagementActions, ActionUnavailable
 from src.nextgen.sonarr import KeepReview, KeepUnavailable
 from src.nextgen.staging import StagingReview, StagingBusy
@@ -30,7 +30,7 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
         factories = (None,) if journals is None else await blocking(journals, actions, target)
         if (not isinstance(factories, tuple) or not 1 <= len(factories) <= 32
                 or (journals is not None and any(not callable(factory) for factory in factories))):
-            raise KeepReview()
+            raise KeepReview(failed_check='src/nextgen/jobs/keep_execution.py:33 execute JOURNALS_INVALID')
         for factory in factories:
             options = {} if factory is None else {'journal_factory': factory}
             service = service_factory(context.configuration, secrets, **options)
@@ -51,9 +51,12 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
             facts = {'failed_check': exc.failed_check}
             if getattr(exc, 'failed_path', None):
                 facts['failed_path'] = exc.failed_path
+        if not facts:
+            facts = failure_facts(exc)
         return Outcome('review', exc.reason_code, facts=facts)
     except (KeepSelectionInvalid, StagingReview, MediaInvalid,
-            PermissionError, ValueError, KeyError, TypeError):
-        return Outcome('review', 'KEEP_IMPORT_REVIEW')
+            PermissionError, ValueError, KeyError, TypeError) as exc:
+        facts = failure_facts(exc)
+        return Outcome('review', 'KEEP_IMPORT_REVIEW', facts=facts)
     except OSError:
         return Outcome('retry', 'KEEP_SERVICE_UNAVAILABLE')

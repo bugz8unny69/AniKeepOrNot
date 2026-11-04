@@ -17,8 +17,16 @@ def _persist(db,claim,value):
         return (persist_reservation(db,claim,value),)
     except AnimeRejected as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
     except EpisodeStaged:raise CompletionRejected(Outcome('skip',activity_code='SKIPPED_DUPLICATE')) from None
-    except EpisodeReserved as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
-    except ReservationConflict as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
+    except EpisodeReserved as exc:
+        facts = {}
+        if getattr(exc, 'owner_job_id', None) is not None:
+            facts['blocking_job_id'] = exc.owner_job_id
+        if getattr(exc, 'operation_id', None) is not None:
+            facts['operation_id'] = exc.operation_id
+        raise CompletionRejected(Outcome('hold', exc.reason_code, facts=facts or None)) from None
+    except ReservationConflict as exc:
+        from src.nextgen.job_contracts import failure_facts
+        raise CompletionRejected(Outcome('review', exc.reason_code, facts=failure_facts(exc))) from None
 
 
 def registration(*, preparation_kind=None):

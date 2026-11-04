@@ -22,7 +22,10 @@ LANGUAGE_SETS=((),('jpn',),('eng',),('eng','jpn'))
 
 class MediaInvalid(ValueError):
     reason_code='MEDIA_VERIFICATION_INVALID'
-    def __init__(self):super().__init__('The downloaded video needs verification review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The downloaded video needs verification review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class MediaUnavailable(RuntimeError):

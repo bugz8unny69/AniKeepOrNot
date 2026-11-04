@@ -130,8 +130,22 @@ def intake_status(query):
 def failed_detail(details):
     """Which check stopped the work and the file it was looking at."""
     check,path=details.get('failed_check'),details.get('failed_path')
-    if type(check) is not str:return None
-    return f'Stopped at {check}' + (f' · file: {path}' if type(path) is str else '')
+    cause=details.get('cause_reason_code')
+    blocker=details.get('blocking_job_id')
+    op=details.get('operation_id')
+    if blocker is not None:
+        msg = f'Waiting for reservation owned by Job #{blocker}' + (f' (operation #{op})' if op is not None else '')
+        return msg
+    if type(check) is not str:
+        if type(cause) is str:
+            return f'Caused by {cause}'
+        return None
+    res = f'Stopped at {check}'
+    if type(cause) is str:
+        res += f' (cause: {cause})'
+    if type(path) is str:
+        res += f' · file: {path}'
+    return res
 
 
 class Application:
@@ -491,10 +505,20 @@ class Application:
                             break
                         except (ValueError,TypeError,KeyError,OverflowError):
                             continue
+                    release_name = None
+                    if row[4] is not None:
+                        event_row = db.execute("SELECT raw_body FROM incoming_events WHERE event_id=?", (row[4],)).fetchone()
+                        if event_row and event_row[0]:
+                            try:
+                                decl = json.loads(event_row[0])
+                                if type(decl) is dict and type(decl.get("release_name")) is str:
+                                    release_name = decl["release_name"]
+                            except (ValueError, TypeError, UnicodeError):
+                                pass
                 return 200,{'job_id':identity_job,'requested_job_id':job,'available':evidence is not None,
                     'attempts':row[2],'state':row[1],
                     'reason':None if row[3] is None else CATALOG.reason(row[3]),
-                    'evidence':evidence},[]
+                    'evidence':evidence,'release_name':release_name},[]
             single=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})',path)
             if single:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
@@ -996,9 +1020,12 @@ class Application:
         try:sized=size_detail(json.loads(sized[0])) if sized else None
         except (ValueError,TypeError):sized=None
         stopped=None
-        if row[4] in ('NEEDS_REVIEW','BLOCKED'):
-            found=db.execute("SELECT details_json FROM job_history WHERE job_id=? AND "
-                             "json_extract(details_json,'$.failed_check') IS NOT NULL ORDER BY history_id DESC LIMIT 1",(row[0],)).fetchone()
+        if row[4] in ('NEEDS_REVIEW','BLOCKED','ON_HOLD'):
+            found=db.execute("SELECT details_json FROM job_history WHERE job_id=? AND ("
+                             "json_extract(details_json,'$.failed_check') IS NOT NULL OR "
+                             "json_extract(details_json,'$.cause_reason_code') IS NOT NULL OR "
+                             "json_extract(details_json,'$.blocking_job_id') IS NOT NULL) "
+                             "ORDER BY history_id DESC LIMIT 1",(row[0],)).fetchone()
             try:stopped=failed_detail(json.loads(found[0])) if found else None
             except (ValueError,TypeError):stopped=None
         titles=db.execute('SELECT a.title,t.english_title,t.romaji_title '

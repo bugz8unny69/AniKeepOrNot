@@ -13,12 +13,18 @@ ACTIVE=frozenset(('downloading','stalledDL','forcedDL','queuedDL','uploading','s
 
 class TransferConflict(ValueError):
     reason_code='TORRENT_TRANSFER_CONFLICT'
-    def __init__(self):super().__init__('Torrent selection, ownership or download details need review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Torrent selection, ownership or download details need review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class PieceOverlap(ValueError):
     reason_code='TORRENT_PIECE_OVERLAP'
-    def __init__(self):super().__init__('This video shares torrent pieces with files that are not selected.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'This video shares torrent pieces with files that are not selected.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class SnapshotChanged(ValueError):

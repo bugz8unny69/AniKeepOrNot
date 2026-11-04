@@ -18,7 +18,7 @@ from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError
 from src.nextgen.diagnostics import configure_logging, event, exception, log_history
-from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json
+from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json, failure_facts
 from src.nextgen.reasons import get_reason
 from src.nextgen.maintenance import MaintenanceGate, MaintenanceBusy, MaintenancePending
 from src.nextgen.storage.job_queue import JobQueue, LeaseLost, QueueUnavailable
@@ -168,25 +168,8 @@ class Worker:
                 exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
                           job_id=claim.job_id, event_id=claim.event_id, attempt=claim.attempt)
-                tb = exc.__traceback__
-                last_frame = None
-                while tb is not None:
-                    if "src/nextgen/" in tb.tb_frame.f_code.co_filename:
-                        last_frame = tb.tb_frame
-                    tb = tb.tb_next
-                loc = "src/nextgen/worker.py:171 _invoke"
-                tag = exc.__class__.__name__[:32].upper()
-                if last_frame is not None:
-                    filename = last_frame.f_code.co_filename
-                    if "src/nextgen/" in filename:
-                        rel = "src/nextgen/" + filename.split("src/nextgen/")[-1]
-                        func = last_frame.f_code.co_name
-                        line = last_frame.f_lineno
-                        candidate = f"{rel}:{line} {func} {tag}"
-                        from src.nextgen.reasons import _CHECK
-                        if _CHECK.fullmatch(candidate):
-                            loc = candidate
-                return Outcome("retry", "JOB_HANDLER_FAILED", facts={"failed_check": loc})
+                facts = failure_facts(exc) or {"failed_check": "src/nextgen/worker.py:171 _invoke"}
+                return Outcome("retry", "JOB_HANDLER_FAILED", facts=facts)
         finally:
             context.cancelled.set()
             finished.set()
@@ -239,7 +222,10 @@ class Worker:
             logger = configure_logging(configuration.logging_settings(), "worker",
                                        logger=logging.Logger("nextgen.worker.job." + str(claim.job_id)))
             for audit in audits:
-                log_history(logger,audit)
+                try:
+                    log_history(logger, audit)
+                except Exception as log_exc:
+                    self.logger.warning("Audit logging failed for job %s: %s", claim.job_id, log_exc)
             spec = self.registry.entries.get(claim.kind)
             invocation = uuid.uuid4().hex
             if spec is None:
@@ -252,7 +238,10 @@ class Worker:
                     outcome = Outcome("review", "JOB_PAYLOAD_INVALID")
                 else:
                     started = await self._io(self.queue.start,claim,spec,invocation,self.registry)
-                    log_history(logger,started)
+                    try:
+                        log_history(logger, started)
+                    except Exception as log_exc:
+                        self.logger.warning("Audit logging failed for job %s: %s", claim.job_id, log_exc)
                     context = Context(claim,configuration,logger,threading.Event())
                     outcome = await self._invoke(claim,spec,context)
             try:
@@ -274,7 +263,10 @@ class Worker:
                 records = await self._io(self.queue.finish,claim,rej_outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
             for record in records:
-                log_history(logger,record)
+                try:
+                    log_history(logger, record)
+                except Exception as log_exc:
+                    self.logger.warning("Audit logging failed after commit for job %s: %s", claim.job_id, log_exc)
             return True
         except asyncio.CancelledError:
             # No invented completion. The recorded lease/start is recoverable.
@@ -282,7 +274,11 @@ class Worker:
         except CancellationRequested:
             if claim is not None:
                 records=await self._io(CancellationStore(self.queue.database).acknowledge,claim)
-                for record in records:log_history(self.logger,record)
+                for record in records:
+                    try:
+                        log_history(self.logger, record)
+                    except Exception as log_exc:
+                        self.logger.warning("Audit logging failed for canceled job %s: %s", claim.job_id, log_exc)
             return True
         except LeaseLost as exc:
             self._log_error(exc,claim)

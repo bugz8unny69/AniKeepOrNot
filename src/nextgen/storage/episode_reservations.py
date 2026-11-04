@@ -80,10 +80,13 @@ def persist_reservation(db,claim,value):
         tvdb_check += " OR (tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)"
         check_args.extend([value.tvdb_series_id, value.tvdb_season, value.tvdb_episode])
 
-    if db.execute(
-        f"SELECT 1 FROM batch_episode_reservations WHERE state='ACTIVE' AND (anidb_episode_id=?{tvdb_check}) LIMIT 1",
-        check_args).fetchone():
-        raise EpisodeReserved()
+    batch_owner = db.execute(
+        f"SELECT owner_job_id FROM batch_episode_reservations WHERE state='ACTIVE' AND (anidb_episode_id=?{tvdb_check}) LIMIT 1",
+        check_args).fetchone()
+    if batch_owner:
+        owner_id = batch_owner[0]
+        op = db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?", (owner_id,)).fetchone()
+        raise EpisodeReserved(owner_job_id=owner_id, operation_id=op[0] if op else None)
     rows=db.execute("SELECT owner_job_id,evaluation_job_id,anidb_id,anidb_episode_id,"
                     "tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id FROM episode_reservations "
                     f"WHERE state='ACTIVE' AND (anidb_episode_id=?{tvdb_check})",
@@ -95,7 +98,9 @@ def persist_reservation(db,claim,value):
         if len(rows)!=1 or rows[0][2:]!=expected:raise ReservationConflict()
         if rows[0][0]!=claim.job_id:
             if published(db,rows[0][0]):raise EpisodeStaged()
-            raise EpisodeReserved()
+            owner_id = rows[0][0]
+            op = db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?", (owner_id,)).fetchone()
+            raise EpisodeReserved(owner_job_id=owner_id, operation_id=op[0] if op else None)
         if rows[0][1]!=value.evaluation_job_id:raise ReservationConflict()
     else:
         db.execute("INSERT INTO episode_reservations(owner_job_id,evaluation_job_id,verification_id,plan_id,"

@@ -8,7 +8,7 @@ from src.nextgen.acquisition.qbittorrent import Client
 from src.nextgen.diagnostics import log_history
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
-from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor
+from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor, failure_facts
 from src.nextgen.providers.errors import ProviderDeferred, ProviderUnavailable
 from src.nextgen.acquisition.metainfo_source import (MetadataSourceWaiting, MetadataSourceUnavailable,
     MetadataSourceConfigurationError, MetadataSourceDenied)
@@ -88,11 +88,13 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
         except ClientUnavailable:return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
         except MetadataSourceWaiting as exc:return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms)
         except MetadataSourceUnavailable as exc:return Outcome('retry',exc.reason_code)
-        except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:return Outcome('review',exc.reason_code)
+        except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except ProviderDeferred as exc:return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)
         except ProviderUnavailable as exc:return Outcome('retry',exc.reason_code)
         except (AcquisitionConflict,MetadataInvalid,SourceMissing,SizeEvidenceMissing,DownloadConfigurationError,
-                ClientInvalid,ClientAuthenticationFailed,ClientUnsupported) as exc:return Outcome('review',exc.reason_code)
+                ClientInvalid,ClientAuthenticationFailed,ClientUnsupported) as exc:
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
         return () if transfer_kind is None else (Successor.create(transfer_kind,{'preparation_job_id':value}),)
     return Registration(KIND,DEFINITION,execute,persist=lambda db,claim,value:_persist(db,claim,value,discovery_kind=discovery_kind),route=route,

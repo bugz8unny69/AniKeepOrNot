@@ -9,7 +9,11 @@ from src.nextgen.storage.review_decisions import staged, require_allowed
 
 
 class KeepSelectionInvalid(ValueError):
-    def __init__(self):super().__init__('The staged episode could not be matched to its verified TVDB placement.')
+    reason_code = 'KEEP_IMPORT_REVIEW'
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The staged episode could not be matched to its verified TVDB placement.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 @dataclass(frozen=True)

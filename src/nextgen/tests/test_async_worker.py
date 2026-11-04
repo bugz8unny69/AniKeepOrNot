@@ -289,3 +289,51 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         ticket = worker.gate.request()
         with worker.gate.exclusive(ticket) as lease:
             lease.complete()
+
+    async def test_retry_exhausted_preserves_cause_reason_code_and_failed_check(self):
+        """W-23: When retries are exhausted, original cause and failed_check are preserved."""
+        import json
+        from src.nextgen.reasons import _CHECK
+        self.policy = Policy(lease_ms=30000, poll_ms=10, max_retries=1, backoff_ms=1)
+        async def handler(context):
+            raise ValueError("simulated handler crash")
+        self.enqueue()
+        worker = self.worker(handler)
+        # Attempt 1: fails, schedules retry
+        self.assertTrue(await worker.attempt())
+        # Make available immediately for retry
+        db = sqlite3.connect(self.database)
+        try:
+            with db:
+                db.execute("UPDATE jobs SET available_at_ms=0")
+        finally:
+            db.close()
+        # Attempt 2: exhausts retries
+        self.assertTrue(await worker.attempt())
+        self.assertEqual(self.rows()[0][0], "NEEDS_REVIEW")
+        self.assertEqual(self.rows()[0][2], "JOB_RETRY_EXHAUSTED")
+        db = sqlite3.connect(self.database)
+        try:
+            row = db.execute(
+                "SELECT details_json FROM job_history WHERE event_code='NEEDS_REVIEW' AND reason_code='JOB_RETRY_EXHAUSTED'"
+            ).fetchone()
+            self.assertIsNotNone(row)
+            details = json.loads(row[0])
+            self.assertEqual(details.get("cause_reason_code"), "JOB_HANDLER_FAILED")
+            self.assertIn("failed_check", details)
+            self.assertTrue(_CHECK.fullmatch(details["failed_check"]))
+        finally:
+            db.close()
+
+    async def test_post_commit_audit_logging_failure_does_not_abort_completed_job(self):
+        """W-23: Post-commit log sink failure does not roll back or fail completed job."""
+        from unittest.mock import patch
+        async def handler(context):
+            return Outcome()
+        self.enqueue()
+        worker = self.worker(handler)
+        with patch("src.nextgen.worker.log_history", side_effect=RuntimeError("disk logging full")):
+            result = await worker.attempt()
+            self.assertTrue(result)
+        self.assertEqual(self.rows()[0][0], "DONE")
+
