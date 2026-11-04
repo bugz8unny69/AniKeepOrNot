@@ -44,19 +44,35 @@ def options_from_configuration(configuration):
         raise ProviderConfigurationError() from None
 
 
-def validate_provider_configuration(configuration, *, secrets):
+def series_credentials(secrets):
+    """Retrieve required TVDB credentials for anime series identification."""
+    return secrets.tvdb_credentials()
+
+
+def episode_placement_credentials(secrets):
+    """Retrieve credentials for optional TVDB episode placement; None if unconfigured."""
+    try:
+        return secrets.tvdb_credentials()
+    except ProviderConfigurationError:
+        return None
+
+
+def validate_provider_configuration(configuration, *, secrets=None, require_series_credentials=False):
     options_from_configuration(configuration)
-    secrets.tvdb_credentials()
+    if require_series_credentials and secrets is not None:
+        series_credentials(secrets)
 
 
 async def build_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
                                 policy=Policy(), logger=None, read_metainfo=None, read_batch_metainfo=None,
-                                backfill=False, backfill_select=False, backfill_acquire=False):
+                                backfill=False, backfill_select=False, backfill_acquire=False,
+                                require_series_credentials=False):
     """Validate required local settings, then return an unstarted worker.
 
-    Call close() if not serving it. Both providers are mandatory for this
-    composition. Generic Worker still supports unrelated explicitly installed
-    jobs without requiring identity-provider credentials.
+    Call close() if not serving it. Series identification requires TVDB
+    credentials; AniDB-first release verification does not. Generic Worker
+    still supports unrelated explicitly installed jobs without requiring
+    identity-provider credentials.
     """
     if (type(backfill_select) is not bool or type(backfill_acquire) is not bool
             or backfill_select and not backfill
@@ -65,14 +81,15 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
     store = ConfigurationStore(config_directory)
     secrets = SecretStore(config_directory)
     startup = await blocking(store.read)
-    prepare = partial(validate_provider_configuration,secrets=secrets)
+    prepare = partial(validate_provider_configuration, secrets=secrets,
+                      require_series_credentials=require_series_credentials)
     await blocking(prepare,startup)  # Missing configuration fails before claims.
     pool=ClientPool()
-    resolve = make_resolver(options_from_configuration,secrets.tvdb_credentials,client_pool=pool)
+    resolve = make_resolver(options_from_configuration, partial(series_credentials, secrets), client_pool=pool)
     read_batch_metainfo=make_batch_reader(secrets=secrets) if read_batch_metainfo is None else read_batch_metainfo
-    verify_batch=make_batch_verifier(options_from_configuration,secrets.tvdb_credentials,
+    verify_batch=make_batch_verifier(options_from_configuration, partial(episode_placement_credentials, secrets),
                                      read_batch_metainfo,client_pool=pool)
-    verify = make_verifier(options_from_configuration,secrets.tvdb_credentials,client_pool=pool,
+    verify = make_verifier(options_from_configuration, partial(episode_placement_credentials, secrets), client_pool=pool,
                            batch_verifier=verify_batch)
     # The hash-bound magnet path is the normal webhook acquisition route, not
     # a backfill opt-in: it is installed with the default metadata reader.
@@ -102,7 +119,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                          reserve_registration(preparation_kind=PREPARE_KIND),
                          *((backfill_registration(secrets,
                               catalog_factory=make_catalog_factory(options_from_configuration,
-                                  secrets.tvdb_credentials,client_pool=pool),
+                                  partial(episode_placement_credentials, secrets),client_pool=pool),
                               select_candidates=backfill_select,
                               acquire_candidates=backfill_acquire),) if backfill else ()),
                          *batch_handlers,*preparation,
@@ -112,10 +129,12 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
 
 async def run_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
                               policy=Policy(), read_metainfo=None, read_batch_metainfo=None,
-                              backfill=False, backfill_select=False, backfill_acquire=False):
+                              backfill=False, backfill_select=False, backfill_acquire=False,
+                              require_series_credentials=False):
     worker = await build_identity_worker(config_directory,additional_registrations=additional_registrations,
                                          release_kind=release_kind,policy=policy,read_metainfo=read_metainfo,
                                          read_batch_metainfo=read_batch_metainfo,
                                          backfill=backfill,backfill_select=backfill_select,
-                                         backfill_acquire=backfill_acquire)
+                                         backfill_acquire=backfill_acquire,
+                                         require_series_credentials=require_series_credentials)
     await serve_worker(worker)

@@ -1,6 +1,7 @@
 """Explicit rejected-anime decisions and selected staging cleanup."""
 import json
 import os
+import stat
 import hashlib
 
 from src.nextgen.acquisition.cleanup import directory, parent
@@ -53,23 +54,25 @@ def remove_selected(manifest,receipts,guard,keep_root):
                 except FileNotFoundError:
                     os.fsync(folder);continue
                 try:
-                    info=signature(os.fstat(fd))
-                    if info[2]!=entry['size']:raise StagingReview()
-                    # NFOs are small: verify the exact content that was
-                    # published. Videos use the already-verified path, size,
-                    # and mtime; hash only if that cheap metadata changed.
-                    if entry['role']=='episode' or info[3]!=proof['file'][3]:
-                        digest=hashlib.sha256()
+                    stat_info = os.fstat(fd)
+                    if not stat.S_ISREG(stat_info.st_mode) or stat_info.st_size != entry['size']:
+                        raise StagingReview()
+                    # NFOs are small: verify the exact content that was published.
+                    if entry['role'] == 'episode':
+                        digest = hashlib.sha256()
                         while True:
-                            chunk=os.read(fd,1024*1024)
-                            if not chunk:break
+                            chunk = os.read(fd, 65536)
+                            if not chunk: break
                             digest.update(chunk)
-                        if digest.hexdigest()!=entry['sha256']:raise StagingReview()
-                finally:os.close(fd)
+                        if digest.hexdigest() != entry['sha256']:
+                            raise StagingReview()
+                finally:
+                    os.close(fd)
                 guard()
-                current=signature(os.stat(name,dir_fd=folder,follow_symlinks=False))
-                if current[2]!=entry['size'] or current[3]!=info[3]:raise StagingReview()
-                os.unlink(name,dir_fd=folder);os.fsync(folder)
+                current = os.stat(name, dir_fd=folder, follow_symlinks=False)
+                if not stat.S_ISREG(current.st_mode) or current.st_size != entry['size']:
+                    raise StagingReview()
+                os.unlink(name, dir_fd=folder); os.fsync(folder)
 
 
 def _prune_series(manifests,guard):

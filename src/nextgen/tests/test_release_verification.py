@@ -245,6 +245,28 @@ class ReleaseVerifierTests(unittest.IsolatedAsyncioTestCase):
         self.cancelled.set()
         with self.assertRaises(ReleaseNotReady): await self.verify(self.source,self.configuration,self.cancelled)
 
+    async def test_anidb_origin_verifies_without_tvdb_credentials(self):
+        # W-15: AniDB-origin release can verify with NULL TVDB placement when credentials unavailable.
+        anidb_source = replace(self.source, raw_body=b'{"release_name":"Test - 01"}')
+        verifier = make_verifier(Options('registeredclient', 1), lambda: None,
+                                 client_factory=lambda *args: self.client)
+        result = await verifier(anidb_source, self.configuration, self.cancelled)
+        self.assertEqual((result.anidb_episode_number, result.anidb_episode_id), (1, 987))
+        self.assertIsNone(result.tvdb_season)
+        self.assertIsNone(result.tvdb_episode)
+        self.assertIsNone(result.tvdb_episode_id)
+
+    async def test_anidb_origin_verifies_when_tvdb_paging_fails(self):
+        # W-15: Provider outage during TVDB paging does not fail AniDB-origin verification.
+        from src.nextgen.providers.errors import ProviderUnavailable
+        anidb_source = replace(self.source, raw_body=b'{"release_name":"Test - 01"}')
+        self.client.episode_page = lambda *args: (_ for _ in ()).throw(ProviderUnavailable())
+        result = await self.verify(anidb_source, self.configuration, self.cancelled)
+        self.assertEqual((result.anidb_episode_number, result.anidb_episode_id), (1, 987))
+        self.assertIsNone(result.tvdb_season)
+        self.assertIsNone(result.tvdb_episode)
+        self.assertIsNone(result.tvdb_episode_id)
+
 
 class ReleaseJobTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

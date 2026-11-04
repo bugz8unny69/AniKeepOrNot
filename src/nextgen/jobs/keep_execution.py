@@ -46,7 +46,12 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
     except KeepUnavailable:
         return Outcome('retry', 'KEEP_SERVICE_UNAVAILABLE')
     except KeepReview as exc:
-        return Outcome('review', exc.reason_code)
+        facts = None
+        if getattr(exc, 'failed_check', None):
+            facts = {'failed_check': exc.failed_check}
+            if getattr(exc, 'failed_path', None):
+                facts['failed_path'] = exc.failed_path
+        return Outcome('review', exc.reason_code, facts=facts)
     except (KeepSelectionInvalid, StagingReview, MediaInvalid,
             PermissionError, ValueError, KeyError, TypeError):
         return Outcome('review', 'KEEP_IMPORT_REVIEW')

@@ -166,7 +166,7 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                                 "anidb_id": known["anidb_id"],
                                 "tvdb_series_id": known["tvdb_series_id"],
                                 "title": known["title"]}, "episodes": [], "attributes": {}}
-                check(stage, "failed", "not_previously_recognized")
+                check(stage, "skipped", "not_previously_recognized")
             else:
                 check(stage, "skipped")
 
@@ -213,8 +213,10 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 candidates = client.title_candidates(aliases)
             if matching is not None:
                 matching.candidates(candidates)
-            if len(candidates) != 1:
-                incomplete("no_unique_anidb_candidate")
+            if len(candidates) == 0:
+                incomplete("no_anidb_candidates")
+            elif len(candidates) > 1:
+                incomplete("multiple_anidb_candidates")
             check(stage, "passed")
             aid = next(iter(candidates))
             if matching is not None:
@@ -265,7 +267,9 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 raise IdentityConflict()
             check(stage, "passed")
             stage = "provider_titles"
-            if not {norm(x) for x in base_anime["titles"]} & {norm(x) for x in tvdb["titles"]}:
+            has_id_link = bool(tvdb["anidb_ids"] and (base_aid in tvdb["anidb_ids"] or aid in tvdb["anidb_ids"]))
+            titles_agree = bool({norm(x) for x in base_anime["titles"]} & {norm(x) for x in tvdb["titles"]})
+            if not has_id_link and not titles_agree:
                 check(stage, "failed", "provider_titles_disagree")
                 raise IdentityConflict()
             check(stage, "passed")

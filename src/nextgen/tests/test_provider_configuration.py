@@ -136,13 +136,14 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         finally: db.close()
 
     async def test_startup_requires_key_without_contacting_provider_or_claiming(self):
-        with self.assertRaises(ProviderConfigurationError): await build_identity_worker(self.root)
+        with self.assertRaises(ProviderConfigurationError):
+            await build_identity_worker(self.root, require_series_credentials=True)
         self.assertEqual(self.state(),("PENDING",0))
         self.assertFalse((self.root/"secrets.json").exists())
 
     async def test_secret_removal_or_invalid_configuration_blocks_before_claim(self):
         self.secrets.initialize("private-key")
-        worker = await build_identity_worker(self.root)
+        worker = await build_identity_worker(self.root, require_series_credentials=True)
         self.addAsyncCleanup(worker.close)
         self.secrets.update_tvdb_api_key("",expected_revision=1)
         with self.assertRaises(ProviderConfigurationError): await worker.attempt()
@@ -153,6 +154,12 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state(),("PENDING",0))
         ticket = worker.gate.request()
         with worker.gate.exclusive(ticket) as lease: lease.complete()
+
+    async def test_worker_without_tvdb_credentials_reaches_release_verifier(self):
+        # Without TVDB credentials, worker starts cleanly for AniDB-origin releases
+        worker = await build_identity_worker(self.root)
+        self.addAsyncCleanup(worker.close)
+        self.assertEqual(self.state(), ("PENDING", 0))
 
     async def test_composed_worker_finishes_with_current_settings_and_no_network_at_startup(self):
         self.secrets.initialize("private-key")

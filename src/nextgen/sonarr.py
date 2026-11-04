@@ -18,7 +18,10 @@ from src.nextgen.acquisition.cleanup import directory, parent
 
 class KeepReview(ValueError):
     reason_code='KEEP_IMPORT_REVIEW'
-    def __init__(self):super().__init__('The library import needs review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'The library import needs review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 class KeepConfiguration(KeepReview):

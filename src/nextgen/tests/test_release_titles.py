@@ -272,6 +272,17 @@ class IntakeSharesTheReaderTests(unittest.TestCase):
         self.assertEqual(release_title('[Group] Kusuriya no Hitorigoto 05 [1080p]'),
                          (['Kusuriya no Hitorigoto'], 5))
         self.assertEqual(release_title('[Group] Mob Psycho 100 III - 05 [1080p]')[0], ['Mob Psycho 100 III'])
+        # Operator issue fixtures:
+        # 1. Steamboy with unclosed (BD Remux packaging tag
+        self.assertEqual(release_title('Steamboy (2004) (BD Remux')[0], ['Steamboy (2004)', 'Steamboy'])
+        # 2. Packaging metadata tag should not leak as an anime title alias
+        mt_aliases, _ = release_title('[Group] Mushoku Tensei III: Special (Dual-Audio, Multi-Subs, Batch)')
+        self.assertNotIn('Dual-Audio, Multi-Subs, Batch', mt_aliases)
+        self.assertIn('Mushoku Tensei III: Special', mt_aliases)
+        # 3. Unbalanced opening parenthesis stripped cleanly
+        self.assertEqual(release_title('Jujutsu Kaisen ( 01 [1080p]')[0], ['Jujutsu Kaisen'])
+        # 4. Opaque internal series ID not used as human-readable title
+        self.assertEqual(release_title('T00393120 S01E01')[0], [])
         # "Season - 05" is never read as season 5.
         self.assertEqual(_release_seasons('[Erai-raws] Kusuriya no Hitorigoto 2nd Season - 05 [1080p]'), ['2'])
         self.assertEqual(_release_seasons('[Group] Title Second Season - 05'), ['2'])

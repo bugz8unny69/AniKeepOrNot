@@ -2,6 +2,7 @@
 from dataclasses import asdict
 import json
 import os
+import stat
 
 from src.nextgen.keep_selection import KeepSelection, load_selection
 from src.nextgen.sonarr import Options, KeepReview
@@ -65,9 +66,12 @@ class Journal:
 
 
 def check_source(data):
-    selection=KeepSelection(**data['selection'])
+    selection = KeepSelection(**data['selection'])
     with directory(selection.staging_root) as root:
-        if [os.fstat(root).st_dev,os.fstat(root).st_ino]!=data['root_identity']:raise KeepReview()
-        with parent(root,selection.media_relative_path) as (folder,name):
-            if [os.fstat(folder).st_dev,os.fstat(folder).st_ino]!=data['source_parent']:raise KeepReview()
-            if list(signature(os.stat(name,dir_fd=folder,follow_symlinks=False)))!=data['source_file']:raise KeepReview()
+        with parent(root, selection.media_relative_path) as (folder, name):
+            try:
+                info = os.stat(name, dir_fd=folder, follow_symlinks=False)
+            except FileNotFoundError:
+                raise KeepReview() from None
+            if not stat.S_ISREG(info.st_mode) or info.st_size != data['source_file'][2]:
+                raise KeepReview()

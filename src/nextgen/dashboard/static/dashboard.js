@@ -735,6 +735,8 @@ const MATCHING_NOTES = Object.freeze({
   season_entry_selected: 'anime-lists selected the AniDB entry for this TVDB season.',
   no_title_aliases: 'No usable anime title could be extracted.',
   no_unique_anidb_candidate: 'AniDB returned zero or multiple exact title candidates.',
+  no_anidb_candidates: 'AniDB returned no title candidates for the searched aliases.',
+  multiple_anidb_candidates: 'AniDB returned multiple ambiguous candidates.',
   anidb_titles_disagree: 'The AniDB record does not corroborate the catalog titles.',
   no_anime_lists_mapping: 'No unique AniDB ↔ TVDB mapping was verified.',
   tvdb_live_action: 'TVDB identifies this work as live action.',

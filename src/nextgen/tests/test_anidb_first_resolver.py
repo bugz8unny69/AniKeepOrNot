@@ -63,12 +63,21 @@ class AniDBFirstResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("tvdb",self.calls)
 
     async def test_conflicting_explicit_remote_id_or_title_stops_identity(self):
-        for change in ({"anidb_ids":frozenset({789})},{"titles":("Unrelated",)},{"live":True}):
+        for change in ({"anidb_ids":frozenset({789})},{"anidb_ids":frozenset(),"titles":("Unrelated",)},{"live":True}):
             def series(*args):
                 return {"tvdb_series_id":456,"titles":("Test Anime",),"animation":True,"live":False,"anidb_ids":frozenset({123}),**change}
             self.client.series = series
             with self.assertRaises(IdentityConflict):
                 await self.resolve(self.request,self.configuration,self.cancelled)
+
+    async def test_verified_id_link_allows_different_title_language(self):
+        # W-13: verified provider ID relationship succeeds despite catalog title differences.
+        def series(*args):
+            return {"tvdb_series_id":456,"titles":("Different Display Title",),"animation":True,"live":False,"anidb_ids":frozenset({123})}
+        self.client.series = series
+        value = await self.resolve(self.request,self.configuration,self.cancelled)
+        self.assertEqual(value["anime"]["anidb_id"], 123)
+        self.assertEqual(value["anime"]["tvdb_series_id"], 456)
 
     async def test_explicit_later_season_and_cancellation_do_not_approve_first_entry(self):
         # S02 never inherits the Season 1 entry: without an anime-lists season entry it stops.
