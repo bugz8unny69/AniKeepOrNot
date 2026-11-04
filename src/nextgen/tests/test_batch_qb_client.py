@@ -180,13 +180,12 @@ class BatchQbClientTests(unittest.TestCase):
         with self.assertRaises(TransferConflict):
             verify_probe_snapshot(self.intent,self.snapshot(ranges=((0,1),(1,1),(2,2))),require_stopped=True)
         snap=self.snapshot(piece_size=150,ranges=((0,0),(0,1),(1,1)))
-        with self.assertRaises(PieceOverlap):
-            verify_probe_snapshot(self.intent,snap,require_stopped=True)
-        current=[snap]
+        self.assertIs(verify_probe_snapshot(self.intent,snap,require_stopped=True),snap)
+        current=[self.snapshot(priorities=(1,0,0),tags=('another-owner',))]
         self.client.inspect_transfer=lambda _:current[0]
         fingerprint=selection_fingerprint(self.intent,100)
         permit=TransferPermit(fingerprint,('skip','wanted'))
-        with self.assertRaises(PieceOverlap):
+        with self.assertRaises(TransferConflict):
             self.client.apply_probe_selection(self.intent,fingerprint,permit,'skip')
         self.assertEqual(self.calls,[])
         current[0]=self.snapshot()

@@ -49,9 +49,6 @@ def verify_probe_snapshot(intent,snapshot,*,require_stopped=False):
     probe=intent.candidate.probe_index
     target=snapshot.piece_ranges[probe]
     if target[0]<0 or target[1]<target[0]:raise TransferConflict()
-    for index,(start,end) in enumerate(snapshot.piece_ranges):
-        if index!=probe and start>=0 and not (end<target[0] or start>target[1]):
-            raise PieceOverlap()
     return snapshot
 
 

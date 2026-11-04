@@ -163,10 +163,10 @@ def schedule_after_cleanup(db,operation_id):
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
+        "AND c.anidb_episode_number=s.anidb_episode_number AND lower(c.info_hash)=lower(s.info_hash) "
         "AND c.state='ACTIVE' "
         "WHERE m.operation_id=? "
-        "AND s.info_hash=json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash')",
+        "AND lower(s.info_hash)=lower(json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash'))",
         (operation_id,)).fetchall()
     if not rows:return ()
     if len(rows)!=1:raise CandidateConflict()
@@ -177,7 +177,7 @@ def schedule_after_cleanup(db,operation_id):
     if db.execute(
         "SELECT 1 FROM episode_reservations r "
         "JOIN acquisition_plans p USING(reservation_id) "
-        "WHERE p.info_hash=? AND r.state='ACTIVE' LIMIT 1",
+        "WHERE lower(p.info_hash)=lower(?) AND r.state='ACTIVE' LIMIT 1",
         (digest,)).fetchone():
         raise CandidateConflict()
     fail_candidate(db,plan_id=plan_id,episode=episode,info_hash=digest,
@@ -227,9 +227,9 @@ def auto_cleanup_failed_candidate(db,claim):
         "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
         "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
         "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
-        "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
+        "AND c.anidb_episode_number=s.anidb_episode_number AND lower(c.info_hash)=lower(s.info_hash) "
         "WHERE e.event_id=? AND e.source='sonarr-discovery' "
-        "AND s.info_hash=json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash')",
+        "AND lower(s.info_hash)=lower(json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash'))",
         (claim.job_id,claim.event_id)).fetchall()
     if row!=[('ACTIVE',)]:return ()
     return request_automatic_cleanup(db,claim)

@@ -150,7 +150,7 @@ class JobQueue:
                     delay = max(delay or 0, min(self.policy.max_backoff_ms, self.policy.backoff_ms * 2**min(failures,30)))
                 state, code, available = "RETRY_WAIT", "RETRY_SCHEDULED" if outcome.kind == "retry" else "DEFERRED", now+delay
         else:
-            state = {"hold":"ON_HOLD","review":"NEEDS_REVIEW","blocked":"BLOCKED"}[outcome.kind]
+            state = {"hold":"ON_HOLD","review":"NEEDS_REVIEW","blocked":"BLOCKED","cancel":"CANCELED"}[outcome.kind]
             code, available = state, now
         validate_job_activity(state,activity)
         db.execute("UPDATE jobs SET state=?,available_at_ms=?,lease_token=NULL,lease_expires_at_ms=NULL,"
@@ -177,8 +177,8 @@ class JobQueue:
                     invocation_id=invocation,handlers=registry.labels))
             elif outcome.kind != "review" or outcome.reason_code not in {"UNSUPPORTED_JOB_KIND", "JOB_PAYLOAD_INVALID"}:
                 raise ValueError("missing registered handler")
-            if outcome.kind == "complete" and spec is not None:
-                if spec.persist is not None:
+            if outcome.kind in ("complete", "cancel") and spec is not None:
+                if spec.persist is not None and (outcome.kind == "complete" or outcome.value is not None):
                     # A feature adapter cannot commit/rollback caller-owned work.
                     db.set_authorizer(lambda action, arg1, arg2, database, source:
                         sqlite3.SQLITE_DENY if action in (sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT) else sqlite3.SQLITE_OK)
@@ -193,19 +193,20 @@ class JobQueue:
                         if type(result) is not tuple or any(type(item) is not HistoryRecord for item in result):
                             raise ValueError("completion persistence must return audit receipts or None")
                         records.extend(result)
-                successors = () if spec.route is None else spec.route(outcome.value)
-                if type(successors) is not tuple or len(successors) > 32:
-                    if inspect.iscoroutine(successors): successors.close()
-                    raise ValueError("invalid successor plan")
-                for successor in successors:
-                    if type(successor) is not Successor or successor.kind not in spec.successor_kinds:
-                        raise ValueError("successor not allowed by registration")
-                    # enqueue_job owns no transaction/commit; all inserts roll back together.
-                    _, created = enqueue_job_with_receipt(db,component="worker",kind=successor.kind,
-                        payload=json.loads(successor.payload), event_id=claim.event_id,
-                        created_by_job_id=claim.job_id,available_at_ms=now,
-                        operation_id=db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?",(claim.job_id,)).fetchone()[0])
-                    records.append(created)
+                if outcome.kind == "complete":
+                    successors = () if spec.route is None else spec.route(outcome.value)
+                    if type(successors) is not tuple or len(successors) > 32:
+                        if inspect.iscoroutine(successors): successors.close()
+                        raise ValueError("invalid successor plan")
+                    for successor in successors:
+                        if type(successor) is not Successor or successor.kind not in spec.successor_kinds:
+                            raise ValueError("successor not allowed by registration")
+                        # enqueue_job owns no transaction/commit; all inserts roll back together.
+                        _, created = enqueue_job_with_receipt(db,component="worker",kind=successor.kind,
+                            payload=json.loads(successor.payload), event_id=claim.event_id,
+                            created_by_job_id=claim.job_id,available_at_ms=now,
+                            operation_id=db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?",(claim.job_id,)).fetchone()[0])
+                        records.append(created)
             now = self.now()
             self._owns(db,claim,now)
             if getattr(outcome, 'search_snapshots', None):

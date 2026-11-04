@@ -125,7 +125,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
     async def test_audio_only_failures_wait_for_dub_instead_of_review(self):
         await self.exhausted()
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        self.assertEqual(self.state(), ('CANCELED', 'WAITING_FOR_DUB'))
         self.assertEqual(self.fake.searches, 1)
         episode = next(x for x in self.series()['missing'] if x['anidb_episode'] == 2)
         self.assertEqual((episode['status'], episode['can_retry']), ('WAITING_FOR_DUB', True))
@@ -133,19 +133,24 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
     async def test_mixed_failures_with_one_audio_failure_wait_for_dub(self):
         await self.exhausted(reasons=('TORRENT_METADATA_TIMEOUT', 'MEDIA_AUDIO_REQUIRED'))
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        self.assertEqual(self.state(), ('CANCELED', 'WAITING_FOR_DUB'))
 
-    async def test_no_audio_failure_still_needs_review(self):
+    async def test_no_audio_failure_still_waits_for_dub(self):
         await self.exhausted(reasons=('TORRENT_METADATA_TIMEOUT', 'EPISODE_RESERVATION_CONFLICT'))
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('NEEDS_REVIEW', 'SONARR_CANDIDATES_EXHAUSTED'))
-        self.assertEqual(self.fake.searches, 0)
+        self.assertEqual(self.state(), ('CANCELED', 'WAITING_FOR_DUB'))
+        self.assertEqual(self.fake.searches, 1)
 
     async def test_check_only_runs_when_english_is_required(self):
         await self.exhausted(audio='japanese')
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('NEEDS_REVIEW', 'SONARR_CANDIDATES_EXHAUSTED'))
+        self.assertEqual(self.state(), ('CANCELED', 'SONARR_CANDIDATES_EXHAUSTED'))
         self.assertEqual(self.fake.searches, 0)
+        self.assertEqual(self.rows('SELECT status FROM sonarr_backfill_results WHERE anidb_episode_number=2'),
+                         [('NO_RESULTS',)])
+        missing = next(x for x in self.series()['missing'] if x['anidb_episode'] == 2)
+        self.assertEqual(missing['status'], 'NO_RESULTS')
+        self.assertTrue(missing['can_retry'])
 
     async def test_search_again_tries_only_new_dual_audio_releases(self):
         await self.exhausted()
@@ -155,12 +160,13 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
                               release('[Group] Test - 02 (1080p) [Dual Audio]', DUBBED))
         attempt = self.rows('SELECT attempt_count FROM jobs WHERE job_id=?', (self.job,))[0][0]
         result = retry_episode(self.database, 123, 2)
-        self.assertEqual(result, {'job_id': self.job, 'reused': False})
+        self.assertFalse(result['reused'])
         await self.run_worker(self.fake)
-        self.assertEqual(self.state()[0], 'DONE')
+        new_state = self.rows('SELECT state FROM jobs WHERE job_id=?', (result['job_id'],))[0][0]
+        self.assertEqual(new_state, 'DONE')
         self.assertEqual(self.rows('SELECT rank,info_hash,state FROM sonarr_episode_candidates '
                                    'WHERE anidb_episode_number=2 AND rank=3'), [(3, DUBBED, 'READY')])
-        payloads = self.rows('SELECT payload_json FROM jobs WHERE created_by_job_id=?', (self.job,))
+        payloads = self.rows('SELECT payload_json FROM jobs WHERE created_by_job_id=?', (result['job_id'],))
         self.assertEqual([json.loads(p) for p, in payloads],
                          [{'plan_id': 1, 'start': 1, 'fallback_episode': 2}])
         self.assertGreater(attempt, 0)
@@ -171,7 +177,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         before = self.fake.searches
         cached = CachedTorrent(TRIED[0], '[Group] Test - 02 [Dual Audio]',
                                'Test - 02', 'magnet:?xt=urn:btih:' + TRIED[0])
-        retry_episode(self.database, 123, 2, delete_cache=False)
+        receipt = retry_episode(self.database, 123, 2, delete_cache=False)
         # Verify only branch selection; cache journal safety has its own tests.
         with patch('src.nextgen.jobs.discover_sonarr_backfill_job.load_cached',
                    return_value=cached), patch(
@@ -179,7 +185,8 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
                    return_value=()):
             await self.run_worker(self.fake)
         self.assertEqual(self.fake.searches, before)
-        self.assertEqual(self.state()[0], 'DONE')
+        new_state = self.rows('SELECT state FROM jobs WHERE job_id=?', (receipt['job_id'],))[0][0]
+        self.assertEqual(new_state, 'DONE')
 
     async def test_search_again_without_cache_searches_prowlarr_for_new_dub(self):
         # Regression: job #5775 (plan #19, episode 1) previously went straight
@@ -192,7 +199,8 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(receipt['reused'])
         await self.run_worker(self.fake)
         self.assertEqual(self.fake.searches, before + 1)
-        self.assertEqual(self.state()[0], 'DONE')
+        new_state = self.rows('SELECT state FROM jobs WHERE job_id=?', (receipt['job_id'],))[0][0]
+        self.assertEqual(new_state, 'DONE')
         self.assertEqual(self.rows(
             "SELECT rank,info_hash,state FROM sonarr_episode_candidates "
             "WHERE plan_id=1 AND anidb_episode_number=2 AND rank=3"
@@ -202,17 +210,19 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         await self.exhausted()
         await self.run_worker(self.fake)
         before = self.fake.searches
-        retry_episode(self.database, 123, 2, delete_cache=False)
+        receipt = retry_episode(self.database, 123, 2, delete_cache=False)
         await self.run_worker(self.fake)
         self.assertEqual(self.fake.searches, before + 1)
-        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        new_state = self.rows('SELECT state, last_reason_code FROM jobs WHERE job_id=?', (receipt['job_id'],))[0]
+        self.assertEqual(new_state, ('CANCELED', 'WAITING_FOR_DUB'))
 
     async def test_search_again_with_nothing_new_waits_again(self):
         await self.exhausted()
         await self.run_worker(self.fake)
-        retry_episode(self.database, 123, 2)
+        receipt = retry_episode(self.database, 123, 2)
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        new_state = self.rows('SELECT state, last_reason_code FROM jobs WHERE job_id=?', (receipt['job_id'],))[0]
+        self.assertEqual(new_state, ('CANCELED', 'WAITING_FOR_DUB'))
         self.assertEqual(self.fake.searches, 2)
 
 
@@ -244,7 +254,7 @@ class RequeueFixTests(WaitingForDubTests):
         self.assertEqual(applied['requeued'], 1)
         self.assertTrue(Path(applied['backup']).is_file())
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('ON_HOLD', 'WAITING_FOR_DUB'))
+        self.assertEqual(self.state(), ('CANCELED', 'WAITING_FOR_DUB'))
         self.assertEqual(fix.execute(self.database, 'japanese_english', apply=True)['requeued'], 0)
 
     async def test_mixed_failures_are_requeued(self):
@@ -264,9 +274,12 @@ class RequeueFixTests(WaitingForDubTests):
     # The worker tests above also run for this subclass; skip the duplicates.
     test_audio_only_failures_wait_for_dub_instead_of_review = None
     test_mixed_failures_with_one_audio_failure_wait_for_dub = None
-    test_no_audio_failure_still_needs_review = None
+    test_no_audio_failure_still_waits_for_dub = None
     test_check_only_runs_when_english_is_required = None
     test_search_again_tries_only_new_dual_audio_releases = None
+    test_search_again_prefers_eligible_cached_magnet_without_prowlarr = None
+    test_search_again_without_cache_searches_prowlarr_for_new_dub = None
+    test_search_again_without_cache_and_without_new_release_did_search = None
     test_search_again_with_nothing_new_waits_again = None
 
 

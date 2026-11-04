@@ -70,7 +70,7 @@ class Successor:
 
 
 _STATES = {"complete":"DONE", "skip":"DONE", "retry":"RETRY_WAIT", "defer":"RETRY_WAIT",
-           "hold":"ON_HOLD", "review":"NEEDS_REVIEW", "blocked":"BLOCKED"}
+           "hold":"ON_HOLD", "review":"NEEDS_REVIEW", "blocked":"BLOCKED", "cancel":"CANCELED"}
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ class Outcome:
     def __post_init__(self):
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
-        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry")
+        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "cancel")
                 or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio"}
                 or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio") else (type(v) is not int or v < 0)
                        for k, v in self.facts.items())):
@@ -106,7 +106,7 @@ class Outcome:
             raise ValueError("invalid outcome delay")
         if self.kind == "defer" and self.delay_ms is None:
             raise ValueError("deferred work requires a delay")
-        if self.kind != "complete" and self.value is not None:
+        if self.kind not in ("complete", "cancel") and self.value is not None:
             raise ValueError("only completion can publish result facts")
         if self.matching is not None:
             matching_from_json(self.matching)

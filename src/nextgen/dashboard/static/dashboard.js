@@ -450,7 +450,10 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       const placed = item.season != null;
       tr.dataset.episode = placed ? tvdbLabel(item) : 'E' + item.anidb_episode;
       tr.appendChild(node('td', missingLabel(item)));
-      const result = node('td', item.status.replaceAll('_', ' ').toLowerCase());
+      const statusLabel = item.status === 'NO_RESULTS' ? 'No usable candidates' :
+        item.status === 'WAITING_FOR_DUB' ? 'Waiting for dub' :
+        item.status.replaceAll('_', ' ').toLowerCase();
+      const result = node('td', statusLabel);
       if (item.reservation_count) result.appendChild(node('small',
         item.reservation_count + ' reservation(s)', 'muted job-note'));
       if (item.manual_submission_count) result.appendChild(node('small',
@@ -507,11 +510,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       }
       if (item.can_retry) {
         const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' :
-          item.status === 'WAITING_FOR_DUB' ? 'Search again' : 'Retry search', 'secondary');
+          (item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS') ? 'Search again' : 'Retry search', 'secondary');
         retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (state.seriesBusy) return;
-          const held = item.status === 'WAITING_FOR_DUB';
+          const held = item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS';
           let deleteCache = true;
           if (held) {
             $('search-again-episode').textContent = missingLabel(item);
