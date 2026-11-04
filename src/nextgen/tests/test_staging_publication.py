@@ -223,6 +223,16 @@ class StagingPublicationTests(unittest.TestCase):
         self.assertTrue(all(r['hash_checked'] for r in receipts[1:]))
         self.assertTrue(self.file.exists())
 
+    def test_copy_succeeds_despite_changed_source_inode_and_device(self):
+        """W-07, W-10: Staging copy succeeds when source file inode/device differ (NFS remount)."""
+        self.plan['transfer']='COPY'
+        orig_file = self.plan['source']['file']
+        # Simulate remount: different device and inode, but identical size and mtime
+        self.plan['source']['file'] = [999999, 888888, orig_file[2], orig_file[3], orig_file[4]]
+        receipts = self.publisher.publish(self.plan)
+        self.assertEqual(self.video().read_bytes(), self.file.read_bytes())
+        self.assertEqual(len(receipts), 3)
+
     def test_copy_retry_discards_incomplete_owned_temporary(self):
         from unittest.mock import patch
         self.plan['transfer']='COPY'

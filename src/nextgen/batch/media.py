@@ -5,13 +5,12 @@ fd-relative, no-follow traversal and the same bounded ffprobe parser as the
 single-episode verifier, without pretending a pack is a single Manifest.
 """
 import os
-import hashlib
 from pathlib import PurePosixPath
 
 from src.nextgen.acquisition.cleanup import directory, parent
 from src.nextgen.acquisition.media import (
     MediaInvalid, MediaUnavailable, VerifiedMedia, cancelled,
-    signature, probe, parse_probe,
+    signature, probe, parse_probe, media_fingerprint,
 )
 from src.nextgen.acquisition.audio import JAPANESE_ENGLISH
 from src.nextgen.batch.probe_transfer import selection_fingerprint
@@ -21,7 +20,11 @@ from src.nextgen.storage.batch_transfer_journal import BatchTransferRecord
 
 def verify_batch_probe_file(intent,record,transfer_job_id,flag,*,
                             read_probe=probe,protected_roots=(),audio=JAPANESE_ENGLISH):
-    """Return the immutable content+JP/EN proof, never a user-supplied verdict."""
+    """Authoritative lightweight media verification for the batch probe file.
+
+    Validates completed transfer, checks file size and audio tracks, and computes
+    lightweight container fingerprint without sequential full-payload streaming.
+    """
     if (type(intent) is not BatchSubmissionIntent
             or type(record) is not BatchTransferRecord
             or record.phase!='COMPLETE' or record.progress!=1
@@ -46,16 +49,8 @@ def verify_batch_probe_file(intent,record,transfer_job_id,flag,*,
                 try:
                     before=signature(os.fstat(fd))
                     if before[2]!=selected.size:raise MediaInvalid()
-                    digest=hashlib.sha256()
-                    remaining=selected.size
-                    while remaining:
-                        cancelled(flag)
-                        chunk=os.read(fd,min(1024*1024,remaining))
-                        if not chunk:raise MediaInvalid()
-                        digest.update(chunk)
-                        remaining-=len(chunk)
-                    if os.read(fd,1):raise MediaInvalid()
-                    os.lseek(fd,0,os.SEEK_SET)
+                    media_hash=media_fingerprint(fd,selected.size,before)
+                    cancelled(flag)
                     duration,languages=parse_probe(
                         read_probe(fd,flag),PurePosixPath(selected.path).suffix.lower(),audio)
                     cancelled(flag)
@@ -69,7 +64,7 @@ def verify_batch_probe_file(intent,record,transfer_job_id,flag,*,
                     return VerifiedMedia(
                         intent.candidate.reservation_job_id,transfer_job_id,
                         intent.candidate.plan_id,intent.fingerprint,record.fingerprint,
-                        selected.path,root_sig,before,digest.hexdigest(),duration,languages)
+                        selected.path,root_sig,before,media_hash,duration,languages)
                 finally:
                     os.close(fd)
     except OSError:
@@ -78,7 +73,7 @@ def verify_batch_probe_file(intent,record,transfer_job_id,flag,*,
 
 def verify_batch_episode_file(intent,record,unlock_job_id,file_index,flag,*,
                               read_probe=probe,protected_roots=(),audio=JAPANESE_ENGLISH):
-    """Verify one provider-approved, fully downloaded regular episode."""
+    """Authoritative lightweight media verification for one planned batch episode."""
     from src.nextgen.storage.batch_unlock_journal import BatchUnlockRecord
     from src.nextgen.batch.unlock import planned_priorities
     if (type(intent) is not BatchSubmissionIntent
@@ -108,16 +103,8 @@ def verify_batch_episode_file(intent,record,unlock_job_id,file_index,flag,*,
                 try:
                     before=signature(os.fstat(fd))
                     if before[2]!=selected.size:raise MediaInvalid()
-                    digest=hashlib.sha256()
-                    remaining=selected.size
-                    while remaining:
-                        cancelled(flag)
-                        chunk=os.read(fd,min(1048576,remaining))
-                        if not chunk:raise MediaInvalid()
-                        remaining-=len(chunk)
-                        digest.update(chunk)
-                    if os.read(fd,1):raise MediaInvalid()
-                    os.lseek(fd,0,os.SEEK_SET)
+                    media_hash=media_fingerprint(fd,selected.size,before)
+                    cancelled(flag)
                     duration,languages=parse_probe(read_probe(fd,flag),suffix,audio)
                     cancelled(flag)
                     if signature(os.fstat(fd))!=before:raise MediaInvalid()
@@ -132,6 +119,6 @@ def verify_batch_episode_file(intent,record,unlock_job_id,file_index,flag,*,
                         intent.candidate.reservation_job_id,unlock_job_id,
                         intent.candidate.plan_id,intent.fingerprint,
                         record.intent.fingerprint,selected.path,root_sig,before,
-                        digest.hexdigest(),duration,languages)
+                        media_hash,duration,languages)
                 finally:os.close(fd)
     except OSError:raise MediaUnavailable() from None
