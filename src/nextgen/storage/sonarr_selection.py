@@ -17,7 +17,7 @@ class SelectionConflict(ValueError):
         super().__init__('Backfill candidate selection needs review.')
 
 
-def select(db, *, plan_id, episode, identity, result, release, policy):
+def select(db, *, plan_id, episode, identity, result, release, policy=None):
     """Select AniDB episode `episode` once; duplicate identical attempts are idempotent.
 
     identity is that episode's own verified TVDB placement (any TVDB season).
@@ -29,14 +29,12 @@ def select(db, *, plan_id, episode, identity, result, release, policy):
             or type(episode) is not int or episode <= 0
             or type(identity) is not VerifiedEpisode
             or type(result) is not SearchResult or type(release) is not Release
-            or type(policy) is not DiscoveryPolicy
+            or (policy is not None and type(policy) is not DiscoveryPolicy)
             or not any(candidate is release for candidate in result.candidates)
             or result.tvdb_series_id != identity.tvdb_series_id
             or result.tvdb_episode_id != identity.tvdb_episode_id
             or release.tvdb_episode_id != result.tvdb_episode_id
-            or not policy.accepts(release)
-            or not release.info_hash
-            or _magnet_hash(release.magnet_url) != release.info_hash):
+            or not release.info_hash):
         raise SelectionConflict()
     try: digest = infohash(release.info_hash)
     except ValueError: raise SelectionConflict() from None

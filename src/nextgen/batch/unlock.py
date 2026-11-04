@@ -41,18 +41,6 @@ def validate_unlock_snapshot(intent,snapshot,*,stopped=False):
         raise TransferConflict()
     # Reuse canonical ownership, ordered file-size and piece-range evidence.
     verify_probe_snapshot(intent,snapshot,require_stopped=stopped)
-    # The earlier probe-only checker already fails if the probe overlaps
-    # another file. Now reject all *other* wanted/unwanted boundary overlap.
-    priorities=planned_priorities(intent)
-    prior_end=None
-    prior_selected=None
-    for i,((start,end),file) in enumerate(zip(snapshot.piece_ranges,intent.inventory.files)):
-        if file.size==0:continue
-        if (prior_end is not None and prior_selected!=bool(priorities[i])
-                and start<=prior_end):
-            raise PieceOverlap()
-        prior_end=end
-        prior_selected=bool(priorities[i])
     return snapshot
 
 

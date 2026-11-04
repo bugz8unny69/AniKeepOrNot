@@ -470,19 +470,28 @@ class DubFound:
     hashes: tuple
 
 
+@dataclass(frozen=True)
+class DubExhausted:
+    plan: BackfillBatch
+    episode: int
+
+
 def _audio_only(db, plan_id, episode):
-    """Hashes tried for this episode when all failed and one failed on audio."""
+    """Hashes tried for this episode when all candidates are failed."""
     rows = db.execute(
         'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
         'WHERE plan_id=? AND anidb_episode_number=?', (plan_id, episode)).fetchall()
-    if (not rows or any(state != 'FAILED' for _, state, _ in rows)
-            or not any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows)):
+    if not rows or any(state != 'FAILED' for _, state, _ in rows):
         return None
     return frozenset(row[0] for row in rows)
 
 
 def audio_exhausted(db, plan_id, episode):
-    return _audio_only(db, plan_id, episode) is not None
+    rows = db.execute(
+        'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
+        'WHERE plan_id=? AND anidb_episode_number=?', (plan_id, episode)).fetchall()
+    return bool(rows and all(state == 'FAILED' for _, state, _ in rows)
+                and any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows))
 
 
 def load_tried_hashes(database, plan_id, numbers):
@@ -548,3 +557,22 @@ def persist_dub_found(db, claim, value):
         event_id=claim.event_id, created_by_job_id=claim.job_id,
         payload={'plan_id': plan.plan_id, 'start': plan.start, 'fallback_episode': episode})
     return (created,)
+
+
+def persist_dub_exhausted(db, claim, value):
+    """Mark the episode as WAITING_FOR_DUB after candidate exhaustion."""
+    if (not db.in_transaction or type(value) is not DubExhausted
+            or claim.kind != 'DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or type(value.plan) is not BackfillBatch or value.episode not in value.plan.numbers):
+        raise BackfillConflict()
+    plan, episode = value.plan, value.episode
+    now = int(time.time() * 1000)
+    db.execute(
+        "INSERT INTO sonarr_backfill_results("
+        "plan_id,anidb_episode_number,job_id,sonarr_episode_id,tvdb_episode_id,status,"
+        "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,NULL,'WAITING_FOR_DUB',0,0,0,?) "
+        "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "
+        "status='WAITING_FOR_DUB',observed_at_ms=excluded.observed_at_ms",
+        (plan.plan_id, episode, claim.job_id, now)
+    )
+    return ()

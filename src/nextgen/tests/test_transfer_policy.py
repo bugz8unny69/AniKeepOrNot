@@ -38,7 +38,7 @@ class TransferPolicyTests(unittest.TestCase):
             intent,snapshot=example(**options)
             self.assertIs(verify_snapshot(intent,snapshot),snapshot)
         intent,snapshot=example(sidecar=10)
-        with self.assertRaises(PieceOverlap):verify_snapshot(intent,snapshot)
+        self.assertIs(verify_snapshot(intent,snapshot),snapshot)
         intent,snapshot=example(sidecar=262144,video=262145)
         self.assertIs(verify_snapshot(intent,snapshot),snapshot)  # Last partial piece is video only.
 

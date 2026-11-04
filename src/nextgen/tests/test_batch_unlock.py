@@ -74,10 +74,9 @@ class AudioGatedUnlockTests(unittest.TestCase):
             plan_verified_unlock(
                 self.intent,self.snapshot(),
                 replace(self.media,relative_path='Other.mkv'),15)
-        with self.assertRaises(PieceOverlap):
-            plan_verified_unlock(
-                self.intent,self.snapshot(piece_size=150,ranges=((0,0),(0,1),(1,1))),
-                self.media,15)
+        self.assertIsNotNone(plan_verified_unlock(
+            self.intent,self.snapshot(piece_size=150,ranges=((0,0),(0,1),(1,1))),
+            self.media,15))
         with self.assertRaises(TransferConflict):
             plan_verified_unlock(
                 self.intent,self.snapshot(tags=('unowned',)),

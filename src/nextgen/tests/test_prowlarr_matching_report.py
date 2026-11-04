@@ -348,9 +348,9 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await worker.close()
 
-        # Job must be ON_HOLD / WAITING_FOR_DUB
+        # Job must be CANCELED / WAITING_FOR_DUB
         job_state = self.rows("SELECT state, last_reason_code FROM jobs WHERE job_id=?", (job_id,))[0]
-        self.assertEqual(job_state, ("ON_HOLD", "WAITING_FOR_DUB"))
+        self.assertEqual(job_state, ("CANCELED", "WAITING_FOR_DUB"))
 
         # Snapshot must exist in database!
         db = connect(self.database)

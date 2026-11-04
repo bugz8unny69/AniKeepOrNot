@@ -225,9 +225,9 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await worker.close()
 
-        # Verify job is ON_HOLD with WAITING_FOR_DUB
+        # Verify job is CANCELED with WAITING_FOR_DUB
         job_state = self.rows("SELECT state, last_reason_code FROM jobs WHERE job_id=?", (job_id,))[0]
-        self.assertEqual(job_state, ("ON_HOLD", "WAITING_FOR_DUB"))
+        self.assertEqual(job_state, ("CANCELED", "WAITING_FOR_DUB"))
 
         # Verify candidate table still has only 1 row (the failed hash) and was NOT reacquired
         candidates = self.rows("SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates WHERE plan_id=1 AND anidb_episode_number=1")

@@ -420,3 +420,102 @@ class FallbackWiringTests(unittest.TestCase):
                 self.db.execute('BEGIN IMMEDIATE')
                 with self.assertRaises(BackfillConflict):
                     persist_fallback(self.db,claim,value)
+
+    def test_metadata_timeout_failure_isolation_and_fallback(self):
+        """Proves TORRENT_METADATA_TIMEOUT on Candidate 1 isolates the failure and activates Candidate 2."""
+        from unittest.mock import patch
+        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        self.db.executescript("""
+            CREATE TABLE job_history(history_id INTEGER,job_id INTEGER,
+                event_code TEXT,reason_code TEXT);
+            CREATE TABLE job_operation_members(job_id INTEGER,operation_id INTEGER);
+            CREATE TABLE management_actions(operation_id INTEGER,action TEXT,
+                target_job_id INTEGER,job_id INTEGER,created_at_ms INTEGER);
+            CREATE TABLE jobs(job_id INTEGER,event_id INTEGER,kind TEXT,
+                created_by_job_id INTEGER,payload_json TEXT);
+            CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
+            CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
+            CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
+            CREATE TABLE episode_reservations(reservation_id INTEGER,state TEXT);
+            CREATE TABLE acquisition_plans(reservation_id INTEGER,info_hash TEXT);
+            INSERT INTO trial_plans VALUES(1,5,6,3);
+            ALTER TABLE trial_plans ADD COLUMN anchor_verification_id INTEGER;
+            CREATE TABLE IF NOT EXISTS trial_evaluations(job_id INTEGER,verification_id INTEGER,plan_id INTEGER);
+            INSERT INTO jobs VALUES(10,9,'DISCOVER_SONARR_BACKFILL',NULL,'{"plan_id":1}');
+            INSERT INTO jobs VALUES(11,25,'VERIFY_RELEASE',10,'{}');
+            INSERT INTO jobs VALUES(12,25,'PREPARE_ACQUISITION',11,'{}');
+            INSERT INTO jobs VALUES(30,25,'CLEANUP_CANCELED_OPERATION',12,'{}');
+            INSERT INTO management_actions VALUES(7,'CLEANUP',12,30,1);
+            INSERT INTO job_operation_members VALUES(11,7),(12,7);
+            INSERT INTO job_history VALUES(1,12,'NEEDS_REVIEW','TORRENT_METADATA_TIMEOUT');
+            INSERT INTO incoming_events VALUES(25,'sonarr-discovery','{"torrent_infohash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}');
+            INSERT INTO sonarr_episode_selections VALUES(1,2,901,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+        """)
+        self.db.commit()
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            activate_candidate(self.db,plan_id=1,episode=2,info_hash=FIRST)
+        self.assertEqual(
+            self.db.execute("SELECT rank,state FROM sonarr_episode_candidates ORDER BY rank").fetchall(),
+            [(1,'ACTIVE'),(2,'READY')])
+        with patch('src.nextgen.storage.sqlite.enqueue_job_with_receipt',
+                   return_value=(99,'receipt')) as enqueue:
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                receipts = schedule_after_cleanup(self.db,7)
+            self.assertEqual(receipts,('receipt',))
+            enqueue.assert_called_once()
+            self.assertEqual(enqueue.call_args.kwargs['payload'],
+                             {'plan_id':1,'start':1,'fallback_episode':2})
+        self.assertEqual(
+            self.db.execute("SELECT rank,state,reason_code FROM sonarr_episode_candidates ORDER BY rank").fetchall(),
+            [(1,'FAILED','TORRENT_METADATA_TIMEOUT'),(2,'READY',None)])
+
+    def test_size_limit_rejection_failure_isolation_and_fallback(self):
+        """Proves ACQUISITION_SIZE_LIMIT on Candidate 1 isolates the failure and activates Candidate 2."""
+        from unittest.mock import patch
+        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        self.db.executescript("""
+            CREATE TABLE job_history(history_id INTEGER,job_id INTEGER,
+                event_code TEXT,reason_code TEXT);
+            CREATE TABLE job_operation_members(job_id INTEGER,operation_id INTEGER);
+            CREATE TABLE management_actions(operation_id INTEGER,action TEXT,
+                target_job_id INTEGER,job_id INTEGER,created_at_ms INTEGER);
+            CREATE TABLE jobs(job_id INTEGER,event_id INTEGER,kind TEXT,
+                created_by_job_id INTEGER,payload_json TEXT);
+            CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
+            CREATE TABLE trial_plans(plan_id INTEGER,anchor_episode INTEGER,backfill_count INTEGER,following_count INTEGER);
+            CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
+                anidb_episode_number INTEGER,tvdb_episode_id INTEGER,info_hash TEXT);
+            CREATE TABLE episode_reservations(reservation_id INTEGER,state TEXT);
+            CREATE TABLE acquisition_plans(reservation_id INTEGER,info_hash TEXT);
+            INSERT INTO trial_plans VALUES(1,5,6,3);
+            ALTER TABLE trial_plans ADD COLUMN anchor_verification_id INTEGER;
+            CREATE TABLE IF NOT EXISTS trial_evaluations(job_id INTEGER,verification_id INTEGER,plan_id INTEGER);
+            INSERT INTO jobs VALUES(10,9,'DISCOVER_SONARR_BACKFILL',NULL,'{"plan_id":1}');
+            INSERT INTO jobs VALUES(11,25,'VERIFY_RELEASE',10,'{}');
+            INSERT INTO jobs VALUES(12,25,'PREPARE_ACQUISITION',11,'{}');
+            INSERT INTO jobs VALUES(30,25,'CLEANUP_CANCELED_OPERATION',12,'{}');
+            INSERT INTO management_actions VALUES(7,'CLEANUP',12,30,1);
+            INSERT INTO job_operation_members VALUES(11,7),(12,7);
+            INSERT INTO job_history VALUES(1,12,'NEEDS_REVIEW','ACQUISITION_SIZE_LIMIT');
+            INSERT INTO incoming_events VALUES(25,'sonarr-discovery','{"torrent_infohash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}');
+            INSERT INTO sonarr_episode_selections VALUES(1,2,901,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+        """)
+        self.db.commit()
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            activate_candidate(self.db,plan_id=1,episode=2,info_hash=FIRST)
+        with patch('src.nextgen.storage.sqlite.enqueue_job_with_receipt',
+                   return_value=(99,'receipt')) as enqueue:
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                receipts = schedule_after_cleanup(self.db,7)
+            self.assertEqual(receipts,('receipt',))
+            enqueue.assert_called_once()
+            self.assertEqual(enqueue.call_args.kwargs['payload'],
+                             {'plan_id':1,'start':1,'fallback_episode':2})
+        self.assertEqual(
+            self.db.execute("SELECT rank,state,reason_code FROM sonarr_episode_candidates ORDER BY rank").fetchall(),
+            [(1,'FAILED','ACQUISITION_SIZE_LIMIT'),(2,'READY',None)])

@@ -500,7 +500,7 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
 
     has_audio_failure = any(row[3] == 'MEDIA_AUDIO_REQUIRED' for row in candidate_rows)
     all_candidates_failed = len(candidate_rows) > 0 and all(row[2] == 'FAILED' for row in candidate_rows)
-    is_waiting_for_dub = all_candidates_failed and has_audio_failure
+    is_waiting_for_dub = all_candidates_failed
 
     if candidate_rows or snapshot.get('search_mode') == 'exhausted':
         out('\nCandidate history reconciliation & hold explanation:')
@@ -525,8 +525,12 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
                 out('    (Release-title hints such as MULTi AD or Dual Audio are search hints, not verified audio streams)')
 
         if is_waiting_for_dub and actionable_count == 0:
-            out('  Hold explanation (WAITING_FOR_DUB): All previous candidates failed (with at least one audio failure) '
-                'and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.')
+            if has_audio_failure:
+                out('  Hold explanation (WAITING_FOR_DUB): All previous candidates failed (with at least one audio failure) '
+                    'and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.')
+            else:
+                out('  Hold explanation (WAITING_FOR_DUB): All previous candidates failed '
+                    'and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.')
 
     out(f'\nAll releases ({len(results)} of {raw_count}):')
     res_hdr = f'{max_res}p?'
@@ -684,7 +688,7 @@ def prowlarr_matching_json(db, job_id, attempt=None):
 
     has_audio_failure = any(row[3] == 'MEDIA_AUDIO_REQUIRED' for row in candidate_rows)
     all_candidates_failed = len(candidate_rows) > 0 and all(row[2] == 'FAILED' for row in candidate_rows)
-    is_waiting_for_dub = all_candidates_failed and has_audio_failure
+    is_waiting_for_dub = all_candidates_failed
 
     counts_out = dict(snapshot.get('counts') or {})
     counts_out['passes_policy'] = passes_policy_count
@@ -699,7 +703,9 @@ def prowlarr_matching_json(db, job_id, attempt=None):
         'previous_failure_reasons': failure_reasons,
         'is_waiting_for_dub': is_waiting_for_dub,
         'hold_explanation': (
-            'All previous candidates failed (with at least one audio failure) and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.'
+            ('All previous candidates failed (with at least one audio failure) and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.'
+             if has_audio_failure else
+             'All previous candidates failed and 0 new actionable releases were found. Job remains on hold; failed torrents are not re-downloaded.')
             if (is_waiting_for_dub and actionable_count == 0) else None
         ),
     }

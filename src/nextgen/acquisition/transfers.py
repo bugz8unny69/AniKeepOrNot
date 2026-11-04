@@ -63,7 +63,6 @@ def verify_snapshot(intent,snapshot):
     size=found.files[selected].size
     covered_start=start//snapshot.piece_size*snapshot.piece_size
     covered_end=min(offset,((start+size+snapshot.piece_size-1)//snapshot.piece_size)*snapshot.piece_size)
-    if covered_end-covered_start!=size:raise PieceOverlap()
     return snapshot
 
 

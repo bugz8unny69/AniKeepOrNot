@@ -21,8 +21,8 @@ from src.nextgen.storage.sonarr_backfill import (
     load_batch, persist_observations, FallbackCompletion, load_fallback,
     persist_fallback, FallbackMissing, persist_fallback_missing,
     AUTOMATIC_RETRY_MS, automatic_retry_used,
-    WAITING_FOR_DUB, DubFound, load_dub_search, persist_dub_found,
-    load_tried_hashes,
+    WAITING_FOR_DUB, DubFound, DubExhausted, load_dub_search, persist_dub_found,
+    persist_dub_exhausted, load_tried_hashes,
 )
 from src.nextgen.storage.sonarr_cached_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
@@ -118,7 +118,9 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 snapshots = getattr(client, 'snapshots', None)
                 if not fresh:
                     log.info('Backfill episode %s: waiting for a dub', exhausted_episode)
-                    return Outcome('hold',WAITING_FOR_DUB,search_snapshots=snapshots)
+                    return Outcome('cancel', WAITING_FOR_DUB,
+                                   value=DubExhausted(plan, exhausted_episode),
+                                   search_snapshots=snapshots)
                 log.info('Backfill episode %s: %s new Dual/Multi Audio release(s)',
                          exhausted_episode, len(fresh))
                 return Outcome(value=DubFound(plan,exhausted_episode,target,fresh),search_snapshots=snapshots)
@@ -205,6 +207,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_fallback_missing(db,claim,value)
             if type(value) is DubFound:
                 return persist_dub_found(db,claim,value)
+            if type(value) is DubExhausted:
+                return persist_dub_exhausted(db,claim,value)
             if type(value) is tuple and len(value)==3 and type(value[2]) is CachedTorrent:
                 return persist_cached(db,claim,*value,True)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
@@ -212,7 +216,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
 
     def route(value):
-        if (type(value) in (FallbackCompletion,FallbackMissing,DubFound)
+        if (type(value) in (FallbackCompletion,FallbackMissing,DubFound,DubExhausted)
                 or type(value) is tuple and len(value)==3 and type(value[2]) is CachedTorrent): return ()
         if type(value) is not BackfillCompletion: raise ValueError('typed backfill result required')
         if value.retry_episode is not None: return ()

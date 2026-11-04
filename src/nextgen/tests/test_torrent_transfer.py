@@ -107,14 +107,13 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(t.base_url=='https://qb.example' for t in self.targets))
         self.assertEqual(self.starts,1)
 
-    async def test_shared_boundary_bytes_require_review_before_controls(self):
+    async def test_shared_boundary_bytes_permitted_under_w19(self):
         self.raw,self.digest=metadata(name=b'Folder',files=[{b'length':10,b'path':[b'info.nfo']},
                                                           {b'length':100,b'path':[b'Test Anime - 10.mkv']}])
         worker=self.worker();await self.queued(worker);await worker.attempt()
-        self.assertEqual(self.starts,0)
-        self.assertEqual(self.selection_calls,[])
-        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='DOWNLOAD_TORRENT'"),
-                         [('NEEDS_REVIEW','TORRENT_PIECE_OVERLAP')])
+        self.assertEqual(self.starts,1)
+        self.assertEqual(self.rows("SELECT state,activity_code FROM jobs WHERE kind='DOWNLOAD_TORRENT'"),
+                         [('RETRY_WAIT','DOWNLOADING')])
 
     async def test_start_timeout_never_rearms_even_when_torrent_stays_stopped(self):
         worker=self.worker(mode='start_timeout_absent');await self.queued(worker);await worker.attempt()

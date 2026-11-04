@@ -450,8 +450,9 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
             "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
             "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
             "AND json_extract(payload_json,'$.plan_id')=? "
-            "AND json_extract(payload_json,'$.exhausted_episode')=? "
-            "ORDER BY job_id DESC LIMIT 1", (plan_id, episode)).fetchone()
+            "AND (json_extract(payload_json,'$.exhausted_episode')=? "
+            "OR json_extract(payload_json,'$.retry_episode')=?) "
+            "ORDER BY job_id DESC LIMIT 1", (plan_id, episode, episode)).fetchone()
         if active_retry:
             return {'job_id':active_retry[0], 'reused':True}
         prior = db.execute(
@@ -468,6 +469,13 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
                 (anidb_id, *place)).fetchone():
                 raise IntakeUnavailable()
         if held is None:
+            if prior and prior[0] == WAITING_FOR_DUB:
+                has_candidates = db.execute(
+                    "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? AND anidb_episode_number=? LIMIT 1",
+                    (plan_id, episode)).fetchone() is not None
+                if has_candidates:
+                    return _search_episode(db, plan_id, numbers, episode, event_id, parent_job,
+                                           exhausted=True, delete_cache=delete_cache)
             return _search_episode(db, plan_id, numbers, episode, event_id, parent_job)
     # Waiting for dub: "Search again" is the held job's existing Retry.
     from src.nextgen.storage.review_retry import request_review_retry, RetryNotAllowed, RetryStale
@@ -480,20 +488,27 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
     return {'job_id': receipt.job_id, 'reused': receipt.outcome == 'ALREADY_QUEUED'}
 
 
-def _search_episode(db, plan_id, numbers, episode, event_id, parent_job):
+def _search_episode(db, plan_id, numbers, episode, event_id, parent_job, *, exhausted=False, delete_cache=True):
     pending = db.execute(
         "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
         "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
         "AND json_extract(payload_json,'$.plan_id')=? "
         "AND (json_extract(payload_json,'$.retry_episode')=? "
+        "OR json_extract(payload_json,'$.exhausted_episode')=? "
         "OR json_extract(payload_json,'$.retry_episode') IS NULL) LIMIT 1",
-        (plan_id, episode)).fetchone()
+        (plan_id, episode, episode)).fetchone()
     if pending:
         return {'job_id': pending[0], 'reused': True}
     start = (numbers.index(episode) // PAGE_SIZE) * PAGE_SIZE + 1
+    payload = {'plan_id': plan_id, 'start': start}
+    if exhausted:
+        payload['exhausted_episode'] = episode
+        payload['delete_cache'] = delete_cache
+    else:
+        payload['retry_episode'] = episode
     job, _ = enqueue_job_with_receipt(
         db, kind='DISCOVER_SONARR_BACKFILL',
-        payload={'plan_id': plan_id, 'start': start, 'retry_episode': episode},
+        payload=payload,
         event_id=event_id, created_by_job_id=parent_job, component='api'
     )
     return {'job_id': job, 'reused': False}
