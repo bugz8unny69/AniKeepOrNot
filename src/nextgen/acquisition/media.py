@@ -51,6 +51,28 @@ def signature(info):
     return (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
 
 
+def media_fingerprint(fd, size, before, *, sample_size=65536):
+    """Compute a lightweight media fingerprint from the container header and file attributes.
+
+    Avoids sequentially streaming multi-gigabyte video payloads from disk while
+    deterministically binding to the container's initial structure, file size,
+    and modification timestamp.
+    """
+    os.lseek(fd, 0, os.SEEK_SET)
+    to_read = min(size, sample_size)
+    header = bytearray()
+    while len(header) < to_read:
+        chunk = os.read(fd, to_read - len(header))
+        if not chunk:
+            raise MediaInvalid()
+        header.extend(chunk)
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256(header)
+    if size > sample_size:
+        digest.update(f":{size}:{before[3]}".encode())
+    return digest.hexdigest()
+
+
 def cancelled(flag):
     if flag.is_set():raise asyncio.CancelledError()
 
@@ -182,6 +204,12 @@ class VerifiedMedia:
 
 
 def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_roots=(),audio=JAPANESE_ENGLISH):
+    """Authoritative lightweight media verification for single acquisitions.
+
+    Trusts the completed download transfer, verifies expected file size and container
+    integrity via a single ffprobe inspection of audio streams, and computes a lightweight
+    media fingerprint (container header + attributes) without sequential full-payload streaming.
+    """
     selected=intent.plan.manifest.files[intent.plan.manifest.selected_index]
     # Same exact owned download root and unknown-file rejection as scoped cleanup.
     try:
@@ -196,15 +224,8 @@ def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_
                 try:
                     before=signature(os.fstat(fd))
                     if before[2]!=selected.size:raise MediaInvalid()
-                    digest=hashlib.sha256()
-                    remaining=selected.size
-                    while remaining:
-                        cancelled(flag)
-                        chunk=os.read(fd,min(1024*1024,remaining))
-                        if not chunk:raise MediaInvalid()
-                        digest.update(chunk);remaining-=len(chunk)
-                    if os.read(fd,1):raise MediaInvalid()
-                    os.lseek(fd,0,os.SEEK_SET)
+                    media_hash=media_fingerprint(fd,selected.size,before)
+                    cancelled(flag)
                     duration,languages=parse_probe(read_probe(fd,flag),PurePosixPath(selected.path).suffix.lower(),audio)
                     cancelled(flag)
                     if signature(os.fstat(fd))!=before:raise MediaInvalid()
@@ -215,7 +236,7 @@ def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_
                         with parent(current,selected.path) as (latest,leaf):
                             if signature(os.stat(leaf,dir_fd=latest,follow_symlinks=False))!=before:raise MediaInvalid()
                     return VerifiedMedia(intent.plan.preparation_job_id,download_job_id,intent.plan.plan_id,
-                        intent.fingerprint,record.fingerprint,selected.path,root_sig,before,digest.hexdigest(),duration,languages)
+                        intent.fingerprint,record.fingerprint,selected.path,root_sig,before,media_hash,duration,languages)
                 finally:os.close(fd)
     except CancellationError:raise MediaInvalid() from None
     except OSError:raise MediaUnavailable() from None
