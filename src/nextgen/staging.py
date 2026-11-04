@@ -16,9 +16,9 @@ from src.nextgen.cancellation import CancellationError
 
 class StagingReview(ValueError):
     reason_code='STAGING_REVIEW'
-    def __init__(self,*,failed_check=None,failed_path=None):
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
         self.failed_check,self.failed_path=failed_check,failed_path
-        super().__init__('Staging needs review; existing files have been preserved.')
+        super().__init__(message or 'Staging needs review; existing files have been preserved.')
 
 
 class StagingBusy(RuntimeError):

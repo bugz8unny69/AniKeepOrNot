@@ -10,7 +10,7 @@ CANCELABLE=frozenset(('PENDING','RETRY_WAIT','ON_HOLD','BLOCKED','NEEDS_REVIEW',
 def operation(db,job_id):
     row=db.execute('SELECT o.operation_id,o.state,o.cleanup_state,o.reason_code FROM job_operations o '
         'JOIN job_operation_members m USING(operation_id) WHERE m.job_id=?',(job_id,)).fetchone()
-    if row is None:raise CancellationError()
+    if row is None:raise CancellationError('OPERATION_NOT_FOUND')
     return row
 
 
@@ -63,40 +63,40 @@ def mark_staged(db,claim):
     Call only after verified durable publication; not a public management action.
     Partial staging/refresh failures must not call this. No file proof is invented.
     """
-    if not db.in_transaction or claim.kind not in ('STAGE_TRIAL_MEDIA','STAGE_BATCH_EPISODE'):raise CancellationError()
+    if not db.in_transaction or claim.kind not in ('STAGE_TRIAL_MEDIA','STAGE_BATCH_EPISODE'):raise CancellationError('TRANSACTION_OR_KIND_INVALID')
     row=db.execute('SELECT state,lease_token,attempt_count,lease_expires_at_ms FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()
     import time
     now=time.time_ns()//1000000
-    if row is None or row[:3]!=('RUNNING',claim.token,claim.attempt) or row[3]<=now:raise CancellationError()
+    if row is None or row[:3]!=('RUNNING',claim.token,claim.attempt) or row[3]<=now:raise CancellationError('CLAIM_EXPIRED_OR_NOT_RUNNING')
     op=operation(db,claim.job_id)
-    if op[1]!='ACTIVE':raise CancellationError()
+    if op[1]!='ACTIVE':raise CancellationError('OPERATION_NOT_ACTIVE')
     if claim.kind=='STAGE_BATCH_EPISODE':
         plan=db.execute(
             'SELECT plan_id FROM batch_staging_publications WHERE job_id=?',
             (claim.job_id,)).fetchone()
-        if plan is None:raise CancellationError()
+        if plan is None:raise CancellationError('PLAN_NOT_FOUND')
         selected=db.execute(
             'SELECT count(*) FROM batch_trial_files WHERE plan_id=?',plan).fetchone()[0]
         published=db.execute(
             "SELECT count(*) FROM batch_staging_publications "
             "WHERE plan_id=? AND state='PUBLISHED'",plan).fetchone()[0]
-        if selected<1 or selected!=published:raise CancellationError()
+        if selected<1 or selected!=published:raise CancellationError('PUBLICATIONS_INCOMPLETE')
     phases=db.execute('SELECT phase FROM staging_cleanup_artifacts WHERE operation_id=?',(op[0],)).fetchall()
-    if not phases or any(p[0]!='PUBLISHED' for p in phases):raise CancellationError()
+    if not phases or any(p[0]!='PUBLISHED' for p in phases):raise CancellationError('PUBLICATIONS_NOT_PUBLISHED')
     if db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) WHERE m.operation_id=? AND j.job_id<>? AND j.state<>'DONE' LIMIT 1",
-                  (op[0],claim.job_id)).fetchone():raise CancellationError()
+                  (op[0],claim.job_id)).fetchone():raise CancellationError('JOB_NOT_DONE')
     db.execute("UPDATE job_operations SET state='STAGED',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
 
 
 def request_cancellation(db,job_id,now,*,component='api',reason_code='JOB_CANCELED'):
     """Cancel via the normal guarded operation lifecycle inside the caller transaction."""
-    if not db.in_transaction:raise CancellationError()
-    if db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(job_id,)).fetchone():raise CancellationError()
+    if not db.in_transaction:raise CancellationError('TRANSACTION_REQUIRED')
+    if db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(job_id,)).fetchone():raise CancellationError('MANAGEMENT_ACTION_EXISTS')
     op=operation(db,job_id)
     if op[1] in ('CANCEL_REQUESTED','CANCELED'):return op[0],()
     members=db.execute('SELECT j.job_id,j.state,j.attempt_count FROM jobs j JOIN job_operation_members m USING(job_id) '
                        'WHERE m.operation_id=?',(op[0],)).fetchall()
-    if not can_cancel_operation(db,op):raise CancellationError()
+    if not can_cancel_operation(db,op):raise CancellationError('OPERATION_NOT_CANCELABLE')
     db.execute("UPDATE job_operations SET state='CANCEL_REQUESTED',cleanup_state='PENDING',reason_code='CANCELLATION_DRAINING',"
                'updated_at_ms=? WHERE operation_id=?',(now,op[0]))
     receipts=[]
@@ -132,7 +132,7 @@ class CancellationStore:
     def acknowledge(self,claim):
         with self.queue.connection() as db,transaction(db):
             op=operation(db,claim.job_id)
-            if op[1] not in ('CANCEL_REQUESTED','CANCELED'):raise CancellationError()
+            if op[1] not in ('CANCEL_REQUESTED','CANCELED'):raise CancellationError('OPERATION_NOT_CANCEL_REQUESTED')
             row=db.execute('SELECT state,lease_token,attempt_count FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()
             if row==('RUNNING',claim.token,claim.attempt):return cancel_job(db,claim.job_id,self.queue.now())
             return ()

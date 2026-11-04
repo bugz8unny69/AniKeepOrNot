@@ -308,7 +308,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
                  failed_check=None, failed_path=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
-                 observed_audio=None, missing_audio=None) -> dict:
+                 observed_audio=None, missing_audio=None,
+                 blocking_job_id=None, operation_id=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -325,7 +326,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
             details[key] = sorted(set(values))
     for key, value in (("retry_at_ms", retry_at_ms), ("attempt", attempt),
                        ("max_attempts", max_attempts), ("video_mb", video_mb),
-                       ("limit_mb", limit_mb), ("plan_used_mb", plan_used_mb)):
+                       ("limit_mb", limit_mb), ("plan_used_mb", plan_used_mb),
+                       ("blocking_job_id", blocking_job_id), ("operation_id", operation_id)):
         if value is not None:
             if type(value) is not int or not 0 <= value <= _MAX_INTEGER:
                 raise ValueError("invalid diagnostic integer")

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
-from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor
+from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor, failure_facts
 from src.nextgen.providers.errors import (ProviderDeferred, ProviderUnavailable, ProviderInvalidResponse,
                                           ProviderAuthenticationFailed)
 from src.nextgen.release_contracts import VerifiedRelease, ReleaseNotReady, ReleaseConflict
@@ -41,7 +41,7 @@ def _persist(db,claim,value):
         else:
             persist_release(db,claim,value.verified)
     except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,BatchPlanningError) as exc:
-        raise CompletionRejected(Outcome("review",getattr(exc,'reason_code','RELEASE_CONFLICT'))) from None
+        raise CompletionRejected(Outcome("review",getattr(exc,'reason_code','RELEASE_CONFLICT'), facts=failure_facts(exc))) from None
 
 
 def registration(verify, *, trial_kind=None, batch_kind=None):
@@ -71,11 +71,11 @@ def registration(verify, *, trial_kind=None, batch_kind=None):
         except MetadataSourceWaiting as exc: return Outcome("defer",exc.reason_code,delay_ms=exc.delay_ms)
         except MetadataSourceUnavailable as exc: return Outcome("retry",exc.reason_code)
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
-            return Outcome("review",exc.reason_code)
+            return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         except ProviderDeferred as exc: return Outcome("defer","JOB_WAITING",delay_ms=exc.delay_ms)
         except (ProviderUnavailable,ProviderInvalidResponse) as exc: return Outcome("retry",exc.reason_code)
-        except ProviderAuthenticationFailed: return Outcome("review","PROVIDER_AUTH_FAILED")
-        except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code)
+        except ProviderAuthenticationFailed as exc: return Outcome("review","PROVIDER_AUTH_FAILED", facts=failure_facts(exc))
+        except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         if type(result) not in (VerifiedRelease,BatchVerificationCompletion) or result.source!=source:
             return Outcome("review","RELEASE_CONFLICT")
         return Outcome(value=ReleaseCompletion(result,context.claim.job_id))

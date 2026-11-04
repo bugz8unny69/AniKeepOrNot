@@ -8,7 +8,7 @@ from src.nextgen.acquisition.transfers import (TransferConflict, PieceOverlap, S
 from src.nextgen.diagnostics import log_history
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
-from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor
+from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor, failure_facts
 from src.nextgen.storage.transfers import TransferJournal, _current, _record
 from src.nextgen.worker import blocking
 
@@ -93,11 +93,12 @@ def registration(secrets,*,client_factory=Client,journal_factory=TransferJournal
             return wait('TORRENT_DOWNLOAD_IN_PROGRESS' if record.phase=='ACTIVE' else 'TORRENT_START_UNCERTAIN',record.phase=='ACTIVE')
         except (TransferConflict,PieceOverlap) as exc:
             if intent is not None:log(await blocking(journal.review,context.claim,intent,exc.reason_code))
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except SnapshotChanged:return wait('TORRENT_SNAPSHOT_CHANGED')
         except ClientUnavailable:return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
         except (AcquisitionConflict,MetadataInvalid,SourceMissing,SizeEvidenceMissing,DownloadConfigurationError,
-                ClientInvalid,ClientAuthenticationFailed,ClientUnsupported) as exc:return Outcome('review',exc.reason_code)
+                ClientInvalid,ClientAuthenticationFailed,ClientUnsupported) as exc:
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
         return () if verification_kind is None else (Successor.create(verification_kind,value),)
     return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,

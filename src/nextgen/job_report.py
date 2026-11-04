@@ -154,7 +154,12 @@ def report(db, job_id, out=print):
         if h['handler_label']: line += f' [{h["handler_label"]}]'
         out(line)
         if h['event_code'] == 'ON_HOLD' and h['reason_code'] == 'EPISODE_RESERVED':
-            out('    (blocking reservation not recorded in this event; see Reservation above)')
+            blocker = details.get('blocking_job_id') or details.get('owner_job_id')
+            op = details.get('operation_id')
+            if blocker:
+                out(f'    waiting for reservation owned by job #{blocker}' + (f' (operation #{op})' if op else ''))
+            else:
+                out('    (blocking reservation not recorded in this event; see Reservation above)')
         if details.get('observed_audio') is not None or details.get('missing_audio') is not None:
             obs = details.get('observed_audio') or 'none'
             mis = details.get('missing_audio') or 'none'

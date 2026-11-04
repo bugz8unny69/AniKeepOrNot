@@ -320,3 +320,36 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(res_rt['data']['episode_targets'], [{'season': 2, 'episode': 1}])
         finally:
             db.close()
+
+    def test_failed_detail_formatting_with_causes_and_blockers(self):
+        """W-22/W-23/W-25: failed_detail shows cause, failed_check, file, and reservation blocker."""
+        from src.nextgen.api.app import failed_detail
+        # Location + file
+        self.assertEqual(
+            failed_detail({"failed_check": "src/nextgen/foo.py:10 bar", "failed_path": "/tmp/test.mkv"}),
+            "Stopped at src/nextgen/foo.py:10 bar · file: /tmp/test.mkv"
+        )
+        # Location + cause + file
+        self.assertEqual(
+            failed_detail({"failed_check": "src/nextgen/foo.py:10 bar", "cause_reason_code": "TORRENT_TIMEOUT", "failed_path": "/tmp/test.mkv"}),
+            "Stopped at src/nextgen/foo.py:10 bar (cause: TORRENT_TIMEOUT) · file: /tmp/test.mkv"
+        )
+        # Cause only
+        self.assertEqual(
+            failed_detail({"cause_reason_code": "TORRENT_TIMEOUT"}),
+            "Caused by TORRENT_TIMEOUT"
+        )
+        # Reservation blocker
+        self.assertEqual(
+            failed_detail({"blocking_job_id": 105, "operation_id": 12}),
+            "Waiting for reservation owned by Job #105 (operation #12)"
+        )
+
+    async def test_matching_endpoint_returns_release_name(self):
+        """W-25: Matching endpoint surfaces original release name for failed identity."""
+        _, res, _ = await self.request('POST', '/api/v1/webhook', self.release(), token=WEB)
+        job = res['data']['job_id']
+        status, match_data, _ = await self.request('GET', f'/api/v1/jobs/{job}/matching', token=ADMIN)
+        self.assertEqual(status, 200)
+        self.assertEqual(match_data['data']['release_name'], 'Test Anime - 10')
+

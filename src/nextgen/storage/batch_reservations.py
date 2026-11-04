@@ -129,18 +129,24 @@ def persist_batch_reservations(db,claim,value):
         key=(value.tvdb_series_id,value.season,fact.tvdb_episode)
         # Deliberately fail the entire pack if any selected episode has an
         # active owner, including all existing single-episode jobs.
-        if db.execute(
-            "SELECT 1 FROM episode_reservations WHERE state='ACTIVE' AND "
+        single_owner = db.execute(
+            "SELECT owner_job_id FROM episode_reservations WHERE state='ACTIVE' AND "
             "(anidb_episode_id=? OR tvdb_episode_id=? OR "
-            "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=? AND tvdb_order='official'))",
-            (fact.anidb_episode_id,fact.tvdb_episode_id,*key)).fetchone():
-            raise EpisodeReserved()
-        if db.execute(
-            "SELECT 1 FROM batch_episode_reservations WHERE state='ACTIVE' AND "
+            "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=? AND tvdb_order='official')) LIMIT 1",
+            (fact.anidb_episode_id,fact.tvdb_episode_id,*key)).fetchone()
+        if single_owner:
+            owner_id = single_owner[0]
+            op = db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?", (owner_id,)).fetchone()
+            raise EpisodeReserved(owner_job_id=owner_id, operation_id=op[0] if op else None)
+        batch_owner = db.execute(
+            "SELECT owner_job_id FROM batch_episode_reservations WHERE state='ACTIVE' AND "
             "(anidb_episode_id=? OR tvdb_episode_id=? OR "
-            "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?))",
-            (fact.anidb_episode_id,fact.tvdb_episode_id,*key)).fetchone():
-            raise EpisodeReserved()
+            "(tvdb_series_id=? AND tvdb_season=? AND tvdb_episode=?)) LIMIT 1",
+            (fact.anidb_episode_id,fact.tvdb_episode_id,*key)).fetchone()
+        if batch_owner:
+            owner_id = batch_owner[0]
+            op = db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?", (owner_id,)).fetchone()
+            raise EpisodeReserved(owner_job_id=owner_id, operation_id=op[0] if op else None)
     # The caller owns a BEGIN IMMEDIATE transaction. Either all selected
     # reservations become visible or none do; there is no partial pack claim.
     for fact in value.episodes:

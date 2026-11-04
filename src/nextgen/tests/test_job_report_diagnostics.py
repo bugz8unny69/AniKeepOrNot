@@ -73,7 +73,7 @@ class JobReportDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(d['dependencies'][0]['type'], 'EPISODE_RESERVATION')
         text = self.text(held)
         self.assertIn(f'Blocking reservation #{conflict["reservation_id"]} ACTIVE', text)
-        self.assertIn('blocking reservation not recorded in this event', text)
+        self.assertIn(f'waiting for reservation owned by job #{owner}', text)
         self.assertIn('=== History', text)  # Existing sections preserved.
 
     # 2

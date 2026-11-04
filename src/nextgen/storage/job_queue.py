@@ -144,6 +144,24 @@ class JobQueue:
             if outcome.kind == "retry" and failures >= self.policy.max_retries:
                 state, code, available, activity = "NEEDS_REVIEW", "NEEDS_REVIEW", now, None
                 details["cause_reason_code"], reason = reason, "JOB_RETRY_EXHAUSTED"
+                if "failed_check" not in details:
+                    prior_check = db.execute(
+                        "SELECT json_extract(details_json, '$.failed_check') FROM job_history "
+                        "WHERE job_id=? AND json_extract(details_json, '$.failed_check') IS NOT NULL "
+                        "ORDER BY history_id DESC LIMIT 1",
+                        (claim.job_id,),
+                    ).fetchone()
+                    if prior_check and prior_check[0]:
+                        details["failed_check"] = prior_check[0]
+                if "failed_path" not in details:
+                    prior_path = db.execute(
+                        "SELECT json_extract(details_json, '$.failed_path') FROM job_history "
+                        "WHERE job_id=? AND json_extract(details_json, '$.failed_path') IS NOT NULL "
+                        "ORDER BY history_id DESC LIMIT 1",
+                        (claim.job_id,),
+                    ).fetchone()
+                    if prior_path and prior_path[0]:
+                        details["failed_path"] = prior_path[0]
             else:
                 delay = outcome.delay_ms
                 if outcome.kind == "retry":

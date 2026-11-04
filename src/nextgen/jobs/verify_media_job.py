@@ -7,7 +7,7 @@ from src.nextgen.acquisition.submission import ClientInvalid
 from src.nextgen.acquisition.transfers import TransferConflict
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
-from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor
+from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor, failure_facts
 from src.nextgen.storage.media_verification import load, persist
 from src.nextgen.worker import blocking
 
@@ -21,7 +21,7 @@ def _persist(db,claim,value):
     try:
         if type(value) is not dict or set(value)!={'media','verification_job_id'} or value['verification_job_id']!=claim.job_id:raise MediaInvalid()
         persist(db,claim,value['media'])
-    except REVIEW as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
+    except REVIEW as exc:raise CompletionRejected(Outcome('review',exc.reason_code, facts=failure_facts(exc))) from None
 
 
 def registration(*,verify=verify_file,load_input=load,staging_kind=None):
@@ -49,7 +49,7 @@ def registration(*,verify=verify_file,load_input=load,staging_kind=None):
             mis = ','.join(exc.missing) if exc.missing else 'none'
             facts = {'observed_audio': obs, 'missing_audio': mis}
             return Outcome('review', exc.reason_code, facts=facts)
-        except REVIEW as exc:return Outcome('review',exc.reason_code)
+        except REVIEW as exc:return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
         return () if staging_kind is None else (Successor.create(staging_kind,{'verification_job_id':value['verification_job_id']}),)
     return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,

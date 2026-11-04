@@ -21,8 +21,10 @@ STATUSES = ('IN_PROGRESS', 'NOT_AIRED', 'MAPPING_MISSING', 'CANDIDATES', 'NO_RES
 
 class BackfillConflict(ValueError):
     reason_code = 'SONARR_BACKFILL_PLAN_CONFLICT'
-    def __init__(self):
-        super().__init__('Frozen backfill discovery facts need review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Frozen backfill discovery facts need review.')
+        self.failed_check = failed_check
+        self.failed_path = failed_path
 
 
 AUDIO_SEARCH_EVENT = 'TRIAL_AUDIO_SEARCH'

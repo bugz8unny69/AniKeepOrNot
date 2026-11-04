@@ -55,11 +55,12 @@ class Journal:
 
     def change(self,claim,prior,phase,data):
         raw=json.dumps(data,sort_keys=True,allow_nan=False)
-        if len(raw.encode())>65536:raise KeepReview()
+        if len(raw.encode())>65536:raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:58 change DATA_SIZE_EXCEEDED')
         with self.queue.connection() as db,transaction(db):
             self.guard(db,claim)
             if db.execute('UPDATE keep_imports SET phase=?,data_json=?,updated_at_ms=? WHERE job_id=? AND phase=?',
-                          (phase,raw,self.queue.now(),claim.job_id,prior)).rowcount!=1:raise KeepReview()
+                          (phase,raw,self.queue.now(),claim.job_id,prior)).rowcount!=1:
+                raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:62 change FENCE_CONFLICT')
 
     def fence(self,claim):
         with self.queue.connection() as db,transaction(db):self.guard(db,claim)
@@ -67,11 +68,14 @@ class Journal:
 
 def check_source(data):
     selection = KeepSelection(**data['selection'])
+    staged_abs = f"{selection.staging_root.rstrip('/')}/{selection.media_relative_path.lstrip('/')}"
     with directory(selection.staging_root) as root:
         with parent(root, selection.media_relative_path) as (folder, name):
             try:
                 info = os.stat(name, dir_fd=folder, follow_symlinks=False)
             except FileNotFoundError:
-                raise KeepReview() from None
+                raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:75 check_source STAGED_FILE_MISSING',
+                                 failed_path=staged_abs) from None
             if not stat.S_ISREG(info.st_mode) or info.st_size != data['source_file'][2]:
-                raise KeepReview()
+                raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:77 check_source STAGED_FILE_CORRUPT',
+                                 failed_path=staged_abs)

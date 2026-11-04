@@ -4,7 +4,7 @@ from src.nextgen.async_io import blocking
 from src.nextgen.cancellation import CancellationError
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
-from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration
+from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, failure_facts
 from src.nextgen.staging import (
     Publisher, StagingReview, StagingUnavailable, StagingBusy,
 )
@@ -24,7 +24,7 @@ def _persist(db,claim,value):
             enqueue(db,claim)
         return records
     except (StagingReview,MediaInvalid,CancellationError) as exc:
-        raise CompletionRejected(Outcome('review',exc.reason_code)) from None
+        raise CompletionRejected(Outcome('review',exc.reason_code, facts=failure_facts(exc))) from None
 
 
 def registration(*,publisher_factory=Publisher,journal_factory=BatchStagingJournal):
@@ -48,10 +48,10 @@ def registration(*,publisher_factory=Publisher,journal_factory=BatchStagingJourn
         try:return Outcome(value=await blocking(run))
         except StagingBusy as exc:
             return Outcome('defer',exc.reason_code,delay_ms=1000)
-        except FileExistsError:
-            return Outcome('review','STAGING_REVIEW')
+        except FileExistsError as exc:
+            return Outcome('review','STAGING_REVIEW', facts=failure_facts(exc))
         except (StagingUnavailable,OSError):
             return Outcome('retry','STAGING_UNAVAILABLE')
         except (StagingReview,MediaInvalid,CancellationError) as exc:
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     return Registration(KIND,DEFINITION,execute,persist=_persist)

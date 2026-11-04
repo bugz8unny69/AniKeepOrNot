@@ -186,3 +186,25 @@ class DiagnosticHistoryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 accept_event_and_job(self.db, "test", b"x", kind="identity", payload={})
         self.assertEqual(self.db.execute("SELECT count(*) FROM incoming_events").fetchone()[0], 0)
+
+    def test_blocking_job_id_and_operation_id_in_history_details(self):
+        """W-22/W-25: Reservation blockers can be recorded in history details."""
+        import json
+        raw = encode_details({"blocking_job_id": 42, "operation_id": 7, "attempt": 1})
+        parsed = json.loads(raw)
+        self.assertEqual(parsed["blocking_job_id"], 42)
+        self.assertEqual(parsed["operation_id"], 7)
+
+    def test_failure_facts_extraction(self):
+        """W-24: failure_facts extracts location-qualified checks matching _CHECK."""
+        from src.nextgen.job_contracts import failure_facts
+        from src.nextgen.reasons import _CHECK
+        try:
+            raise ValueError("custom error")
+        except ValueError as exc:
+            facts = failure_facts(exc)
+            self.assertIsNotNone(facts)
+            self.assertIn("failed_check", facts)
+            self.assertTrue(_CHECK.fullmatch(facts["failed_check"]))
+            self.assertTrue(facts["failed_check"].endswith("VALUEERROR"))
+
