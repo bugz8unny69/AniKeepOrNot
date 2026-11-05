@@ -12,9 +12,12 @@ from src.nextgen.acquisition.submission import (
 from src.nextgen.configuration_schema import ConfigurationError
 from src.nextgen.diagnostics import event
 
+# Job kinds whose handlers contact qBittorrent. Spelled out here (rather than
+# imported from each job module) to avoid import cycles with the worker;
+# test_qbittorrent_readiness checks every entry against the real KIND constants.
 ACQUISITION_KINDS = (
     'PREPARE_ACQUISITION', 'SUBMIT_TORRENT', 'DOWNLOAD_TORRENT',
-    'BATCH_SUBMIT', 'BATCH_TRANSFER', 'BATCH_UNLOCK',
+    'SUBMIT_BATCH', 'TRANSFER_BATCH', 'UNLOCK_BATCH',
 )
 
 

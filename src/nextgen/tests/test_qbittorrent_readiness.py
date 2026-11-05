@@ -299,6 +299,67 @@ class WorkerReadinessIntegrationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             db.close()
 
+    async def test_every_qbittorrent_job_kind_waits_while_not_ready(self):
+        """Regression: batch kinds were misspelled (BATCH_SUBMIT etc.) and still claimed."""
+        executed = []
+
+        async def handler(context):
+            executed.append(context.claim.kind)
+            return Outcome("complete")
+
+        qb_kinds = _real_qbittorrent_kinds()  # Real KIND constants, not the list under test.
+        kinds = (*qb_kinds, "CLEANUP_CANCELED_OPERATION")
+        registry = Registry(tuple(
+            Registration(kind, HandlerDefinition(kind, kind.title()), handler, mode="async")
+            for kind in kinds))
+        qb_state = {'available': False}
+
+        def factory(options, credentials):
+            if not qb_state['available']:
+                raise ClientUnavailable()
+            return FakeQbClient(options, credentials, strategy='fetch')
+
+        worker = Worker(self.store, self.startup, registry, policy=self.policy,
+                        qb_readiness=QbittorrentReadiness(client_factory=factory, min_backoff_ms=50),
+                        secrets=MockSecrets())
+        self.addAsyncCleanup(worker.close)
+        jobs = {kind: self.enqueue(kind) for kind in kinds}
+
+        while await worker.attempt():
+            pass
+        self.assertEqual(executed, ["CLEANUP_CANCELED_OPERATION"])
+        db = sqlite3.connect(self.database)
+        try:
+            states = {kind: db.execute("SELECT state FROM jobs WHERE job_id=?", (job,)).fetchone()[0]
+                      for kind, job in jobs.items()}
+        finally:
+            db.close()
+        self.assertEqual({kind: states[kind] for kind in qb_kinds},
+                         dict.fromkeys(qb_kinds, "PENDING"))
+
+        qb_state['available'] = True
+        await asyncio.sleep(0.06)
+        while await worker.attempt():
+            pass
+        self.assertEqual(sorted(executed), sorted(kinds))
+
+
+def _real_qbittorrent_kinds():
+    """KIND constants of the handlers that contact qBittorrent."""
+    from src.nextgen.jobs import (
+        download_torrent_job, prepare_acquisition_job, submit_batch_job,
+        submit_torrent_job, transfer_batch_job, unlock_batch_job,
+    )
+    return tuple(module.KIND for module in (
+        prepare_acquisition_job, submit_torrent_job, download_torrent_job,
+        submit_batch_job, transfer_batch_job, unlock_batch_job))
+
+
+class AcquisitionKindsTests(unittest.TestCase):
+    def test_every_entry_is_a_real_job_kind(self):
+        """The list is spelled out by hand; tie each entry to its handler's KIND."""
+        self.assertEqual(ACQUISITION_KINDS, _real_qbittorrent_kinds())
+
 
 if __name__ == '__main__':
     unittest.main()
