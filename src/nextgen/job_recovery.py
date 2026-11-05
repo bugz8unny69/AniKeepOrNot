@@ -267,7 +267,8 @@ def preview_recovery(db, *, job_id=None, reason=None, all_eligible=False, limit=
                 targets.append(job)
                 break
         elif reason is not None:
-            if job['reason_code'] == reason and (job['eligible'] or not all_eligible):
+            # A reason is an explicit operator selection, not autonomous recovery.
+            if job['reason_code'] == reason:
                 targets.append(job)
         elif all_eligible:
             if job['eligible']:
@@ -277,7 +278,9 @@ def preview_recovery(db, *, job_id=None, reason=None, all_eligible=False, limit=
 
     previews = []
     for t in targets:
-        can_retry = t['retryable'] if job_id is not None else t['eligible']
+        # Operator-selected jobs may override the recommendation matrix, but
+        # must still pass the same capability gate as dashboard Retry.
+        can_retry = t['retryable'] if job_id is not None or reason is not None else t['eligible']
         previews.append({
             'job_id': t['job_id'],
             'kind': t['kind'],

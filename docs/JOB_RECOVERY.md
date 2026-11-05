@@ -48,8 +48,27 @@ The tool classifies stopped jobs into categories based on whether code remediati
 | Category | Reason Codes | Action Taken |
 |---|---|---|
 | **Autonomous Retry** | `TORRENT_METADATA_TIMEOUT`, `ACQUISITION_SIZE_LIMIT`, `TORRENT_PIECE_OVERLAP`, `KEEP_IMPORT_REVIEW`, `STAGING_REVIEW`, `IDENTITY_INVALID`, `PROWLARR_SEARCH_REVIEW`, `SONARR_CANDIDATES_EXHAUSTED`, `WAITING_FOR_DUB`, `RELEASE_EPISODE_MAPPING_MISSING`, `MEDIA_AUDIO_REQUIRED` | Eligible for `--all-eligible` retry. Requeues to `PENDING` so worker activates candidate fallback or proceeds with fixed logic. |
-| **Manual Action Required** | `IDENTITY_INCOMPLETE`, `IDENTITY_CONFLICT`, `RELEASE_TYPE_UNSUPPORTED`, `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `TORRENT_METADATA_CONFIGURATION_INVALID` | Excluded from `--all-eligible`. Requires operator manual matching or inspection via `sudo adm report job --id N`. Can be individually retried with `--job-id N --apply` once resolved. |
+| **Manual Action Required** | `IDENTITY_INCOMPLETE`, `IDENTITY_CONFLICT`, `RELEASE_TYPE_UNSUPPORTED`, `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `TORRENT_METADATA_CONFIGURATION_INVALID` | Excluded from `--all-eligible`. Requires operator manual matching or inspection via `sudo adm report job --id N`. Retryable jobs may be targeted with `--job-id N` or `--reason CODE` once resolved. |
 | **In Flight / Blocked** | `EPISODE_RESERVED`, active lease running, cancellation draining | Retrying blocked until active dependencies resolve. |
+
+### Explicit operator selection versus automatic recovery
+
+`--all-eligible` remains restricted to reasons classified `AUTONOMOUS_RETRY`.
+A specific `--reason` or `--job-id` is an operator-selected retry and **does not**
+require the reason to appear in the autonomous matrix. For example, after
+correcting qBittorrent configuration:
+
+```bash
+sudo adm recover preview --reason TORRENT_METADATA_CONFIGURATION_INVALID
+sudo adm recover apply --reason TORRENT_METADATA_CONFIGURATION_INVALID --apply
+```
+
+This overrides **only the recovery matrix's recommendation**. The underlying
+`capability()` and `request_review_retry()` safeguards still reject active leases,
+unsupported kinds/states, inactive operations, already-handed-off jobs, and
+stale attempts or reasons. No `--force`, direct SQL reset, or worker bypass is
+introduced. Requeued jobs may return to review if the configuration remains
+invalid.
 
 ---
 
