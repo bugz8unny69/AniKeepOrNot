@@ -40,6 +40,7 @@ Function-local imports are marked *(local)*. Where removing a name deletes the w
 | `acquisition/metainfo_source.py:11` | `MetadataInvalid` |
 | `acquisition/metainfo_source.py:123,127` *(local)* | `_inventory`, `ObservedBatchInventory` |
 | `acquisition/qbittorrent.py:241` *(local)* | `MetadataInvalid` |
+| `acquisition/readiness.py:2,7,13` *(added by #261)* | `logging`, `DownloadOptions`, `DownloadCredentials`, `event` |
 | `api/__main__.py:9` | `ApiError` |
 | `api/admin_socket.py:10` | `PasswordStore` |
 | `api/app.py:17` | `bearer`, `matches` |
@@ -89,6 +90,7 @@ These are production definitions referenced **only by tests**. Deleting them wou
 | P11 | `diagnostics.py:222` | `Span` | 2 | A trivial monotonic timer that only tests use. |
 | P12 | `acquisition/settings.py:108` | `download_context()` | 3 | Production calls `download_options()` and `qbittorrent_credentials()` separately. |
 | P13 | Multiple storage modules | Read-only snapshot boilerplate | n/a | See §5, duplication. |
+| P14 | `acquisition/readiness.py:126` *(added by #261)* | `QbittorrentReadiness.last_error()` | 0 | A public accessor that was added with the new readiness cache but that nothing calls. The code is brand new and the accessor may be intended for diagnostics, so it is left until the owner decides. |
 
 ---
 
@@ -177,9 +179,9 @@ Sonarr-based release search and grab was replaced by Prowlarr in `db41b589` ("se
 | Class | Count |
 |---|---|
 | Confirmed dead definitions | 6 (D1–D6) |
-| Confirmed unused imports | 47 names in 29 files (D7) |
-| Potentially dead (owner decision or more investigation) | 11 definitions + 1 pattern (P2–P13) |
+| Confirmed unused imports | 51 names in 30 files (D7), including 4 added by #261 |
+| Potentially dead (owner decision or more investigation) | 12 definitions + 1 pattern (P2–P14) |
 | Required compatibility | 10 groups |
 | Unreferenced modules | 0 |
 
-**RF-003 plan:** remove D1–D7 in small commits grouped by subsystem (acquisition, storage, API/worker, jobs), running focused tests after each and the full suite after each group. Leave P2–P13 for an owner decision. `prune_snapshots` (formerly P1) is kept by owner decision. See §3.
+**RF-003 plan:** remove D1–D7 in small commits grouped by subsystem (acquisition, storage, API/worker, jobs), running focused tests after each and the full suite after each group. Leave P2–P14 for an owner decision. `prune_snapshots` (formerly P1) is kept by owner decision. See §3.

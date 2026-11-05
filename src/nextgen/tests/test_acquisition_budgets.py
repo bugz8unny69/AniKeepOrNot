@@ -44,7 +44,7 @@ class AcquisitionBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT count(*),sum(selected_size_bytes) FROM acquisition_plans'),[(1,700000)])
         # The over-budget copy is canceled automatically so another release can take the episode.
         self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='PREPARE_ACQUISITION' ORDER BY state"),
-                         [('CANCELED','JOB_CANCELED'),('DONE',None)])
+                         [('CANCELED','ACQUISITION_PLAN_SIZE_LIMIT'),('DONE',None)])
         # Two 0.7 MB videos against a 1 MB trial total: the trial-total limit, with its numbers.
         (details,),=self.rows("SELECT details_json FROM job_history WHERE reason_code='ACQUISITION_PLAN_SIZE_LIMIT'")
         import json

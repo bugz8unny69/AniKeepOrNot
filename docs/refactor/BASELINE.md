@@ -65,6 +65,7 @@ Before each work item, and after significant changes land on `NextGen`:
 |---|---|---|
 | 2026-11-04 | `99dd30ef` | Base. No upstream changes beyond the base. |
 | 2026-11-04 | `aab7db0b` | Merged #258 (non-owner read-only secrets access), #259 (P0: `BatchTransferJournal.select()` fingerprint binding) and #260 (`STORAGE_STATEMENT_INVALID` reporting). No conflicts. RF-002 audit rescan: no new unused imports, unreferenced definitions or modules. Full suite 1,493/1,493. |
+| 2026-11-04 | `304a76f1` | Merged #261 (worker readiness validation, FAILED candidate lifecycle, migration 058). No conflicts. Audit rescan: 4 new unused imports and 1 unreferenced method in the new `acquisition/readiness.py`, added to `DEAD_CODE_AUDIT.md`. A wrong job-kind list in the new `ACQUISITION_KINDS` was reported for a NextGen fix. |
 
 ## Work-item PR flow
 

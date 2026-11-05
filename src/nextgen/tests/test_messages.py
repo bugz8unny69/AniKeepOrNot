@@ -39,7 +39,7 @@ class MessageTests(unittest.TestCase):
             self.assertIn(view["action_key"], ENGLISH)
         expected = {
             "acquisition": {"ACTIVE", "STAGED", "CANCEL_REQUESTED", "CANCELED"},
-            "job": {"PENDING", "RUNNING", "RETRY_WAIT", "ON_HOLD", "NEEDS_REVIEW", "DONE", "BLOCKED", "CANCELED"},
+            "job": {"PENDING", "RUNNING", "RETRY_WAIT", "ON_HOLD", "NEEDS_REVIEW", "DONE", "BLOCKED", "CANCELED", "FAILED"},
             "job_activity": {"DOWNLOADING", "WAITING_FOR_DOWNLOAD", "WAITING_FOR_SEARCH", "SKIPPED_DUPLICATE"},
             "incoming_event": {"PENDING", "RUNNING", "RETRY_WAIT", "NEEDS_REVIEW", "IDENTIFIED"},
         }

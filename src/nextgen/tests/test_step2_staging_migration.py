@@ -59,6 +59,7 @@ class Step2StagingMigrationTests(unittest.TestCase):
 
     def migrate(self):
         self.db.executescript(SCRIPT)
+        self.db.executescript((SQL_DIR / '058_failed_job_state.sql').read_text())
         return self.db
 
     def test_fresh_schema_matches_upgrade_to_v57(self):
@@ -67,7 +68,7 @@ class Step2StagingMigrationTests(unittest.TestCase):
         initialize(fresh)
         upgraded = self.migrate()
         self.assertEqual(_structure(fresh), _structure(upgraded))
-        self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 57)
+        self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], LATEST_VERSION)
 
     def test_v57_permits_nullable_tvdb_fields(self):
         upgraded = self.migrate()

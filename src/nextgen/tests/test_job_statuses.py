@@ -39,7 +39,7 @@ class JobStatusTests(unittest.TestCase):
     def test_all_lifecycle_states_are_persistable_with_readable_labels(self):
         self.assertEqual(set(STATES["job"]), {
             "PENDING", "RUNNING", "RETRY_WAIT", "ON_HOLD", "NEEDS_REVIEW",
-            "DONE", "BLOCKED", "CANCELED"})
+            "DONE", "BLOCKED", "CANCELED", "FAILED"})
         for state in STATES["job"]:
             with self.subTest(state=state), transaction(self.db):
                 self.db.execute(
