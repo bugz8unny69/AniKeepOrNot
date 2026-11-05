@@ -169,6 +169,8 @@ class JobQueue:
 
     def _transition(self, db, claim, outcome, now):
         details = {"attempt":claim.attempt,**(outcome.facts or {})}
+        if outcome.metadata_evidence is not None:
+            details["metadata_evidence"] = outcome.metadata_evidence
         if outcome.matching is not None:
             if claim.kind != "IDENTIFY_ANIME":
                 raise ValueError("matching evidence only belongs to an identity attempt")

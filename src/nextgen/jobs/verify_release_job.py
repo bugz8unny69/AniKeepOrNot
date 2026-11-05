@@ -68,7 +68,8 @@ def registration(verify, *, trial_kind=None, batch_kind=None):
                                     claim=context.claim)
             else:
                 result=await verify(source,context.configuration,context.cancelled)
-        except MetadataSourceWaiting as exc: return Outcome("defer",exc.reason_code,delay_ms=exc.delay_ms)
+        except MetadataSourceWaiting as exc: return Outcome("defer",exc.reason_code,delay_ms=exc.delay_ms,
+                                                   metadata_evidence=exc.evidence)
         except MetadataSourceUnavailable as exc: return Outcome("retry",exc.reason_code)
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome("review",exc.reason_code, facts=failure_facts(exc))

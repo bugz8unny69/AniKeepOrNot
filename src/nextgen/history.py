@@ -35,12 +35,15 @@ def encode_details(details=None):
         raise ValueError("invalid diagnostic details")
     allowed = {"missing_fields", "invalid_fields", "attempt", "max_attempts",
                "retry_at_ms", "cause_reason_code", "matching",
-               "video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path",
+               "video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "metadata_evidence",
                "delete_cache", "cache_entries_deleted", "cached_replay",
                "observed_audio", "missing_audio", "blocking_job_id", "operation_id"}
     if any(type(key) is not str or key not in allowed for key in details):
         raise ValueError("invalid diagnostic detail key")
-    safe = safe_details(**{k: v for k, v in details.items() if k != "matching"})
+    safe = safe_details(**{k: v for k, v in details.items() if k not in ("matching", "metadata_evidence")})
+    if "metadata_evidence" in details:
+        from src.nextgen.acquisition.metadata_evidence import validated
+        safe["metadata_evidence"] = validated(details["metadata_evidence"])
     if "matching" in details:
         # Only the tightly validated public matching format may exceed the
         # ordinary audit bound; never persist arbitrary provider responses.

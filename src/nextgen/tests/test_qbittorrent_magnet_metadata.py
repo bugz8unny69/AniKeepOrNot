@@ -398,6 +398,35 @@ class MagnetMetadataTests(unittest.TestCase):
             client.add_stopped(MAGNET,intent,permit)
         client._request.assert_called_once()
 
+    def test_metadata_poll_records_pre_stop_state_and_empty_inventory(self):
+        from types import SimpleNamespace
+        from src.nextgen.acquisition.settings import DownloadOptions
+        from src.nextgen.acquisition.submission import Observation
+        from src.nextgen.storage.batch_metadata_admission import EarlyBatchIntent
+        from src.nextgen.acquisition.metadata_evidence import fresh
+        options=DownloadOptions('http://localhost:8080',
+                                '/downloads/ad-'+'c'*32,'anime',10)
+        client=self.client((2,8,19),4)
+        client.options=options
+        intent=EarlyBatchIntent(4,21,HASH,'c'*32,options,4,'UNCERTAIN')
+        def snapshot(state):
+            return Observation(HASH,state,options.download_root,'anime',
+                               ('ad-'+'c'*32,),False,())
+        trace=fresh('poll')
+        with patch.object(client,'inspect',side_effect=[
+                snapshot('pausedDL'),snapshot('metaDL'),snapshot('metaDL')]):
+            with patch.object(client,'stop_legacy_metadata',
+                              return_value=snapshot('pausedDL')):
+                observed=client.poll_legacy_metadata(
+                    intent,SimpleNamespace(is_set=lambda:False),
+                    attempts=2,interval=0,sleep=lambda _:None,trace=trace)
+        self.assertEqual(observed.state,'pausedDL')
+        self.assertEqual(trace,{
+            'phase':'poll','initial_state':'pausedDL',
+            'last_active_state':'metaDL','stopped_state':'pausedDL',
+            'polls':2,'max_files':0,'resumed':True,
+        })
+
     def test_same_submission_interface_uses_legacy_paused_parameter(self):
         client=self.client((2,8,15),major=4)
         intent=Mock(options=client.options,api_major=4,fingerprint='f'*64)
