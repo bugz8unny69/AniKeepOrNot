@@ -43,7 +43,15 @@ The TVDB key is never accepted in settings.json, jobs, diagnostic history or SQL
 The file must be service-owned, regular, single-link and inaccessible to group
 or other users. Reads reject symlinks/FIFOs/nonregular files and unsafe modes.
 New temporary/final secret files use mode 0600. The parent directory must be
-service-owned and not writable by group/others. Installation must establish
+service-owned and not writable by group/others.
+
+Read-only access does not require the reader to own the file or the directory.
+Root can read secrets this way, for example through the internal admin API.
+The private mode, single-link and directory-writability checks still apply,
+and the kernel's own permission check still blocks other accounts. Writes
+(`initialize` and updates) still require the caller to own both, so a publish
+never replaces the service-owned file with a file owned by root or anyone else.
+Installation must establish
 these permissions; the library never repairs ownership or changes installed
 file permissions to bypass errors.
 

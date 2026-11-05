@@ -1,8 +1,10 @@
 """Fresh v7 credential separation and safe updates; no runtime migration."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from src.nextgen.secrets import SecretStore, SecretStorageError
 from src.nextgen.configuration_schema import ConfigurationConflict
@@ -52,6 +54,40 @@ class ApiAccessSecretsTests(unittest.TestCase):
         (self.root / "secrets.json").chmod(0o644)
         with self.assertRaises(SecretStorageError):
             self.store.access_credentials()
+
+    def other_account(self):
+        """Simulate a reader (e.g. root via the internal API) that is not the owner."""
+        return patch("src.nextgen.secrets.os.geteuid", return_value=os.geteuid() + 1)
+
+    def test_non_owner_can_read_private_service_owned_secrets(self):
+        self.store.initialize("provider-key", webhook_token="w" * 43)
+        with self.other_account():
+            self.assertTrue(self.store.status().webhook_configured)
+            self.assertEqual(self.store.access_credentials().webhook_token, "w" * 43)
+            self.assertEqual(self.store.tvdb_credentials().api_key, "provider-key")
+            self.assertEqual(self.store.reveal_integration("tvdb"), {"api_key": "provider-key"})
+
+    def test_non_owner_read_still_requires_private_mode(self):
+        self.store.initialize(webhook_token="w" * 43)
+        (self.root / "secrets.json").chmod(0o640)
+        with self.other_account(), self.assertRaises(SecretStorageError):
+            self.store.status()
+        (self.root / "secrets.json").chmod(0o600)
+        self.root.chmod(0o777)
+        self.addCleanup(self.root.chmod, 0o700)
+        with self.other_account(), self.assertRaises(SecretStorageError):
+            self.store.status()
+
+    def test_non_owner_cannot_write_secrets(self):
+        self.store.initialize(webhook_token="w" * 43)
+        before = (self.root / "secrets.json").read_bytes()
+        with self.other_account(), self.assertRaises(SecretStorageError):
+            self.store.update_webhook_token("x" * 43, expected_revision=1)
+        self.assertEqual((self.root / "secrets.json").read_bytes(), before)
+        (self.root / "secrets.json").unlink()
+        with self.other_account(), self.assertRaises(SecretStorageError):
+            self.store.initialize(webhook_token="w" * 43)
+        self.assertFalse((self.root / "secrets.json").exists())
 
 
 if __name__ == "__main__":
