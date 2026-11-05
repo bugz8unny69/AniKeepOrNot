@@ -871,6 +871,11 @@ def load_identity_matching_record(db, job_id, attempt=None):
     reason = row.get('reason_code') or identity_job.get('last_reason_code')
     summary = explain_identity_stop(failed_checks, reason_code=reason, job_state=state, checks=checks)
 
+    cand_evidence = []
+    if 'identity_candidate_evidence' in tables(db):
+        from src.nextgen.storage.candidate_evidence import load_candidate_evidence
+        cand_evidence = load_candidate_evidence(db, identity_job['job_id'], attempt=att)
+
     return {
         'exists': True,
         'recorded': True,
@@ -886,6 +891,10 @@ def load_identity_matching_record(db, job_id, attempt=None):
         'season': evidence.get('season'),
         'episode': evidence.get('episode'),
         'anidb_candidates': evidence.get('anidb_candidates') or [],
+        'candidate_evidence': cand_evidence,
+        'threshold_pct': evidence.get('threshold_pct'),
+        'scoring_version': evidence.get('scoring_version'),
+        'decision': evidence.get('decision'),
         'selected_anidb_id': evidence.get('selected_anidb_id'),
         'selected_tvdb_id': evidence.get('selected_tvdb_id'),
         'tvdb_titles': evidence.get('tvdb_titles') or [],
@@ -919,6 +928,10 @@ def identity_matching_json(db, job_id, attempt=None):
         'season': rec['season'],
         'episode': rec['episode'],
         'anidb_candidates': rec['anidb_candidates'],
+        'candidate_evidence': rec.get('candidate_evidence') or [],
+        'threshold_pct': rec.get('threshold_pct'),
+        'scoring_version': rec.get('scoring_version'),
+        'decision': rec.get('decision'),
         'selected_anidb_id': rec['selected_anidb_id'],
         'selected_tvdb_id': rec['selected_tvdb_id'],
         'tvdb_titles': rec['tvdb_titles'],
@@ -948,6 +961,8 @@ def report_identity_matching(db, job_id, attempt=None, out=print, is_short=False
     observed_str = 'Not recorded' if observed == '-' else f'{observed} local'
     out(f'Identification observed: {observed_str}')
     out(f'Release: {rec["release_name"] or "Not recorded"}')
+    if rec.get('threshold_pct') is not None:
+        out(f'Threshold: {rec["threshold_pct"]}% · Scoring version: {rec.get("scoring_version") or "v1"}')
     out(f'State: {rec["state"]} · Reason: {rec["reason_code"] or "None"} · Attempt: {att}')
     out('Source: recorded identity evidence (NO live provider request)')
 
@@ -959,16 +974,44 @@ def report_identity_matching(db, job_id, attempt=None, out=print, is_short=False
     episode_str = f'Episode {episode}' if episode is not None else 'Not parsed'
     out(f'\nParsed release:\n  Aliases : {aliases_str}\n  Detected: {season_str} · {episode_str}')
 
-    candidates = rec['anidb_candidates']
-    out(f'\nAniDB candidates ({len(candidates)}):')
-    if not candidates:
-        out('  (none returned)')
-    else:
-        for cand in candidates:
+    cand_evidence = rec.get('candidate_evidence')
+    if cand_evidence:
+        out(f'\nAniDB candidates ({len(cand_evidence)}):')
+        for cand in cand_evidence:
             aid = cand.get('anidb_id')
-            titles = cand.get('titles') or []
-            titles_str = ' · '.join(titles) if titles else 'No titles recorded'
-            out(f'  AniDB #{aid}: {titles_str}')
+            disp = cand.get('display_title') or cand.get('matched_title') or 'No title'
+            sim = cand.get('similarity_pct', 0)
+            rank = cand.get('rank', 1)
+            sel = "YES" if cand.get('selected') else "NO"
+            ev = cand.get('evidence') or {}
+            ev_summary = []
+            if 'matched_variant' in ev and 'matched_anidb_title' in ev:
+                ev_summary.append(f"matched '{ev['matched_variant']}' -> '{ev['matched_anidb_title']}' ({ev.get('matched_variant_provenance', '')})")
+            if 'exact_match_bonus' in ev:
+                ev_summary.append("exact match")
+            if 'season_agreement' in ev:
+                ev_summary.append("season agreement")
+            elif 'season_contradiction' in ev:
+                ev_summary.append("season contradiction")
+            if 'special_penalty' in ev:
+                ev_summary.append("special/spinoff penalty")
+            ev_str = ', '.join(ev_summary) if ev_summary else 'standard match'
+            out(f'  AniDB #{aid} — {disp}')
+            out(f'    Similarity: {sim}%')
+            out(f'    Evidence: {ev_str}')
+            out(f'    Rank: {rank}')
+            out(f'    Selected: {sel}')
+    else:
+        candidates = rec['anidb_candidates']
+        out(f'\nAniDB candidates ({len(candidates)}):')
+        if not candidates:
+            out('  (none returned)')
+        else:
+            for cand in candidates:
+                aid = cand.get('anidb_id')
+                titles = cand.get('titles') or []
+                titles_str = ' · '.join(titles) if titles else 'No titles recorded'
+                out(f'  AniDB #{aid}: {titles_str}')
 
     sel_anidb = rec['selected_anidb_id']
     sel_tvdb = rec['selected_tvdb_id']
@@ -998,6 +1041,8 @@ def report_identity_matching(db, job_id, attempt=None, out=print, is_short=False
     else:
         out('  Failed check: none')
     out(f'  Summary     : {rec["summary"]}')
+    if rec.get('decision'):
+        out(f'  Decision    : {rec["decision"]}')
     return 0
 
 

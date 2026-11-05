@@ -109,20 +109,20 @@ def registration(resolve, *, release_kind=None):
             else:
                 candidate = await resolve(request, context.configuration, context.cancelled)
         except ProviderDeferred as exc:
-            return Outcome("defer", "JOB_WAITING", delay_ms=exc.delay_ms, matching=evidence())
+            return Outcome("defer", "JOB_WAITING", delay_ms=exc.delay_ms, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except (ProviderUnavailable, ProviderInvalidResponse) as exc:
-            return Outcome("retry", exc.reason_code, matching=evidence())
+            return Outcome("retry", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except ProviderAuthenticationFailed:
             trace.check("tvdb_series", "failed", "provider_auth_failed")
-            return Outcome("review", "PROVIDER_AUTH_FAILED", matching=evidence())
+            return Outcome("review", "PROVIDER_AUTH_FAILED", matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except (IdentityNotReady, IdentityConflict) as exc:
-            return Outcome("review", exc.reason_code, matching=evidence())
+            return Outcome("review", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         try:
             validated = AnimeSeries.from_dict(candidate)
             result = IdentifiedSeries(request.event_id, payload_json(validated.to_dict()))
         except (ValueError, TypeError, RecursionError, OverflowError):
-            return Outcome("review", "IDENTITY_INVALID", matching=evidence())
-        return Outcome(value=result, matching=evidence())
+            return Outcome("review", "IDENTITY_INVALID", matching=evidence(), candidate_evidence=trace.candidate_evidence)
+        return Outcome(value=result, matching=evidence(), candidate_evidence=trace.candidate_evidence)
 
     def route(result):
         if type(result) is not IdentifiedSeries:

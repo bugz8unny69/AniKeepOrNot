@@ -89,7 +89,7 @@ class MetadataReaderTests(unittest.IsolatedAsyncioTestCase):
 
 class SourceSchemaRetirementTests(unittest.TestCase):
     def test_obsolete_source_settings_are_not_live_fields(self):
-        self.assertEqual(CONFIGURATION_VERSION,13)
+        self.assertEqual(CONFIGURATION_VERSION,14)
         self.assertNotIn('torrent_metadata.base_url',FIELDS)
         self.assertNotIn('torrent_metadata.timeout_seconds',FIELDS)
         for settings in (
@@ -114,8 +114,8 @@ class SourceSchemaRetirementTests(unittest.TestCase):
             load_current(json.dumps(doc).encode())
         upgraded=convert_document(doc)
         self.assertEqual(doc,old)
-        self.assertEqual(upgraded.revision,doc['revision']+2)
-        self.assertEqual(upgraded.schema_version,13)
+        self.assertEqual(upgraded.revision,doc['revision']+3)
+        self.assertEqual(upgraded.schema_version,14)
         self.assertNotIn('torrent_metadata',upgraded.to_document()['settings'])
         self.assertEqual(upgraded.value('logging.level'),'DEBUG')
 

@@ -515,10 +515,16 @@ class Application:
                                     release_name = decl["release_name"]
                             except (ValueError, TypeError, UnicodeError):
                                 pass
+                    candidate_evidence = []
+                    try:
+                        from src.nextgen.storage.candidate_evidence import load_candidate_evidence
+                        candidate_evidence = load_candidate_evidence(db, identity_job)
+                    except Exception:
+                        candidate_evidence = []
                 return 200,{'job_id':identity_job,'requested_job_id':job,'available':evidence is not None,
                     'attempts':row[2],'state':row[1],
                     'reason':None if row[3] is None else CATALOG.reason(row[3]),
-                    'evidence':evidence,'release_name':release_name},[]
+                    'evidence':evidence,'candidate_evidence':candidate_evidence,'release_name':release_name},[]
             single=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})',path)
             if single:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')

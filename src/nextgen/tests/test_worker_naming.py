@@ -25,7 +25,7 @@ class WorkerConfigurationTests(unittest.TestCase):
         original = copy.deepcopy(source)
         result = convert_document(source)
         self.assertEqual(source, original)
-        self.assertEqual((result.schema_version, result.revision), (13, 24))
+        self.assertEqual((result.schema_version, result.revision), (14, 25))
         self.assertEqual(result.value("worker.concurrency"), 9)
         self.assertEqual(result.value("logging.components"), {"worker": "TRACE", "api": "WARNING"})
         self.assertEqual(result.value("api.port"), 9000)

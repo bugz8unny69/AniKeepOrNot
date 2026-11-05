@@ -10,6 +10,10 @@ from src.nextgen.providers.http import Clients, Credentials, Options, json_objec
 from src.nextgen.providers.errors import (ProviderInvalidResponse, ProviderDeferred,
     ProviderUnavailable, ProviderAuthenticationFailed)
 from src.nextgen.providers.parsing import norm, release_title
+from src.nextgen.providers.scoring import (
+    generate_title_variants, rank_and_select_candidates,
+    detect_explicit_sequel_marker,
+)
 from src.nextgen.storage.sqlite import IdentityConflict, IdentityNotReady
 from src.nextgen.worker import blocking
 
@@ -170,6 +174,14 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             else:
                 check(stage, "skipped")
 
+            # Threshold for candidate eligibility (defaults to 90%)
+            try:
+                threshold_pct = int(configuration.value("identity.match_threshold_pct"))
+            except Exception:
+                threshold_pct = 90
+
+            variants, _, _ = generate_title_variants(title, seasons=seasons, episode=episode)
+
             # S02+ is not itself a rejection. Prefer a separately named
             # sequel work over the generic season-one title for lookup.
             stage = "season_scope"
@@ -211,14 +223,55 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                     matching.queries([*matching.data["queries"], *aliases],
                                      episode, int(seasons[0]) if seasons else None)
                 candidates = client.title_candidates(aliases)
+
+            if not candidates:
+                # Search using any remaining title variants
+                other_variants = [v.text for v in variants if v.text not in aliases]
+                if other_variants:
+                    extra = client.title_candidates(other_variants)
+                    if extra:
+                        candidates.update(extra)
+            elif isinstance(client, Clients):
+                # When searching real offline catalog, discover candidates across all variants
+                extra_variants = [v.text for v in variants if v.text not in aliases]
+                if extra_variants:
+                    extra = client.title_candidates(extra_variants)
+                    for k, v in extra.items():
+                        if k not in candidates:
+                            candidates[k] = v
+                        else:
+                            candidates[k] = tuple(dict.fromkeys((*candidates[k], *v)))
+
             if matching is not None:
                 matching.candidates(candidates)
             if len(candidates) == 0:
+                if matching is not None:
+                    matching.scoring(threshold_pct, "v1", "NO_CANDIDATES", 0, 0)
                 incomplete("no_anidb_candidates")
-            elif len(candidates) > 1:
-                incomplete("multiple_anidb_candidates")
+
+            # Score and rank all discovered AniDB candidates
+            rel_season = int(seasons[0]) if seasons else None
+            scoring = rank_and_select_candidates(
+                candidates, variants, threshold_pct,
+                release_season=rel_season
+            )
+
+            if matching is not None:
+                matching.set_candidate_evidence(scoring.candidates)
+                eligible_cnt = sum(1 for c in scoring.candidates if c.eligible)
+                matching.scoring(
+                    threshold_pct, scoring.scoring_version, scoring.decision,
+                    len(scoring.candidates), eligible_cnt
+                )
+
+            if scoring.selected is None:
+                if scoring.decision == "AMBIGUOUS_TIE":
+                    incomplete("no_unique_anidb_candidate")
+                else:
+                    incomplete("no_anidb_candidates")
+
             check(stage, "passed")
-            aid = next(iter(candidates))
+            aid = scoring.selected.anidb_id
             if matching is not None:
                 matching.anidb(aid)
 
@@ -236,6 +289,15 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             if matching is not None:
                 matching.tvdb(tid, ())
             base_aid, base_anime = aid, anime
+
+            # If the selected AniDB work already corresponds to the release's season,
+            # no further redirection via Anime-Lists season_entry is needed.
+            cand_base, cand_season = detect_explicit_sequel_marker(anime["title"])
+            if cand_season is None and scoring.selected is not None:
+                cand_base, cand_season = detect_explicit_sequel_marker(scoring.selected.matched_anidb_title)
+            if rel_season is not None and cand_season == rel_season:
+                season_lookup = None
+
             if season_lookup is not None:
                 aid = client.season_entry(tid, season_lookup, episode)
                 if matching is not None:

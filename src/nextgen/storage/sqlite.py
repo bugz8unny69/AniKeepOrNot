@@ -781,6 +781,24 @@ CREATE TABLE IF NOT EXISTS manual_release_submissions (
 );
 CREATE INDEX IF NOT EXISTS idx_manual_release_episode ON manual_release_submissions(anidb_id,tvdb_season,tvdb_episode);
 
+CREATE TABLE IF NOT EXISTS identity_candidate_evidence (
+ evidence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+ job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+ attempt INTEGER NOT NULL CHECK(attempt >= 0),
+ captured_at_ms INTEGER NOT NULL CHECK(captured_at_ms >= 0),
+ anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
+ display_title TEXT NOT NULL,
+ matched_title TEXT NOT NULL,
+ matched_variant TEXT NOT NULL,
+ similarity_pct INTEGER NOT NULL CHECK(similarity_pct >= 0 AND similarity_pct <= 100),
+ rank INTEGER NOT NULL CHECK(rank >= 1),
+ eligible INTEGER NOT NULL CHECK(eligible IN (0, 1)),
+ selected INTEGER NOT NULL CHECK(selected IN (0, 1)),
+ evidence_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_evidence_job ON identity_candidate_evidence(job_id, attempt, rank);
+CREATE INDEX IF NOT EXISTS idx_candidate_evidence_anidb ON identity_candidate_evidence(anidb_id);
+
 """
 
 def connect(path):
@@ -820,7 +838,7 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v58; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema v59; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.

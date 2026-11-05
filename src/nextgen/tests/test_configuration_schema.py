@@ -75,7 +75,7 @@ class ConfigurationSchemaTests(unittest.TestCase):
         migrated = convert_document(old)
         self.assertEqual(old, original)
         self.assertEqual(source_version(old), 0)
-        self.assertEqual(migrated.revision, 13)
+        self.assertEqual(migrated.revision, 14)
         self.assertEqual(migrated.value("logging.level"), "DEBUG")
         self.assertEqual(migrated.value("logging.components")["worker"], "TRACE")
         self.assertEqual(convert_document(migrated.to_document()), migrated)

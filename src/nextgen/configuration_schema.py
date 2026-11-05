@@ -14,7 +14,7 @@ import re
 
 from src.nextgen.settings import COMPONENTS, Settings, parse_settings
 
-CONFIGURATION_VERSION = 13
+CONFIGURATION_VERSION = 14
 MAX_REVISION = (1 << 63) - 1
 MAX_BYTES = 65536
 
@@ -71,6 +71,8 @@ class FieldDefinition:
 FIELDS = MappingProxyType({
     "anime.title_language": FieldDefinition("english", "title_language", "next_operation",
         label="Anime title language", help_text="English or Japanese (Romaji). Changes display names only."),
+    "identity.match_threshold_pct": FieldDefinition(90, "integer", "next_operation", minimum=50, maximum=100,
+        label="AniDB match threshold (%)", help_text="Configurable similarity percentage floor for automatic AniDB candidate matching (50–100). Default is 90%."),
     "shoko.base_url": FieldDefinition("", "download_endpoint", "next_operation", label="Shoko address", help_text="Optional Shoko v5 API v3 metadata lookup after Keep. Blank disables it. Does not move, rename, hash or register files."),
     "shoko.timeout_seconds": FieldDefinition(30, "integer", "next_operation", minimum=1, maximum=60, label="Shoko timeout"),
     "jellyfin.base_url": FieldDefinition("", "download_endpoint", "next_operation", label="Jellyfin address", help_text="HTTP(S) address without a subpath. Blank disables automatic library refresh. Configure both staging and permanent folders in Jellyfin first."),
@@ -128,7 +130,9 @@ FIELDS = MappingProxyType({
 
 # The obsolete HTTP metadata-source fields exist only to validate published
 # v7-v11 documents during *explicit* migrations, never in live settings.
-V12_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items()
+V13_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items()
+    if key != "identity.match_threshold_pct"})
+V12_FIELDS = MappingProxyType({key: spec for key, spec in V13_FIELDS.items()
     if key != "anime.title_language"})
 V11_FIELDS = MappingProxyType({**V12_FIELDS,
     "torrent_metadata.base_url": FieldDefinition("", "metadata_source", "next_operation"),
@@ -579,11 +583,23 @@ def _v12_to_v13(document):
     if current == MAX_REVISION:
         raise ConfigurationError()
     previous = validate_values(document['settings'], fields=V12_FIELDS)
-    return {'schema_version': 13, 'revision': current+1, 'settings': validate_values(previous)}
+    return {'schema_version': 13, 'revision': current+1, 'settings': validate_values(previous, fields=V13_FIELDS)}
+
+
+def _v13_to_v14(document):
+    """Add AniDB identity match threshold percentage, preserving previous configuration."""
+    if (type(document) is not dict or set(document) != {'schema_version', 'revision', 'settings'}
+            or document['schema_version'] != 13):
+        raise ConfigurationError()
+    current = revision(document['revision'])
+    if current == MAX_REVISION:
+        raise ConfigurationError()
+    previous = validate_values(document['settings'], fields=V13_FIELDS)
+    return {'schema_version': 14, 'revision': current+1, 'settings': validate_values(previous)}
 
 
 # Preserve published version shapes and validate before dropping obsolete keys.
-CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13})
+CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14})
 
 
 def convert_document(document):

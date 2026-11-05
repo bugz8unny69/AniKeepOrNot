@@ -553,5 +553,119 @@ class IdentityMatchingReportTests(unittest.IsolatedAsyncioTestCase):
             db.close()
 
 
+    def test_candidate_evidence_ranking_report(self):
+        """Candidate evidence table rows are formatted into ranking report with scores and decision."""
+        from src.nextgen.storage.candidate_evidence import save_candidate_evidence
+        event_id, job_id = self._create_identity_job(release_name="[Anime Time] Black Clover - S02E02")
+        trace = MatchingTrace()
+        trace.queries(["Black Clover", "Black Clover 2nd Season"], season=2, episode=2)
+        trace.scoring(90, "v1", "AUTO_SELECTED", 3, 2)
+        trace.anidb(19433)
+        trace.check("release_title", "passed")
+        trace.check("season_scope", "passed")
+        trace.check("anidb_candidates", "passed")
+
+        candidates = [
+            {
+                "anidb_id": 19433,
+                "display_title": "Black Clover 2nd Season",
+                "matched_anidb_title": "Black Clover 2nd Season",
+                "matched_variant": "Black Clover 2nd Season",
+                "similarity_pct": 100,
+                "rank": 1,
+                "eligible": True,
+                "selected": True,
+                "evidence": {
+                    "matched_variant": "Black Clover 2nd Season",
+                    "matched_anidb_title": "Black Clover 2nd Season",
+                    "matched_variant_provenance": "season_derived",
+                    "exact_match_bonus": 10.0,
+                    "season_agreement": 10.0,
+                },
+            },
+            {
+                "anidb_id": 12665,
+                "display_title": "Black Clover",
+                "matched_anidb_title": "Black Clover",
+                "matched_variant": "Black Clover",
+                "similarity_pct": 100,
+                "rank": 2,
+                "eligible": True,
+                "selected": False,
+                "evidence": {
+                    "matched_variant": "Black Clover",
+                    "matched_anidb_title": "Black Clover",
+                    "matched_variant_provenance": "cleaned",
+                    "exact_match_bonus": 10.0,
+                },
+            },
+            {
+                "anidb_id": 12351,
+                "display_title": "Black Clover Special",
+                "matched_anidb_title": "Black Clover Special",
+                "matched_variant": "Black Clover",
+                "similarity_pct": 75,
+                "rank": 3,
+                "eligible": False,
+                "selected": False,
+                "evidence": {
+                    "special_penalty": -15.0,
+                },
+            },
+        ]
+
+        db = connect(self.database)
+        try:
+            with transaction(db):
+                db.execute(
+                    "UPDATE jobs SET state='DONE', attempt_count=1 WHERE job_id=?",
+                    (job_id,)
+                )
+                append_job_history(
+                    db, job_id=job_id, event_code="DONE",
+                    reason_code=None, component="worker",
+                    occurred_at_ms=1700000000000,
+                    details={"attempt": 1, "matching": trace.data}
+                )
+                save_candidate_evidence(db, job_id, 1, candidates, now_ms=1700000000000)
+        finally:
+            db.close()
+
+        code, out = self.run_report_capture(
+            "--config-dir", str(self.root),
+            "job", "--id", str(job_id),
+            "--include-matching", "identity",
+            "--short"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Threshold: 90% · Scoring version: v1", out)
+        self.assertIn("AniDB #19433 — Black Clover 2nd Season", out)
+        self.assertIn("Similarity: 100%", out)
+        self.assertIn("Rank: 1", out)
+        self.assertIn("Selected: YES", out)
+        self.assertIn("AniDB #12665 — Black Clover", out)
+        self.assertIn("Rank: 2", out)
+        self.assertIn("Selected: NO", out)
+        self.assertIn("AniDB #12351 — Black Clover Special", out)
+        self.assertIn("Rank: 3", out)
+        self.assertIn("Decision    : AUTO_SELECTED", out)
+
+        # JSON output check
+        code_json, out_json = self.run_report_capture(
+            "--config-dir", str(self.root),
+            "job", "--id", str(job_id),
+            "--include-matching", "identity",
+            "--short", "--json"
+        )
+        self.assertEqual(code_json, 0)
+        doc = json.loads(out_json)
+        match_id = doc["matching"]["identity"]
+        self.assertEqual(match_id["threshold_pct"], 90)
+        self.assertEqual(match_id["decision"], "AUTO_SELECTED")
+        self.assertEqual(len(match_id["candidate_evidence"]), 3)
+        self.assertEqual(match_id["candidate_evidence"][0]["anidb_id"], 19433)
+        self.assertTrue(match_id["candidate_evidence"][0]["selected"])
+
+
 if __name__ == "__main__":
     unittest.main()

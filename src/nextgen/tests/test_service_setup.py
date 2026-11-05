@@ -28,7 +28,7 @@ class ServiceSetupTests(unittest.TestCase):
         SecretStore(self.root).update_webhook_token('w'*43,expected_revision=1)
 
     def test_explicit_init_creates_current_local_files_without_external_work(self):
-        result=self.initialize();self.assertTrue(result['initialized']);self.assertEqual(result['configuration_version'],13)
+        result=self.initialize();self.assertTrue(result['initialized']);self.assertEqual(result['configuration_version'],14)
         self.assertEqual(ConfigurationStore(self.root).read().value('storage.database_path'),str(self.database))
         self.assertEqual(self.database.stat().st_mode&0o777,0o600)
         db=connect(self.database)

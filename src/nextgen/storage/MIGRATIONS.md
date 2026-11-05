@@ -237,3 +237,11 @@ permitting FAILED alongside existing states (PENDING, RUNNING, RETRY_WAIT,
 ON_HOLD, NEEDS_REVIEW, DONE, BLOCKED, CANCELED). Existing jobs, foreign keys,
 and indexes are preserved. Fresh SCHEMA and the migration runner match v58.
 
+
+## v58 → v59: identity candidate evidence
+
+059_identity_candidate_evidence.sql adds the `identity_candidate_evidence` table
+to persist all evaluated AniDB candidates for an IDENTIFY_ANIME job attempt,
+capturing similarity scores, rankings, eligibility, and explainable selection
+evidence. Existing data is preserved; fresh SCHEMA and migration runner match v59.
+

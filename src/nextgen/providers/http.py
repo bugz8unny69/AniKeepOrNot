@@ -192,10 +192,10 @@ class Clients:
         self.store.public_put(provider,key,payload,86400000,token)
         return payload
 
-    def title_candidates(self, aliases):
+    def title_candidates(self, aliases, *, threshold_pct=50):
         payload = self._public("anidb_titles","titles",TITLES_URL,limit=67108864,gap=86400000,
                                validate=lambda value:parsing.xml(value,"animetitles"))
-        return parsing.title_matches(payload,aliases)
+        return parsing.title_matches(payload,aliases,threshold_pct=threshold_pct)
 
     def _mapping_payload(self):
         return self._public("anime_lists","mapping",MAPPING_URL,limit=16777216,gap=60000,

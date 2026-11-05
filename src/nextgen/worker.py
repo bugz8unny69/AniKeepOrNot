@@ -272,9 +272,14 @@ class Worker:
                 # The first transaction rolled back all facts/ending/successors.
                 # Record the expected domain decision under the same valid lease.
                 rej_outcome = rejection.outcome
+                replacements = {}
                 if getattr(rej_outcome, 'search_snapshots', None) is None and getattr(outcome, 'search_snapshots', None) is not None:
+                    replacements['search_snapshots'] = outcome.search_snapshots
+                if getattr(rej_outcome, 'candidate_evidence', None) is None and getattr(outcome, 'candidate_evidence', None) is not None:
+                    replacements['candidate_evidence'] = outcome.candidate_evidence
+                if replacements:
                     from dataclasses import replace
-                    rej_outcome = replace(rej_outcome, search_snapshots=outcome.search_snapshots)
+                    rej_outcome = replace(rej_outcome, **replacements)
                 records = await self._io(self.queue.finish,claim,rej_outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
             for record in records:

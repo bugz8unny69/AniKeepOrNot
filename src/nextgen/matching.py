@@ -50,11 +50,35 @@ def _identifier(value):
 
 def validated(trace):
     """Validate an exact, bounded public diagnostic shape, not arbitrary JSON."""
-    if type(trace) is not dict or set(trace) != {
+    if type(trace) is not dict:
+        raise ValueError("invalid matching evidence structure")
+    version = trace.get("version")
+    if version not in (1, 2):
+        raise ValueError("invalid matching evidence structure")
+    required = {
         "version", "season", "episode", "queries", "anidb_candidates",
         "tvdb_titles", "selected_anidb_id", "selected_tvdb_id", "checks",
-    } or trace["version"] != 1:
-        raise ValueError("invalid matching evidence structure")
+    }
+    if version == 1:
+        if set(trace) != required:
+            raise ValueError("invalid matching evidence structure")
+    elif version == 2:
+        allowed = required | {
+            "threshold_pct", "scoring_version", "decision", "candidate_count", "eligible_count"
+        }
+        if not (required <= set(trace) <= allowed):
+            raise ValueError("invalid matching evidence structure")
+        if "threshold_pct" in trace and trace["threshold_pct"] is not None:
+            if type(trace["threshold_pct"]) is not int or not 50 <= trace["threshold_pct"] <= 100:
+                raise ValueError("invalid matching evidence threshold")
+        if "scoring_version" in trace and trace["scoring_version"] is not None:
+            _label(trace["scoring_version"])
+        if "decision" in trace and trace["decision"] is not None:
+            _label(trace["decision"])
+        for count_key in ("candidate_count", "eligible_count"):
+            if count_key in trace and trace[count_key] is not None:
+                if type(trace[count_key]) is not int or trace[count_key] < 0:
+                    raise ValueError(f"invalid matching evidence {count_key}")
     for key in ("season", "episode"):
         val = trace[key]
         if val is not None and (type(val) is not int or not 1 <= val <= 9999):
@@ -105,6 +129,7 @@ class MatchingTrace:
             "anidb_candidates": [], "tvdb_titles": [], "selected_anidb_id": None,
             "selected_tvdb_id": None, "checks": [],
         }
+        self.candidate_evidence = None
 
     def check(self, step, status, note=None):
         if step not in STEPS or status not in STATUSES or note is not None and note not in NOTES:
@@ -126,6 +151,19 @@ class MatchingTrace:
                     if (display := _display(title)) is not None
                 ]})
         self.data["anidb_candidates"] = items
+
+    def set_candidate_evidence(self, candidates):
+        self.candidate_evidence = tuple(candidates) if candidates else None
+
+    def scoring(self, threshold_pct, scoring_version, decision, candidate_count=None, eligible_count=None):
+        self.data["version"] = 2
+        self.data["threshold_pct"] = threshold_pct
+        self.data["scoring_version"] = scoring_version
+        self.data["decision"] = decision
+        if candidate_count is not None:
+            self.data["candidate_count"] = candidate_count
+        if eligible_count is not None:
+            self.data["eligible_count"] = eligible_count
 
     def tvdb(self, tid, titles):
         self.data["selected_tvdb_id"] = tid
