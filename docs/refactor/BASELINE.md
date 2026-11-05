@@ -67,6 +67,7 @@ Before each work item, and after significant changes land on `NextGen`:
 | 2026-11-04 | `aab7db0b` | Merged #258 (non-owner read-only secrets access), #259 (P0: `BatchTransferJournal.select()` fingerprint binding) and #260 (`STORAGE_STATEMENT_INVALID` reporting). No conflicts. RF-002 audit rescan: no new unused imports, unreferenced definitions or modules. Full suite 1,493/1,493. |
 | 2026-11-04 | `304a76f1` | Merged #261 (worker readiness validation, FAILED candidate lifecycle, migration 058). No conflicts. Audit rescan: 4 new unused imports and 1 unreferenced method in the new `acquisition/readiness.py`, added to `DEAD_CODE_AUDIT.md`. A wrong job-kind list in the new `ACQUISITION_KINDS` was reported for a NextGen fix. |
 | 2026-11-04 | `17c3c8e0` | Merged #265 (explicit-reason `adm recover` retries; `apply` is the sole confirmation). No conflicts and no new Sonarr references. Audit rescan: no new unused imports. `dashboard/assets.address_mismatch` became unreferenced after RF-003 removed its last (unused) import; it is queued for RF-008. |
+| 2026-11-04 | `9071be2e` | Merged #267 (AniDB identity matching, `adm report` identity diagnostics, new `tools/` evaluation harness) and #268 (correct batch kinds in `ACQUISITION_KINDS`). No conflicts and no new reason or event codes. Audit rescan: 4 unused imports, 1 unused constant and 1 unreferenced function from #267, queued for RF-008 in `DEAD_CODE_AUDIT.md`. |
 
 ## Work-item PR flow
 

@@ -38,7 +38,8 @@ class FailedJobStateMigrationTests(unittest.TestCase):
         self.addCleanup(fresh.close)
         initialize(fresh)
         upgraded = self.migrate()
-        self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 58)
+        upgraded.executescript((SQL_DIR / '059_identity_candidate_evidence.sql').read_text())
+        self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], LATEST_VERSION)
         self.assertEqual(_structure(fresh), _structure(upgraded))
 
     def test_upgrade_preserves_existing_jobs_and_allows_failed_state(self):

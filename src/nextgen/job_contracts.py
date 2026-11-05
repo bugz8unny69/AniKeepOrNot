@@ -83,8 +83,11 @@ class Outcome:
     matching: str | None = field(default=None, repr=False)
     facts: dict | None = field(default=None, repr=False)
     search_snapshots: tuple | list | None = field(default=None, repr=False)
+    candidate_evidence: tuple | list | None = field(default=None, repr=False)
 
     def __post_init__(self):
+        if self.candidate_evidence is not None and not isinstance(self.candidate_evidence, (list, tuple)):
+            raise ValueError("invalid outcome candidate evidence")
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
         if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "cancel", "fail")

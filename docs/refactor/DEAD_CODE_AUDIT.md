@@ -93,6 +93,18 @@ These are production definitions referenced **only by tests**. Deleting them wou
 | P13 | Multiple storage modules | Read-only snapshot boilerplate | n/a | See §5, duplication. |
 | P14 | `acquisition/readiness.py:126` *(added by #261)* | `QbittorrentReadiness.last_error()` | 0 | A public accessor that was added with the new readiness cache but that nothing calls. The code is brand new and the accessor may be intended for diagnostics, so it is left until the owner decides. |
 
+
+### Added by later NextGen merges (queued for RF-008)
+
+| Location | Item | Class | Notes |
+|---|---|---|---|
+| `dashboard/assets.py:28` | `address_mismatch()` | Confirmed dead | Its last (unused) import in `api/app.py` was removed in RF-003. No references remain in `src/nextgen`, `fixes/`, `bin/` or `deploy/`. |
+| `providers/scoring.py:13` *(#267)* | `import unicodedata` | Confirmed dead import | |
+| `tools/evaluate_historical_identities.py:10,16,404` *(#267)* | `dataclass`, `CandidateMatch`, local `re` | Confirmed dead imports | |
+| `providers/parsing.py:22` *(#267)* | `METADATA_ONLY` | Potentially dead | No references. It may be an intended parse-mode constant, so check before removing. |
+| `storage/candidate_evidence.py:102` *(#267)* | `count_candidate_evidence()` | Potentially dead | No references, including tests. |
+| `tools/evaluate_historical_identities.py` *(#267)* | module | **Active** | A standalone offline evaluation tool (`__main__`), documented in `docs/ANIDB_IDENTITY_MATCHING.md`. It is not imported, which is expected for a tool. |
+
 ---
 
 ## 3. Required compatibility (must remain supported)

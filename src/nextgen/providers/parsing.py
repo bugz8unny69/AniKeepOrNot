@@ -41,15 +41,19 @@ def release_title(raw):
     """
     if not isinstance(raw, str) or not raw.strip():
         return [], None
-    # A single episode is read by the shared release-group title reader; its
-    # title alternatives, without season markers, are the search aliases.
     from src.nextgen.acquisition.release_titles import parse_release, season_marker
-    parsed = parse_release(raw)
+    from src.nextgen.providers.scoring import clean_metadata, detect_explicit_sequel_marker, YEAR_TAG
+    # Only the primary title determines base release aliases; pipe alternatives
+    # are handled as distinct sequel/alternate aliases.
+    primary = raw.split(" | ", 1)[0].strip() if " | " in raw else raw.strip()
+    parsed = parse_release(primary)
     if parsed is not None:
         aliases = []
         for written in parsed.titles:
-            base, number = season_marker(written, roman=False)
-            for alias in (base if number is not None else written,):
+            cleaned_written = clean_metadata(written)
+            base, number = season_marker(cleaned_written, roman=False)
+            candidates_to_add = (cleaned_written, base) if (number is not None and base != cleaned_written) else (cleaned_written,)
+            for alias in candidates_to_add:
                 cleaned = re.sub(r'[\(\[\{][^\)\]\}]*$', '', alias).strip()
                 cleaned = re.sub(r'[\(\[\{:\-\s]+$', '', cleaned).strip()
                 cleaned = re.sub(r'[\)\]\}]+$', '', cleaned).strip()
@@ -57,63 +61,70 @@ def release_title(raw):
                     aliases.append(cleaned)
         if aliases:
             return aliases, parsed.episode
-    value = PREFIX.sub('', raw).strip()
+
+    value = PREFIX.sub('', primary).strip()
     episode_match = EP.search(value)
     episode = (next((int(x) for x in (
         episode_match.group('season_ep'), episode_match.group('dash_ep'),
         episode_match.group('word_ep')) if x is not None), None)
         if episode_match else None)
-    # An explicit episode token is the safest title boundary. A season token
-    # or video encode/quality marker is a weaker boundary for season packs.
-    boundaries = [m.start() for m in (episode_match,
-                                     SEASON_TOKEN.search(value),
-                                     SEASON_WORD.search(value),
-                                     RELEASE_TECH.search(value)) if m]
-    title = (value[:min(boundaries)] if boundaries else value).strip(' ._-')
-    title = TRAIL.sub('', title).strip()
-    # Clean unbalanced open parentheses/brackets at the end
-    title = re.sub(r'[\(\[\{][^\)\]\}]*$', '', title).strip()
-    title = re.sub(r'[\(\[\{:\-\s]+$', '', title).strip()
-    # Metadata-only parentheticals may occur even when no season token exists.
-    parts = [part.strip() for part in META_GROUP.findall(title)]
-    safe_parts = [part for part in parts
-                  if not METADATA_ONLY.fullmatch(part)]
-    title = META_GROUP.sub(lambda m: '' if METADATA_ONLY.fullmatch(m.group(1).strip())
-                           else m.group(0), title).strip(' ._-')
-    title = re.sub(r'[._]+', ' ', title)
-    title = re.sub(r'\s+', ' ', title).strip()
-    without_parentheses = META_GROUP.sub('', title)
-    without_parentheses = re.sub(r'\s+', ' ', without_parentheses).strip(' ._-')
-    # Provider queries never use an isolated packaging tag. Parenthetical
-    # alternate names remain optional query aliases only when title-like.
-    raw_aliases = [title, without_parentheses]
-    for part in safe_parts:
-        if (len(part) >= 4 and not re.fullmatch(r'\d{4}', part)
-                and not RELEASE_TECH.search(part)
-                and not SEASON_WORD.search(part)):
-            raw_aliases.append(part)
+
+    slash_parts = [sp.strip() for sp in re.split(r'\s+/\s+', value) if sp.strip()]
+    if not slash_parts:
+        slash_parts = [value]
+
+    raw_aliases = []
+    for sp in slash_parts:
+        ep_m = EP.search(sp)
+        boundaries = [m.start() for m in (ep_m,
+                                         SEASON_TOKEN.search(sp),
+                                         SEASON_WORD.search(sp),
+                                         RELEASE_TECH.search(sp)) if m]
+        title = (sp[:min(boundaries)] if boundaries else sp).strip(' ._-')
+        title = TRAIL.sub('', title).strip()
+        title = clean_metadata(title)
+        if not title:
+            continue
+
+        base, num = detect_explicit_sequel_marker(title)
+        if num is not None and base != title:
+            raw_aliases.extend([title, base])
+        else:
+            raw_aliases.append(title)
+
+        if YEAR_TAG.search(title):
+            unyeared = re.sub(r'\s+', ' ', YEAR_TAG.sub(' ', title)).strip(' -:,')
+            if unyeared:
+                raw_aliases.append(unyeared)
+
+        without_parens = META_GROUP.sub('', title).strip(' ._-')
+        if without_parens and without_parens != title:
+            raw_aliases.append(without_parens)
+
     aliases = []
     for item in raw_aliases:
         cleaned = item.strip()
-        # Clean unbalanced unclosed opening brackets
-        while (cleaned.count('(') > cleaned.count(')') or
-               cleaned.count('[') > cleaned.count(']') or
-               cleaned.count('{') > cleaned.count('}')):
-            m = re.search(r'[\(\[\{][^\(\)\[\]\{\}]*$', cleaned)
+        while cleaned.count('(') > cleaned.count(')'):
+            m = re.search(r'\([^()]*$', cleaned)
             if not m: break
             cleaned = cleaned[:m.start()].strip()
-        # Clean unbalanced closing brackets
-        while (cleaned.endswith(')') and cleaned.count(')') > cleaned.count('(')) or \
-              (cleaned.endswith(']') and cleaned.count(']') > cleaned.count('[')) or \
-              (cleaned.endswith('}') and cleaned.count('}') > cleaned.count('{')):
-            cleaned = cleaned[:-1].strip()
+        while cleaned.count(')') > cleaned.count('('):
+            cleaned = re.sub(r'\)[^()]*$', '', cleaned).strip()
+        while cleaned.count('[') > cleaned.count(']'):
+            m = re.search(r'\[[^\[\]]*$', cleaned)
+            if not m: break
+            cleaned = cleaned[:m.start()].strip()
+        while cleaned.count(']') > cleaned.count('['):
+            cleaned = re.sub(r'\][^\[\]]*$', '', cleaned).strip()
         cleaned = re.sub(r'[:\-\s]+$', '', cleaned).strip()
-        if not cleaned: continue
+        if not cleaned:
+            continue
         if re.fullmatch(r'^[A-Za-z]?\d{6,}$', cleaned) or re.fullmatch(r'^[0-9a-fA-F]{16,}$', cleaned):
             continue
         if cleaned not in aliases:
             aliases.append(cleaned)
     return aliases, episode
+
 
 def norm(s):
     return ''.join(ch for ch in unicodedata.normalize('NFKC', s).casefold() if ch.isalnum())
@@ -139,19 +150,48 @@ def positive_text(value):
     return int(value)
 
 
-def title_matches(payload, aliases):
-    root = xml(payload,"animetitles")
-    wanted = {norm(alias) for alias in aliases}
+def title_matches(payload, aliases, *, threshold_pct=50):
+    root = xml(payload, "animetitles")
+    wanted_texts = [a.text if hasattr(a, "text") else str(a) for a in aliases if a]
+    wanted_norms = {norm(t) for t in wanted_texts if norm(t)}
+    if not wanted_norms:
+        return {}
+
+    wanted_words = {
+        w for t in wanted_texts
+        for w in re.findall(r'[a-z0-9]{3,}', norm(t))
+    }
+
+    from difflib import SequenceMatcher
     found = {}
     for node in root.findall("anime"):
+        aid = positive_text(node.get("aid"))
+        if aid in found:
+            raise ProviderInvalidResponse()
         titles = tuple((item.text or "").strip() for item in node.findall("title") if (item.text or "").strip())
-        if any(norm(title) in wanted for title in titles):
-            aid = positive_text(node.get("aid"))
-            if aid in found: raise ProviderInvalidResponse()
+        if not titles:
+            continue
+
+        is_match = any(norm(title) in wanted_norms for title in titles)
+        if not is_match and threshold_pct is not None and wanted_words:
+            for title in titles:
+                nt = norm(title)
+                if not nt:
+                    continue
+                if any(w in nt for w in wanted_words):
+                    best_ratio = max(
+                        SequenceMatcher(None, nw, nt, autojunk=False).ratio()
+                        for nw in wanted_norms
+                    )
+                    if round(100 * best_ratio) >= threshold_pct:
+                        is_match = True
+                        break
+
+        if is_match:
             found[aid] = titles
-            if len(found)>10: raise IdentityNotReady()
-    # No exact catalog title is a search miss, not a provider failure.
-    # Let the resolver try an explicit alternate title when one exists.
+            if len(found) > 1000:
+                raise IdentityNotReady()
+
     return found
 
 

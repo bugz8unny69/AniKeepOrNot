@@ -9,6 +9,10 @@ sudo adm report --short job --id 1292 --include-matching prowlarr       # matchi
 sudo adm report --short --id 1292 --include-matching prowlarr           # short form alias without "job"
 sudo adm report job --id 1292 --include-matching prowlarr --json        # structured JSON with matching.prowlarr
 sudo adm report --short job --id 1292 --include-matching prowlarr --json# matching JSON document only
+sudo adm report job --id 449 --include-matching identity                # full report + Identity matching
+sudo adm report job --id 449 --include-matching identity --short        # identity matching section only
+sudo adm report job --id 449 --include-matching identity --attempt 2    # explicit attempt selection
+sudo adm report job --id 449 --include-matching identity --short --json # matching JSON document only
 ```
 
 The report is read-only. It opens the database with `mode=ro` and
@@ -30,10 +34,24 @@ the existing on-disk existence check of recorded paths, which is labeled as one.
 | History | Unchanged order. Each event shows its reason (or its registered event message), the attempt, and the cause reason |
 | Records and paths | Unchanged |
 | Prowlarr matching | Optional (`--include-matching prowlarr`). Complete listing of every returned row (raw results, query attribution, policy dispositions, exact episode matching, Dual-Audio hints, and detailed rejection reasons). Captured at search time; offline and read-only. Reconciled with candidate history and audio verification diagnostics. |
+| Identity matching | Optional (`--include-matching identity`). Explainable series identification diagnostics for `IDENTIFY_ANIME` jobs (release name, parsed title aliases, season/episode detection, AniDB candidate titles/IDs, selected AniDB/TVDB identifiers, verification checks with pass/fail/wait/skip statuses and notes, failed check identification, and readable stop summary). Reconstructed from recorded `job_history.details_json`; offline and read-only. Supports explicit `--attempt` selection. |
 
 Wording: `Not recorded` = the database has no such fact. `Not checked` = the report
 did not look (for example, live qBittorrent state). `MISSING` under *Paths on disk* = checked
 live and confirmed absent.
+
+## Identity matching diagnostics
+
+When `--include-matching identity` is requested, the report explains why an `IDENTIFY_ANIME` job stopped using persisted matching evidence:
+
+- **Parsed Release & Detection**: Displays parsed title aliases, extracted season, and candidate episode number.
+- **AniDB Candidates**: Lists all candidate anime returned by AniDB, with their AniDB IDs and recorded titles.
+- **Selected Identifiers**: Displays the selected AniDB ID and TVDB series ID (with TVDB titles) if verified, or `Not selected` if unverified.
+- **Verification Checks**: Detailed audit of every check step (`release_title`, `recognized_season`, `season_scope`, `anidb_candidates`, `anidb_record`, `anime_lists`, `tvdb_series`, `tvdb_animation`, `provider_link`, `provider_titles`, `identity_verified`) with status (`passed`, `failed`, `waiting`, `skipped`) and diagnostic note.
+- **Failed Check & Summary**: Clearly identifies which check failed and provides a readable plain-language explanation of why identification stopped (e.g., no candidates, ambiguous candidates, unverified sequel, TVDB live-action/not animation, provider auth failure, rate limiting).
+- **Attempt Selection**: Defaults to the latest attempt with recorded matching evidence; earlier attempts can be inspected explicitly via `--attempt N`.
+- **Downstream Job Resolution**: When `--id` references a successor job (such as `VERIFY_RELEASE`), the report resolves identity matching from the associated `IDENTIFY_ANIME` job for that event.
+- **Historical Evidence**: Displays historical diagnostic notes (such as `no_unique_anidb_candidate`) without misinterpreting them. When evidence is unavailable for an attempt or older job, displays `Not recorded`.
 
 ## Prowlarr matching & candidate reconciliation
 

@@ -44,7 +44,7 @@ class MediaDestinationTests(unittest.TestCase):
         before = copy.deepcopy(old)
         snapshot = convert_document(old)
         self.assertEqual(old, before)
-        self.assertEqual((snapshot.schema_version, snapshot.revision), (13, 20))
+        self.assertEqual((snapshot.schema_version, snapshot.revision), (14, 21))
         self.assertEqual(snapshot.value("worker.concurrency"), 8)
         self.assertEqual(snapshot.value("storage.trial_root"), "")
         self.assertEqual(snapshot.value("storage.keep_root"), "")

@@ -903,16 +903,31 @@ async function openMatching(jobId) {
       if (check.note) content.appendChild(node('small', MATCHING_NOTES[check.note] || 'No additional details recorded.', 'muted'));
       line.appendChild(content); checks.appendChild(line);
     }
-    const candCount = ev.anidb_candidates?.length || 0;
-    const candIds = (ev.anidb_candidates || []).map(c => '#' + c.anidb_id).join(', ');
-    const candidates = matchingSection(body, `AniDB candidates (${candCount}` + (candCount > 0 ? ` · ${candIds})` : ')'));
-    if (!ev.anidb_candidates?.length)
-      candidates.appendChild(node('p', 'No AniDB candidates recorded. The worker may have stopped before querying AniDB.', 'muted'));
-    for (const candidate of ev.anidb_candidates || []) {
-      const card = node('div', null, 'trace-card');
-      card.appendChild(node('strong', `AniDB #${candidate.anidb_id}`));
-      card.appendChild(node('p', candidate.titles?.length ? candidate.titles.join(' · ') : 'No provider titles recorded', 'muted'));
-      candidates.appendChild(card);
+    if (result.candidate_evidence?.length) {
+      const cands = result.candidate_evidence;
+      const candidates = matchingSection(body, `AniDB candidate ranking (${cands.length})`);
+      for (const c of cands) {
+        const card = node('div', null, 'trace-card');
+        const header = node('div');
+        header.appendChild(node('strong', `Rank ${c.rank} · AniDB #${c.anidb_id} — ${c.display_title || c.matched_title}`));
+        const badge = c.selected ? ' [SELECTED]' : (c.eligible ? ' [ELIGIBLE]' : ' [INELIGIBLE]');
+        header.appendChild(node('span', badge, c.selected ? 'trace-passed' : (c.eligible ? 'muted' : 'trace-failed')));
+        card.appendChild(header);
+        card.appendChild(node('p', `Similarity: ${c.similarity_pct}% · Matched: "${c.matched_variant}" → "${c.matched_title}"`, 'muted'));
+        candidates.appendChild(card);
+      }
+    } else {
+      const candCount = ev.anidb_candidates?.length || 0;
+      const candIds = (ev.anidb_candidates || []).map(c => '#' + c.anidb_id).join(', ');
+      const candidates = matchingSection(body, `AniDB candidates (${candCount}` + (candCount > 0 ? ` · ${candIds})` : ')'));
+      if (!ev.anidb_candidates?.length)
+        candidates.appendChild(node('p', 'No AniDB candidates recorded. The worker may have stopped before querying AniDB.', 'muted'));
+      for (const candidate of ev.anidb_candidates || []) {
+        const card = node('div', null, 'trace-card');
+        card.appendChild(node('strong', `AniDB #${candidate.anidb_id}`));
+        card.appendChild(node('p', candidate.titles?.length ? candidate.titles.join(' · ') : 'No provider titles recorded', 'muted'));
+        candidates.appendChild(card);
+      }
     }
     const mapping = matchingSection(body, 'Verified provider identities');
     const mappingGrid = node('div', null, 'trace-grid'); mapping.appendChild(mappingGrid);
