@@ -119,7 +119,7 @@ class BatchTransferJournal:
                 'reason_code,selected_progress,created_at_ms,updated_at_ms) '
                 "VALUES(?,?,?,?,?,?,'SELECT_UNCERTAIN','TORRENT_SELECTION_UNCERTAIN',?,?,?)",
                 (current.candidate.plan_id,claim.job_id,claim.attempt,index,
-                 snapshot.piece_size,snapshot.progress[index],now,now))
+                 snapshot.piece_size,fingerprint,snapshot.progress[index],now,now))
             audit=append_job_history(
                 db,job_id=claim.job_id,event_code='TORRENT_SELECTION_RECORDED',
                 reason_code='TORRENT_SELECTION_UNCERTAIN',component='worker',

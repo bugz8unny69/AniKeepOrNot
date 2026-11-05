@@ -64,6 +64,7 @@ Before each work item, and after significant changes land on `NextGen`:
 | Date | `origin/NextGen` SHA | Notes |
 |---|---|---|
 | 2026-11-04 | `99dd30ef` | Base. No upstream changes beyond the base. |
+| 2026-11-04 | `aab7db0b` | Merged #258 (non-owner read-only secrets access), #259 (P0: `BatchTransferJournal.select()` fingerprint binding) and #260 (`STORAGE_STATEMENT_INVALID` reporting). No conflicts. RF-002 audit rescan: no new unused imports, unreferenced definitions or modules. Full suite 1,493/1,493. |
 
 ## Work-item PR flow
 
