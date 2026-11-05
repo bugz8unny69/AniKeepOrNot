@@ -24,7 +24,7 @@ NOT_CHECKED = 'Not checked'
 UNKNOWN = 'Unknown'
 LIVE = ('PENDING', 'RUNNING', 'RETRY_WAIT')
 STOPPED = ('NEEDS_REVIEW', 'BLOCKED', 'ON_HOLD')
-FINISHED = ('DONE', 'CANCELED')
+FINISHED = ('DONE', 'CANCELED', 'FAILED')
 MAX_HOPS = 6          # Dependency chain bound.
 MAX_MATCHES = 20      # Reservation rows shown per namespace.
 DEFAULT_MAX_RETRIES = 3  # job_contracts.Policy default; the running worker's value is not persisted.
@@ -339,6 +339,12 @@ def summary(db, job, op, res, rec, now):
                    'SKIPPED_DUPLICATE' else ''), automatic='Not needed.', manual='No.')
     elif state == 'CANCELED':
         out.update(doing='Canceled.', automatic='Not applicable.', manual='No.')
+    elif state == 'FAILED':
+        out.update(doing=f'Candidate attempt failed ({reason}).',
+                   waiting_for='safe cleanup and fallback' if canceling else 'fallback',
+                   condition='Cleanup confirms absence before next candidate.',
+                   automatic='Yes — automatic cleanup and candidate fallback.',
+                   manual='No.')
     elif canceling:
         out.update(doing=f'Operation #{op["operation_id"]} is {op["state"]}; this job will not run normally.',
                    waiting_for=f'cancellation cleanup ({op["cleanup_state"]})',

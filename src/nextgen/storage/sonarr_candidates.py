@@ -1,5 +1,6 @@
 """Ranked backfill candidate facts, not acquisition permits or torrent ownership."""
 import json
+import sqlite3
 from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, SearchResult
 
@@ -137,7 +138,7 @@ def schedule_after_cleanup(db,operation_id):
     # A user-initiated Cancel stops the operation. Only a cleanup control
     # created BY the failed backfill job may initiate fallback.
     automated=db.execute(
-        "SELECT 1 FROM management_actions a "
+        "SELECT a.target_job_id, control.payload_json FROM management_actions a "
         "JOIN jobs control ON control.job_id=a.job_id "
         "AND control.kind='CLEANUP_CANCELED_OPERATION' "
         "JOIN job_operation_members source ON "
@@ -146,11 +147,35 @@ def schedule_after_cleanup(db,operation_id):
         "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1",
         (operation_id,)).fetchone()
     if automated is None:return ()
-    issue=db.execute(
-        "SELECT h.reason_code FROM job_history h "
-        "JOIN job_operation_members m ON m.job_id=h.job_id "
-        "WHERE m.operation_id=? AND h.event_code='NEEDS_REVIEW' "
-        "ORDER BY h.history_id DESC LIMIT 1",(operation_id,)).fetchone()
+    target_job_id, payload_str = automated
+    issue = None
+    if payload_str:
+        try:
+            issue = json.loads(payload_str).get('failure_reason')
+        except Exception:
+            pass
+    if not issue:
+        try:
+            t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
+            if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
+                issue = t_row[0]
+        except sqlite3.OperationalError:
+            pass
+    if not issue:
+        h_row = db.execute(
+            "SELECT reason_code FROM job_history "
+            "WHERE job_id=? AND event_code IN ('FAILED','NEEDS_REVIEW') "
+            "ORDER BY history_id DESC LIMIT 1", (target_job_id,)).fetchone()
+        if h_row and h_row[0]:
+            issue = h_row[0]
+    if not issue:
+        h_fallback = db.execute(
+            "SELECT h.reason_code FROM job_history h "
+            "JOIN job_operation_members m ON m.job_id=h.job_id "
+            "WHERE m.operation_id=? AND h.event_code IN ('FAILED','NEEDS_REVIEW') "
+            "ORDER BY h.history_id DESC LIMIT 1", (operation_id,)).fetchone()
+        if h_fallback and h_fallback[0]:
+            issue = h_fallback[0]
     if issue is None:return ()
     rows=db.execute(
         "SELECT s.plan_id,s.anidb_episode_number,s.info_hash,parent.event_id,parent.job_id,parent.payload_json "
@@ -181,7 +206,7 @@ def schedule_after_cleanup(db,operation_id):
         (digest,)).fetchone():
         raise CandidateConflict()
     fail_candidate(db,plan_id=plan_id,episode=episode,info_hash=digest,
-                   reason_code=issue[0] or 'JOB_RETRY_EXHAUSTED')
+                   reason_code=issue or 'JOB_RETRY_EXHAUSTED')
     pending=next_candidate(db,plan_id=plan_id,episode=episode)
     from src.nextgen.storage.sqlite import enqueue_job_with_receipt
     from src.nextgen.storage.sonarr_backfill import PAGE_SIZE, plan_window
@@ -207,7 +232,7 @@ def auto_cleanup_failed_candidate(db,claim):
     """Enqueue the EXISTING cancellation worker for a failed backfill attempt.
 
     Called by the normal worker transition after the failing job has become
-    NEEDS_REVIEW. The rejected candidate owns its own operation; siblings and
+    FAILED or NEEDS_REVIEW. The rejected candidate owns its own operation; siblings and
     the backfill discovery worker are not canceled. Ordinary jobs are untouched.
     """
     if (not db.in_transaction or claim.event_id is None or claim.kind not in
@@ -257,16 +282,25 @@ def request_automatic_cleanup(db,claim):
     if op[1]!='ACTIVE':return ()
     if db.execute("SELECT 1 FROM management_actions WHERE operation_id=? "
                   "AND action='CLEANUP'",(op[0],)).fetchone():return ()
+    failing_reason = None
+    try:
+        failing_reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()
+    except sqlite3.OperationalError:
+        pass
+    failure_reason = failing_reason[0] if failing_reason and failing_reason[0] else None
     # This is the same cancellation transition and control job used by the
     # manual UI. Only its *trigger* differs. No new worker/cleanup path.
     database=db.execute('PRAGMA database_list').fetchone()[2] or ':memory:'
     canceled,records=CancellationStore(database).request_in_transaction(
         db,claim.job_id)
     now=__import__('time').time_ns()//1000000
+    payload={'target_job_id':claim.job_id}
+    if failure_reason:
+        payload['failure_reason']=failure_reason
     control,created=enqueue_job_with_receipt(
         db,component='worker',kind='CLEANUP_CANCELED_OPERATION',
         event_id=claim.event_id,created_by_job_id=claim.job_id,
-        payload={'target_job_id':claim.job_id},available_at_ms=now)
+        payload=payload,available_at_ms=now)
     db.execute('INSERT INTO management_actions VALUES(?,?,?,?,?)',
                (canceled,'CLEANUP',claim.job_id,control,now))
     return (*records,created)

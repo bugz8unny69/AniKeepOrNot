@@ -4,7 +4,7 @@ from src.nextgen.history import job_attempt, append_job_history, integer
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.sqlite import transaction
 
-CANCELABLE=frozenset(('PENDING','RETRY_WAIT','ON_HOLD','BLOCKED','NEEDS_REVIEW','RUNNING'))
+CANCELABLE=frozenset(('PENDING','RETRY_WAIT','ON_HOLD','BLOCKED','NEEDS_REVIEW','RUNNING','FAILED'))
 
 
 def operation(db,job_id):
@@ -49,10 +49,11 @@ def can_cancel_operation(db,op):
 
 
 def cancel_job(db,job_id,now,component='worker',*,reason_code='JOB_CANCELED'):
-    row=db.execute('SELECT state,attempt_count FROM jobs WHERE job_id=?',(job_id,)).fetchone()
+    row=db.execute('SELECT state,attempt_count,last_reason_code FROM jobs WHERE job_id=?',(job_id,)).fetchone()
     if row is None or row[0] not in CANCELABLE:return ()
+    saved_reason = row[2] if row[0] == 'FAILED' and row[2] else reason_code
     db.execute("UPDATE jobs SET state='CANCELED',lease_token=NULL,lease_expires_at_ms=NULL,activity_code=NULL,"
-               "last_reason_code=?,updated_at_ms=? WHERE job_id=?",(reason_code,now,job_id))
+               "last_reason_code=?,updated_at_ms=? WHERE job_id=?",(saved_reason,now,job_id))
     return (append_job_history(db,job_id=job_id,event_code='CANCELED',reason_code=reason_code,component=component,
                               occurred_at_ms=now,details={'attempt':row[1]}),)
 

@@ -41,7 +41,7 @@ class RetryReceipt:
 
 
 def _retryable_state(kind, state, reason):
-    return state == 'NEEDS_REVIEW' or (
+    return state in ('NEEDS_REVIEW', 'FAILED') or (
         # Waiting for dub: Retry is "Search again".
         kind == 'DISCOVER_SONARR_BACKFILL' and state == 'ON_HOLD'
         and reason == 'WAITING_FOR_DUB') or (
@@ -142,7 +142,7 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
     if target is not None:
         if row[1] != expected_attempt:
             raise RetryStale('job attempt changed')
-        if row[0] not in ('NEEDS_REVIEW', 'BLOCKED'):
+        if row[0] not in ('NEEDS_REVIEW', 'BLOCKED', 'FAILED'):
             raise RetryNotAllowed('job is not stopped for review')
         if row[2] != expected_reason:
             raise RetryStale('job review reason changed')

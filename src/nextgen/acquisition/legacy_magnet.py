@@ -17,7 +17,7 @@ from src.nextgen.acquisition.metadata import (ObservedInventory, MetadataInvalid
 from src.nextgen.acquisition.submission import (
     ClientInvalid, ClientUnavailable, ClientAuthenticationFailed, ClientUnsupported,
 )
-from src.nextgen.job_contracts import Outcome
+from src.nextgen.job_contracts import Outcome, failure_facts
 from src.nextgen.storage.sonarr_magnet_intake import MagnetJournal
 from src.nextgen.storage.sonarr_selection import acquisition_identity, SelectionConflict
 from src.nextgen.storage.acquisition import source_magnet
@@ -86,7 +86,7 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
             current=await blocking(owned.inspect,source.info_hash)
             if current is None:
                 if await blocking(journal.metadata_expired,context.claim,intent):
-                    return Outcome('review','TORRENT_METADATA_TIMEOUT')
+                    return Outcome('fail','TORRENT_METADATA_TIMEOUT')
                 return PENDING
             # Do not stop/restart any torrent without the exact journal tag.
             if (current.save_path.rstrip('/')!=intent.options.download_root
@@ -121,11 +121,17 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
                 return Outcome(value=AcquisitionProposal(source,inventory,
                     configuration.desired_revision,size_limits(configuration),context.claim.job_id))
             if await blocking(journal.metadata_expired,context.claim,intent):
-                return Outcome('review','TORRENT_METADATA_TIMEOUT')
+                return Outcome('fail','TORRENT_METADATA_TIMEOUT')
             return PENDING
         except ClientUnavailable:
             return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
-        except (MetadataInvalid,AcquisitionConflict,SizeLimitExceeded,
+        except (SizeLimitExceeded, MetadataInvalid) as exc:
+            exception(context.logger,'OPERATION_FAILED',exc,level=logging.WARNING,
+                      reason_code=exc.reason_code,component='worker',
+                      job_id=context.claim.job_id,event_id=context.claim.event_id,
+                      attempt=context.claim.attempt)
+            return Outcome('fail',exc.reason_code,facts=getattr(exc,'facts',None) or failure_facts(exc))
+        except (AcquisitionConflict,
                 SizeEvidenceMissing,SourceMissing) as exc:
             # Same safe traceback (line numbers only) to locate the failed check.
             exception(context.logger,'OPERATION_FAILED',exc,level=logging.WARNING,

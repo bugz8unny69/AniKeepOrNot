@@ -122,15 +122,20 @@ class JobQueue:
             if row is None:raise QueueUnavailable()
             return row[0]
 
-    def claim(self, halted=None):
+    def claim(self, halted=None, exclude_kinds=None):
         with self.connection() as db, transaction(db):
             now = self.now()
             if halted is not None and halted():
                 return None, ()
-            row = db.execute("SELECT job_id,event_id,kind,CASE WHEN length(CAST(payload_json AS BLOB))<=65536 "
+            sql = ("SELECT job_id,event_id,kind,CASE WHEN length(CAST(payload_json AS BLOB))<=65536 "
                 "THEN payload_json ELSE '' END,attempt_count FROM jobs "
-                "WHERE state IN ('PENDING','RETRY_WAIT') AND available_at_ms<=? AND NOT EXISTS (SELECT 1 FROM job_operation_members m JOIN job_operations o USING(operation_id) WHERE m.job_id=jobs.job_id AND o.state<>'ACTIVE') "
-                "ORDER BY available_at_ms,job_id LIMIT 1", (now,)).fetchone()
+                "WHERE state IN ('PENDING','RETRY_WAIT') AND available_at_ms<=? AND NOT EXISTS (SELECT 1 FROM job_operation_members m JOIN job_operations o USING(operation_id) WHERE m.job_id=jobs.job_id AND o.state<>'ACTIVE') ")
+            params = [now]
+            if exclude_kinds:
+                sql += f"AND kind NOT IN ({','.join('?' for _ in exclude_kinds)}) "
+                params.extend(exclude_kinds)
+            sql += "ORDER BY available_at_ms,job_id LIMIT 1"
+            row = db.execute(sql, params).fetchone()
             if row is None:
                 return None, ()
             if db.execute('SELECT 1 FROM job_operation_members WHERE job_id=?',(row[0],)).fetchone() is None:
@@ -207,7 +212,7 @@ class JobQueue:
                     delay = max(delay or 0, min(self.policy.max_backoff_ms, self.policy.backoff_ms * 2**min(failures,30)))
                 state, code, available = "RETRY_WAIT", "RETRY_SCHEDULED" if outcome.kind == "retry" else "DEFERRED", now+delay
         else:
-            state = {"hold":"ON_HOLD","review":"NEEDS_REVIEW","blocked":"BLOCKED","cancel":"CANCELED"}[outcome.kind]
+            state = {"hold":"ON_HOLD","review":"NEEDS_REVIEW","blocked":"BLOCKED","cancel":"CANCELED","fail":"FAILED"}[outcome.kind]
             code, available = state, now
         validate_job_activity(state,activity)
         db.execute("UPDATE jobs SET state=?,available_at_ms=?,lease_token=NULL,lease_expires_at_ms=NULL,"
@@ -273,7 +278,7 @@ class JobQueue:
             # Failed Sonarr candidates use the existing cancellation worker,
             # never the user-facing Cancel button. Non-Sonarr jobs are untouched.
             if db.execute('SELECT state FROM jobs WHERE job_id=?',
-                          (claim.job_id,)).fetchone()==('NEEDS_REVIEW',):
+                          (claim.job_id,)).fetchone() in (('FAILED',), ('NEEDS_REVIEW',)):
                 from src.nextgen.storage.sonarr_candidates import (
                     auto_cleanup_failed_candidate, auto_cleanup_oversized)
                 records.extend(auto_cleanup_failed_candidate(db,claim))
