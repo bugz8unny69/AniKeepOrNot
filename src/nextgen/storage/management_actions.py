@@ -236,7 +236,7 @@ class ManagementActions:
         with self.queue.connection() as db,transaction(db):
             self.queue._owns(db,claim,self.queue.now())
             data=claim.data()
-            if set(data)!={'target_job_id'}:raise ActionUnavailable()
+            if not ({'target_job_id'} <= set(data) <= {'target_job_id', 'failure_reason'}):raise ActionUnavailable()
             integer(data['target_job_id'],positive=True)
             row=db.execute('SELECT target_job_id,operation_id FROM management_actions WHERE job_id=? AND action=?',
                            (claim.job_id,action)).fetchone()

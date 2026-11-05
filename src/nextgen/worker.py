@@ -58,12 +58,15 @@ class Context:
 
 
 class Worker:
-    def __init__(self, configuration_store, startup, registry, *, policy=Policy(), logger=None, prepare=None):
+    def __init__(self, configuration_store, startup, registry, *, policy=Policy(), logger=None, prepare=None,
+                 qb_readiness=None, secrets=None):
         if type(registry) is not Registry or not registry.entries:
             raise WorkerNotReady()
         if prepare is not None and (not callable(prepare) or inspect.iscoroutinefunction(prepare)):
             raise ValueError("worker readiness callback must be synchronous")
         self._prepare = prepare
+        self._qb_readiness = qb_readiness
+        self._secrets = secrets
         self.config, self.startup, self.registry, self.policy = configuration_store, startup, registry, policy
         self.gate = MaintenanceGate(startup.value("storage.database_path"))
         self.queue = JobQueue(self.gate.database, policy=policy)
@@ -118,6 +121,12 @@ class Worker:
             raise RuntimeError("an attempt cannot drain itself")
         while self._attempts:
             await settle(tuple(self._attempts))
+
+    def _log_readiness_error(self, exc):
+        from src.nextgen.acquisition.readiness import error_reason
+        reason = error_reason(exc)
+        exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
+                  reason_code=reason, component="worker")
 
     def _log_error(self, exc, claim=None):
         reason = getattr(exc, "reason_code", "JOB_HANDLER_FAILED")
@@ -210,7 +219,13 @@ class Worker:
                 result = await self._io(self._prepare,configuration)
                 if result is not None:
                     raise ValueError("readiness callback must not return values")
-            claim, audits = await self._io(self.queue.claim,halted=self._halt_claims.is_set)
+            exclude_kinds = None
+            if self._qb_readiness is not None and self._secrets is not None:
+                is_ready = await self._io(self._qb_readiness.is_ready, configuration, self._secrets)
+                if not is_ready:
+                    from src.nextgen.acquisition.readiness import ACQUISITION_KINDS
+                    exclude_kinds = ACQUISITION_KINDS
+            claim, audits = await self._io(self.queue.claim,halted=self._halt_claims.is_set,exclude_kinds=exclude_kinds)
             if claim is None:
                 return False
             operation_id=await self._io(self.queue.operation_id,claim)
@@ -317,6 +332,12 @@ class Worker:
                 if not self._paused:
                     await self._recover()
                     if not ready:
+                        if self._qb_readiness is not None and self._secrets is not None:
+                            try:
+                                config = await self._io(self.config.operation, self.startup, component="worker")
+                                await self._io(self._qb_readiness.check, config, self._secrets)
+                            except Exception as exc:
+                                self._log_readiness_error(exc)
                         ready = True
                         if on_ready is not None:
                             on_ready()

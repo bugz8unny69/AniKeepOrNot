@@ -21,6 +21,7 @@ def _persist(db,claim,value):
     try:
         if type(value) is not dict or set(value)!={'media','verification_job_id'} or value['verification_job_id']!=claim.job_id:raise MediaInvalid()
         persist(db,claim,value['media'])
+    except MediaInvalid as exc:raise CompletionRejected(Outcome('fail',exc.reason_code, facts=failure_facts(exc))) from None
     except REVIEW as exc:raise CompletionRejected(Outcome('review',exc.reason_code, facts=failure_facts(exc))) from None
 
 
@@ -48,7 +49,9 @@ def registration(*,verify=verify_file,load_input=load,staging_kind=None):
             obs = ','.join(exc.observed) if exc.observed else 'none'
             mis = ','.join(exc.missing) if exc.missing else 'none'
             facts = {'observed_audio': obs, 'missing_audio': mis}
-            return Outcome('review', exc.reason_code, facts=facts)
+            return Outcome('fail', exc.reason_code, facts=facts)
+        except MediaInvalid as exc:
+            return Outcome('fail', exc.reason_code, facts=failure_facts(exc))
         except REVIEW as exc:return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
         return () if staging_kind is None else (Successor.create(staging_kind,{'verification_job_id':value['verification_job_id']}),)

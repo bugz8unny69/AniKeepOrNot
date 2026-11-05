@@ -21,7 +21,9 @@ def _persist(db,claim,value):
     if type(value) is not AcquisitionProposal or value.preparation_job_id not in (None,claim.job_id):
         raise ValueError('preparation facts do not match job')
     try:return (persist_acquisition(db,claim,value),)
-    except (AcquisitionConflict,MetadataInvalid,SourceMissing,SizeLimitExceeded,SizeEvidenceMissing) as exc:
+    except (SizeLimitExceeded,MetadataInvalid) as exc:
+        raise CompletionRejected(Outcome('fail',exc.reason_code,facts=getattr(exc,'facts',None) or failure_facts(exc))) from None
+    except (AcquisitionConflict,SourceMissing,SizeEvidenceMissing) as exc:
         raise CompletionRejected(Outcome('review',exc.reason_code,facts=getattr(exc,'facts',None) or failure_facts(exc))) from None
 
 
@@ -56,7 +58,9 @@ def registration(read_metainfo,*,submission_kind=None,legacy_bootstrap=None):
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except ProviderDeferred as exc:return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)
         except ProviderUnavailable as exc:return Outcome('retry',exc.reason_code)
-        except (AcquisitionConflict,MetadataInvalid,SourceMissing,SizeLimitExceeded,SizeEvidenceMissing) as exc:
+        except (SizeLimitExceeded,MetadataInvalid) as exc:
+            return Outcome('fail',exc.reason_code,facts=getattr(exc,'facts',None) or failure_facts(exc))
+        except (AcquisitionConflict,SourceMissing,SizeEvidenceMissing) as exc:
             return Outcome('review',exc.reason_code,facts=getattr(exc,'facts',None) or failure_facts(exc))
         return Outcome(value=AcquisitionProposal(source,manifest,context.configuration.desired_revision,size_limits(context.configuration),context.claim.job_id))
     def route(value):

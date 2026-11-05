@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS jobs (
  kind TEXT NOT NULL CHECK(length(trim(kind)) > 0),
  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
  state TEXT NOT NULL DEFAULT 'PENDING'
-   CHECK(state IN ('PENDING','RUNNING','RETRY_WAIT','ON_HOLD','NEEDS_REVIEW','DONE','BLOCKED','CANCELED')),
+   CHECK(state IN ('PENDING','RUNNING','RETRY_WAIT','ON_HOLD','NEEDS_REVIEW','DONE','BLOCKED','CANCELED','FAILED')),
  available_at_ms INTEGER NOT NULL,
  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
  lease_token TEXT,
@@ -820,13 +820,14 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v57; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema v58; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.
     """
+    from src.nextgen.storage.migrations import LATEST_VERSION
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version == 57:
+    if version == LATEST_VERSION:
         return
     if version != 0:
         raise ValueError("existing NextGen database requires versioned SQL upgrade")
@@ -836,7 +837,7 @@ def initialize(db):
     if db.in_transaction:
         raise ValueError("initialization requires no active transaction")
     try:
-        db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nPRAGMA user_version=57;\nCOMMIT;")
+        db.executescript(f"BEGIN IMMEDIATE;\n{SCHEMA}\nPRAGMA user_version={LATEST_VERSION};\nCOMMIT;")
     except BaseException:
         db.rollback()
         raise

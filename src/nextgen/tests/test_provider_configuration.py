@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import (
@@ -221,9 +221,11 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         def release_factory(*args,**kwargs):
             async def verify(source,*rest): return VerifiedRelease(source,1,987,0,1,100)
             return verify
+        mock_readiness=Mock()
+        mock_readiness.is_ready.return_value=True
         with patch("src.nextgen.providers.configuration.make_resolver",side_effect=identity_factory), \
              patch("src.nextgen.providers.configuration.make_verifier",side_effect=release_factory):
-            worker=await build_identity_worker(self.root,backfill=True)
+            worker=await build_identity_worker(self.root,backfill=True,qb_readiness=mock_readiness)
         self.addAsyncCleanup(worker.close)
         await worker.attempt()
         await worker.attempt()

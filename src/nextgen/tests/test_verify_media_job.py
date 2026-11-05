@@ -50,7 +50,7 @@ class VerifyMediaJobTests(unittest.IsolatedAsyncioTestCase):
         verify=partial(verify_file,read_probe=lambda *_:probe_bytes(languages=('jpn',)))
         worker=self.worker(verify);_,_,path=await self.ready(worker);await worker.attempt()
         self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='VERIFY_MEDIA'"),
-                         [('NEEDS_REVIEW','MEDIA_AUDIO_REQUIRED')])
+                         [('FAILED','MEDIA_AUDIO_REQUIRED')])
         self.assertTrue(path.exists())
         self.assertEqual(self.rows('SELECT * FROM media_verifications'),[])
 

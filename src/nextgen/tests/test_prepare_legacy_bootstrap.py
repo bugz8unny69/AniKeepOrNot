@@ -142,7 +142,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
              patch('src.nextgen.acquisition.legacy_magnet.source_magnet',return_value=MAGNET), \
              self.assertLogs('anime-discovery.test.bootstrap','WARNING') as logs:
             outcome=await cb(self.source,self._config())
-        self.assertEqual((outcome.kind,outcome.reason_code),('review',MetadataInvalid.reason_code))
+        self.assertEqual((outcome.kind,outcome.reason_code),('fail',MetadataInvalid.reason_code))
         self.assertIn('error=',logs.output[0])
         self.assertIn('reason_code='+MetadataInvalid.reason_code,logs.output[0])
         probe.add_legacy_magnet.assert_not_called()

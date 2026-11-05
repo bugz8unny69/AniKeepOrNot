@@ -114,7 +114,7 @@ function displayError(error) {
 }
 function date(value) { return value ? new Date(value).toLocaleString() : '—'; }
 function statusBadge(job) {
-  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', ON_HOLD: 'waiting', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked'};
+  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', ON_HOLD: 'waiting', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked', FAILED: 'blocked'};
   return node('span', job.status?.message || 'Unknown status', 'status ' + (classes[job.state] || ''));
 }
 function actionButton(job, action, label) {

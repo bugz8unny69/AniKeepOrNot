@@ -157,7 +157,7 @@ def inspect_stopped_jobs(db):
     FROM jobs j
     LEFT JOIN job_operation_members m ON m.job_id=j.job_id
     LEFT JOIN job_operations o ON o.operation_id=m.operation_id
-    WHERE j.state IN ('NEEDS_REVIEW', 'BLOCKED', 'ON_HOLD')
+    WHERE j.state IN ('NEEDS_REVIEW', 'BLOCKED', 'ON_HOLD', 'FAILED')
     ORDER BY j.job_id
     """
     cursor = db.execute(sql)
