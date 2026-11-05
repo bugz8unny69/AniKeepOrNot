@@ -77,7 +77,6 @@ These are production definitions referenced **only by tests**. Deleting them wou
 
 | # | Location | Item | Test refs | Notes |
 |---|---|---|---|---|
-| P1 | `storage/prowlarr_snapshots.py:122` | `prune_snapshots()` | 3 | **A retention feature that was never wired up.** It was added in `45e1876a` and nothing in production calls it, so `prowlarr_snapshots` rows are never pruned. Wiring it in would be a behavior change, which belongs on NextGen. Deleting it gives up a planned capability. **Needs the owner's decision.** |
 | P2 | `batch/window.py:27` | `plan_batch_trial_window()` | 7 | The production batch flow plans through `batch/selection.plan_verified_batch` and `storage/sonarr_backfill.plan_window`. It is unclear whether these validated planners are superseded or still planned. |
 | P3 | `batch/verification.py:151` | `plan_provider_verified_batch()` | 6 | Same group as P2. |
 | P4 | `batch/transfer.py:30` | `plan_stopped_batch_probe()` | 2 | Same group as P2. Its docstring describes the E01-first probe intent. |
@@ -105,6 +104,7 @@ These are production definitions referenced **only by tests**. Deleting them wou
 | `storage/sonarr_cached_retry.py` | The active "Search again" saved-magnet replay path, used by recovery and review retry. |
 | `schema/__init__.py` re-exports (`AnimeSeries`, `Anime`, `Episode`, `TVDBPlacement`) | The canonical package surface ("Canonical versioned series schema"). No current importer uses it, but it is the documented public entry. Keep it unless RF-008 decides otherwise. |
 | `storage/staging.py:13` `StagingConfiguration` | Re-exported. Other modules import it from here. |
+| `storage/prowlarr_snapshots.py:122` `prune_snapshots()` | **Kept by owner decision (2026-11-04). This function is retained but not yet wired up.** It is the retention policy for `prowlarr_search_snapshots`: delete snapshots older than 30 days, and keep the latest 5 per job, but only for `DONE` or `CANCELED` jobs. That table is active: `job_queue.py:231` writes a row for every Prowlarr search, and `adm report --include-matching prowlarr` reads them. Because nothing calls this function, the rows are never pruned. Wiring it in would be a behavior change, so it belongs on NextGen, not in this refactor. Do not remove it. |
 | `schema/anime_series.py:14` `FIELD_DOC_KEYS` | A schema-documentation contract constant. `test_anime_series_schema.py` uses it to make every field carry documentation metadata. |
 
 ---
@@ -178,8 +178,8 @@ Sonarr-based release search and grab was replaced by Prowlarr in `db41b589` ("se
 |---|---|
 | Confirmed dead definitions | 6 (D1–D6) |
 | Confirmed unused imports | 47 names in 29 files (D7) |
-| Potentially dead (owner decision or more investigation) | 12 definitions + 1 pattern (P1–P13) |
-| Required compatibility | 9 groups |
+| Potentially dead (owner decision or more investigation) | 11 definitions + 1 pattern (P2–P13) |
+| Required compatibility | 10 groups |
 | Unreferenced modules | 0 |
 
-**RF-003 plan:** remove D1–D7 in small commits grouped by subsystem (acquisition, storage, API/worker, jobs), running focused tests after each and the full suite after each group. Leave P1–P13 for an owner decision. P1 (`prune_snapshots`) in particular is a choice between wiring retention on NextGen and deleting the function.
+**RF-003 plan:** remove D1–D7 in small commits grouped by subsystem (acquisition, storage, API/worker, jobs), running focused tests after each and the full suite after each group. Leave P2–P13 for an owner decision. `prune_snapshots` (formerly P1) is kept by owner decision. See §3.
