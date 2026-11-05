@@ -4,9 +4,12 @@ NextGen is a clean-slate application. Its tests live in `src/nextgen/tests/` and
 
 ## Running the complete offline stack
 
-**Authorized 2026-10-24:** run offline tests and GitHub CI across the complete
-NextGen stack and fix failures. Earlier unrun notes below describe historical
-implementation milestones. Live services, real media and deployment are separate.
+**Current policy (2026-11-04):** tests are run locally, not deferred. Every
+completed work item runs the full batch suite below, fixes failures as they
+appear, and only then commits, pushes and opens a PR. GitHub Actions is avoided
+for routine verification. The "unrun"/"unexecuted" notes below describe the
+earlier deferral policy and are historical. Live services, real media and
+deployment remain separate and still need explicit authorization.
 
 Run from the **repository root** with Python 3.12+ (standard library only):
 

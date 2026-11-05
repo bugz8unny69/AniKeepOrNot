@@ -2,7 +2,7 @@
 
 > **Authoritative architecture decision: 2026-10-22.** NextGen is built fresh in `src/nextgen/`. There is **no migration**, compatibility bridge, legacy SQLite reader or transitional data assembler. Legacy `src/legacy/` is reference material for domain lessons and regression tests only.
 >
-> **Operational guardrails:** Draft work on branches/PRs; do not merge, deploy, restart services, change production databases, acquire/delete torrents, or touch user media without explicit authorization. Use `NextGen` as the PR target for new NextGen work. Keep `develop` for the existing legacy application. Current authorization (2026-10-24): merge the completed NextGen stack, run offline tests and CI across it, and fix failures. Keep deployment and live media operations separate.
+> **Operational guardrails:** Draft work on branches/PRs; do not merge, deploy, restart services, change production databases, acquire/delete torrents, or touch user media without explicit authorization. Use `NextGen` as the PR target for new NextGen work. Keep `develop` for the existing legacy application. Current authorization (2026-10-24): merge the completed NextGen stack, run offline tests and CI across it, and fix failures. Keep deployment and live media operations separate. Test policy (2026-11-04): offline tests run locally for every work item before commit/push/PR; GitHub Actions is not relied on (see "NextGen tests" below).
 
 ## Merged stack and CI repair — 2026-10-24
 
@@ -484,7 +484,9 @@ The clean-slate code uses its **own** tests in `src/nextgen/tests/`. The legacy 
 
 The automatic GitHub Actions **Python test workflow has been removed** on this draft PR branch. Do not automatically run legacy or NextGen tests on pushes or pull requests. Keep the separate manually invoked archive publishing workflow unchanged. If branch protection requires a deleted check, resolve that repository rule explicitly before merging; do not silently bypass it.
 
-Use `python -m src.nextgen.tests.run_batches --match schema` for focused schema work, or `python -m src.nextgen.tests.run_batches` for all NextGen tests, executed in separate groups of up to five test files. Use `--batch-size N`, `--match <filename-part>`, and `--list` as needed. This needs Python 3.12+ and runs **locally/on demand**, never against live services. See `src/nextgen/tests/README.md`. Each new NextGen component gets its own isolated offline tests and sample data in the existing `fixtures/` folder. Current project policy defers test execution: commit relevant tests and document them as unrun. The commands above are for later explicit authorization.
+Use `python -m src.nextgen.tests.run_batches --match schema` for focused schema work, or `python -m src.nextgen.tests.run_batches` for all NextGen tests, executed in separate groups of up to five test files. Use `--batch-size N`, `--match <filename-part>`, and `--list` as needed. This needs Python 3.12+ and runs **locally**, never against live services. See `src/nextgen/tests/README.md`. Each new NextGen component gets its own isolated offline tests and sample data in the existing `fixtures/` folder.
+
+**Current test policy (2026-11-04):** tests are no longer deferred. GitHub Actions is avoided for routine verification; instead, every completed work item runs the full local batch suite (`python -m src.nextgen.tests.run_batches`), fixes failures as they appear, and only then commits, pushes and opens a PR. PR descriptions report the local result. A failure that cannot be fixed confidently is documented in the PR rather than guessed at. Earlier "authored/unrun" notes in this file describe the previous deferral policy and are historical.
 
 ## Next PR: delivery and worker reliability (TCP-like, application-level)
 
