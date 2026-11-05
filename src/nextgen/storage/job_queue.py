@@ -32,6 +32,41 @@ class QueueUnavailable(RuntimeError):
         super().__init__("Job storage is unavailable.")
 
 
+class StorageStatementInvalid(QueueUnavailable):
+    """A SQL statement was rejected as invalid: a programming defect, not an outage.
+
+    Raised for sqlite3.ProgrammingError/InterfaceError, such as a wrong
+    number of bound parameters or an unsupported parameter type. Subclassing
+    QueueUnavailable keeps every existing recovery path unchanged; only the
+    reported reason and message differ. failed_check names the statement site.
+    """
+    reason_code = "STORAGE_STATEMENT_INVALID"
+    def __init__(self, failed_check=None):
+        RuntimeError.__init__(self, "A database statement is invalid (programming error).")
+        self.failed_check = failed_check
+
+
+def _statement_site(exc):
+    """failed_check for the innermost NextGen line that ran the statement.
+
+    Uses the traceback's own line (tb_lineno). The caller's frame is still
+    executing its `with self.connection()` exit here, so its f_lineno would
+    name the `with` line rather than the failing execute().
+    """
+    from src.nextgen.reasons import _CHECK
+    site, tb = None, exc.__traceback__
+    while tb is not None:
+        filename = tb.tb_frame.f_code.co_filename
+        if "src/nextgen/" in filename:
+            site = (filename, tb.tb_lineno, tb.tb_frame.f_code.co_name)
+        tb = tb.tb_next
+    if site is None:
+        return None
+    check = ("src/nextgen/" + site[0].split("src/nextgen/")[-1] + f":{site[1]} {site[2]} "
+             + type(exc).__name__[:32].upper())
+    return check if _CHECK.fullmatch(check) else None
+
+
 @dataclass(frozen=True)
 class Claim:
     job_id: int
@@ -59,6 +94,10 @@ class JobQueue:
             if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
                 raise QueueUnavailable()
             yield db
+        except (sqlite3.ProgrammingError, sqlite3.InterfaceError) as exc:
+            # Deterministic statement defects. The original error stays in
+            # __context__, so exact_error() still logs sqlite's own message.
+            raise StorageStatementInvalid(_statement_site(exc)) from None
         except (sqlite3.Error, OSError):
             raise QueueUnavailable() from None
         finally:
