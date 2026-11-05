@@ -2,7 +2,7 @@
 
 Coordinates with MaintenanceGate and reuses request_review_retry / ManagementActions.
 Never performs ad-hoc SQL updates or resets attempt counters.
-Dry-run / preview by default; mutations require explicit --apply.
+Preview is read-only; the apply subcommand explicitly requests mutations.
 """
 import argparse
 from datetime import datetime
@@ -409,8 +409,9 @@ def parser():
     sub_apply.add_argument('--all-eligible', action='store_true', help='Recover all eligible stopped jobs')
     sub_apply.add_argument('--limit', type=int, default=50, help='Maximum jobs to recover (default: 50, max: 100)')
     sub_apply.add_argument('--no-backup', action='store_true', help='Skip SQLite online pre-recovery backup')
-    sub_apply.add_argument('--apply', action='store_true', required=True,
-                           help='Explicit confirmation required to apply mutations')
+    # Backward compatibility only. The "apply" subcommand already expresses
+    # the operator's intent; do not require a redundant confirmation flag.
+    sub_apply.add_argument('--apply', action='store_true', help=argparse.SUPPRESS)
     sub_apply.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
 
     return p
@@ -450,7 +451,7 @@ def main(argv=None):
                 print(f'\nTotal stopped: {total_stopped} | Eligible for safe recovery: {total_eligible} | Manual action required: {total_manual}\n')
                 if total_eligible > 0:
                     print('Run "sudo adm recover preview --all-eligible" to inspect recovery plan.')
-                    print('Run "sudo adm recover apply --all-eligible --apply" to resume eligible jobs.\n')
+                    print('Run "sudo adm recover apply --all-eligible" to resume eligible jobs.\n')
             return 0
 
         elif action == 'list':

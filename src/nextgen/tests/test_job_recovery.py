@@ -210,14 +210,19 @@ class JobRecoveryTests(unittest.TestCase):
             self.assertEqual(ret, 0)
         self.assertIn('Dry-Run Preview', stdout.getvalue())
 
-        # 5. Apply CLI without --apply flag fails
-        with self.assertRaises(SystemExit):
-            recovery_main(['--config-dir', str(self.config_dir), 'apply', '--all-eligible'])
-
-        # 6. Apply CLI with --apply succeeds
+        # 5. The apply subcommand executes without redundant --apply.
         stdout = io.StringIO()
         with patch('sys.stdout', stdout):
-            ret = recovery_main(['--config-dir', str(self.config_dir), 'apply', '--all-eligible', '--apply'])
+            ret = recovery_main(['--config-dir', str(self.config_dir), 'apply', '--all-eligible'])
+            self.assertEqual(ret, 0)
+        self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
+
+        # 6. Existing scripts with the old --apply flag still work.
+        old_style = self._create_stopped_job('PREPARE_ACQUISITION', 'TORRENT_METADATA_TIMEOUT')
+        stdout = io.StringIO()
+        with patch('sys.stdout', stdout):
+            ret = recovery_main(['--config-dir', str(self.config_dir),
+                                 'apply', '--job-id', str(old_style), '--apply'])
             self.assertEqual(ret, 0)
         self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
 
@@ -274,7 +279,7 @@ class JobRecoveryTests(unittest.TestCase):
         with patch('sys.stdout', stdout):
             result = recovery_main([
                 '--config-dir', str(self.config_dir),
-                'apply', '--reason', reason, '--apply', '--no-backup',
+                'apply', '--reason', reason, '--no-backup',
             ])
         self.assertEqual(result, 0)
         self.assertIn('Successfully Requeued Jobs', stdout.getvalue())

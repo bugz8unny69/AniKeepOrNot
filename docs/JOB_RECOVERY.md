@@ -14,20 +14,20 @@ sudo adm recover preview --job-id 1292
 sudo adm recover preview --reason TORRENT_METADATA_TIMEOUT [--limit 20]
 sudo adm recover preview --all-eligible [--limit 50]
 
-# 4. Safe recovery execution (Explicit --apply required)
-sudo adm recover apply --job-id 1292 --apply
-sudo adm recover apply --reason TORRENT_METADATA_TIMEOUT --apply
-sudo adm recover apply --all-eligible --limit 50 --apply
+# 4. Apply recovery (mutating action; preview first if needed)
+sudo adm recover apply --job-id 1292
+sudo adm recover apply --reason TORRENT_METADATA_TIMEOUT
+sudo adm recover apply --all-eligible --limit 50
 ```
 
 ---
 
 ## Safety Model & Guarantees
 
-1. **Dry-Run by Default**:
+1. **Read-Only Preview**:
    Running `adm recover` or `adm recover preview` will never mutate the database, claim leases, or enqueue background jobs.
-2. **Explicit Confirmation**:
-   The `apply` subcommand requires the `--apply` flag. Running `adm recover apply` without `--apply` terminates immediately with an error.
+2. **Explicit Apply Subcommand**:
+   `adm recover apply` is the mutating action; no redundant `--apply` confirmation is needed. The old flag is accepted but hidden for backward compatibility.
 3. **No Ad-Hoc SQL or Attempt Reset**:
    Recovery never executes raw `UPDATE jobs SET state='PENDING'` or clears attempt counts. It invokes the vetted `request_review_retry()` engine.
 4. **Compare-And-Swap (CAS) Protection**:
@@ -60,7 +60,7 @@ correcting qBittorrent configuration:
 
 ```bash
 sudo adm recover preview --reason TORRENT_METADATA_CONFIGURATION_INVALID
-sudo adm recover apply --reason TORRENT_METADATA_CONFIGURATION_INVALID --apply
+sudo adm recover apply --reason TORRENT_METADATA_CONFIGURATION_INVALID
 ```
 
 This overrides **only the recovery matrix's recommendation**. The underlying
