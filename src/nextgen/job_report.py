@@ -103,6 +103,7 @@ def report(db, job_id, out=print):
         out('Reason: ' + reason_text(job['last_reason_code']))
         reason = get_reason(job['last_reason_code'])
         if reason: out('Advice: ' + reason.action)
+        out('  Historical reason wording may differ: the executing code revision was not recorded.')
     event = rows(db, 'SELECT received_at_ms,raw_body FROM incoming_events WHERE event_id=?',
                  (job['event_id'],)) if job['event_id'] else []
     if event:
@@ -170,8 +171,19 @@ def report(db, job_id, out=print):
         if details.get('failed_path'):
             out(f'    file: {details["failed_path"]}')
             failed_paths.append(details['failed_path'])
+        observation=details.get('metadata_evidence')
+        if observation:
+            out('    metadata observation (this attempt): '
+                f'phase={observation["phase"]} '
+                f'initial={observation["initial_state"] or "not recorded"} '
+                f'last_active={observation["last_active_state"] or "not recorded"} '
+                f'stopped={observation["stopped_state"] or "not observed"} '
+                f'polls={observation["polls"]} '
+                f'max_files={observation["max_files"]} '
+                f'resumed={observation["resumed"]}')
     if failed:
         out('\n=== Code of the last failed check')
+        out('  This excerpt comes from the CURRENT installed source, not necessarily the revision that failed.')
         for text in source(failed[-1]): out(text)
     elif job['state'] in ('NEEDS_REVIEW', 'BLOCKED'):
         out('\n(No failed check was recorded; this stop happened before check recording existed. '
@@ -266,7 +278,7 @@ def render(out, d):
 
     dl, nxt = d['downloads'], d['next_step']
     out('\n=== Download and staging')
-    if dl is None: out('  No download or staging records for this work.')
+    if dl is None: out('  No download or staging records for this work (metadata admission is a separate earlier phase; see Records and paths).')
     for p in (dl or {}).get('plans', ()):
         plan, sub, tr, ver, st = p['plan'], p['submission'], p['transfer'], p['verification'], p['staging']
         out(f'  Plan #{plan["plan_id"]} {plan["state"]} · hash {plan["info_hash"]} · prepared by Job #{plan["job_id"]}')
