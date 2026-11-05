@@ -494,6 +494,14 @@ def _audio_only(db, plan_id, episode):
     return frozenset(row[0] for row in rows)
 
 
+def audio_exhausted(db, plan_id, episode):
+    rows = db.execute(
+        'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
+        'WHERE plan_id=? AND anidb_episode_number=?', (plan_id, episode)).fetchall()
+    return bool(rows and all(state == 'FAILED' for _, state, _ in rows)
+                and any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows))
+
+
 def load_tried_hashes(database, plan_id, numbers):
     """(AniDB episode -> frozenset of tried hashes) for episodes in numbers."""
     if not numbers: return {}
