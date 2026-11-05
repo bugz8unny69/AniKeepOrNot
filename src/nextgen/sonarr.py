@@ -136,22 +136,6 @@ class Client:
         _,eid=selection.match_sonarr_episode(series,rows)
         return next(row for row in rows if row.get('id')==eid)
 
-    def add_payload(self,selection,*,monitored=True):
-        # Sonarr needs a profile to add a series; it never drives release selection.
-        # Unset (0) uses the lowest-ID profile Sonarr already has.
-        profiles=[r.get('id') for r in self.request('qualityprofile') if type(r.get('id')) is int and r['id']>0]
-        profile=self.options.quality_profile_id or min(profiles,default=0)
-        if profile not in profiles:raise KeepConfiguration()
-        if not any(r.get('path')==self.options.library_root for r in self.request('rootfolder')):raise KeepConfiguration()
-        rows=self.request('series/lookup',query={'term':'tvdb:'+str(selection.tvdb_series_id)})
-        matches=[r for r in rows if r.get('tvdbId')==selection.tvdb_series_id]
-        if len(matches)!=1:raise KeepReview()
-        value={k:v for k,v in matches[0].items() if k not in ('id','path','qualityProfileId','addOptions')}
-        value.update(rootFolderPath=self.options.library_root,qualityProfileId=profile,
-                     monitored=monitored,seasonFolder=True,seriesType='anime',
-                     addOptions={'monitor':'all','searchForMissingEpisodes':False,'searchForCutoffUnmetEpisodes':False})
-        return value
-
     def import_payload(self,selection,series,episode):
         source=remote_source(self.options,selection)
         rows=self.request('manualimport',query={'folder':str(PurePosixPath(source).parent),'filterExistingFiles':'false'})
