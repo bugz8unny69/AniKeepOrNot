@@ -1,11 +1,12 @@
 # Reason and event code audit
 
 **Base:** `refactor` at `9fdb64eb` (NextGen `9071be2e`). This is a review document: it changes no code.
-**Data:** [`reason_code_proposals.py`](reason_code_proposals.py) is the machine-readable source for this page. RF-006 applies it.
+**Data:** [`reason_code_proposals.py`](reason_code_proposals.py) is the machine-readable source. Rebuild this page with `python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md`. RF-006 applies the data.
 
 ## Decisions this audit implements
 
 - Persisted identifiers are **renamed**. One versioned SQL migration rewrites the stored values, including `job_history`. The code recognizes **only the new values**, and old names are removed.
+- **"Trial" becomes "user evaluation"** (`USER_EVALUATION_*`) everywhere it can. The other places the term is used are mapped in [NAMING_MAP.md](NAMING_MAP.md) §8.
 - Every code's wording is rewritten to be human-readable: plain words, the service named, and a concrete next step.
 - **Severity and retryable flags are unchanged.** This audit changes wording and names only, not behavior.
 
@@ -14,8 +15,8 @@
 | | Reason codes | Event codes |
 |---|---|---|
 | Current catalog | 159 | 49 |
-| Kept, wording rewritten | 146 | 46 |
-| Kept, **renamed** | 3 | 2 |
+| Kept, wording rewritten | 141 | 44 |
+| Kept, **renamed** | 8 | 4 |
 | **Removed** (no longer emitted; stored rows migrate) | 10 | 1 |
 | Unregistered label fixed | 1 | 0 |
 | New catalog | 149 | 48 |
@@ -27,7 +28,14 @@
 | `SONARR_BACKFILL_PLAN_CONFLICT` | `EPISODE_DISCOVERY_PLAN_CONFLICT` | reason | Episode discovery searches Prowlarr, not Sonarr. |
 | `SONARR_CANDIDATES_EXHAUSTED` | `RELEASE_CANDIDATES_EXHAUSTED` | reason | Release candidates come from Prowlarr, not Sonarr. |
 | `TORRENT_PROVENANCE_CONFLICT` | `TORRENT_OWNERSHIP_CONFLICT` | reason | "Provenance" is jargon. The check is whether the torrent still matches what this work added. |
+| `TRIAL_SELECTED` | `USER_EVALUATION_SELECTED` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
+| `TRIAL_OUTSIDE_WINDOW` | `USER_EVALUATION_OUTSIDE_WINDOW` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
+| `TRIAL_DISABLED` | `USER_EVALUATION_DISABLED` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
+| `TRIAL_PLAN_CONFLICT` | `USER_EVALUATION_PLAN_CONFLICT` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
+| `TRIAL_COUNTS_INVALID` | `USER_EVALUATION_COUNTS_INVALID` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `TORRENT_INTENT_RECORDED` | `TORRENT_SUBMISSION_RECORDED` | event | "Intent" is jargon. The event records that the torrent is about to be added. |
+| `TRIAL_EVALUATED` | `USER_EVALUATION_CHECKED` | event | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
+| `TRIAL_AUDIO_SEARCH` | `USER_EVALUATION_AUDIO_SEARCH` | event | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `SONARR_BACKFILL_OBSERVED` | `EPISODE_DISCOVERY_RECORDED` | event | Episode discovery searches Prowlarr. The old text said "Read-only Sonarr backfill results recorded." |
 | `SONARR_SELECTION_CONFLICT` | `RELEASE_SELECTION_CONFLICT` | internal label | It is set on two exception classes but was never registered and is never stored, because those exceptions are converted to other codes before anything is saved. The new name is registered so the contract holds. |
 
@@ -54,13 +62,13 @@ For every renamed or removed code, migration `059` rewrites:
 - **History:** `job_history.event_code` and `.reason_code`; `event_history.event_code` and `.reason_code`.
 - **Current state:** `jobs.last_reason_code`, `incoming_events.last_reason_code` and `job_operations.reason_code`.
 - **Per-step records:**
-  - `trial_evaluations.reason_code`;
+  - `trial_evaluations.reason_code`, renamed in RF-006 (NAMING_MAP §8);
   - `sonarr_episode_candidates.reason_code`, renamed in RF-006;
   - `torrent_submissions.reason_code` and `torrent_transfers.reason_code`;
   - `batch_torrent_submissions.reason_code`, `batch_torrent_transfers.reason_code` and `batch_torrent_unlocks.reason_code`.
 - **Codes inside JSON:** `job_history.details_json` and `event_history.details_json` (`cause_reason_code`). Also any stored JSON that embeds codes, such as `prowlarr_search_snapshots.snapshot_json`. RF-006 checks each JSON column with `json_extract`/`json_tree` before writing the update.
 
-These columns were inventoried from the current schema (every column named `*reason*`, `event_code` or `*_code`). `activity_code` and `handler_code` hold activity and handler codes, not reason codes. `handler_code` changes only for the job-kind rename (`DISCOVER_SONARR_BACKFILL`).
+These columns were inventoried from the current schema (every column named `*reason*`, `event_code` or `*_code`). `activity_code` and `handler_code` hold activity and handler codes, not reason codes. `handler_code` changes only for the job-kind renames (`DISCOVER_SONARR_BACKFILL`, `EVALUATE_TRIAL`, `STAGE_TRIAL_MEDIA`).
 
 The same release removes the old names from the code:
 
@@ -936,8 +944,8 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 
 | | Old | New |
 |---|---|---|
-| D | Adding this video would exceed the total size limit for this anime's trial episodes (selection plan). | Adding this video would go over the total size allowed for the episodes picked for this anime. |
-| M | This anime's trial episodes would exceed their total size limit. | The episodes picked for this anime would go over their total size limit. |
+| D | Adding this video would exceed the total size limit for this anime's trial episodes (selection plan). | Adding this video would go over the total size allowed for the episodes picked for your evaluation of this anime. |
+| M | This anime's trial episodes would exceed their total size limit. | The evaluation episodes for this anime would go over their total size limit. |
 | A | The selection plan is every episode picked for this anime's trial. Raise 'Maximum selection-plan size' in Settings. | Raise "Maximum selection-plan size" in Settings. |
 
 #### `ACQUISITION_SIZE_EVIDENCE_MISSING`
@@ -1021,32 +1029,32 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | Episode reservation details need review. | The episode reservation needs review. |
 | A | Check the episode identity and recorded reservation. | Check the episode and its reservation in the job report. |
 
-#### `TRIAL_SELECTED`
+#### `TRIAL_SELECTED` → **`USER_EVALUATION_SELECTED`**
 *INFO, retryable: None, uses: 7*
 
 | | Old | New |
 |---|---|---|
-| D | The verified received episode falls within its immutable episode-selection window. | This episode is inside the range of episodes picked for this anime. |
-| M | This episode is selected for Intake. | This episode is picked for Intake. |
+| D | The verified received episode falls within its immutable episode-selection window. | This episode is one of the first episodes picked so you can evaluate this anime. |
+| M | This episode is selected for Intake. | This episode is picked for your evaluation. |
 | A | Continue only after acquisition prerequisites are verified. | Nothing to do. It downloads once its checks pass. |
 
-#### `TRIAL_OUTSIDE_WINDOW`
+#### `TRIAL_OUTSIDE_WINDOW` → **`USER_EVALUATION_OUTSIDE_WINDOW`**
 *INFO, retryable: False, uses: 7*
 
 | | Old | New |
 |---|---|---|
-| D | The received episode is outside the recorded episode-selection windows. | This episode is outside the range of episodes picked for this anime. |
-| M | This episode is outside the Intake selection. | This episode is not picked for Intake. |
-| A | Review the recorded episode window if a different selection is needed. | Nothing to do, unless you want a different range; then change the episode counts in Settings. |
+| D | The received episode is outside the recorded episode-selection windows. | This episode is outside the episodes picked for you to evaluate this anime. |
+| M | This episode is outside the Intake selection. | This episode is not picked for your evaluation. |
+| A | Review the recorded episode window if a different selection is needed. | Nothing to do. To pick more episodes, raise the evaluation episode counts in Settings. |
 
-#### `TRIAL_DISABLED`
+#### `TRIAL_DISABLED` → **`USER_EVALUATION_DISABLED`**
 *INFO, retryable: False, uses: 4*
 
 | | Old | New |
 |---|---|---|
-| D | Both counts are zero and no prior episode-selection plan exists. | Both episode counts are zero, so no episodes are picked for new anime. |
-| M | Intake episode selection is disabled. | Intake episode picking is turned off. |
-| A | Set a backfill or following count to create new selection plans. | Set "backfill" or "following" episodes above zero in Settings. |
+| D | Both counts are zero and no prior episode-selection plan exists. | Both evaluation episode counts are zero, so no episodes are picked for new anime. |
+| M | Intake episode selection is disabled. | Picking episodes for evaluation is turned off. |
+| A | Set a backfill or following count to create new selection plans. | Set the "backfill" or "following" evaluation episodes above zero in Settings. |
 
 #### `RELEASE_AUDIO_UNTAGGED`
 *INFO, retryable: None, uses: 1*
@@ -1057,14 +1065,14 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | This release is not being downloaded; its episode is searched in Prowlarr instead. | This release is skipped; its episode is searched in Prowlarr instead. |
 | A | Nothing to do. Set Audio check to japanese or off to download such releases directly. | Nothing to do. To download such releases directly, set Audio check to "japanese" or "off". |
 
-#### `TRIAL_PLAN_CONFLICT`
+#### `TRIAL_PLAN_CONFLICT` → **`USER_EVALUATION_PLAN_CONFLICT`**
 *WARNING, retryable: False, uses: 2*
 
 | | Old | New |
 |---|---|---|
-| D | The source verification or episode-selection plan is inconsistent. | The verified episode does not match the saved range of picked episodes. |
-| M | The Intake selection plan needs review. | The picked-episode range needs review. |
-| A | Review the verified episode and recorded selection plan. | Check the verified episode and the saved range in the job report. |
+| D | The source verification or episode-selection plan is inconsistent. | The verified episode does not match the saved list of episodes picked for evaluation. |
+| M | The Intake selection plan needs review. | The evaluation episode list needs review. |
+| A | Review the verified episode and recorded selection plan. | Check the verified episode and the saved evaluation list in the job report. |
 
 #### `RELEASE_UNRESOLVED`
 *WARNING, retryable: False, uses: 3*
@@ -1264,14 +1272,14 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | This type of work cannot be processed. | This type of job cannot be processed. |
 | A | Check the installed components. | Check that the installed version matches the database. |
 
-#### `TRIAL_COUNTS_INVALID`
+#### `TRIAL_COUNTS_INVALID` → **`USER_EVALUATION_COUNTS_INVALID`**
 *WARNING, retryable: False, uses: 2*
 
 | | Old | New |
 |---|---|---|
-| D | Both episode selection counts are zero. | Both episode counts are zero. |
-| M | Set backfill or episodes starting with the received episode to at least 1. | Set at least one episode count above zero. |
-| A | Increase at least one of the two episode counts. | Raise "backfill" or "following" episodes in Settings. |
+| D | Both episode selection counts are zero. | Both evaluation episode counts are zero. |
+| M | Set backfill or episodes starting with the received episode to at least 1. | Set at least one evaluation episode count above zero. |
+| A | Increase at least one of the two episode counts. | Raise the "backfill" or "following" evaluation episodes in Settings. |
 
 #### `CONFIGURATION_INVALID`
 *WARNING, retryable: False, uses: 1*
@@ -1447,8 +1455,8 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | `ACQUISITION_PREPARED` | Source files inspected and acquisition plan recorded. | Torrent files checked; download planned. |
 | `EPISODE_RESERVATION_CREATED` | Episode reserved for acquisition. | Episode reserved. |
 | `EPISODE_RESERVATION_SKIPPED` | Episode reservation was not needed. | No episode reservation was needed. |
-| `TRIAL_EVALUATED` | Intake episode selection evaluated. | Checked whether this episode is picked for Intake. |
-| `TRIAL_AUDIO_SEARCH` | Release title has no Dual/Multi Audio tag; searching Prowlarr instead of downloading it. | Release has no Dual Audio tag; searching Prowlarr instead. |
+| `TRIAL_EVALUATED` → **`USER_EVALUATION_CHECKED`** | Intake episode selection evaluated. | Checked whether this episode is picked for your evaluation. |
+| `TRIAL_AUDIO_SEARCH` → **`USER_EVALUATION_AUDIO_SEARCH`** | Release title has no Dual/Multi Audio tag; searching Prowlarr instead of downloading it. | Release has no Dual Audio tag; searching Prowlarr instead. |
 | `SONARR_BACKFILL_OBSERVED` → **`EPISODE_DISCOVERY_RECORDED`** | Read-only Sonarr backfill results recorded. | Episode search results saved. |
 | `DONE` | Job completed. | Job finished. |
 | `FAILED` | Job processing failed. | Job failed. |
@@ -1488,8 +1496,9 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 ## 5. Open decisions
 
 1. **`SONARR_DISCOVERY_EPISODE_NOT_FOUND` and `SONARR_EPISODES_NOT_LISTED`.** These meant "Sonarr has no record of this series or its episodes", but Sonarr is no longer part of discovery. The proposal migrates them to `PROWLARR_UNAVAILABLE`, which keeps the affected jobs retry-eligible with no new code. The alternative is a dedicated historical code such as `DISCOVERY_STOPPED_BEFORE_PROWLARR` ("This search stopped under the old Sonarr-based discovery; press Search again to search Prowlarr"). That is clearer in History, but it adds a code that nothing emits.
-2. **`TRIAL_*` codes** (`TRIAL_SELECTED`, `TRIAL_OUTSIDE_WINDOW`, `TRIAL_DISABLED`, `TRIAL_PLAN_CONFLICT`, `TRIAL_COUNTS_INVALID`, event `TRIAL_EVALUATED`). The dashboard calls this step "Intake" and "episode picking". The code names are left as they are here, because "trial" is also part of job kinds (`EVALUATE_TRIAL`, `STAGE_TRIAL_MEDIA`) and tables (`trial_plans`). Renaming them consistently is a larger, separate rename.
-3. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit.
+2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit.
+
+Decided: "trial" is replaced by "user evaluation" (`USER_EVALUATION`), owner decision on 2026-11-04.
 
 ## 6. Notes for the service-health foundation (later)
 

@@ -163,4 +163,68 @@ Risks to carry into RF-005 and RF-006:
 ## 7. Open owner decisions
 
 1. ~~Reason and event codes (§4.6)~~: **decided** (rename, migrate history, remove old names). The remaining decisions are in REASON_CODE_AUDIT §5.
+1. ~~"Trial" vocabulary~~: **decided**. It becomes "user evaluation" (`USER_EVALUATION`) everywhere it can; see §8.
 2. **New names:** confirm or adjust the names in §3 and §4. They are proposals chosen from what each piece actually does. The ones worth checking most are `magnet_intake` and `magnet_intents`, because those modules serve both discovery and webhook magnets.
+
+## 8. "Trial" → "user evaluation"
+
+**Decided (owner, 2026-11-04):** "trial" was a bad term. It is replaced by **user evaluation** (`USER_EVALUATION` / `user_evaluation`) wherever it can be. The concept is the first episodes of a new anime that are downloaded so the user can evaluate it before choosing Keep or Reject. The same rules as §4 apply: rename, migrate stored values, remove the old names, no aliases.
+
+### 8.1 Code-only identifiers (RF-005)
+
+| Existing | New |
+|---|---|
+| `trial_policy.py` | `user_evaluation_policy.py` |
+| `storage/trials.py` | `storage/user_evaluations.py` |
+| `storage/batch_trials.py` | `storage/batch_user_evaluations.py` |
+| `batch/durable_trial.py` | `batch/user_evaluation.py` |
+| `jobs/evaluate_trial_job.py` | `jobs/select_user_evaluation_job.py` |
+| `jobs/stage_trial_media_job.py` | `jobs/stage_user_evaluation_media_job.py` |
+| `TrialConflict`, `TrialProposal`, `TrialSource` | `UserEvaluationConflict`, `UserEvaluationProposal`, `UserEvaluationSource` |
+| `BatchTrialSource`, `BatchTrialProposal`, `propose_batch_trial` | `BatchUserEvaluationSource`, `BatchUserEvaluationProposal`, `propose_batch_user_evaluation` |
+| `persist_trial`, `load_trial_source`, `persist_batch_trial`, `load_batch_trial_source` | `persist_user_evaluation`, `load_user_evaluation_source`, `persist_batch_user_evaluation`, `load_batch_user_evaluation_source` |
+| `plan_batch_trial_window` (potentially dead, P2) | `plan_batch_user_evaluation_window`, unless P2 removes it first |
+| Local names and parameters: `trial`, `trial_kind`, `trial_source`, `trial_registration`, `TRIAL_KIND` | The same with `user_evaluation` |
+| Tests: `test_trial_policy.py`, `test_trial_migration.py`, `test_batch_trial_job.py` | `test_user_evaluation_policy.py`, `test_user_evaluation_migration.py`, `test_batch_user_evaluation_job.py` |
+| Docs: `TRIAL_POLICY.md`, `jobs/STAGE_TRIAL_MEDIA.md`, `architecture/INTAKE_TO_TRIAL.md` | `USER_EVALUATION_POLICY.md`, `jobs/STAGE_USER_EVALUATION_MEDIA.md`, `architecture/INTAKE_TO_USER_EVALUATION.md` |
+
+### 8.2 Persisted identifiers (RF-006)
+
+| Existing | New | Where | Handling |
+|---|---|---|---|
+| Job kind `EVALUATE_TRIAL` | `SELECT_USER_EVALUATION` | `jobs.kind`, `job_history.handler_code`, registry, dashboard, `adm` filters | Migrate every row (as in §4.2). |
+| Job kind `STAGE_TRIAL_MEDIA` | `STAGE_USER_EVALUATION_MEDIA` | same | same |
+| Table `trial_plans` | `user_evaluation_plans` | about 40 references; foreign keys from several tables | `ALTER TABLE … RENAME TO` (SQLite updates foreign-key references). |
+| Table `trial_evaluations` | `user_evaluation_checks` | holds the per-episode result (`USER_EVALUATION_SELECTED` and so on) | rename |
+| Table `batch_trial_plans` | `batch_user_evaluation_plans` | | rename |
+| Table `batch_trial_files` | `batch_user_evaluation_files` | | rename |
+| Column `acquisition_budgets.trial_plan_id` | `user_evaluation_plan_id` | | `ALTER TABLE … RENAME COLUMN` |
+| Indexes `idx_trial_evaluations_plan`, `idx_batch_trial_by_episode` | `idx_user_evaluation_checks_plan`, `idx_batch_user_evaluation_by_episode` | | drop and recreate under the new name |
+| Codes `TRIAL_*` | `USER_EVALUATION_*` | | See [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md). |
+| API field `trial_plan_ready` (`api/app.py:442`, `dashboard.js`) | `user_evaluation_plan_ready` | API response to the dashboard | Rename the server and dashboard together. |
+
+### 8.3 Settings (configuration upgrade, not just a DB migration)
+
+| Existing key | New key |
+|---|---|
+| `trial.backfill_count` | `user_evaluation.backfill_count` |
+| `trial.following_count` | `user_evaluation.following_count` |
+| `storage.trial_root` | `storage.user_evaluation_root` |
+
+These keys live in the user's settings file, not in the database, so they need a **new configuration schema version**. Its upgrade step moves the values to the new keys, the same way the v10 upgrade moved `sonarr.discovery_*` to `prowlarr.*`. The dashboard settings section `'trial'` (shown as "Intake selection") is renamed with it. The upgrade code that validates **older** published settings versions keeps the old key names, because it has to read old files.
+
+### 8.4 Must keep the old name
+
+- The historical migration files `storage/sql/011_trial_windows.sql` and `028_batch_trial_plans.sql`, and their entries in `migrations.py`. They replay on old databases.
+- The validation code for older settings versions in `configuration_schema.py` that reads `trial.*` and `storage.trial_root` from old files.
+- Historical documents in `docs/` that describe archived behavior.
+
+### 8.5 Dashboard wording
+
+| Existing | New |
+|---|---|
+| "N episode(s) planned for the trial." | "N episode(s) picked for your evaluation." |
+| "No trial plan has been committed for this pack." | "No episodes have been picked for evaluation from this pack yet." |
+| "Trial planned" / "Outside trial" | "Picked for evaluation" / "Not picked" |
+| Settings section "Intake selection" | "Evaluation episodes" |
+
