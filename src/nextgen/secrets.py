@@ -73,11 +73,18 @@ def _value(value):
     return value
 
 
-def _read(fd):
+def _read(fd, *, owned=True):
+    """Parse secrets.json. Writers require ownership; read-only callers do not.
+
+    Read-only access (for example root using the internal admin API) relies on
+    the file's private mode and the kernel's permission check. Writers keep the
+    owner check so a publish never replaces the service-owned file with one
+    owned by another account.
+    """
     stream_fd = os.open(NAME,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=fd)
     with os.fdopen(stream_fd,"rb") as stream:
         metadata = os.fstat(stream.fileno())
-        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid!=os.geteuid()
+        if (not stat.S_ISREG(metadata.st_mode) or (owned and metadata.st_uid!=os.geteuid())
                 or metadata.st_mode & 0o077 or metadata.st_nlink!=1):
             raise SecretStorageError()
         raw = stream.read(65537)
@@ -109,9 +116,9 @@ def _read(fd):
         raise SecretStorageError() from None
 
 
-def _private_directory(fd):
+def _private_directory(fd, *, owned=True):
     metadata = os.fstat(fd)
-    if metadata.st_uid!=os.geteuid() or metadata.st_mode & 0o022:
+    if (owned and metadata.st_uid!=os.geteuid()) or metadata.st_mode & 0o022:
         raise SecretStorageError()
 
 
@@ -158,8 +165,8 @@ class SecretStore:
     def _current(self):
         try:
             with _directory(self.directory) as fd:
-                _private_directory(fd)
-                return _read(fd)
+                _private_directory(fd, owned=False)
+                return _read(fd, owned=False)
         except FileNotFoundError:
             return 0,{'tvdb_api_key':'','qbittorrent_username':'','qbittorrent_password':'','webhook_token':'','management_token':'','sonarr_api_key':'','jellyfin_api_key':'','shoko_api_key':'','prowlarr_api_key':''},2
         except OSError:
