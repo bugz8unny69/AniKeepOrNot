@@ -1,5 +1,5 @@
 """Fenced, hash-only proof loader for one completed batch-trial episode."""
-from src.nextgen.acquisition.metadata import BatchInventory, AcquisitionConflict
+from src.nextgen.acquisition.metadata import BatchInventory
 from src.nextgen.acquisition.media import MediaInvalid
 from src.nextgen.history import integer
 from src.nextgen.storage.batch_acquisition_candidate import _candidate

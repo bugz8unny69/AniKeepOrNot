@@ -1,5 +1,5 @@
 """Strict source loading for an E01 media verifier, with no qB mutations."""
-from src.nextgen.acquisition.metadata import BatchInventory, AcquisitionConflict
+from src.nextgen.acquisition.metadata import BatchInventory
 from src.nextgen.acquisition.media import MediaInvalid
 from src.nextgen.storage.batch_acquisition_candidate import _candidate
 from src.nextgen.storage.batch_submission_journal import _intent

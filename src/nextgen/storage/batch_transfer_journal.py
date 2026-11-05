@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from src.nextgen.acquisition.metadata import AcquisitionConflict, BatchInventory
 from src.nextgen.acquisition.transfers import (
-    TransferPermit, TransferConflict, STOPPED,
+    TransferPermit, TransferConflict,
 )
 from src.nextgen.batch.probe_transfer import (
     verify_probe_snapshot, exact_probe_selection,

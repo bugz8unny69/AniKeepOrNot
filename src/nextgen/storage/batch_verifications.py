@@ -9,7 +9,7 @@ import json
 
 from src.nextgen.acquisition.metadata import BatchInventory, ObservedBatchInventory, infohash
 from src.nextgen.batch.verification import VerifiedBatch
-from src.nextgen.batch.selection import VIDEO, file_episode_number, BatchPlanningError
+from src.nextgen.batch.selection import VIDEO, file_episode_number
 from src.nextgen.history import integer
 from src.nextgen.release_contracts import ReleaseInput, ReleaseConflict
 from src.nextgen.storage.releases import _source

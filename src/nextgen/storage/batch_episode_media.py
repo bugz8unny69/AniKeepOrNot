@@ -3,8 +3,6 @@ import json
 import time
 
 from src.nextgen.acquisition.media import VerifiedMedia, MediaInvalid
-from src.nextgen.history import integer
-from src.nextgen.storage.batch_unlock_journal import _decode_media
 
 
 def persist_batch_episode_media(db,claim,file_index,media):
