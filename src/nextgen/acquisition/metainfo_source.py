@@ -44,8 +44,10 @@ class MetadataClientUnsupported(MetadataSourceDenied):
 
 class MetadataSourceWaiting(RuntimeError):
     reason_code = 'TORRENT_METADATA_WAITING'
-    def __init__(self, delay_ms=60000):
+    def __init__(self, delay_ms=60000, *, evidence=None):
+        from src.nextgen.acquisition.metadata_evidence import validated
         self.delay_ms = delay_ms
+        self.evidence = validated(evidence) if evidence is not None else None
         super().__init__('qBittorrent is still retrieving torrent metadata.')
 
 
@@ -112,7 +114,8 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         if qb.metadata_strategy=='fetch':
             result=await blocking(qb.fetch_metadata,source,digest,batch=batch)
             if result is None:
-                raise MetadataSourceWaiting()
+                from src.nextgen.acquisition.metadata_evidence import fresh
+                raise MetadataSourceWaiting(evidence=fresh('fetch'))
             return result[1]
 
         if not batch:
@@ -126,6 +129,8 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         from src.nextgen.batch.qb_client import BatchClient
         from src.nextgen.acquisition.metadata import hash_magnet, ObservedBatchInventory
         from src.nextgen.storage.batch_metadata_admission import STOPPED
+        from src.nextgen.acquisition.metadata_evidence import fresh
+        import inspect
 
         database=configuration.value('storage.database_path')
         owned,stored=await blocking(lookup,database,digest)
@@ -154,7 +159,8 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
                     raise MetadataSourceWaiting() from None
             current=await blocking(target.inspect,digest)
             if current is None:
-                raise MetadataSourceWaiting()
+                raise MetadataSourceWaiting(evidence=fresh('not_found'))
+            evidence=fresh('stopped_inspect',state=current.state,files=len(current.files))
             if (current.save_path.rstrip('/')!=owned.options.download_root
                     or current.category!=owned.options.category
                     or current.auto_tmm is not False
@@ -164,20 +170,31 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
                 await blocking(journal.observe,claim,owned,current)
                 raise MetadataSourceDenied()
             if current.state not in STOPPED:
+                evidence['phase']='recover_stop'
                 observed=await blocking(target.stop_legacy_metadata,owned)
             elif current.files:
                 observed=await blocking(target.inspect_legacy_metadata,
                     digest,owned.marker,owned.options.download_root)
             else:
+                evidence['phase']='poll'
+                kwargs={
+                    'attempts':configuration.value('qbittorrent.metadata_poll_attempts'),
+                    'interval':configuration.value('qbittorrent.metadata_poll_seconds'),
+                }
+                # Existing injected test clients may not accept the optional
+                # diagnostics argument. It never changes the polling contract.
+                if 'trace' in inspect.signature(target.poll_legacy_metadata).parameters:
+                    kwargs['trace']=evidence
                 observed=await blocking(target.poll_legacy_metadata,
-                                         owned,cancelled,
-                                         attempts=configuration.value('qbittorrent.metadata_poll_attempts'),
-                                         interval=configuration.value('qbittorrent.metadata_poll_seconds'))
+                                        owned,cancelled,**kwargs)
+            evidence['stopped_state']=getattr(observed,'state',None)
+            evidence['max_files']=max(evidence['max_files'],
+                                      len(getattr(observed,'files',())))
             updated=await blocking(journal.observe,claim,owned,observed)
             if updated.state in ('REVIEW','EXTERNAL'):
                 raise MetadataSourceDenied()
             if updated.state!='OWNED_STOPPED':
-                raise MetadataSourceWaiting()
+                raise MetadataSourceWaiting(evidence=evidence)
             owned,stored=await blocking(lookup,database,digest)
 
         # Never trust just the marker: recheck the complete journal-owned

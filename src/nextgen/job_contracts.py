@@ -84,8 +84,14 @@ class Outcome:
     facts: dict | None = field(default=None, repr=False)
     search_snapshots: tuple | list | None = field(default=None, repr=False)
     candidate_evidence: tuple | list | None = field(default=None, repr=False)
+    metadata_evidence: dict | None = field(default=None, repr=False)
 
     def __post_init__(self):
+        if self.metadata_evidence is not None:
+            from src.nextgen.acquisition.metadata_evidence import validated
+            if self.kind != "defer" or self.reason_code != "TORRENT_METADATA_WAITING":
+                raise ValueError("metadata evidence requires a metadata deferral")
+            validated(self.metadata_evidence)
         if self.candidate_evidence is not None and not isinstance(self.candidate_evidence, (list, tuple)):
             raise ValueError("invalid outcome candidate evidence")
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):

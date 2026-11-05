@@ -191,6 +191,25 @@ class JobReportDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(section, text)
         json.dumps(d, default=str)  # JSON mode stays serializable.
 
+    async def test_report_displays_observed_metadata_not_a_generic_wait_only(self):
+        owner, _ = await self.held()
+        observation = {
+            'phase':'poll','initial_state':'pausedDL',
+            'last_active_state':'metaDL','stopped_state':'pausedDL',
+            'polls':24,'max_files':0,'resumed':True,
+        }
+        self.raw(
+            "INSERT INTO job_history(job_id,occurred_at_ms,event_code,reason_code,"
+            "details_json,component) VALUES(?,6,'DEFERRED',"
+            "'TORRENT_METADATA_WAITING',?,'worker')",
+            (owner,json.dumps({'attempt':2,'metadata_evidence':observation})))
+        text=self.text(owner)
+        self.assertIn('metadata observation (this attempt)',text)
+        self.assertIn('last_active=metaDL',text)
+        self.assertIn('stopped=pausedDL',text)
+        self.assertIn('polls=24',text)
+        self.assertIn('max_files=0',text)
+
     async def test_unknown_job(self):
         self.assertIsNone(self.diag(99999))
         self.assertIn('does not exist', self.text(99999))
