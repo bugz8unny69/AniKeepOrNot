@@ -210,14 +210,19 @@ class JobRecoveryTests(unittest.TestCase):
             self.assertEqual(ret, 0)
         self.assertIn('Dry-Run Preview', stdout.getvalue())
 
-        # 5. Apply CLI without --apply flag fails
-        with self.assertRaises(SystemExit):
-            recovery_main(['--config-dir', str(self.config_dir), 'apply', '--all-eligible'])
-
-        # 6. Apply CLI with --apply succeeds
+        # 5. The apply subcommand executes without redundant --apply.
         stdout = io.StringIO()
         with patch('sys.stdout', stdout):
-            ret = recovery_main(['--config-dir', str(self.config_dir), 'apply', '--all-eligible', '--apply'])
+            ret = recovery_main(['--config-dir', str(self.config_dir), 'apply', '--all-eligible'])
+            self.assertEqual(ret, 0)
+        self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
+
+        # 6. Existing scripts with the old --apply flag still work.
+        old_style = self._create_stopped_job('PREPARE_ACQUISITION', 'TORRENT_METADATA_TIMEOUT')
+        stdout = io.StringIO()
+        with patch('sys.stdout', stdout):
+            ret = recovery_main(['--config-dir', str(self.config_dir),
+                                 'apply', '--job-id', str(old_style), '--apply'])
             self.assertEqual(ret, 0)
         self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
 
@@ -243,6 +248,55 @@ class JobRecoveryTests(unittest.TestCase):
         result2 = apply_recovery(str(self.config_dir), job_id=j2, backup=False)
         self.assertEqual(len(result2['recovered']), 1)
         self.assertEqual(result2['recovered'][0]['job_id'], j2)
+
+
+    def test_explicit_reason_can_retry_manual_classification_with_safety_gate(self):
+        reason = 'TORRENT_METADATA_CONFIGURATION_INVALID'
+        retryable = self._create_stopped_job('PREPARE_ACQUISITION', reason, attempt=2)
+        held = self._create_stopped_job('PREPARE_ACQUISITION', reason, state='ON_HOLD')
+        automatic = self._create_stopped_job('PREPARE_ACQUISITION', 'TORRENT_METADATA_TIMEOUT')
+
+        db = connect(self.database_path)
+        try:
+            jobs = {job['job_id']: job for job in inspect_stopped_jobs(db)}
+            self.assertEqual(jobs[retryable]['category'], 'MANUAL_ACTION')
+            self.assertFalse(jobs[retryable]['eligible'])
+            self.assertTrue(jobs[retryable]['retryable'])
+
+            # Untargeted bulk recovery keeps the conservative reason matrix.
+            self.assertEqual([item['job_id'] for item in preview_recovery(db, all_eligible=True)],
+                             [automatic])
+
+            # Explicit --reason selects retryable manual-classified jobs, but does
+            # not override the underlying state/lease/operation safety checks.
+            preview = preview_recovery(db, reason=reason)
+            self.assertEqual({item['job_id']: item['eligible'] for item in preview},
+                             {retryable: True, held: False})
+        finally:
+            db.close()
+
+        stdout = io.StringIO()
+        with patch('sys.stdout', stdout):
+            result = recovery_main([
+                '--config-dir', str(self.config_dir),
+                'apply', '--reason', reason, '--no-backup',
+            ])
+        self.assertEqual(result, 0)
+        self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
+
+        db = connect(self.database_path)
+        try:
+            rows = dict(db.execute('SELECT job_id, state FROM jobs'))
+            self.assertEqual(rows[retryable], 'PENDING')
+            self.assertEqual(rows[held], 'ON_HOLD')
+            self.assertEqual(rows[automatic], 'NEEDS_REVIEW')
+            history = db.execute(
+                "SELECT event_code FROM job_history WHERE job_id=? ORDER BY history_id DESC LIMIT 1",
+                (retryable,),
+            ).fetchone()
+            self.assertEqual(history[0], 'RETRY_REQUESTED')
+        finally:
+            db.close()
 
     def test_apply_recovery_cas_mismatch_records_failure_cleanly(self):
         j1 = self._create_stopped_job('PREPARE_ACQUISITION', 'TORRENT_METADATA_TIMEOUT', attempt=1)

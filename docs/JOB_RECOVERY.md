@@ -14,20 +14,20 @@ sudo adm recover preview --job-id 1292
 sudo adm recover preview --reason TORRENT_METADATA_TIMEOUT [--limit 20]
 sudo adm recover preview --all-eligible [--limit 50]
 
-# 4. Safe recovery execution (Explicit --apply required)
-sudo adm recover apply --job-id 1292 --apply
-sudo adm recover apply --reason TORRENT_METADATA_TIMEOUT --apply
-sudo adm recover apply --all-eligible --limit 50 --apply
+# 4. Apply recovery (mutating action; preview first if needed)
+sudo adm recover apply --job-id 1292
+sudo adm recover apply --reason TORRENT_METADATA_TIMEOUT
+sudo adm recover apply --all-eligible --limit 50
 ```
 
 ---
 
 ## Safety Model & Guarantees
 
-1. **Dry-Run by Default**:
+1. **Read-Only Preview**:
    Running `adm recover` or `adm recover preview` will never mutate the database, claim leases, or enqueue background jobs.
-2. **Explicit Confirmation**:
-   The `apply` subcommand requires the `--apply` flag. Running `adm recover apply` without `--apply` terminates immediately with an error.
+2. **Explicit Apply Subcommand**:
+   `adm recover apply` is the mutating action; no redundant `--apply` confirmation is needed. The old flag is accepted but hidden for backward compatibility.
 3. **No Ad-Hoc SQL or Attempt Reset**:
    Recovery never executes raw `UPDATE jobs SET state='PENDING'` or clears attempt counts. It invokes the vetted `request_review_retry()` engine.
 4. **Compare-And-Swap (CAS) Protection**:
@@ -48,8 +48,27 @@ The tool classifies stopped jobs into categories based on whether code remediati
 | Category | Reason Codes | Action Taken |
 |---|---|---|
 | **Autonomous Retry** | `TORRENT_METADATA_TIMEOUT`, `ACQUISITION_SIZE_LIMIT`, `TORRENT_PIECE_OVERLAP`, `KEEP_IMPORT_REVIEW`, `STAGING_REVIEW`, `IDENTITY_INVALID`, `PROWLARR_SEARCH_REVIEW`, `SONARR_CANDIDATES_EXHAUSTED`, `WAITING_FOR_DUB`, `RELEASE_EPISODE_MAPPING_MISSING`, `MEDIA_AUDIO_REQUIRED` | Eligible for `--all-eligible` retry. Requeues to `PENDING` so worker activates candidate fallback or proceeds with fixed logic. |
-| **Manual Action Required** | `IDENTITY_INCOMPLETE`, `IDENTITY_CONFLICT`, `RELEASE_TYPE_UNSUPPORTED`, `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `TORRENT_METADATA_CONFIGURATION_INVALID` | Excluded from `--all-eligible`. Requires operator manual matching or inspection via `sudo adm report job --id N`. Can be individually retried with `--job-id N --apply` once resolved. |
+| **Manual Action Required** | `IDENTITY_INCOMPLETE`, `IDENTITY_CONFLICT`, `RELEASE_TYPE_UNSUPPORTED`, `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `TORRENT_METADATA_CONFIGURATION_INVALID` | Excluded from `--all-eligible`. Requires operator manual matching or inspection via `sudo adm report job --id N`. Retryable jobs may be targeted with `--job-id N` or `--reason CODE` once resolved. |
 | **In Flight / Blocked** | `EPISODE_RESERVED`, active lease running, cancellation draining | Retrying blocked until active dependencies resolve. |
+
+### Explicit operator selection versus automatic recovery
+
+`--all-eligible` remains restricted to reasons classified `AUTONOMOUS_RETRY`.
+A specific `--reason` or `--job-id` is an operator-selected retry and **does not**
+require the reason to appear in the autonomous matrix. For example, after
+correcting qBittorrent configuration:
+
+```bash
+sudo adm recover preview --reason TORRENT_METADATA_CONFIGURATION_INVALID
+sudo adm recover apply --reason TORRENT_METADATA_CONFIGURATION_INVALID
+```
+
+This overrides **only the recovery matrix's recommendation**. The underlying
+`capability()` and `request_review_retry()` safeguards still reject active leases,
+unsupported kinds/states, inactive operations, already-handed-off jobs, and
+stale attempts or reasons. No `--force`, direct SQL reset, or worker bypass is
+introduced. Requeued jobs may return to review if the configuration remains
+invalid.
 
 ---
 
