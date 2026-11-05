@@ -17,7 +17,7 @@ from src.nextgen.cancellation import OperationGate, CancellationRequested
 from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError
-from src.nextgen.diagnostics import configure_logging, exception, log_history
+from src.nextgen.diagnostics import configure_logging, event, exception, log_history
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json, failure_facts
 from src.nextgen.reasons import get_reason
 from src.nextgen.maintenance import MaintenanceGate, MaintenanceBusy, MaintenancePending
@@ -59,14 +59,21 @@ class Context:
 
 class Worker:
     def __init__(self, configuration_store, startup, registry, *, policy=Policy(), logger=None, prepare=None,
-                 qb_readiness=None, secrets=None):
+                 service_health=None, secrets=None):
         if type(registry) is not Registry or not registry.entries:
             raise WorkerNotReady()
         if prepare is not None and (not callable(prepare) or inspect.iscoroutinefunction(prepare)):
             raise ValueError("worker readiness callback must be synchronous")
         self._prepare = prepare
-        self._qb_readiness = qb_readiness
         self._secrets = secrets
+        # Services needed by at least one registered job kind. Unknown names
+        # are a wiring error and must fail before any job is claimed.
+        self._required = tuple(sorted({s for spec in registry.entries.values() for s in spec.services}))
+        self._service_health = service_health
+        self._service_settings = None
+        if service_health is not None:
+            for name in self._required:
+                service_health.registry.get(name)
         self.config, self.startup, self.registry, self.policy = configuration_store, startup, registry, policy
         self.gate = MaintenanceGate(startup.value("storage.database_path"))
         self.queue = JobQueue(self.gate.database, policy=policy)
@@ -122,11 +129,55 @@ class Worker:
         while self._attempts:
             await settle(tuple(self._attempts))
 
-    def _log_readiness_error(self, exc):
-        from src.nextgen.acquisition.readiness import error_reason
-        reason = error_reason(exc)
-        exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
-                  reason_code=reason, component="worker")
+    def _log_service_changes(self, changes):
+        """Log each service status change once: down, or available again.
+
+        A first success (UNKNOWN to UP) is not a recovery and is not logged.
+        """
+        from src.nextgen.services import USABLE
+        for change in changes:
+            if not change.state.usable:
+                name, level = "SERVICE_DOWN", logging.WARNING
+            elif change.old not in USABLE:
+                name, level = "SERVICE_RESTORED", logging.INFO
+            else:
+                continue
+            event(self.logger, level, name, component="worker", service=change.service,
+                  service_status=change.new, service_detail=change.state.message())
+
+    def _settings_key(self, configuration):
+        """Settings and credentials revisions; a change makes every service due for a recheck."""
+        try:
+            credentials = self._secrets.status().revision
+        except Exception:
+            credentials = None
+        return getattr(configuration, 'desired_revision', None), credentials
+
+    def _waiting_kinds(self):
+        """Job kinds that must not be claimed because a service they need is unavailable."""
+        health = self._service_health
+        if health is None:
+            return None
+        kinds = tuple(kind for kind, spec in self.registry.entries.items()
+                      if spec.services and health.unavailable(spec.services))
+        return kinds or None
+
+    def _observe_services(self, spec, outcome):
+        """Passive health: a job's own result marks its services without another request."""
+        health = self._service_health
+        if health is None or spec is None or not spec.services:
+            return
+        changes = []
+        for service in spec.services:
+            change = None
+            if outcome.reason_code is not None:
+                change = health.mark_reason(service, outcome.reason_code,
+                                            detail=f'a {spec.kind} job reported {outcome.reason_code}')
+            elif outcome.kind == "complete":
+                change = health.mark_succeeded(service)
+            if change is not None:
+                changes.append(change)
+        self._log_service_changes(changes)
 
     def _log_error(self, exc, claim=None):
         reason = getattr(exc, "reason_code", "JOB_HANDLER_FAILED")
@@ -219,12 +270,18 @@ class Worker:
                 result = await self._io(self._prepare,configuration)
                 if result is not None:
                     raise ValueError("readiness callback must not return values")
-            exclude_kinds = None
-            if self._qb_readiness is not None and self._secrets is not None:
-                is_ready = await self._io(self._qb_readiness.is_ready, configuration, self._secrets)
-                if not is_ready:
-                    from src.nextgen.acquisition.readiness import ACQUISITION_KINDS
-                    exclude_kinds = ACQUISITION_KINDS
+            if self._service_health is not None and self._secrets is not None and self._required:
+                key = await self._io(self._settings_key, configuration)
+                if key != self._service_settings:
+                    # A fixed address, key or password is checked at once,
+                    # not after the down-service backoff.
+                    if self._service_settings is not None:
+                        self._service_health.recheck_all()
+                    self._service_settings = key
+                changes = await self._io(self._service_health.probe_due, configuration, self._secrets,
+                                         self._required)
+                self._log_service_changes(changes)
+            exclude_kinds = self._waiting_kinds()
             claim, audits = await self._io(self.queue.claim,halted=self._halt_claims.is_set,exclude_kinds=exclude_kinds)
             if claim is None:
                 return False
@@ -259,6 +316,7 @@ class Worker:
                         self.logger.warning("Audit logging failed for job %s: %s", claim.job_id, log_exc)
                     context = Context(claim,configuration,logger,threading.Event())
                     outcome = await self._invoke(claim,spec,context)
+            self._observe_services(spec, outcome)
             try:
                 records = await self._io(self.queue.finish,claim,outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
@@ -337,12 +395,16 @@ class Worker:
                 if not self._paused:
                     await self._recover()
                     if not ready:
-                        if self._qb_readiness is not None and self._secrets is not None:
+                        if self._service_health is not None and self._secrets is not None and self._required:
+                            # Check every needed service once at startup and log what is not usable.
                             try:
                                 config = await self._io(self.config.operation, self.startup, component="worker")
-                                await self._io(self._qb_readiness.check, config, self._secrets)
+                                changes = await self._io(self._service_health.probe_due, config,
+                                                         self._secrets, self._required)
+                                self._log_service_changes(changes)
                             except Exception as exc:
-                                self._log_readiness_error(exc)
+                                exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
+                                          reason_code="JOB_HANDLER_FAILED", component="worker")
                         ready = True
                         if on_ready is not None:
                             on_ready()

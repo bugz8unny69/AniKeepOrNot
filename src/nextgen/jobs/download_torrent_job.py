@@ -13,6 +13,7 @@ from src.nextgen.storage.transfers import TransferJournal, _current, _record
 from src.nextgen.worker import blocking
 
 KIND='DOWNLOAD_TORRENT'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Select video, start torrent and monitor download')
 
 
@@ -101,5 +102,5 @@ def registration(secrets,*,client_factory=Client,journal_factory=TransferJournal
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
         return () if verification_kind is None else (Successor.create(verification_kind,value),)
-    return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist,route=route,
         successor_kinds=() if verification_kind is None else (verification_kind,))

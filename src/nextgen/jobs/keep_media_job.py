@@ -7,6 +7,7 @@ from src.nextgen.jobs.keep_execution import execute_keep
 from src.nextgen.history import job_attempt, append_job_history
 
 KIND='KEEP_MEDIA'
+SERVICES=('sonarr',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Keep staged video in the permanent library')
 
 
@@ -29,4 +30,4 @@ def registration(secrets=None,*,service_factory=Service):
     async def execute(context):
         return await execute_keep(context, secrets, service_factory=service_factory,
                                   shoko=True)
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

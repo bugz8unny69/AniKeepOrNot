@@ -38,6 +38,7 @@ class JellyfinAdapter(_OptionalAdapter):
     key_getter = 'jellyfin_api_key'
     key_header = 'X-Emby-Token'
     version_keys = ('Version',)
+    reasons = {'JELLYFIN_UNAVAILABLE': DOWN, 'JELLYFIN_CONFIGURATION_INVALID': NOT_CONFIGURED}
 
     def classify(self, exc):
         from src.nextgen.jellyfin import RefreshConfiguration, RefreshUnavailable
@@ -55,6 +56,7 @@ class ShokoAdapter(_OptionalAdapter):
     key_getter = 'shoko_api_key'
     key_header = 'apikey'
     version_keys = ('Version', 'version')
+    reasons = {'SHOKO_UNAVAILABLE': DOWN, 'SHOKO_CONFIGURATION_INVALID': NOT_CONFIGURED}
 
     def classify(self, exc):
         from src.nextgen.shoko import ShokoConfiguration, ShokoUnavailable

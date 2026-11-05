@@ -46,9 +46,42 @@ AniDB bans clients that send too many requests, so these providers are never con
 
 A provider is `DOWN` while it has recent failures, and `UP` with the age of its newest cached data otherwise.
 
+## Jobs declare the services they need
+
+Each job registration lists the services its handler contacts:
+
+```python
+KIND='SUBMIT_BATCH'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
+...
+return Registration(KIND, DEFINITION, execute, services=SERVICES, ...)
+```
+
+The worker **does not claim** a job while any service it needs is blocking: `DOWN`, `NOT_CONFIGURED`, `AUTH_FAILED` or `UNSUPPORTED`. The job stays `PENDING` or `RETRY_WAIT` and spends no retries. Local-only jobs declare nothing and keep running during an outage. If a job names a service that has no adapter, the worker refuses to start.
+
+| Service | Job kinds |
+|---|---|
+| qBittorrent | `PREPARE_ACQUISITION`, `SUBMIT_TORRENT`, `DOWNLOAD_TORRENT`, `SUBMIT_BATCH`, `TRANSFER_BATCH`, `UNLOCK_BATCH`, `CLEANUP_BATCH_DOWNLOAD`, `CLEANUP_CANCELED_OPERATION`, `CLEANUP_DECIDED_DOWNLOAD` |
+| Prowlarr | `DISCOVER_SONARR_BACKFILL` |
+| Sonarr | `KEEP_MEDIA`, `KEEP_BATCH`, `CLEANUP_KEPT_MEDIA`, `CLEANUP_BATCH_KEPT_MEDIA` |
+| Jellyfin | `REFRESH_JELLYFIN` |
+| Shoko | `ENRICH_SHOKO_METADATA` |
+
+AniDB, TVDB and Anime-Lists are not declared yet. Identification and verification already wait for them through provider pacing (`ProviderDeferred`).
+
+What the worker does:
+
+- **At startup** it checks every needed service once and logs each one that is not usable.
+- **Before each claim** it rechecks services whose time has come: every 60 s while up, and with 15 s to 5 min backoff while down. Concurrent attempts never probe the same service twice. When the settings or credentials revision changes, every service is rechecked at once, so a fixed password does not wait out the backoff.
+- **After each job** it applies passive marking (below).
+- It logs `SERVICE_DOWN` and `SERVICE_RESTORED` once per change, with `service=`, `service_status=` and a `service_detail=` text such as `Prowlarr is unavailable: HTTP 503 at …`.
+
 ## Passive marking
 
-When a real request fails, the code that made it calls `ServiceHealth.mark_failed(service, exc)`. The adapter's `classify(exc)` turns the client's own exception into a status, so the service is marked down at once, without an extra network call.
+When a real request fails, the service is marked at once, without an extra network call:
+
+- **From a job's result:** each adapter lists the job reason codes that mean "this service failed" (`reasons`; for example qBittorrent: `DOWNLOAD_CLIENT_UNAVAILABLE` → `DOWN`, `DOWNLOAD_CLIENT_AUTH_FAILED` → `AUTH_FAILED`). When a job that declares the service returns one of them, the worker marks the service. Other jobs that need it then wait instead of failing. A job that completes marks its services `UP`.
+- **From an exception:** `ServiceHealth.mark_failed(service, exc)` uses the adapter's `classify(exc)` to turn the client's own exception into a status.
 
 Expected waits, such as a planned AniDB pacing delay, return `NOT_A_FAILURE` and never mark a service down. Each status change is returned once as a `Transition`, so it is logged once instead of on every attempt.
 
@@ -78,7 +111,7 @@ Expected waits, such as a planned AniDB pacing delay, return `NOT_A_FAILURE` and
 
 ## Roadmap
 
-1. **This phase:** adapters, registry, monitor and `adm services check`. Job processing does not change yet.
-2. **Next:** jobs declare which services they need, and the worker skips jobs whose services are down. This replaces `QbittorrentReadiness` and `ACQUISITION_KINDS`.
+1. **Done:** adapters, registry, monitor and `adm services check`.
+2. **Done:** jobs declare which services they need, the worker skips jobs whose services are down, and job results mark services passively. This replaced `QbittorrentReadiness` and `ACQUISITION_KINDS`.
 3. **Then:** an outage means waiting, not failing. The generic `SERVICE_UNAVAILABLE` code names the service, and a job gives up after **72 hours**. The old per-service `*_UNAVAILABLE` codes are migrated.
 4. **Then:** startup fails when a required service is not set up correctly; a dashboard banner shows each service's status.

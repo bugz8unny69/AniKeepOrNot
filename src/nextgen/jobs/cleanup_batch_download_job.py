@@ -12,6 +12,7 @@ from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration
 from src.nextgen.storage.sqlite import enqueue_job
 
 KIND='CLEANUP_BATCH_DOWNLOAD'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Reconcile and remove owned completed batch torrent')
 
 
@@ -118,4 +119,4 @@ def registration(secrets,*,service_factory=BatchDecisionCleanup):
             return Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW')
         except OSError:
             return Outcome('retry','DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE')
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

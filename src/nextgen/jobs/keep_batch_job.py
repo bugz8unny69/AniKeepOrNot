@@ -12,6 +12,7 @@ from src.nextgen.history import job_attempt, append_job_history
 from src.nextgen.storage.cancellation import operation
 
 KIND='KEEP_BATCH'
+SERVICES=('sonarr',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Keep verified batch episodes in the permanent library')
 
 
@@ -55,4 +56,4 @@ def registration(secrets,*,service_factory=Service):
     async def execute(context):
         return await execute_keep(context, secrets, service_factory=service_factory,
                                   journals=_episode_journals)
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

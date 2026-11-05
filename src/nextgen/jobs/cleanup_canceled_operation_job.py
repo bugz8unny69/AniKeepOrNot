@@ -7,6 +7,7 @@ from src.nextgen.storage.management_actions import ManagementActions, ActionUnav
 from src.nextgen.storage.sqlite import transaction
 
 KIND='CLEANUP_CANCELED_OPERATION'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Clean up canceled work')
 
 
@@ -39,4 +40,4 @@ def registration(secrets,*,service_factory=CancellationService):
         # A bounded reconciliation pass frees a slot. Waiting is not retry failure
         # and never rearms an uncertain external cleanup command.
         return Outcome('defer',status['reason_code'] or 'CANCELLATION_PENDING',delay_ms=30000)
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)
