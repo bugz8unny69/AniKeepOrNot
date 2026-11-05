@@ -29,6 +29,7 @@ from src.nextgen.worker import blocking
 
 
 KIND='TRANSFER_BATCH'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Select E01 probe and observe batch torrent')
 
 
@@ -174,5 +175,5 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
         return () if verification_kind is None else (
             Successor.create(verification_kind,{
                 'transfer_job_id':value['transfer_job_id']}),)
-    return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist,route=route,
                         successor_kinds=() if verification_kind is None else (verification_kind,))

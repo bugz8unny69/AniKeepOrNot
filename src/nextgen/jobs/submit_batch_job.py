@@ -31,6 +31,7 @@ from src.nextgen.worker import blocking
 
 
 KIND='SUBMIT_BATCH'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Submit owned season pack stopped')
 
 
@@ -141,5 +142,5 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
         return () if transfer_kind is None else (
             Successor.create(transfer_kind,{
                 'submission_job_id':value['submission_job_id']}),)
-    return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist,route=route,
                         successor_kinds=() if transfer_kind is None else (transfer_kind,))

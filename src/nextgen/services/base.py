@@ -81,6 +81,13 @@ class ServiceAdapter:
     # records written by real requests, such as the provider cache and pacing
     # table. Required for AniDB, which bans clients that send too many requests.
     network_probe = True
+    # Job outcome reason codes that mean this service failed, mapped to the
+    # status they imply. The worker uses them to mark the service at once
+    # when a job reports one, with no extra request.
+    reasons = {}
+
+    def status_for_reason(self, reason_code):
+        return self.reasons.get(reason_code)
 
     def probe(self, configuration, secrets, *, now_ms=0):
         raise NotImplementedError

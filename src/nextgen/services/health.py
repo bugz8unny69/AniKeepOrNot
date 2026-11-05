@@ -122,6 +122,12 @@ class ServiceHealth:
                 return None
             return self._apply(service, UP, '', self.now(), probed=False)
 
+    def recheck_all(self):
+        """Make every service due now, e.g. after settings or credentials changed."""
+        with self._lock:
+            for name, state in self._states.items():
+                self._states[name] = replace(state, next_probe_ms=0)
+
     def due(self, service):
         """Whether this service's probe may run now.
 
@@ -143,12 +149,31 @@ class ServiceHealth:
             result = ProbeResult(service, status, f'check failed: {type(exc).__name__}', now)
         return self.record(result)
 
-    def probe_due(self, configuration, secrets):
-        """Probe every service whose recheck time has come. Returns the transitions."""
+    def _reserve(self, service):
+        """Claim the next probe of a service so concurrent callers do not repeat it."""
+        with self._lock:
+            state = self._get(service)
+            now = self.now()
+            if now < state.next_probe_ms:
+                return False
+            self._states[service] = replace(state, next_probe_ms=now + self.min_backoff_ms)
+            return True
+
+    def probe_due(self, configuration, secrets, services=None):
+        """Probe each due service (all, or only the given names). Returns the transitions."""
+        names = self.registry.names() if services is None else tuple(services)
         changes = []
-        for adapter in self.registry:
-            if self.due(adapter.name):
-                change = self.probe(adapter.name, configuration, secrets)
+        for name in names:
+            if self._reserve(name):
+                change = self.probe(name, configuration, secrets)
                 if change is not None:
                     changes.append(change)
         return tuple(changes)
+
+    def mark_reason(self, service, reason_code, *, detail=''):
+        """A job reported a reason code that its service's adapter recognises."""
+        status = self.registry.get(service).status_for_reason(reason_code)
+        if status is None or status in USABLE:
+            return None
+        with self._lock:
+            return self._apply(service, status, detail, self.now(), probed=False)

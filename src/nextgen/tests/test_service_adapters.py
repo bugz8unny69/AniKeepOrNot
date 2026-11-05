@@ -128,6 +128,21 @@ class ArrAdapterTests(unittest.TestCase):
         self.assertEqual(SonarrAdapter().probe(Config(), Secrets(), transport=new).status, UP)
         self.assertTrue(new.requests[0][0].endswith('/api/v3/system/status'))
 
+    def test_job_reason_codes_map_to_their_service(self):
+        from src.nextgen.reasons import get_reason
+        from src.nextgen.services import default_registry
+        registry = default_registry()
+        self.assertEqual(registry.get('qbittorrent').status_for_reason('DOWNLOAD_CLIENT_UNAVAILABLE'), DOWN)
+        self.assertEqual(registry.get('qbittorrent').status_for_reason('DOWNLOAD_CLIENT_AUTH_FAILED'), AUTH_FAILED)
+        self.assertEqual(registry.get('prowlarr').status_for_reason('PROWLARR_SEARCH_TIMEOUT'), DOWN)
+        self.assertEqual(registry.get('sonarr').status_for_reason('KEEP_SERVICE_UNAVAILABLE'), DOWN)
+        self.assertIsNone(registry.get('sonarr').status_for_reason('KEEP_IMPORT_REVIEW'))
+        # Every mapped code is a real, registered reason.
+        for adapter in registry:
+            for code in adapter.reasons:
+                with self.subTest(service=adapter.name, code=code):
+                    self.assertIsNotNone(get_reason(code))
+
     def test_client_errors_classify_without_a_probe(self):
         from src.nextgen.acquisition.prowlarr_search import SearchUnauthorized, SearchUnavailable
         from src.nextgen.sonarr import KeepUnavailable
@@ -236,6 +251,16 @@ class MetadataAdapterTests(unittest.TestCase):
         result = self.probe(AnidbAdapter())
         self.assertEqual((result.status, result.detail),
                          (DOWN, '3 recent failed request(s); next request allowed in 20 min'))
+
+    def test_expired_cooldown_is_unknown_so_requests_can_recover_it(self):
+        # Only a successful request resets the failure count. If an expired
+        # cooldown still counted as down, gated jobs would never send that request.
+        self.write("INSERT INTO provider_limits(provider,next_allowed_at_ms,failures,reservation_token) "
+                   "VALUES('anidb',?,3,?)", (self.now - 60000, 'a' * 32))
+        result = self.probe(AnidbAdapter())
+        self.assertEqual(result.status, UNKNOWN)
+        self.assertTrue(result.usable)
+        self.assertIn('next request will show', result.detail)
 
     def test_cached_data_means_up_with_its_age(self):
         self.write("INSERT INTO provider_limits(provider,next_allowed_at_ms,failures,reservation_token) "

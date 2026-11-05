@@ -17,6 +17,7 @@ from src.nextgen.storage.cancellation import operation
 from src.nextgen.keep_cleanup_proof import staged_keep, permanent_keep
 
 KIND='CLEANUP_KEPT_MEDIA'
+SERVICES=('sonarr',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Remove kept episode from staging')
 
 
@@ -115,4 +116,4 @@ def registration(secrets,*,service_factory=Service):
             return Outcome('review','POST_KEEP_CLEANUP_REVIEW')
         except OSError:return Outcome('retry','POST_KEEP_CLEANUP_UNAVAILABLE')
         return Outcome(value={'keep_job_id':keep})
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

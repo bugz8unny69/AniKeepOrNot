@@ -127,6 +127,15 @@ def _message(name, fields):
             raise ValueError("unregistered diagnostic activity")
         parts.extend(("activity_code=" + activity, "activity_message=" + json.dumps(
             DEFAULT_CATALOG.state("job_activity", activity)["message"])))
+    service = fields.get("service")
+    if type(service) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", service):
+        parts.append("service=" + service)
+        status = fields.get("service_status")
+        if type(status) is str and re.fullmatch(r"[A-Z_]{2,20}", status):
+            parts.append("service_status=" + status)
+        detail = fields.get("service_detail")
+        if type(detail) is str and detail:
+            parts.append("service_detail=" + json.dumps(redact(detail)[:300]))
     selected = {}
     for key in ("event_id", "job_id", "created_by_job_id", "attempt", "elapsed_ms", "config_revision"):
         value = fields.get(key)

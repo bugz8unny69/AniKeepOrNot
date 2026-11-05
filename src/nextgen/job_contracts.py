@@ -141,6 +141,10 @@ class Registration:
     successor_kinds: tuple[str, ...] = ()
     route: object = field(default=None, repr=False)
     persist: object = field(default=None, repr=False)
+    # External services this handler needs (names from the service registry,
+    # e.g. "qbittorrent"). The worker does not claim the job while any of
+    # them is unavailable. Local-only handlers declare none.
+    services: tuple[str, ...] = ()
 
     def __post_init__(self):
         if (type(self.kind) is not str or not self.kind.strip() or len(self.kind) > 64
@@ -151,6 +155,9 @@ class Registration:
             raise ValueError("handler execution mode does not match callable")
         if type(self.successor_kinds) is not tuple or any(type(x) is not str for x in self.successor_kinds):
             raise ValueError("invalid allowed successors")
+        if (type(self.services) is not tuple or len(set(self.services)) != len(self.services)
+                or any(type(s) is not str or not s or len(s) > 32 for s in self.services)):
+            raise ValueError("invalid service requirements")
         for callback in (self.route, self.persist):
             if callback is not None and (not callable(callback) or inspect.iscoroutinefunction(callback)):
                 raise ValueError("completion adapters must be synchronous trusted callables")

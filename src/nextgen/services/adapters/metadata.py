@@ -54,11 +54,19 @@ class _ProviderAdapter(ServiceAdapter):
         finally:
             db.close()
         failing = [(p, until, n) for p, until, n in rows if n > 0]
+        cooling = [(p, until, n) for p, until, n in failing if until > now_ms]
+        if cooling:
+            # Down only while a cooldown is active. Only a successful request
+            # resets the failure count, so treating an expired cooldown as down
+            # would stop the very requests that can recover the service.
+            until = max(u for _, u, _ in cooling)
+            count = max(n for _, _, n in cooling)
+            return self.result(DOWN, f'{count} recent failed request(s); next request allowed in '
+                               f'{_age(until - now_ms)}', now_ms=now_ms)
         if failing:
-            until = max(u for _, u, _ in failing)
             count = max(n for _, _, n in failing)
-            wait = f'; next request allowed in {_age(until - now_ms)}' if until > now_ms else ''
-            return self.result(DOWN, f'{count} recent failed request(s){wait}', now_ms=now_ms)
+            return self.result(UNKNOWN, f'{count} recent failed request(s); the next request will '
+                               'show whether it has recovered', now_ms=now_ms)
         if not rows:
             return self.result(UNKNOWN, 'no requests have been made yet', now_ms=now_ms)
         if cached and cached[1]:

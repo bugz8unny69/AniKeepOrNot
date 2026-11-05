@@ -35,6 +35,12 @@ class ProwlarrAdapter(_ArrAdapter):
     label = 'Prowlarr'
     status_path = '/api/v1/system/status'
     key_getter = 'prowlarr_api_key'
+    reasons = {
+        'PROWLARR_UNAVAILABLE': DOWN,
+        'PROWLARR_SEARCH_TIMEOUT': DOWN,
+        'PROWLARR_AUTH_FAILED': AUTH_FAILED,
+        'PROWLARR_CONFIGURATION_INVALID': NOT_CONFIGURED,
+    }
 
     def classify(self, exc):
         from src.nextgen.acquisition.prowlarr_search import (
@@ -55,6 +61,10 @@ class SonarrAdapter(_ArrAdapter):
     status_path = '/api/v3/system/status'
     key_getter = 'sonarr_api_key'
     supported_major = '4'
+    reasons = {
+        'KEEP_SERVICE_UNAVAILABLE': DOWN,
+        'KEEP_CONFIGURATION_INVALID': NOT_CONFIGURED,
+    }
 
     def classify(self, exc):
         from src.nextgen.sonarr import KeepConfiguration, KeepUnavailable

@@ -159,6 +159,27 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(self.health.probe_due(None, None), ())
         self.assertEqual(self.adapter.calls, 1)
 
+    def test_concurrent_callers_do_not_probe_the_same_service_twice(self):
+        import threading
+        barrier = threading.Barrier(4)
+
+        def call():
+            barrier.wait()
+            self.health.probe_due(None, None, services=('fake',))
+        threads = [threading.Thread(target=call) for _ in range(4)]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        self.assertEqual(self.adapter.calls, 1)
+
+    def test_recheck_all_and_mark_reason(self):
+        self.health.probe('fake', None, None)
+        self.assertFalse(self.health.due('fake'))
+        self.health.recheck_all()
+        self.assertTrue(self.health.due('fake'))
+        self.adapter.reasons = {'FAKE_DOWN': DOWN}
+        self.assertEqual(self.health.mark_reason('fake', 'FAKE_DOWN', detail='x').new, DOWN)
+        self.assertIsNone(self.health.mark_reason('fake', 'SOMETHING_ELSE'))
+
     def test_invalid_timing_is_rejected(self):
         with self.assertRaises(ValueError):
             ServiceHealth(ServiceRegistry(), min_backoff_ms=500)

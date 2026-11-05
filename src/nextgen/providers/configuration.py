@@ -66,7 +66,7 @@ def validate_provider_configuration(configuration, *, secrets=None, require_seri
 async def build_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
                                 policy=Policy(), logger=None, read_metainfo=None, read_batch_metainfo=None,
                                 backfill=False, backfill_select=False, backfill_acquire=False,
-                                require_series_credentials=False, client_factory=None, qb_readiness=None):
+                                require_series_credentials=False, client_factory=None, service_health=None):
     """Validate required local settings, then return an unstarted worker.
 
     Call close() if not serving it. Series identification requires TVDB
@@ -124,23 +124,26 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                               acquire_candidates=backfill_acquire),) if backfill else ()),
                          *batch_handlers,*preparation,
                          *management_registrations(secrets),*additional_registrations))
-    if qb_readiness is None:
-        from src.nextgen.acquisition.readiness import QbittorrentReadiness
-        from src.nextgen.acquisition.qbittorrent import Client as DefaultClient
-        qb_readiness = QbittorrentReadiness(client_factory=DefaultClient if client_factory is None else client_factory)
+    if service_health is None:
+        from src.nextgen.services import ServiceHealth, ServiceRegistry
+        from src.nextgen.services.adapters import builtin_adapters
+        from src.nextgen.services.adapters.qbittorrent import QbittorrentAdapter
+        adapters = tuple(QbittorrentAdapter(client_factory=client_factory)
+                         if isinstance(a, QbittorrentAdapter) else a for a in builtin_adapters())
+        service_health = ServiceHealth(ServiceRegistry(adapters))
     return Worker(store,startup,registry,policy=policy,logger=logger,prepare=prepare,
-                  qb_readiness=qb_readiness,secrets=secrets)
+                  service_health=service_health,secrets=secrets)
 
 
 async def run_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
                               policy=Policy(), read_metainfo=None, read_batch_metainfo=None,
                               backfill=False, backfill_select=False, backfill_acquire=False,
-                              require_series_credentials=False, client_factory=None, qb_readiness=None):
+                              require_series_credentials=False, client_factory=None, service_health=None):
     worker = await build_identity_worker(config_directory,additional_registrations=additional_registrations,
                                          release_kind=release_kind,policy=policy,read_metainfo=read_metainfo,
                                          read_batch_metainfo=read_batch_metainfo,
                                          backfill=backfill,backfill_select=backfill_select,
                                          backfill_acquire=backfill_acquire,
                                          require_series_credentials=require_series_credentials,
-                                         client_factory=client_factory, qb_readiness=qb_readiness)
+                                         client_factory=client_factory, service_health=service_health)
     await serve_worker(worker)

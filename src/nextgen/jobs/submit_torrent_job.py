@@ -16,6 +16,7 @@ from src.nextgen.storage.submissions import SubmissionJournal, target_options, _
 from src.nextgen.worker import blocking
 
 KIND='SUBMIT_TORRENT'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Submit stopped torrent and reconcile ownership')
 
 
@@ -97,5 +98,5 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
         return () if transfer_kind is None else (Successor.create(transfer_kind,{'preparation_job_id':value}),)
-    return Registration(KIND,DEFINITION,execute,persist=lambda db,claim,value:_persist(db,claim,value,discovery_kind=discovery_kind),route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=lambda db,claim,value:_persist(db,claim,value,discovery_kind=discovery_kind),route=route,
                         successor_kinds=() if transfer_kind is None else (transfer_kind,))

@@ -14,6 +14,7 @@ from src.nextgen.storage.acquisition import load_acquisition_input, persist_acqu
 from src.nextgen.worker import blocking
 
 KIND='PREPARE_ACQUISITION'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Inspect source files and prepare acquisition')
 
 
@@ -67,5 +68,5 @@ def registration(read_metainfo,*,submission_kind=None,legacy_bootstrap=None):
         if submission_kind is None:return ()
         if value.preparation_job_id is None:raise ValueError('preparation job identity required')
         return (Successor.create(submission_kind,{'preparation_job_id':value.preparation_job_id}),)
-    return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist,route=route,
                         successor_kinds=() if submission_kind is None else (submission_kind,))
