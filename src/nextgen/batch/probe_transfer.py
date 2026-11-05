@@ -7,7 +7,7 @@ import hashlib
 import json
 
 from src.nextgen.acquisition.transfers import (
-    TransferSnapshot, TransferConflict, PieceOverlap, STOPPED, CHECKING, ACTIVE,
+    TransferSnapshot, TransferConflict, STOPPED, CHECKING, ACTIVE,
 )
 from src.nextgen.storage.batch_submission_journal import BatchSubmissionIntent
 

@@ -7,7 +7,7 @@ import socket
 import stat
 import struct
 
-from src.nextgen.api.password_store import PasswordStore, PasswordConflict, PasswordStorageError
+from src.nextgen.api.password_store import PasswordConflict, PasswordStorageError
 
 MAX_LINE = 2048
 

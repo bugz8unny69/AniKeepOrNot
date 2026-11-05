@@ -4,13 +4,13 @@ Returns intended priorities for the first probe; NEVER calls qBittorrent or
 grants authority to perform an irreversible send. Actual selection/start must
 have a separate durable fenced journal and single-use permit.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import hashlib
 import json
 
 from src.nextgen.acquisition.metadata import BatchInventory
 from src.nextgen.acquisition.settings import SizeLimits
-from src.nextgen.acquisition.transfers import STOPPED, TransferSnapshot, TransferConflict, PieceOverlap
+from src.nextgen.acquisition.transfers import STOPPED, TransferSnapshot, TransferConflict
 from src.nextgen.batch.verification import VerifiedBatch
 from src.nextgen.batch.window import BatchWindowPlan
 

@@ -14,7 +14,7 @@ from src.nextgen.systemd_notify import notify, watchdog_interval
 from src.nextgen.api.password_store import PasswordStore, PasswordConflict, PasswordStorageError
 from src.nextgen.api.passwords import verify_password
 from src.nextgen.api.admin_socket import start_admin
-from src.nextgen.api.auth import (ApiError, COOKIE, Sessions, bearer, matches, public_origin, check_origin, valid_host, webhook_key)
+from src.nextgen.api.auth import (ApiError, COOKIE, Sessions, public_origin, check_origin, valid_host, webhook_key)
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError, ConfigurationConflict, ConfigurationSnapshot, for_operation, field_definitions
 from src.nextgen.cancellation import CancellationError
@@ -23,7 +23,7 @@ from src.nextgen.history import encode_details
 from src.nextgen.matching import validated as validate_matching
 from src.nextgen.maintenance import MaintenanceGate, MaintenanceError, MaintenancePending, MaintenanceBusy
 from src.nextgen.messages import MessageCatalog
-from src.nextgen.dashboard.assets import load_assets, address_mismatch, CSP as DASHBOARD_CSP
+from src.nextgen.dashboard.assets import load_assets, CSP as DASHBOARD_CSP
 from src.nextgen.dashboard.presentation import HANDLERS
 from src.nextgen.search import SearchInvalid, match as search_match, words as search_words
 from src.nextgen.secrets import SecretStore

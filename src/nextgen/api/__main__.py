@@ -6,7 +6,6 @@ import logging
 import re
 
 from src.nextgen.api.app import Application
-from src.nextgen.api.auth import ApiError
 from src.nextgen.secrets import SecretStore
 from src.nextgen.systemd_notify import notify
 
