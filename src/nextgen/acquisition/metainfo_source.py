@@ -8,7 +8,7 @@ import re
 import urllib.parse
 
 from src.nextgen.async_io import blocking
-from src.nextgen.acquisition.metadata import infohash, MetadataInvalid
+from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.settings import (
     endpoint, download_options, DownloadConfigurationError,
 )
@@ -121,10 +121,10 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
             raise MetadataClientUnsupported()
 
         from src.nextgen.storage.batch_metadata_admission import (
-            BatchMetadataJournal, lookup, _inventory,
+            BatchMetadataJournal, lookup,
         )
         from src.nextgen.batch.qb_client import BatchClient
-        from src.nextgen.acquisition.metadata import hash_magnet, ObservedBatchInventory
+        from src.nextgen.acquisition.metadata import hash_magnet
         from src.nextgen.storage.batch_metadata_admission import STOPPED
 
         database=configuration.value('storage.database_path')

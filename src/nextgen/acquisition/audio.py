@@ -8,7 +8,6 @@ import re
 OFF = 'off'
 JAPANESE = 'japanese'
 JAPANESE_ENGLISH = 'japanese_english'
-MODES = (OFF, JAPANESE, JAPANESE_ENGLISH)
 
 _REQUIRED = {OFF: frozenset(), JAPANESE: frozenset({'jpn'}),
              JAPANESE_ENGLISH: frozenset({'jpn', 'eng'})}
@@ -17,15 +16,6 @@ _REQUIRED = {OFF: frozenset(), JAPANESE: frozenset({'jpn'}),
 _SEP = r'[ ._+&/,-]*'
 _JA = r'(?:ja|jp|jpn|jap|japanese)'
 _EN = r'(?:en|eng|english)'
-_TAG = re.compile(
-    r'(?<![a-z0-9])(?:'
-    r'dual' + _SEP + r'(?:audio|aud)?'
-    r'|multi' + _SEP + r'(?:audio|aud)'
-    r'|multi(?!' + _SEP + r'(?:sub|subs|subtitles?)\b)'
-    r'|' + _EN + _SEP + r'dub(?:bed|s)?'
-    r'|dub(?:bed)?'
-    r'|' + _JA + _SEP + _EN + r'|' + _EN + _SEP + _JA +
-    r')(?![a-z0-9])', re.I)
 
 
 def required_languages(mode=None):
@@ -63,8 +53,3 @@ _DUAL_TAG = re.compile(
 def dual_audio_tagged(title):
     """Candidate hint for both audio tracks; actual languages require ffprobe."""
     return type(title) is str and _DUAL_TAG.search(title) is not None
-
-
-def audio_tagged(title):
-    """True when the release title advertises dual/multi audio or an English dub."""
-    return type(title) is str and _TAG.search(title) is not None

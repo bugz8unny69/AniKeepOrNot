@@ -278,42 +278,6 @@ def matches_episode(title, titles, target, season):
     return matches(parse_release(title), AnimeTitles.build(titles, season), target, season)
 
 
-def _release(row, titles, target, season, prepared=None):
-    """A matching torrent result, or None for anything else."""
-    from src.nextgen.acquisition.release_titles import AnimeTitles, matches, parse_release
-    if type(row) is not dict: raise SearchReview()
-    title = row.get('title')
-    if (type(title) is not str or not 1 <= len(title) <= 2048
-            or any(ord(c) < 32 or ord(c) == 127 for c in title)):
-        return None
-    prepared = prepared or AnimeTitles.build(titles, season)
-    if row.get('protocol') not in ('torrent', None) or not matches(
-            parse_release(title), prepared, target, season):
-        return None
-    indexer = row.get('indexer') if type(row.get('indexer')) is str else ''
-    seeders = row.get('seeders')
-    seeders = seeders if type(seeders) is int and seeders >= 0 else None
-    size = row.get('size') if type(row.get('size')) is int and row['size'] >= 0 else 0
-    raw_hash = row.get('infoHash')
-    info_hash = (raw_hash.lower() if type(raw_hash) is str
-                 and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
-    magnet = None
-    for source in (row.get('magnetUrl'), row.get('guid')):
-        source_hash = _magnet_hash(source)
-        if source_hash is None: continue
-        if info_hash is not None and source_hash != info_hash:
-            # Conflicting identities are never silently reconciled.
-            return None
-        info_hash, magnet = source_hash, source
-        break
-    if info_hash is not None and magnet is None:
-        # Hash only: qBittorrent resolves it through DHT/PEX like a bare webhook hash.
-        magnet = 'magnet:?xt=urn:btih:' + info_hash
-    return Release(title[:2048], indexer[:256], resolution(title), seeders, size,
-                   target.tvdb_episode_id, info_hash, magnet, info_hash is not None,
-                   declared_title(titles, target.anidb_episode))
-
-
 def _unavailable(headers):
     error = SearchUnavailable()
     try: value = headers.get('Retry-After') if headers is not None else None

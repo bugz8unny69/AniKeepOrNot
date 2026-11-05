@@ -238,7 +238,7 @@ class Client:
         are usable only after full ownership readback and a stopped state.
         Never claim that qBittorrent's files alone prove BEP3 info bytes.
         """
-        from src.nextgen.acquisition.metadata import infohash, MetadataInvalid
+        from src.nextgen.acquisition.metadata import infohash
         expected_hash=infohash(expected_hash)
         if (not self._sid or self.protocol is None
                 or type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)
