@@ -735,6 +735,272 @@ def prowlarr_matching_json(db, job_id, attempt=None):
     }
 
 
+def explain_identity_stop(failed_checks, reason_code=None, job_state=None, checks=None):
+    if job_state == 'DONE':
+        return 'Series identified successfully.'
+    if failed_checks:
+        first = failed_checks[0]
+        step = first.get('step')
+        note = first.get('note')
+        if note == 'no_anidb_candidates':
+            return 'No AniDB candidates matched the release title or aliases.'
+        if note in ('multiple_anidb_candidates', 'no_unique_anidb_candidate'):
+            return 'Multiple AniDB candidates matched the release title; automatic identification requires an unambiguous match.'
+        if note == 'unverified_sequel':
+            return 'Release was parsed as a sequel or specific season, but no verified sequel mapping or catalog entry was found.'
+        if note == 'multiple_seasons':
+            return 'Release specifies multiple seasons and cannot be unambiguously mapped.'
+        if note == 'not_previously_recognized':
+            return 'Series has not been previously recognized and could not be identified.'
+        if note == 'invalid_release_title':
+            return 'Could not extract a valid anime title from the release name.'
+        if note == 'no_title_aliases':
+            return 'No valid title aliases found for release.'
+        if note == 'anidb_titles_disagree':
+            return 'AniDB candidate titles disagree with the release title.'
+        if note == 'no_anime_lists_mapping':
+            return 'No mapping from AniDB to TVDB found in AnimeLists.'
+        if note == 'tvdb_not_animation':
+            return 'Matched TVDB series is not categorized as animation.'
+        if note == 'tvdb_live_action':
+            return 'Matched TVDB series is categorized as live-action.'
+        if note == 'tvdb_anidb_conflict':
+            return 'Conflict between AniDB and TVDB series mappings.'
+        if note == 'provider_titles_disagree':
+            return 'Provider titles disagree with the release title.'
+        if note == 'missing_verification':
+            return 'Series identity could not be fully verified across providers.'
+        if note == 'provider_auth_failed':
+            return 'TVDB authentication failed; verify API credentials.'
+        if note == 'upstream_deferred':
+            return 'Upstream provider deferred the request (rate limited or temporary delay).'
+        if note == 'upstream_unavailable':
+            return 'Upstream provider is temporarily unavailable.'
+        if note == 'invalid_provider_response':
+            return 'Upstream provider returned an invalid or unparseable response.'
+        if note == 'identity_conflict':
+            return 'Resolved identity conflicts with an existing series in the database.'
+        if note == 'canceled':
+            return 'Identification was canceled.'
+        if note:
+            return f'Matching check {step} failed: {note}.'
+        return f'Matching check {step} failed.'
+    if reason_code == 'JOB_RETRY_EXHAUSTED':
+        return 'Identification retry attempts exhausted.'
+    if reason_code == 'IDENTITY_INCOMPLETE':
+        return 'Anime identification is incomplete; required provider-verified identity facts are missing.'
+    if reason_code == 'IDENTITY_INVALID':
+        return 'Resolved identity failed AnimeSeries validation.'
+    if reason_code == 'IDENTITY_CONFLICT':
+        return 'Resolved identity conflicts with existing stored identity.'
+    if reason_code == 'PROVIDER_AUTH_FAILED':
+        return 'Provider authentication failed.'
+    if reason_code:
+        return f'Identification stopped: {reason_text(reason_code)}'
+    return 'Identification stopped.'
+
+
+def load_identity_matching_record(db, job_id, attempt=None):
+    job_rows = rows(db, 'SELECT job_id, kind, state, last_reason_code, attempt_count, event_id FROM jobs WHERE job_id=?', (job_id,))
+    if not job_rows:
+        return None
+
+    job_row = job_rows[0]
+    identity_job = job_row
+    if job_row['kind'] != 'IDENTIFY_ANIME' and job_row.get('event_id') is not None:
+        source_rows = rows(db, "SELECT job_id, kind, state, last_reason_code, attempt_count, event_id FROM jobs WHERE event_id=? AND kind='IDENTIFY_ANIME' ORDER BY job_id LIMIT 1", (job_row['event_id'],))
+        if source_rows:
+            identity_job = source_rows[0]
+
+    release_name = None
+    if identity_job.get('event_id') is not None:
+        ev_rows = rows(db, "SELECT raw_body FROM incoming_events WHERE event_id=?", (identity_job['event_id'],))
+        if ev_rows and ev_rows[0].get('raw_body'):
+            try:
+                body = json.loads(ev_rows[0]['raw_body'])
+                if isinstance(body, dict) and isinstance(body.get('release_name'), str):
+                    release_name = body['release_name']
+            except (ValueError, TypeError, UnicodeError):
+                pass
+
+    history_rows = rows(
+        db,
+        "SELECT history_id, occurred_at_ms, event_code, reason_code, details_json "
+        "FROM job_history WHERE job_id=? ORDER BY history_id DESC",
+        (identity_job['job_id'],)
+    )
+
+    selected = None
+    for row in history_rows:
+        try:
+            details = json.loads(row['details_json'] or '{}')
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(details, dict) or 'matching' not in details:
+            continue
+        matching_data = details['matching']
+        if not isinstance(matching_data, dict):
+            continue
+        row_attempt = details.get('attempt')
+        if attempt is not None:
+            if row_attempt == attempt:
+                selected = (row, details, matching_data)
+                break
+        else:
+            selected = (row, details, matching_data)
+            break
+
+    if selected is None:
+        return {
+            'exists': True,
+            'recorded': False,
+            'job_id': identity_job['job_id'],
+            'requested_job_id': job_id,
+            'attempt': attempt or identity_job.get('attempt_count', 1),
+            'state': identity_job['state'],
+            'reason_code': identity_job['last_reason_code'],
+            'release_name': release_name,
+            'message': 'Identity matching: Not recorded for this attempt (older job or evidence unavailable). No provider request was made.',
+        }
+
+    row, details, evidence = selected
+    att = details.get('attempt') or identity_job.get('attempt_count', 1)
+    checks = evidence.get('checks') or []
+    failed_checks = [c for c in checks if c.get('status') == 'failed']
+    state = row['event_code'] if row.get('event_code') in ('DONE', 'NEEDS_REVIEW', 'BLOCKED', 'ON_HOLD', 'FAILED') else identity_job['state']
+    reason = row.get('reason_code') or identity_job.get('last_reason_code')
+    summary = explain_identity_stop(failed_checks, reason_code=reason, job_state=state, checks=checks)
+
+    return {
+        'exists': True,
+        'recorded': True,
+        'job_id': identity_job['job_id'],
+        'requested_job_id': job_id,
+        'attempt': att,
+        'occurred_at_ms': row.get('occurred_at_ms'),
+        'state': state,
+        'reason_code': reason,
+        'release_name': release_name,
+        'aliases': evidence.get('queries') or [],
+        'queries': evidence.get('queries') or [],
+        'season': evidence.get('season'),
+        'episode': evidence.get('episode'),
+        'anidb_candidates': evidence.get('anidb_candidates') or [],
+        'selected_anidb_id': evidence.get('selected_anidb_id'),
+        'selected_tvdb_id': evidence.get('selected_tvdb_id'),
+        'tvdb_titles': evidence.get('tvdb_titles') or [],
+        'checks': checks,
+        'failed_checks': failed_checks,
+        'summary': summary,
+    }
+
+
+def identity_matching_json(db, job_id, attempt=None):
+    rec = load_identity_matching_record(db, job_id, attempt=attempt)
+    if rec is None:
+        return {'error': 'job not found'}
+    if not rec['recorded']:
+        return {
+            'recorded': False,
+            'job_id': rec['job_id'],
+            'message': rec['message'],
+        }
+    return {
+        'recorded': True,
+        'job_id': rec['job_id'],
+        'requested_job_id': rec['requested_job_id'],
+        'attempt': rec['attempt'],
+        'occurred_at_ms': rec['occurred_at_ms'],
+        'occurred_at': when(rec['occurred_at_ms']),
+        'state': rec['state'],
+        'reason_code': rec['reason_code'],
+        'release_name': rec['release_name'],
+        'aliases': rec['aliases'],
+        'season': rec['season'],
+        'episode': rec['episode'],
+        'anidb_candidates': rec['anidb_candidates'],
+        'selected_anidb_id': rec['selected_anidb_id'],
+        'selected_tvdb_id': rec['selected_tvdb_id'],
+        'tvdb_titles': rec['tvdb_titles'],
+        'checks': rec['checks'],
+        'failed_checks': rec['failed_checks'],
+        'summary': rec['summary'],
+    }
+
+
+def report_identity_matching(db, job_id, attempt=None, out=print, is_short=False):
+    rec = load_identity_matching_record(db, job_id, attempt=attempt)
+    if rec is None:
+        out(f'Job #{job_id} does not exist.')
+        return 1
+
+    if not rec['recorded']:
+        if is_short:
+            out(f'=== Identity matching · Job #{job_id}')
+        else:
+            out('=== Identity matching')
+        out(rec['message'])
+        return 0
+
+    att = rec['attempt']
+    out(f'=== Identity matching · Job #{job_id} · attempt {att}')
+    observed = when(rec['occurred_at_ms'])
+    observed_str = 'Not recorded' if observed == '-' else f'{observed} local'
+    out(f'Identification observed: {observed_str}')
+    out(f'Release: {rec["release_name"] or "Not recorded"}')
+    out(f'State: {rec["state"]} · Reason: {rec["reason_code"] or "None"} · Attempt: {att}')
+    out('Source: recorded identity evidence (NO live provider request)')
+
+    aliases = rec['aliases']
+    aliases_str = ' · '.join(aliases) if aliases else 'Not recorded'
+    season = rec['season']
+    episode = rec['episode']
+    season_str = f'Season {season}' if season is not None else 'Not specified'
+    episode_str = f'Episode {episode}' if episode is not None else 'Not parsed'
+    out(f'\nParsed release:\n  Aliases : {aliases_str}\n  Detected: {season_str} · {episode_str}')
+
+    candidates = rec['anidb_candidates']
+    out(f'\nAniDB candidates ({len(candidates)}):')
+    if not candidates:
+        out('  (none returned)')
+    else:
+        for cand in candidates:
+            aid = cand.get('anidb_id')
+            titles = cand.get('titles') or []
+            titles_str = ' · '.join(titles) if titles else 'No titles recorded'
+            out(f'  AniDB #{aid}: {titles_str}')
+
+    sel_anidb = rec['selected_anidb_id']
+    sel_tvdb = rec['selected_tvdb_id']
+    tvdb_titles = rec['tvdb_titles'] or []
+    sel_anidb_str = f'AniDB #{sel_anidb}' if sel_anidb else 'Not selected'
+    sel_tvdb_str = f'TVDB #{sel_tvdb}' if sel_tvdb else 'Not selected'
+    tvdb_titles_str = f' ({", ".join(tvdb_titles)})' if tvdb_titles else ''
+    out(f'\nSelected identifiers:\n  AniDB: {sel_anidb_str}\n  TVDB : {sel_tvdb_str}{tvdb_titles_str}')
+
+    checks = rec['checks']
+    out(f'\nMatching checks ({len(checks)}):')
+    if not checks:
+        out('  (no checks recorded)')
+    else:
+        for chk in checks:
+            step = chk.get('step', 'unknown')
+            st = chk.get('status', 'unknown')
+            note = chk.get('note')
+            note_str = f' ({note})' if note else ''
+            out(f'  [{st.upper():<7}] {step:<20}{note_str}')
+
+    failed_checks = rec['failed_checks']
+    out('\nIdentification outcome:')
+    if failed_checks:
+        failed_steps = ', '.join(f"{c.get('step')} ({c.get('note')})" if c.get('note') else c.get('step') for c in failed_checks)
+        out(f'  Failed check: {failed_steps}')
+    else:
+        out('  Failed check: none')
+    out(f'  Summary     : {rec["summary"]}')
+    return 0
+
+
 def main(argv):
     import argparse
     # Short form alias support: if 'job' is omitted but '--id' is present, insert 'job'
@@ -745,26 +1011,33 @@ def main(argv):
                 break
 
     parser = argparse.ArgumentParser(prog='adm report', description='Read-only reports')
-    parser.add_argument('--compress', action='store_true',
+    parser.add_argument('--compress', action='store_true', default=False,
                         help='Save as a .tar.gz (default /tmp/<kind>-report-<id>.tar.gz)')
-    parser.add_argument('--dest', help='File or directory to save the report to')
+    parser.add_argument('--dest', default=None,
+                        help='File or directory to save the report to')
     parser.add_argument('--config-dir', default='/etc/anime-discovery')
     parser.add_argument('--json', action='store_true', default=False,
                         help='Print diagnostics or matching report as JSON')
     parser.add_argument('--short', action='store_true', default=False,
                         help='Output only the selected matching report section')
-    parser.add_argument('--include-matching', choices=('prowlarr',), default=None,
+    parser.add_argument('--include-matching', choices=('prowlarr', 'identity'), default=None,
                         help='Include matching section for provider')
     parser.add_argument('--attempt', type=int, default=None,
                         help='Specific captured search attempt')
     kinds = parser.add_subparsers(dest='what', required=True, metavar='{job}')
     job = kinds.add_parser('job', help='Everything about one job: history, failed check, paths')
     job.add_argument('--id', dest='job_id', type=int, required=True, help='Job number, e.g. 2593')
+    job.add_argument('--compress', action='store_true', default=argparse.SUPPRESS,
+                     help='Save as a .tar.gz (default /tmp/<kind>-report-<id>.tar.gz)')
+    job.add_argument('--dest', default=argparse.SUPPRESS,
+                     help='File or directory to save the report to')
+    job.add_argument('--config-dir', default=argparse.SUPPRESS,
+                     help='Configuration directory')
     job.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
                      help='Print the diagnostics as JSON instead of text')
     job.add_argument('--short', action='store_true', default=argparse.SUPPRESS,
                      help='Output only the selected matching report section')
-    job.add_argument('--include-matching', choices=('prowlarr',), default=argparse.SUPPRESS,
+    job.add_argument('--include-matching', choices=('prowlarr', 'identity'), default=argparse.SUPPRESS,
                      help='Include matching section for provider')
     job.add_argument('--attempt', type=int, default=argparse.SUPPRESS,
                      help='Specific captured search attempt')
@@ -774,27 +1047,35 @@ def main(argv):
     is_short = getattr(args, 'short', False)
     include_matching = getattr(args, 'include_matching', None)
     attempt = getattr(args, 'attempt', None)
+    compress = getattr(args, 'compress', False)
+    dest = getattr(args, 'dest', None)
+    config_dir = getattr(args, 'config_dir', '/etc/anime-discovery')
 
     if is_short and not include_matching:
         parser.error('--short requires --include-matching <section>')
 
     try:
-        db = connect(args.config_dir)
+        db = connect(config_dir)
     except Exception as exc:  # Explain plainly; the usual cause is permissions.
         parser.exit(2, f'Cannot open the database read-only ({exc.__class__.__name__}: {exc}). '
                        'Run with sudo, or as the anime-discovery service account.\n')
     lines = []
-    printing = not (args.compress or args.dest)
+    printing = not (compress or dest)
     out = print if printing else lines.append
     try:
         with db:
             if is_json:
                 if is_short:
-                    matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
+                    if include_matching == 'prowlarr':
+                        matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
+                    elif include_matching == 'identity':
+                        matching_doc = identity_matching_json(db, args.job_id, attempt=attempt)
+                    else:
+                        matching_doc = None
                     result_data = {
                         'job_id': args.job_id,
                         'matching': {
-                            'prowlarr': matching_doc,
+                            include_matching: matching_doc,
                         }
                     }
                     out(json.dumps(result_data, indent=2, default=str))
@@ -803,7 +1084,12 @@ def main(argv):
                     from src.nextgen.job_diagnostics import diagnose
                     data = diagnose(db, args.job_id)
                     if data and include_matching:
-                        matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
+                        if include_matching == 'prowlarr':
+                            matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
+                        elif include_matching == 'identity':
+                            matching_doc = identity_matching_json(db, args.job_id, attempt=attempt)
+                        else:
+                            matching_doc = None
                         data['matching'] = {
                             include_matching: matching_doc,
                         }
@@ -811,15 +1097,23 @@ def main(argv):
                     status = 0 if data else 1
             else:
                 if is_short:
-                    status = report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=True)
+                    if include_matching == 'prowlarr':
+                        status = report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=True)
+                    elif include_matching == 'identity':
+                        status = report_identity_matching(db, args.job_id, attempt=attempt, out=out, is_short=True)
+                    else:
+                        status = 1
                 else:
                     status = report(db, args.job_id, out=out)
-                    if status == 0 and include_matching == 'prowlarr':
+                    if status == 0 and include_matching:
                         out('')
-                        report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
+                        if include_matching == 'prowlarr':
+                            report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
+                        elif include_matching == 'identity':
+                            report_identity_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
         if not printing:
             saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{args.job_id}',
-                         dest=args.dest, compress=args.compress)
+                         dest=dest, compress=compress)
             print(f'Report saved to {saved}')
     finally:
         db.close()
