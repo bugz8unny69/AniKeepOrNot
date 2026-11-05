@@ -217,14 +217,18 @@ class JobRecoveryTests(unittest.TestCase):
             self.assertEqual(ret, 0)
         self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
 
-        # 6. Existing scripts with the old --apply flag still work.
+        # 6. The removed --apply flag is rejected before anything is changed.
         old_style = self._create_stopped_job('PREPARE_ACQUISITION', 'TORRENT_METADATA_TIMEOUT')
-        stdout = io.StringIO()
-        with patch('sys.stdout', stdout):
-            ret = recovery_main(['--config-dir', str(self.config_dir),
-                                 'apply', '--job-id', str(old_style), '--apply'])
-            self.assertEqual(ret, 0)
-        self.assertIn('Successfully Requeued Jobs', stdout.getvalue())
+        with patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit) as rejected:
+            recovery_main(['--config-dir', str(self.config_dir),
+                           'apply', '--job-id', str(old_style), '--apply'])
+        self.assertEqual(rejected.exception.code, 2)
+        db = connect(self.database_path)
+        try:
+            self.assertEqual(db.execute('SELECT state FROM jobs WHERE job_id=?',
+                                        (old_style,)).fetchone()[0], 'NEEDS_REVIEW')
+        finally:
+            db.close()
 
     def test_adm_entrypoint_routes_to_recover(self):
         stdout = io.StringIO()

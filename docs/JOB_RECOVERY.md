@@ -27,7 +27,7 @@ sudo adm recover apply --all-eligible --limit 50
 1. **Read-Only Preview**:
    Running `adm recover` or `adm recover preview` will never mutate the database, claim leases, or enqueue background jobs.
 2. **Explicit Apply Subcommand**:
-   `adm recover apply` is the mutating action; no redundant `--apply` confirmation is needed. The old flag is accepted but hidden for backward compatibility.
+   `adm recover apply` is the mutating action; no separate confirmation flag is needed. The former `--apply` flag has been removed and is rejected.
 3. **No Ad-Hoc SQL or Attempt Reset**:
    Recovery never executes raw `UPDATE jobs SET state='PENDING'` or clears attempt counts. It invokes the vetted `request_review_retry()` engine.
 4. **Compare-And-Swap (CAS) Protection**:

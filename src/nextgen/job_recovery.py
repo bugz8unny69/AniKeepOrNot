@@ -409,9 +409,6 @@ def parser():
     sub_apply.add_argument('--all-eligible', action='store_true', help='Recover all eligible stopped jobs')
     sub_apply.add_argument('--limit', type=int, default=50, help='Maximum jobs to recover (default: 50, max: 100)')
     sub_apply.add_argument('--no-backup', action='store_true', help='Skip SQLite online pre-recovery backup')
-    # Backward compatibility only. The "apply" subcommand already expresses
-    # the operator's intent; do not require a redundant confirmation flag.
-    sub_apply.add_argument('--apply', action='store_true', help=argparse.SUPPRESS)
     sub_apply.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
 
     return p
