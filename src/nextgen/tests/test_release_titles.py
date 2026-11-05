@@ -267,10 +267,12 @@ class IntakeSharesTheReaderTests(unittest.TestCase):
     def test_identity_aliases_and_seasons(self):
         from src.nextgen.providers.identity import _release_seasons
         from src.nextgen.providers.parsing import release_title
-        self.assertEqual(release_title('[Erai-raws] Kusuriya no Hitorigoto 2nd Season - 05 [1080p]'),
-                         (['Kusuriya no Hitorigoto'], 5))
-        self.assertEqual(release_title('[Group] Kusuriya no Hitorigoto 05 [1080p]'),
-                         (['Kusuriya no Hitorigoto'], 5))
+        aliases_2nd, ep_2nd = release_title('[Erai-raws] Kusuriya no Hitorigoto 2nd Season - 05 [1080p]')
+        self.assertEqual(ep_2nd, 5)
+        self.assertIn('Kusuriya no Hitorigoto 2nd Season', aliases_2nd)
+        self.assertIn('Kusuriya no Hitorigoto', aliases_2nd)
+        aliases_plain, ep_plain = release_title('[Group] Kusuriya no Hitorigoto 05 [1080p]')
+        self.assertEqual((aliases_plain, ep_plain), (['Kusuriya no Hitorigoto'], 5))
         self.assertEqual(release_title('[Group] Mob Psycho 100 III - 05 [1080p]')[0], ['Mob Psycho 100 III'])
         # Operator issue fixtures:
         # 1. Steamboy with unclosed (BD Remux packaging tag

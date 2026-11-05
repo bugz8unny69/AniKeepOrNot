@@ -163,7 +163,7 @@ class ConfigurationMigrationTests(unittest.TestCase):
     def test_preview_has_no_writes_and_apply_preserves_exact_original_backup(self):
         before = set(self.root.iterdir())
         plan = self.store.preview_migration()
-        self.assertEqual((plan.from_version, plan.to_version, plan.required), (0, 13, True))
+        self.assertEqual((plan.from_version, plan.to_version, plan.required), (0, 14, True))
         self.assertEqual(set(self.root.iterdir()), before)
         self.assertEqual(self.path.read_bytes(), self.raw)
         with self.assertRaises(ConfigurationMigrationRequired):
@@ -172,7 +172,7 @@ class ConfigurationMigrationTests(unittest.TestCase):
         self.assertTrue(result.saved)
         self.assertEqual((self.root / result.backup_name).read_bytes(), self.raw)
         self.assertEqual(self.store.read().value("logging.level"), "DEBUG")
-        self.assertEqual(self.store.read().revision, 13)
+        self.assertEqual(self.store.read().revision, 14)
         again = self.store.preview_migration()
         self.assertFalse(again.required)
         self.assertFalse(self.store.migrate(expected_fingerprint=again.source_fingerprint).saved)

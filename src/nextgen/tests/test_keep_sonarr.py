@@ -214,8 +214,8 @@ class SonarrSettingsTests(unittest.TestCase):
             self.assertNotIn('sonarr',doc['settings'])
             with self.assertRaises(ConfigurationError):convert_document({**doc,'settings':{**doc['settings'],'sonarr':{'base_url':'http://sonarr.invalid'}}})
         upgraded=convert_document(doc)
-        self.assertEqual(upgraded.schema_version,13)
-        self.assertEqual(upgraded.revision,doc['revision']+6)
+        self.assertEqual(upgraded.schema_version,14)
+        self.assertEqual(upgraded.revision,doc['revision']+7)
         self.assertEqual(upgraded.value('sonarr.base_url'),'')
         # The HTTP torrent metadata source was explicitly retired in v12.
         # Every other historical setting remains unchanged.
