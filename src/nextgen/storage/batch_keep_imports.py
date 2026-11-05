@@ -6,7 +6,6 @@ entire season torrent as one episode.
 """
 from dataclasses import asdict
 import json
-from pathlib import PurePosixPath
 
 from src.nextgen.history import integer
 from src.nextgen.keep_selection import KeepSelection

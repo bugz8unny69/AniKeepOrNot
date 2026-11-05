@@ -23,10 +23,8 @@ from src.nextgen.job_contracts import (
     CompletionRejected, Outcome, Registration, Successor, failure_facts,
 )
 from src.nextgen.storage.batch_transfer_journal import (
-    BatchTransferJournal, _record,
+    BatchTransferJournal,
 )
-from src.nextgen.storage.batch_submission_journal import _intent
-from src.nextgen.storage.batch_acquisition_candidate import _candidate
 from src.nextgen.worker import blocking
 
 

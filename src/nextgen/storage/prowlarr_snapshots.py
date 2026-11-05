@@ -9,7 +9,6 @@ import time
 
 ANSI_ESCAPE = re.compile(r'\x1B(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])')
 MAX_TITLE_LEN = 2048
-MAX_INDEXER_LEN = 256
 MAX_STORED_ROWS = 1000
 
 

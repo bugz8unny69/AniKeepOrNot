@@ -1,16 +1,14 @@
 """Central authoritative qBittorrent readiness validation and snapshot caching."""
-import logging
 import time
 
 from src.nextgen.acquisition.qbittorrent import Client
 from src.nextgen.acquisition.settings import (
-    download_options, DownloadConfigurationError, DownloadOptions, DownloadCredentials,
+    download_options, DownloadConfigurationError,
 )
 from src.nextgen.acquisition.submission import (
     ClientAuthenticationFailed, ClientInvalid, ClientUnavailable, ClientUnsupported,
 )
 from src.nextgen.configuration_schema import ConfigurationError
-from src.nextgen.diagnostics import event
 
 ACQUISITION_KINDS = (
     'PREPARE_ACQUISITION', 'SUBMIT_TORRENT', 'DOWNLOAD_TORRENT',

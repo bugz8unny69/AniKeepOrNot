@@ -9,7 +9,7 @@ import json
 
 from src.nextgen.acquisition.media import VerifiedMedia
 from src.nextgen.acquisition.transfers import (
-    TransferSnapshot, TransferConflict, PieceOverlap, STOPPED, ACTIVE, CHECKING,
+    TransferSnapshot, TransferConflict,
 )
 from src.nextgen.batch.probe_transfer import verify_probe_snapshot
 from src.nextgen.storage.batch_submission_journal import BatchSubmissionIntent

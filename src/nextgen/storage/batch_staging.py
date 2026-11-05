@@ -12,7 +12,6 @@ from pathlib import PurePosixPath
 from types import SimpleNamespace
 
 from src.nextgen.anime_titles import title_for
-from src.nextgen.acquisition.media import VerifiedMedia
 from src.nextgen.staging import (
     StagingReview, disjoint, specification, root_identity, encoded,
 )

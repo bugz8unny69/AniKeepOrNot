@@ -6,7 +6,7 @@ candidate. Selection never grants a torrent submission permit.
 """
 import time
 
-from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult, _magnet_hash
+from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
 from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.sonarr_episode import VerifiedEpisode
 

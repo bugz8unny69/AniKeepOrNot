@@ -12,7 +12,6 @@ from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration
 from src.nextgen.staging import StagingBusy, StagingReview
 from src.nextgen.sonarr import KeepReview
 from src.nextgen.storage.batch_keep_imports import batch_publications
-from src.nextgen.storage.cancellation import operation
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.review_decisions import staged, remove_series
 from src.nextgen.storage.sqlite import enqueue_job, transaction

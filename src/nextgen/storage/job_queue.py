@@ -13,7 +13,7 @@ import uuid
 
 from src.nextgen.cancellation import CancellationRequested
 from src.nextgen.history import HistoryRecord, append_job_history, integer
-from src.nextgen.job_contracts import Outcome, Policy, Successor, payload_json, parse_payload
+from src.nextgen.job_contracts import Outcome, Policy, Successor, parse_payload
 from src.nextgen.matching import from_json as matching_from_json
 from src.nextgen.messages import validate_job_activity
 from src.nextgen.storage.migrations import _open, LATEST_VERSION

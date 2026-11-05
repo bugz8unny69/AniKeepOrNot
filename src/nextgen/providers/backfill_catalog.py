@@ -7,8 +7,7 @@ will accept. No release search or acquisition happens here.
 import datetime
 
 from src.nextgen.acquisition.prowlarr_search import EpisodeCatalog, EpisodeTarget
-from src.nextgen.providers.errors import ProviderAuthenticationFailed, ProviderInvalidResponse
-from src.nextgen.providers.http import Credentials
+from src.nextgen.providers.errors import ProviderInvalidResponse
 from src.nextgen.providers.release_mapping import forward_mappings
 
 

@@ -17,7 +17,7 @@ from src.nextgen.cancellation import OperationGate, CancellationRequested
 from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError
-from src.nextgen.diagnostics import configure_logging, event, exception, log_history
+from src.nextgen.diagnostics import configure_logging, exception, log_history
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json, failure_facts
 from src.nextgen.reasons import get_reason
 from src.nextgen.maintenance import MaintenanceGate, MaintenanceBusy, MaintenancePending

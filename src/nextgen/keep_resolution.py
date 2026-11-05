@@ -2,12 +2,10 @@
 import time
 import urllib.error
 from src.nextgen.providers.release_mapping import forward_mappings
-from src.nextgen.providers.http import Options
 from src.nextgen.providers.identity import ClientPool, Clients
 from src.nextgen.providers.configuration import options_from_configuration
 from src.nextgen.providers.errors import (
-    ProviderUnavailable, ProviderAuthenticationFailed,
-    ProviderConfigurationError, ProviderInvalidResponse,
+    ProviderUnavailable, ProviderAuthenticationFailed, ProviderConfigurationError,
 )
 from src.nextgen.release_contracts import ReleaseNotReady, ReleaseConflict
 from src.nextgen.secrets import Credentials

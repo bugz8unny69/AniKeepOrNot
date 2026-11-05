@@ -7,7 +7,6 @@ import stat
 from src.nextgen.keep_selection import KeepSelection, load_selection
 from src.nextgen.sonarr import Options, KeepReview
 from src.nextgen.acquisition.cleanup import directory, parent
-from src.nextgen.acquisition.media import signature
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.review_decisions import staged, require_allowed
 from src.nextgen.storage.cancellation import operation

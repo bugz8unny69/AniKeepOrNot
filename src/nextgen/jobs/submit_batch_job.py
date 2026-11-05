@@ -25,7 +25,7 @@ from src.nextgen.job_contracts import (
     CompletionRejected, Outcome, Registration, Successor,
 )
 from src.nextgen.storage.batch_submission_journal import (
-    BatchSubmissionJournal, _target,
+    BatchSubmissionJournal,
 )
 from src.nextgen.worker import blocking
 

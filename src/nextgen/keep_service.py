@@ -4,7 +4,7 @@ import re
 
 from src.nextgen.keep_selection import KeepSelection
 from src.nextgen.acquisition.metadata import safe_path
-from src.nextgen.sonarr import Client, Options, KeepReview, KeepUnavailable, existing_file
+from src.nextgen.sonarr import Client, Options, KeepReview, existing_file
 from src.nextgen.storage.keep_imports import Journal, check_source
 from src.nextgen.storage.staging import Journal as StageJournal
 

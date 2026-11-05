@@ -1,13 +1,8 @@
 """Durable real JP+EN probe proof, fenced to a completed batch download job."""
-import json
 import time
 
 from src.nextgen.acquisition.media import VerifiedMedia, MediaInvalid
-from src.nextgen.batch.probe_transfer import selection_fingerprint
 from src.nextgen.history import integer
-from src.nextgen.storage.batch_acquisition_candidate import _candidate
-from src.nextgen.storage.batch_submission_journal import _intent
-from src.nextgen.storage.batch_transfer_journal import _record
 
 
 def _proof_source(db,claim,verified):

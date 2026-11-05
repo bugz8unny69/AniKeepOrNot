@@ -6,7 +6,6 @@ import hashlib
 
 from src.nextgen.acquisition.cleanup import directory, parent
 from src.nextgen.acquisition.metadata import AcquisitionConflict
-from src.nextgen.acquisition.media import signature
 from src.nextgen.staging import StagingReview, disjoint
 
 

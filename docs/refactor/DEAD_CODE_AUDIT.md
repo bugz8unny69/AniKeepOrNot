@@ -1,7 +1,9 @@
 # Dead-code and duplication audit (RF-002)
 
 **Base:** `NextGen` `99dd30ef` (see [BASELINE.md](BASELINE.md))
-**Scope:** `src/nextgen` excluding tests (167 files, 27,589 lines), plus entrypoints `bin/adm`, `bin/anime-discovery-install`, `deploy/nextgen/*.service`, dashboard JS and SQL.
+**Scope:** `src/nextgen` excluding tests (167 files, 27,589 lines), plus entrypoints `bin/adm`, `bin/anime-discovery-install`, `deploy/nextgen/*.service`, the operator repair scripts in `fixes/`, dashboard JS and SQL.
+
+> **Correction (RF-003):** the first version of this audit did not scan `fixes/`. As a result `audio_exhausted` (formerly D4) was wrongly listed as dead: `fixes/requeue_waiting_for_dub.py` imports it. The full suite caught this when it was removed, and the removal was reverted. Every other removed name and every P-item was then rechecked against `fixes/`, `bin/` and `deploy/`, and no other references were found.
 **Production behavior changed:** none. This is an audit only.
 
 ## Method
@@ -26,7 +28,6 @@ Historical migration scripts (`src/nextgen/storage/sql/`, `storage/migrations.py
 | D1 | `src/nextgen/sonarr.py:139` | `Client.add_payload()` | Its only caller (`check_source(data);payload=client.add_payload(selection)`) was removed in `b0ca9e37`. Keep now requires the series to exist already and fails with `SERIES_MISSING` (`keep_service.py:45`). No production or test references remain. This was the last piece of the superseded Sonarr "add series" acquisition path. |
 | D2 | `src/nextgen/acquisition/prowlarr_search.py:281` | `_release()` | Its row-filtering logic was inlined into `Client._search()` (`prowlarr_search.py:551`) for the explainable matching report in `45e1876a`. Zero references. |
 | D3 | `src/nextgen/acquisition/audio.py:68` | `audio_tagged()` and its `_TAG` regex, if `_TAG` turns out to be used only there | `dual_audio_tagged()` replaced it in `c9c14c35` ("gate English acquisitions on dual-audio hints"), which removed both production callers. Only its own unit assertions in `tests/test_audio_check.py:28,34` remain. Those assertions go with it. |
-| D4 | `src/nextgen/storage/sonarr_backfill.py:497` | `audio_exhausted()` | Added in `a5ed1c2c` and never called. Zero references, including tests. |
 | D5 | `src/nextgen/acquisition/audio.py:11` | `MODES` | Zero references. Configuration validates audio modes on its own. |
 | D6 | `src/nextgen/storage/prowlarr_snapshots.py:12` | `MAX_INDEXER_LEN` | Zero references. Removing an unused constant changes no bounds. |
 | D7 | (list below) | Unused imports | Not used in their file, not re-exported, not a patch target. |
@@ -107,6 +108,7 @@ These are production definitions referenced **only by tests**. Deleting them wou
 | `schema/__init__.py` re-exports (`AnimeSeries`, `Anime`, `Episode`, `TVDBPlacement`) | The canonical package surface ("Canonical versioned series schema"). No current importer uses it, but it is the documented public entry. Keep it unless RF-008 decides otherwise. |
 | `storage/staging.py:13` `StagingConfiguration` | Re-exported. Other modules import it from here. |
 | `storage/prowlarr_snapshots.py:122` `prune_snapshots()` | **Kept by owner decision (2026-11-04). This function is retained but not yet wired up.** It is the retention policy for `prowlarr_search_snapshots`: delete snapshots older than 30 days, and keep the latest 5 per job, but only for `DONE` or `CANCELED` jobs. That table is active: `job_queue.py:231` writes a row for every Prowlarr search, and `adm report --include-matching prowlarr` reads them. Because nothing calls this function, the rows are never pruned. Wiring it in would be a behavior change, so it belongs on NextGen, not in this refactor. Do not remove it. |
+| `storage/sonarr_backfill.py` `audio_exhausted()` *(formerly D4)* | Imported by the operator repair script `fixes/requeue_waiting_for_dub.py:29`, which `tests/test_waiting_for_dub.py` loads. It is not dead. |
 | `schema/anime_series.py:14` `FIELD_DOC_KEYS` | A schema-documentation contract constant. `test_anime_series_schema.py` uses it to make every field carry documentation metadata. |
 
 ---
@@ -178,10 +180,10 @@ Sonarr-based release search and grab was replaced by Prowlarr in `db41b589` ("se
 
 | Class | Count |
 |---|---|
-| Confirmed dead definitions | 6 (D1–D6) |
+| Confirmed dead definitions | 5 (D1–D3, D5, D6). D4 was reclassified as required. |
 | Confirmed unused imports | 51 names in 30 files (D7), including 4 added by #261 |
 | Potentially dead (owner decision or more investigation) | 12 definitions + 1 pattern (P2–P14) |
-| Required compatibility | 10 groups |
+| Required compatibility | 11 groups |
 | Unreferenced modules | 0 |
 
-**RF-003 plan:** remove D1–D7 in small commits grouped by subsystem (acquisition, storage, API/worker, jobs), running focused tests after each and the full suite after each group. Leave P2–P14 for an owner decision. `prune_snapshots` (formerly P1) is kept by owner decision. See §3.
+**RF-003 plan:** remove D1–D3 and D5–D7 in small commits grouped by subsystem (acquisition, storage, API/worker, jobs), running focused tests after each and the full suite after each group. Leave P2–P14 for an owner decision. `prune_snapshots` (formerly P1) is kept by owner decision. See §3.

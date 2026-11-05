@@ -2,7 +2,7 @@
 import json
 import unittest
 
-from src.nextgen.acquisition.audio import audio_tagged, dual_audio_tagged, required_languages, wants_english
+from src.nextgen.acquisition.audio import dual_audio_tagged, required_languages, wants_english
 from src.nextgen.acquisition.media import AudioMissing, parse_probe
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release
 from src.nextgen.jobs.evaluate_trial_job import (
@@ -18,21 +18,6 @@ from src.nextgen.tests.test_media_verification import probe_bytes
 
 
 class AudioTagTests(unittest.TestCase):
-    def test_common_group_spellings_count_as_audio_tags(self):
-        for title in ('[Group] Show - 01 (1080p) [Dual Audio]', 'Show.S01E01.1080p.Dual-Audio.x265',
-                      'Show S01E01 DUAL 1080p', 'Show - 01 [Multi-Audio]', 'Show S01E01 MULTi 1080p',
-                      'Show - 01 [English Dub]', 'Show - 01 (Dubbed)', 'Show S01E01 JPN+ENG',
-                      'Show - 01 [Eng-Jpn]', 'Show - 01 (Japanese, English)',
-                      'Show - 01 [MULTi AD]', '[SubsPlease] Some Show - 01 (720p) [MULTi AD].mkv'):
-            with self.subTest(title=title):
-                self.assertTrue(audio_tagged(title))
-
-    def test_subtitles_and_plain_titles_do_not_count(self):
-        for title in ('[SubsPlease] Show - 01 (1080p)', 'Show - 01 [Multi-Subs]',
-                      'Show S01E01 1080p MULTi-Sub', 'Multiple Show - 01', '', None):
-            with self.subTest(title=title):
-                self.assertFalse(audio_tagged(title))
-
     def test_dual_audio_hint_requires_both_audio_languages(self):
         for title in ('Show - 01 [Dual Audio]', 'Show - 01 MULTi',
                       'Show - 01 [Multi-Audio]', 'Show - 01 [MULTi AD]',

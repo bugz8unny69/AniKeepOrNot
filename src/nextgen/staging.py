@@ -6,12 +6,10 @@ import json
 import os
 from pathlib import PurePosixPath
 import re
-import stat
 import xml.etree.ElementTree as ET
 
 from src.nextgen.acquisition.cleanup import directory, parent
 from src.nextgen.acquisition.media import signature, cancelled
-from src.nextgen.cancellation import CancellationError
 
 
 class StagingReview(ValueError):
