@@ -6,10 +6,12 @@
 """
 import io
 import json
+import sqlite3
 import unittest
 
 from src.nextgen.acquisition.episode_context import (
-    EpisodeSearchContext, load_authoritative_episode_context,
+    EpisodeSearchContext, EpisodeContextMissing, EpisodeContextConflict,
+    load_authoritative_episode_context,
 )
 from src.nextgen.acquisition.prowlarr_search import (
     Client, DiscoveryPolicy, EpisodeCatalog, EpisodeTarget, Options,
@@ -420,13 +422,14 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.titles[0], self.titles[0])
             self.assertEqual(ctx.absolute_episode, self.ep)
             self.assertEqual(ctx.status, "SEARCHABLE")
-            self.assertTrue(ctx.verified)
+            self.assertFalse(ctx.verified)
+            self.assertIsNone(ctx.verification_id)
             self.assertEqual(ctx.provenance, "SAVED_SELECTION")
 
-            # Missing plan returns None
-            self.assertIsNone(load_authoritative_episode_context(db, 999, self.ep))
-            # Missing episode returns None
-            self.assertIsNone(load_authoritative_episode_context(db, 19, 999))
+            with self.assertRaises(EpisodeContextMissing):
+                load_authoritative_episode_context(db, 999, self.ep)
+            with self.assertRaises(EpisodeContextMissing):
+                load_authoritative_episode_context(db, 19, 999)
         finally:
             db.close()
 
@@ -459,3 +462,185 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('Original Series' in q for q in queries))
         self.assertTrue(any('English Series' in q for q in queries))
         self.assertTrue(any('Romaji Series' in q for q in queries))
+
+    def test_persisted_identity_conflict_fails_closed(self):
+        self.setUpFixture()
+        db=connect(self.database)
+        try:
+            _,_,anchor=seed_plan(db,19,self.aid,self.tid,anchor_ep=1,title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,"
+                    "tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) VALUES(19,2,1,2,?,?,1000)",
+                    (self.tvdb_ep_id,"aa"*20))
+                db.execute(
+                    "INSERT INTO recognized_episodes(tvdb_series_id,tvdb_season,anidb_id,"
+                    "anidb_episode_number,anidb_episode_id,tvdb_episode,tvdb_episode_id,"
+                    "evidence_verification_id,recognized_at_ms) VALUES(?,1,?,?,99002,99,?,?,1000)",
+                    (self.tid,self.aid,self.ep,self.tvdb_ep_id+1,anchor))
+            from src.nextgen.storage.sonarr_backfill import _selected
+            for callback in (lambda: load_authoritative_episode_context(db,19,2),
+                             lambda: _selected(db,19,2)):
+                with self.assertRaises(EpisodeContextConflict) as ex:
+                    callback()
+                self.assertEqual(ex.exception.context_left,
+                                 f'selection:S1E2#{self.tvdb_ep_id}')
+                self.assertEqual(ex.exception.context_right,
+                                 f'recognized:S1E99#{self.tvdb_ep_id+1}')
+        finally:
+            db.close()
+
+    def test_storage_failure_is_not_missing_identity(self):
+        class Broken:
+            def execute(self,*args):
+                raise sqlite3.OperationalError('unavailable')
+        with self.assertRaises(sqlite3.OperationalError):
+            load_authoritative_episode_context(Broken(),19,2)
+
+    def test_independent_episode_verification_and_provenance(self):
+        self.setUpFixture()
+        db=connect(self.database)
+        try:
+            _,_,vid=seed_plan(db,19,self.aid,self.tid,anchor_ep=2,title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,"
+                    "tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) VALUES(19,2,1,2,?,?,1000)",
+                    (110002,"bb"*20))
+            ctx=load_authoritative_episode_context(db,19,2)
+            self.assertTrue(ctx.verified)
+            self.assertEqual(ctx.verification_id,vid)
+            self.assertEqual(ctx.provenance,'SAVED_SELECTION')
+            from dataclasses import replace
+            for values in ({'provenance':'ARBITRARY'}, {'verified':False},
+                           {'verification_id':None}):
+                with self.subTest(values=values), self.assertRaises(SonarrEpisodeMismatch):
+                    replace(ctx,**values)
+        finally:
+            db.close()
+
+    async def test_persisted_conflict_worker_review_with_identity_facts(self):
+        self.setUpFixture()
+        db=connect(self.database)
+        try:
+            event,_,anchor=seed_plan(db,19,self.aid,self.tid,anchor_ep=1,title=self.titles[0])
+            with transaction(db):
+                failed="aa"*20
+                db.execute(
+                    "INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash,"
+                    "state,reason_code) VALUES(19,2,1,?,'FAILED','MEDIA_AUDIO_REQUIRED')",
+                    (failed,))
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,"
+                    "tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) VALUES(19,2,1,2,?,?,1000)",
+                    (self.tvdb_ep_id,failed))
+                db.execute(
+                    "INSERT INTO recognized_episodes(tvdb_series_id,tvdb_season,anidb_id,"
+                    "anidb_episode_number,anidb_episode_id,tvdb_episode,tvdb_episode_id,"
+                    "evidence_verification_id,recognized_at_ms) VALUES(?,1,?,?,99002,99,?,?,1000)",
+                    (self.tid,self.aid,2,self.tvdb_ep_id+1,anchor))
+                job=enqueue_job(db,kind=DISCOVER_KIND,component='worker',event_id=event,
+                                payload={'plan_id':19,'start':1,'exhausted_episode':2,
+                                         'delete_cache':True},available_at_ms=0)
+        finally:
+            db.close()
+        def provider_offline(*a):
+            raise AssertionError('Conflicting saved evidence must stop before catalog use')
+        def factory(configuration,secrets):
+            return Client(Options('http://127.0.0.1:9696',60),'key',
+                          catalog=provider_offline,policy=DiscoveryPolicy(prefer_audio_tag=True))
+        worker=Worker(self.store,self.startup,Registry((
+            discovery_registration(None,client_factory=factory,
+                                   select_candidates=True,acquire_candidates=True),
+        )),policy=Policy(lease_ms=30000))
+        await worker.attempt()
+        await worker.close()
+        db=connect(self.database)
+        try:
+            state,reason=db.execute(
+                'SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)
+            ).fetchone()
+            self.assertEqual((state,reason),('NEEDS_REVIEW','EPISODE_CONTEXT_CONFLICT'))
+            details=db.execute(
+                "SELECT details_json FROM job_history WHERE job_id=? AND reason_code=?",
+                (job,'EPISODE_CONTEXT_CONFLICT')).fetchone()
+            self.assertIsNotNone(details)
+            detail=json.loads(details[0])
+            self.assertIn('CONTEXT_CONFLICT',detail['failed_check'])
+            self.assertIn('selection:S1E2',detail['context_left'])
+            self.assertIn('recognized:S1E99',detail['context_right'])
+        finally:
+            db.close()
+
+    async def _run_prowlarr_retry_diagnostic(self, error_type):
+        self.setUpFixture()
+        failed_hash="aa"*20
+        db=connect(self.database)
+        try:
+            event,_,_=seed_plan(db,19,self.aid,self.tid,anchor_ep=1,title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash,"
+                    "state,reason_code) VALUES(19,2,1,?,'FAILED','MEDIA_AUDIO_REQUIRED')",
+                    (failed_hash,))
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,"
+                    "tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) VALUES(19,2,1,2,?,?,1000)",
+                    (self.tvdb_ep_id,failed_hash))
+                job=enqueue_job(db,kind=DISCOVER_KIND,component='worker',event_id=event,
+                                payload={'plan_id':19,'start':1,'exhausted_episode':2,
+                                         'delete_cache':True},available_at_ms=0)
+        finally:
+            db.close()
+        failed_check='src/nextgen/acquisition/prowlarr_search.py:63 search PROWLARR_FAILURE'
+        def factory(configuration,secrets):
+            client=Client(Options('http://127.0.0.1:9696',60),'key',
+                          catalog=lambda *args: (_ for _ in ()).throw(
+                              AssertionError('Provider catalog unexpectedly called')),
+                          policy=DiscoveryPolicy(prefer_audio_tag=True))
+            def unavailable(query):
+                raise error_type(failed_check=failed_check)
+            client._get=unavailable
+            return client
+        worker=Worker(self.store,self.startup,Registry((
+            discovery_registration(None,client_factory=factory,
+                                   select_candidates=True,acquire_candidates=True),
+        )),policy=Policy(lease_ms=30000))
+        try:
+            await worker.attempt()
+            db=connect(self.database)
+            try:
+                state,reason=db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',
+                                        (job,)).fetchone()
+                self.assertEqual((state,reason),('RETRY_WAIT',error_type.reason_code))
+                first=db.execute(
+                    "SELECT details_json FROM job_history WHERE job_id=? AND event_code='DEFERRED'",
+                    (job,)).fetchone()
+                self.assertIsNotNone(first)
+                self.assertEqual(json.loads(first[0])['failed_check'],failed_check)
+                with transaction(db):
+                    db.execute('UPDATE jobs SET available_at_ms=0 WHERE job_id=?',(job,))
+            finally:
+                db.close()
+            await worker.attempt()
+        finally:
+            await worker.close()
+        db=connect(self.database)
+        try:
+            state,reason=db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',
+                                    (job,)).fetchone()
+            self.assertEqual((state,reason),('BLOCKED',error_type.reason_code))
+            rows=db.execute(
+                "SELECT event_code,details_json FROM job_history WHERE job_id=? "
+                "AND event_code IN ('DEFERRED','BLOCKED') ORDER BY history_id",(job,)
+            ).fetchall()
+            self.assertEqual([row[0] for row in rows],['DEFERRED','BLOCKED'])
+            self.assertTrue(all(json.loads(row[1])['failed_check']==failed_check for row in rows))
+        finally:
+            db.close()
+
+    async def test_prowlarr_timeout_defers_then_blocks_with_diagnostics(self):
+        await self._run_prowlarr_retry_diagnostic(SearchTimeout)
+
+    async def test_prowlarr_unavailable_defers_then_blocks_with_diagnostics(self):
+        await self._run_prowlarr_retry_diagnostic(SearchUnavailable)
