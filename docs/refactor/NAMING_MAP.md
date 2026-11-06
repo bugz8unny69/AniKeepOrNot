@@ -129,7 +129,7 @@ Historical intermediate names (`*_v43`, `*_v48`, `*_v53`, `*_v56`, `*_v57`, `son
 
 **Decided (2026-11-04): rename and migrate; old names removed.** The full audit of every reason and event code is in [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md), with the data in [reason_code_proposals.py](reason_code_proposals.py). It covers the renamed codes, the removed codes and the code each one migrates to, and new human-readable wording for every code.
 
-- Renamed: `SONARR_BACKFILL_PLAN_CONFLICT` → `EPISODE_DISCOVERY_PLAN_CONFLICT`, `SONARR_CANDIDATES_EXHAUSTED` → `RELEASE_CANDIDATES_EXHAUSTED`, and event `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`. The unregistered label `SONARR_SELECTION_CONFLICT` becomes `RELEASE_SELECTION_CONFLICT`.
+- Renamed: `SONARR_BACKFILL_PLAN_CONFLICT` → `EPISODE_DISCOVERY_PLAN_CONFLICT`, `SONARR_CANDIDATES_EXHAUSTED` → `RELEASE_CANDIDATES_EXHAUSTED`, and event `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`. `SONARR_SELECTION_CONFLICT` becomes `RELEASE_SELECTION_CONFLICT` (NextGen #283 has since registered it) and its season counterpart `BATCH_SELECTION_CONFLICT` becomes `SEASON_PACK_SELECTION_CONFLICT`.
 - Removed (historical Sonarr-based discovery): every `SONARR_DISCOVERY_*` code and `SONARR_EPISODES_NOT_LISTED`. Their stored rows migrate to the matching `PROWLARR_*` codes, so `review_retry.py` drops its list of historical codes.
 
 ### 4.7 Configuration and secrets
@@ -148,7 +148,7 @@ There are no changes. The v10 configuration upgrade already moved `sonarr.discov
 ## 6. Ordering and risks
 
 1. **RF-005 first** (§3, code-only). A pure rename and module split, with no data changes. It runs with the full suite, `fixes/` tests and entrypoint imports.
-2. **RF-006 next** (§4). One new migration, `059`, handles `jobs.kind`, the event source and the table renames. It also needs:
+2. **RF-006 next** (§4). One new migration, `063` (`060`–`062` are now the batch candidate tables and `service_status`), handles `jobs.kind`, the event source and the table renames. It also needs:
    - rewriting the stored codes and handler codes in history (REASON_CODE_AUDIT §3), and removing the old names from the code (no aliases);
    - display text fixes for the codes.
 3. **RF-007** tests the migration from a **real pre-refactor schema fixture**, with pre-rename jobs in every state.

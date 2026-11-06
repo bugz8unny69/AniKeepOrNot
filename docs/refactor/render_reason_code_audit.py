@@ -38,6 +38,21 @@ WHY = {
     'TORRENT_PROVENANCE_CONFLICT': '"Provenance" is jargon. The check is whether the torrent still matches what this work added.',
     'TORRENT_INTENT_RECORDED': '"Intent" is jargon. The event records that the torrent is about to be added.',
     'SONARR_BACKFILL_OBSERVED': 'Episode discovery searches Prowlarr. The old text said "Read-only Sonarr backfill results recorded."',
+    'SONARR_SELECTION_CONFLICT': 'Releases come from Prowlarr, not Sonarr. Registered by NextGen #283; it appears only in the worker log, because the job itself ends with `JOB_HANDLER_FAILED`.',
+    'BATCH_SELECTION_CONFLICT': 'Matches `RELEASE_SELECTION_CONFLICT`, and says "season pack", the word the dashboard uses, instead of the internal "batch". Same log-only use.',
+}
+# Codes registered after the first version of this audit (base 9fdb64eb), and where they came from.
+ADDED = {
+    'SONARR_SELECTION_CONFLICT': ('reason', 'NextGen #283'),
+    'BATCH_SELECTION_CONFLICT': ('reason', 'NextGen #283'),
+    'MANUAL_RELEASE_EPISODE_MISMATCH': ('reason', 'NextGen #286'),
+    'MANUAL_RELEASE_TITLE_UNREADABLE': ('reason', 'NextGen #286'),
+    'MANUAL_RELEASE_SOURCE_INVALID': ('reason', 'NextGen #286'),
+    'SERVICE_SETUP_INVALID': ('reason', '`services` (#279, merged in #284)'),
+    'SERVICE_UNAVAILABLE': ('reason', '`services` (#279, merged in #284)'),
+    'SERVICE_DOWN': ('event', '`services` (#279, merged in #284)'),
+    'SERVICE_RESTORED': ('event', '`services` (#279, merged in #284)'),
+    'SERVICE_STARTUP_REFUSED': ('event', '`services` (#279, merged in #284)'),
 }
 TRIAL_WHY = '"Trial" is replaced by "user evaluation" everywhere (owner decision).'
 REMOVED_NOTE = {
@@ -58,7 +73,8 @@ out = []
 P = out.append
 P('# Reason and event code audit')
 P('')
-P('**Base:** `refactor` at `9fdb64eb` (NextGen `9071be2e`). This is a review document: it changes no code.')
+P('**Base:** `refactor` at `8c1d25a0` (NextGen `29fce109`, with `services` merged). First written against `9fdb64eb` (NextGen `9071be2e`); §0 lists the codes added since. This is a review document: it changes no code.')
+P('**Kept current by** `src/nextgen/tests/test_reason_code_audit.py`: it fails when a registered code has no proposal here, so a NextGen sync that adds a code cannot slip past the audit.')
 P('**Data:** [`reason_code_proposals.py`](reason_code_proposals.py) is the machine-readable source. Rebuild this page with `python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md`. RF-006 applies the data.')
 P('')
 P('## Decisions this audit implements')
@@ -83,6 +99,14 @@ P(f'| **Removed** (no longer emitted; stored rows migrate) | {xr} | {xe} |')
 P(f'| Unregistered label fixed | {len(U)} | 0 |')
 P(f'| New catalog | {len(R)} | {len(E)} |')
 P('')
+P('## 0. Codes added since the first audit')
+P('')
+P('| Code | Kind | From | Proposal |')
+P('|---|---|---|---|')
+for k, (kind, origin) in ADDED.items():
+    new = (R if kind == 'reason' else E)[k][0]
+    P(f'| `{k}` | {kind} | {origin} | ' + ('kept' if new == k else f'renamed to **`{new}`**') + ' |')
+P('')
 P('## 1. Renamed codes')
 P('')
 P('| Old | New | Kind | Why |')
@@ -104,7 +128,7 @@ for k, target in X.items():
 P('')
 P('## 3. What the migration must rewrite (RF-006)')
 P('')
-P('For every renamed or removed code, migration `059` rewrites:')
+P('For every renamed or removed code, the RF-006 migration rewrites the columns below. It will be `063`: `060` and `061` are the batch candidate tables and `062` is `service_status`.')
 P('')
 P('- **History:** `job_history.event_code` and `.reason_code`; `event_history.event_code` and `.reason_code`.')
 P('- **Current state:** `jobs.last_reason_code`, `incoming_events.last_reason_code` and `job_operations.reason_code`.')
@@ -112,8 +136,9 @@ P('- **Per-step records:**')
 P('  - `trial_evaluations.reason_code`, renamed in RF-006 (NAMING_MAP §8);')
 P('  - `sonarr_episode_candidates.reason_code`, renamed in RF-006;')
 P('  - `torrent_submissions.reason_code` and `torrent_transfers.reason_code`;')
-P('  - `batch_torrent_submissions.reason_code`, `batch_torrent_transfers.reason_code` and `batch_torrent_unlocks.reason_code`.')
-P('- **Codes inside JSON:** `job_history.details_json` and `event_history.details_json` (`cause_reason_code`). Also any stored JSON that embeds codes, such as `prowlarr_search_snapshots.snapshot_json`. RF-006 checks each JSON column with `json_extract`/`json_tree` before writing the update.')
+P('  - `batch_torrent_submissions.reason_code`, `batch_torrent_transfers.reason_code` and `batch_torrent_unlocks.reason_code`;')
+P('  - `batch_candidates.reason_code` and `batch_candidate_stops.reason_code`, why a season pack candidate stopped (added by the batch candidate controller, migrations `060` and `061`).')
+P('- **Codes inside JSON:** `job_history.details_json` and `event_history.details_json` (`cause_reason_code`). Also any stored JSON that embeds codes, such as `prowlarr_search_snapshots.snapshot_json`, `identity_candidate_evidence.evidence_json` and `batch_candidates.metadata_json`. RF-006 scans **every** `*_json` column with `json_tree` for old code values before writing the update, rather than trusting this list.')
 P('')
 P('These columns were inventoried from the current schema (every column named `*reason*`, `event_code` or `*_code`). `activity_code` and `handler_code` hold activity and handler codes, not reason codes. `handler_code` changes only for the job-kind renames (`DISCOVER_SONARR_BACKFILL`, `EVALUATE_TRIAL`, `STAGE_TRIAL_MEDIA`).')
 P('')
@@ -162,11 +187,16 @@ P('')
 P('## 5. Open decisions')
 P('')
 P('1. **`SONARR_DISCOVERY_EPISODE_NOT_FOUND` and `SONARR_EPISODES_NOT_LISTED`.** These meant "Sonarr has no record of this series or its episodes", but Sonarr is no longer part of discovery. The proposal migrates them to `PROWLARR_UNAVAILABLE`, which keeps the affected jobs retry-eligible with no new code. The alternative is a dedicated historical code such as `DISCOVERY_STOPPED_BEFORE_PROWLARR` ("This search stopped under the old Sonarr-based discovery; press Search again to search Prowlarr"). That is clearer in History, but it adds a code that nothing emits.')
-P('2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit.')
+P('2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit. The new codes in §0 need the same review, in particular the proposed name `SEASON_PACK_SELECTION_CONFLICT`.')
+P('3. **The per-service "unavailable" codes** (see §6). `services` now makes a job wait with `SERVICE_UNAVAILABLE` when a service is down, but the handlers still report their own code, kept as the `cause_reason_code`. `services/README.md` leaves retiring them to RF-006. Choose one:')
+P('   - **Keep them as causes** (proposed). `SERVICE_UNAVAILABLE` is the state and the per-service code says which kind of failure it was. Only their wording changes.')
+P('   - **Retire them.** The handlers report `SERVICE_UNAVAILABLE` naming the service, and stored rows migrate. This changes what `adm recover`, `review_retry` and the reports match on, so it is a behaviour change for NextGen first, not a refactor rename.')
 P('')
 P('Decided: "trial" is replaced by "user evaluation" (`USER_EVALUATION`), owner decision on 2026-11-04.')
 P('')
-P('## 6. Notes for the service-health foundation (later)')
+P('## 6. Per-service "unavailable" codes and the service-health foundation')
 P('')
-P('`DOWNLOAD_CLIENT_UNAVAILABLE`, `KEEP_SERVICE_UNAVAILABLE`, `SHOKO_UNAVAILABLE`, `JELLYFIN_UNAVAILABLE`, `PROWLARR_UNAVAILABLE` and `PROVIDER_UNAVAILABLE` describe the same situation (a service cannot be reached) with different retry behavior. Their wording is aligned here. Their behavior is left for the planned cross-service health foundation.')
+P('`DOWNLOAD_CLIENT_UNAVAILABLE`, `KEEP_SERVICE_UNAVAILABLE`, `SHOKO_UNAVAILABLE`, `JELLYFIN_UNAVAILABLE`, `PROWLARR_UNAVAILABLE` and `PROVIDER_UNAVAILABLE` describe the same situation (a service cannot be reached). Their wording is aligned here.')
+P('')
+P('The service-health foundation (`services`, merged into `refactor` in #284) added `SERVICE_UNAVAILABLE`: a job that hits an outage now waits with that reason, and the handler\'s own code above is kept as its `cause_reason_code`. Whether to retire the per-service codes is open decision 3 in §5. This audit keeps them.')
 print('\n'.join(out))

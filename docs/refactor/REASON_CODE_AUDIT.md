@@ -1,6 +1,7 @@
 # Reason and event code audit
 
-**Base:** `refactor` at `9fdb64eb` (NextGen `9071be2e`). This is a review document: it changes no code.
+**Base:** `refactor` at `8c1d25a0` (NextGen `29fce109`, with `services` merged). First written against `9fdb64eb` (NextGen `9071be2e`); §0 lists the codes added since. This is a review document: it changes no code.
+**Kept current by** `src/nextgen/tests/test_reason_code_audit.py`: it fails when a registered code has no proposal here, so a NextGen sync that adds a code cannot slip past the audit.
 **Data:** [`reason_code_proposals.py`](reason_code_proposals.py) is the machine-readable source. Rebuild this page with `python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md`. RF-006 applies the data.
 
 ## Decisions this audit implements
@@ -14,12 +15,27 @@
 
 | | Reason codes | Event codes |
 |---|---|---|
-| Current catalog | 159 | 49 |
-| Kept, wording rewritten | 141 | 44 |
-| Kept, **renamed** | 8 | 4 |
+| Current catalog | 166 | 52 |
+| Kept, wording rewritten | 146 | 47 |
+| Kept, **renamed** | 10 | 4 |
 | **Removed** (no longer emitted; stored rows migrate) | 10 | 1 |
-| Unregistered label fixed | 1 | 0 |
-| New catalog | 149 | 48 |
+| Unregistered label fixed | 0 | 0 |
+| New catalog | 156 | 51 |
+
+## 0. Codes added since the first audit
+
+| Code | Kind | From | Proposal |
+|---|---|---|---|
+| `SONARR_SELECTION_CONFLICT` | reason | NextGen #283 | renamed to **`RELEASE_SELECTION_CONFLICT`** |
+| `BATCH_SELECTION_CONFLICT` | reason | NextGen #283 | renamed to **`SEASON_PACK_SELECTION_CONFLICT`** |
+| `MANUAL_RELEASE_EPISODE_MISMATCH` | reason | NextGen #286 | kept |
+| `MANUAL_RELEASE_TITLE_UNREADABLE` | reason | NextGen #286 | kept |
+| `MANUAL_RELEASE_SOURCE_INVALID` | reason | NextGen #286 | kept |
+| `SERVICE_SETUP_INVALID` | reason | `services` (#279, merged in #284) | kept |
+| `SERVICE_UNAVAILABLE` | reason | `services` (#279, merged in #284) | kept |
+| `SERVICE_DOWN` | event | `services` (#279, merged in #284) | kept |
+| `SERVICE_RESTORED` | event | `services` (#279, merged in #284) | kept |
+| `SERVICE_STARTUP_REFUSED` | event | `services` (#279, merged in #284) | kept |
 
 ## 1. Renamed codes
 
@@ -33,11 +49,12 @@
 | `TRIAL_DISABLED` | `USER_EVALUATION_DISABLED` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `TRIAL_PLAN_CONFLICT` | `USER_EVALUATION_PLAN_CONFLICT` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `TRIAL_COUNTS_INVALID` | `USER_EVALUATION_COUNTS_INVALID` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
+| `SONARR_SELECTION_CONFLICT` | `RELEASE_SELECTION_CONFLICT` | reason | Releases come from Prowlarr, not Sonarr. Registered by NextGen #283; it appears only in the worker log, because the job itself ends with `JOB_HANDLER_FAILED`. |
+| `BATCH_SELECTION_CONFLICT` | `SEASON_PACK_SELECTION_CONFLICT` | reason | Matches `RELEASE_SELECTION_CONFLICT`, and says "season pack", the word the dashboard uses, instead of the internal "batch". Same log-only use. |
 | `TORRENT_INTENT_RECORDED` | `TORRENT_SUBMISSION_RECORDED` | event | "Intent" is jargon. The event records that the torrent is about to be added. |
 | `TRIAL_EVALUATED` | `USER_EVALUATION_CHECKED` | event | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `TRIAL_AUDIO_SEARCH` | `USER_EVALUATION_AUDIO_SEARCH` | event | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `SONARR_BACKFILL_OBSERVED` | `EPISODE_DISCOVERY_RECORDED` | event | Episode discovery searches Prowlarr. The old text said "Read-only Sonarr backfill results recorded." |
-| `SONARR_SELECTION_CONFLICT` | `RELEASE_SELECTION_CONFLICT` | internal label | It is set on two exception classes but was never registered and is never stored, because those exceptions are converted to other codes before anything is saved. The new name is registered so the contract holds. |
 
 ## 2. Removed codes and where their stored rows migrate
 
@@ -57,7 +74,7 @@
 
 ## 3. What the migration must rewrite (RF-006)
 
-For every renamed or removed code, migration `059` rewrites:
+For every renamed or removed code, the RF-006 migration rewrites the columns below. It will be `063`: `060` and `061` are the batch candidate tables and `062` is `service_status`.
 
 - **History:** `job_history.event_code` and `.reason_code`; `event_history.event_code` and `.reason_code`.
 - **Current state:** `jobs.last_reason_code`, `incoming_events.last_reason_code` and `job_operations.reason_code`.
@@ -65,8 +82,9 @@ For every renamed or removed code, migration `059` rewrites:
   - `trial_evaluations.reason_code`, renamed in RF-006 (NAMING_MAP §8);
   - `sonarr_episode_candidates.reason_code`, renamed in RF-006;
   - `torrent_submissions.reason_code` and `torrent_transfers.reason_code`;
-  - `batch_torrent_submissions.reason_code`, `batch_torrent_transfers.reason_code` and `batch_torrent_unlocks.reason_code`.
-- **Codes inside JSON:** `job_history.details_json` and `event_history.details_json` (`cause_reason_code`). Also any stored JSON that embeds codes, such as `prowlarr_search_snapshots.snapshot_json`. RF-006 checks each JSON column with `json_extract`/`json_tree` before writing the update.
+  - `batch_torrent_submissions.reason_code`, `batch_torrent_transfers.reason_code` and `batch_torrent_unlocks.reason_code`;
+  - `batch_candidates.reason_code` and `batch_candidate_stops.reason_code`, why a season pack candidate stopped (added by the batch candidate controller, migrations `060` and `061`).
+- **Codes inside JSON:** `job_history.details_json` and `event_history.details_json` (`cause_reason_code`). Also any stored JSON that embeds codes, such as `prowlarr_search_snapshots.snapshot_json`, `identity_candidate_evidence.evidence_json` and `batch_candidates.metadata_json`. RF-006 scans **every** `*_json` column with `json_tree` for old code values before writing the update, rather than trusting this list.
 
 These columns were inventoried from the current schema (every column named `*reason*`, `event_code` or `*_code`). `activity_code` and `handler_code` hold activity and handler codes, not reason codes. `handler_code` changes only for the job-kind renames (`DISCOVER_SONARR_BACKFILL`, `EVALUATE_TRIAL`, `STAGE_TRIAL_MEDIA`).
 
@@ -85,7 +103,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 ### 4.1 Reason codes
 
 #### `PROWLARR_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 2*
+*WARNING, retryable: False, uses: 4*
 
 | | Old | New |
 |---|---|---|
@@ -94,7 +112,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Set the Prowlarr address and API key in Settings, then retry; no download occurred. | Enter the Prowlarr address and API key in Settings, then press Retry. Nothing was downloaded. |
 
 #### `PROWLARR_AUTH_FAILED`
-*WARNING, retryable: False, uses: 2*
+*WARNING, retryable: False, uses: 4*
 
 | | Old | New |
 |---|---|---|
@@ -103,7 +121,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check the Prowlarr API key in Settings, then retry. | Check the Prowlarr API key in Settings, then press Retry. |
 
 #### `PROWLARR_SEARCH_REVIEW`
-*WARNING, retryable: False, uses: 3*
+*WARNING, retryable: False, uses: 4*
 
 | | Old | New |
 |---|---|---|
@@ -112,7 +130,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check Prowlarr and its indexers, then retry. | Check that Prowlarr and its indexers are working, then press Retry. |
 
 #### `PROWLARR_SEARCH_TIMEOUT`
-*ERROR, retryable: True, uses: 3*
+*ERROR, retryable: True, uses: 4*
 
 | | Old | New |
 |---|---|---|
@@ -121,7 +139,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | The search runs again once after 30 minutes. If it still times out, check Prowlarr and indexer response times or raise the timeout, then retry. | Nothing to do yet: the search runs once more in 30 minutes. If it times out again, check Prowlarr and its indexers or raise the search timeout, then press Retry. |
 
 #### `PROWLARR_UNAVAILABLE`
-*ERROR, retryable: True, uses: 3*
+*ERROR, retryable: True, uses: 4*
 
 | | Old | New |
 |---|---|---|
@@ -166,7 +184,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | New Dual/Multi Audio autobrr releases can still start Intake. Use Search again to check Prowlarr for an eligible release. | Nothing to do. A new Dual Audio release from autobrr starts automatically, or press Search again to check Prowlarr now. |
 
 #### `SHOKO_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 1*
+*WARNING, retryable: False, uses: 2*
 
 | | Old | New |
 |---|---|---|
@@ -175,7 +193,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Update Shoko settings/credentials, then retry Shoko metadata. The episode remains kept. | Fix the Shoko settings, then retry the Shoko step. The episode is still kept. |
 
 #### `SHOKO_UNAVAILABLE`
-*WARNING, retryable: True, uses: 1*
+*WARNING, retryable: True, uses: 2*
 
 | | Old | New |
 |---|---|---|
@@ -211,7 +229,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | The worker rechecks exact ownership and may repeat safe stop or torrent-only remove commands. Local files are cleaned only after torrent absence is confirmed. | Nothing to do. Files are deleted only after qBittorrent confirms the torrent is gone. |
 
 #### `DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE`
-*WARNING, retryable: True, uses: 4*
+*WARNING, retryable: True, uses: 5*
 
 | | Old | New |
 |---|---|---|
@@ -274,7 +292,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check the permanent file and selected staged artifacts, then submit Keep again to resume only cleanup. | Check the library file and the staged files, then press Keep again. Only the cleanup runs again. |
 
 #### `JELLYFIN_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 2*
+*WARNING, retryable: False, uses: 3*
 
 | | Old | New |
 |---|---|---|
@@ -283,7 +301,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Review the address and private API key. Completed staging and Keep remain valid. | Fix the Jellyfin address and API key in Settings. Staging and Keep are not affected. |
 
 #### `JELLYFIN_UNAVAILABLE`
-*WARNING, retryable: True, uses: 2*
+*WARNING, retryable: True, uses: 3*
 
 | | Old | New |
 |---|---|---|
@@ -301,7 +319,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check the address and server API compatibility. | Check the Jellyfin address and that your Jellyfin version is supported. |
 
 #### `KEEP_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 1*
+*WARNING, retryable: False, uses: 3*
 
 | | Old | New |
 |---|---|---|
@@ -319,7 +337,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | The job will check Sonarr again shortly. | Nothing to do. Sonarr is checked again shortly. |
 
 #### `KEEP_SERVICE_UNAVAILABLE`
-*WARNING, retryable: True, uses: 3*
+*WARNING, retryable: True, uses: 4*
 
 | | Old | New |
 |---|---|---|
@@ -427,7 +445,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Install ffprobe at /usr/bin/ffprobe and check worker permissions. | Install ffprobe at /usr/bin/ffprobe and make sure the worker can run it. |
 
 #### `MEDIA_AUDIO_REQUIRED`
-*WARNING, retryable: False, uses: 8*
+*WARNING, retryable: False, uses: 9*
 
 | | Old | New |
 |---|---|---|
@@ -436,7 +454,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Review the audio streams or the Audio check setting; filenames and subtitles do not satisfy this requirement. | Check the audio tracks, or change the Audio check setting. File names and subtitles do not count. |
 
 #### `TORRENT_METADATA_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 2*
+*WARNING, retryable: False, uses: 3*
 
 | | Old | New |
 |---|---|---|
@@ -454,7 +472,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | The older-client batch path needs an owned, stopped magnet admission and verified inventory; do not submit or adopt an unrelated torrent. | Upgrade qBittorrent. Do not add the torrent by hand. |
 
 #### `TORRENT_METADATA_UNAVAILABLE`
-*WARNING, retryable: True, uses: 1*
+*WARNING, retryable: True, uses: 2*
 
 | | Old | New |
 |---|---|---|
@@ -463,16 +481,16 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check the qBittorrent connection if retries continue failing. | Nothing to do unless this continues; then check that qBittorrent is running. |
 
 #### `TORRENT_METADATA_WAITING`
-*INFO, retryable: None, uses: 2*
+*INFO, retryable: None, uses: 3*
 
 | | Old | New |
 |---|---|---|
-| D | The qBittorrent metadata-only response is not ready yet. | qBittorrent is still fetching the torrent file list from peers. |
+| D | qBittorrent has not yet supplied an acceptable torrent file inventory. | qBittorrent is still fetching the torrent file list from peers. |
 | M | Waiting for torrent metadata. | Waiting for the torrent file list. |
-| A | The worker will retry the hash-bound metadata request without adding a torrent. | Nothing to do. It is checked again without adding the torrent twice. |
+| A | The worker will retry metadata discovery for the same hash. Older qBittorrent uses the existing journal-owned magnet; newer versions can fetch metadata without adding a torrent. | Nothing to do. It is checked again without adding the torrent twice. |
 
 #### `TORRENT_METADATA_TIMEOUT`
-*WARNING, retryable: False, uses: 6*
+*WARNING, retryable: False, uses: 8*
 
 | | Old | New |
 |---|---|---|
@@ -616,7 +634,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Use the configured dashboard address. | Open the dashboard at its configured address. |
 
 #### `API_REQUEST_INVALID`
-*WARNING, retryable: False, uses: 65*
+*WARNING, retryable: False, uses: 68*
 
 | | Old | New |
 |---|---|---|
@@ -652,7 +670,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Send UTF-8 JSON. | Send UTF-8 JSON. |
 
 #### `API_ROUTE_NOT_FOUND`
-*INFO, retryable: False, uses: 12*
+*INFO, retryable: False, uses: 13*
 
 | | Old | New |
 |---|---|---|
@@ -661,7 +679,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check the API address and resource identifier. | Check the address and the item ID. |
 
 #### `API_METHOD_INVALID`
-*WARNING, retryable: False, uses: 22*
+*WARNING, retryable: False, uses: 25*
 
 | | Old | New |
 |---|---|---|
@@ -688,7 +706,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check service status and try again later. | Check the service status and the API log, then try again. |
 
 #### `JOB_CANCELED`
-*INFO, retryable: False, uses: 4*
+*INFO, retryable: False, uses: 7*
 
 | | Old | New |
 |---|---|---|
@@ -859,7 +877,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check client availability; preserve any pending submission intent. | Check that qBittorrent is running and reachable from the worker. |
 
 #### `DOWNLOAD_CLIENT_RESPONSE_INVALID`
-*WARNING, retryable: False, uses: 2*
+*WARNING, retryable: False, uses: 1*
 
 | | Old | New |
 |---|---|---|
@@ -922,7 +940,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Apply approved file selection before starting any download. | Nothing to do. The video file is selected next. |
 
 #### `DOWNLOAD_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 3*
+*WARNING, retryable: False, uses: 2*
 
 | | Old | New |
 |---|---|---|
@@ -1228,7 +1246,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Check the interrupted work and its recovery status. | Nothing to do; the job is tried again. If it keeps happening, check the worker log. |
 
 #### `JOB_HANDLER_FAILED`
-*ERROR, retryable: None, uses: 5*
+*ERROR, retryable: None, uses: 8*
 
 | | Old | New |
 |---|---|---|
@@ -1246,7 +1264,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Review the job before retrying manually. | Check the earlier failure reason in History, fix it, then press Retry. |
 
 #### `STORAGE_UNAVAILABLE`
-*ERROR, retryable: None, uses: 2*
+*ERROR, retryable: None, uses: 3*
 
 | | Old | New |
 |---|---|---|
@@ -1408,7 +1426,7 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | A | Review the job history before resuming work. | Check the job history, then press Retry. |
 
 #### `JOB_PAYLOAD_INVALID`
-*ERROR, retryable: False, uses: 31*
+*ERROR, retryable: False, uses: 32*
 
 | | Old | New |
 |---|---|---|
@@ -1424,6 +1442,69 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | D | No trusted job handlers are registered for execution. | The worker started without any job handlers installed. |
 | M | The worker is not ready to process jobs. | The worker is not ready. |
 | A | Install and register the required job handlers. | Reinstall or upgrade the application, then restart the worker. |
+
+#### `SONARR_SELECTION_CONFLICT` → **`RELEASE_SELECTION_CONFLICT`**
+*WARNING, retryable: False, uses: 2*
+
+| | Old | New |
+|---|---|---|
+| D | An episode's candidate releases or selection state are inconsistent. | The saved list of releases for this episode no longer matches what this job expected, for example because another job changed it. |
+| M | The release choice for this episode needs review. | The release choice for this episode needs review. |
+| A | Review the episode's candidate releases. | Open the job report (adm report job --id <job>) to compare the saved releases, then press Retry. |
+
+#### `BATCH_SELECTION_CONFLICT` → **`SEASON_PACK_SELECTION_CONFLICT`**
+*WARNING, retryable: False, uses: 1*
+
+| | Old | New |
+|---|---|---|
+| D | A season's candidate releases or selection state are inconsistent. | The saved list of season packs for this season no longer matches what this job expected, for example because another job changed it. |
+| M | The release choice for this season needs review. | The season pack choice for this season needs review. |
+| A | Review the season's candidate releases. | Open the job report (adm report job --id <job>) to compare the saved season packs, then press Retry. |
+
+#### `MANUAL_RELEASE_EPISODE_MISMATCH`
+*WARNING, retryable: False, uses: 1*
+
+| | Old | New |
+|---|---|---|
+| D | A manually submitted release title or torrent file names a different episode than the one it was submitted for. | A release submitted by hand names a different episode, in its name or in its video file, than the episode it was submitted for. |
+| M | This release is for a different episode than the one selected. | This release is for a different episode. |
+| A | Check the episode in the release title, or submit it from that episode. | Check the episode in the release name. A release can only be submitted from its own episode. Nothing was downloaded. |
+
+#### `MANUAL_RELEASE_TITLE_UNREADABLE`
+*WARNING, retryable: False, uses: 1*
+
+| | Old | New |
+|---|---|---|
+| D | No episode could be read from a manually submitted release title. | No season and episode could be read from the name of a release submitted by hand. |
+| M | The release title does not say which episode it is. | The release name does not say which episode it is. |
+| A | Use the full release name, including its season and episode (for example S01E05). | Paste the full release name, including its season and episode (for example S01E05). Nothing was downloaded. |
+
+#### `MANUAL_RELEASE_SOURCE_INVALID`
+*WARNING, retryable: False, uses: 1*
+
+| | Old | New |
+|---|---|---|
+| D | A manually submitted magnet link or torrent file failed validation. | The magnet link or .torrent file submitted by hand is not valid. |
+| M | The magnet link or torrent file is not valid. | The magnet link or torrent file is not valid. |
+| A | Paste a magnet link that contains its info hash, or choose a valid .torrent file. | Paste a magnet link that contains its info hash (xt=urn:btih:...), or choose a valid .torrent file. Nothing was downloaded. |
+
+#### `SERVICE_SETUP_INVALID`
+*ERROR, retryable: False, uses: 2*
+
+| | Old | New |
+|---|---|---|
+| D | A required service (qBittorrent, AniDB or TVDB) is not set up, rejected the login, client name or API key, or is an unsupported version. The worker did not start; waiting would not fix this. | qBittorrent, AniDB or TVDB is not set up, rejected the login, client name or API key, or runs a version that is not supported. The worker did not start, because waiting would not fix this. |
+| M | A required service is not set up correctly. | A required service is not set up correctly. |
+| A | Fix the service named in the details in Settings, or run adm services check, then start the worker again. | Fix the service named in the log in Settings, or run adm services check, then start the worker again. |
+
+#### `SERVICE_UNAVAILABLE`
+*WARNING, retryable: True, uses: 8*
+
+| | Old | New |
+|---|---|---|
+| D | A service this job needs could not be reached. The job waits and tries again by itself; it does not use up its retries. | A service this job needs could not be reached. The job waits and tries again by itself, without using up its retries. |
+| M | Waiting for a service that is unavailable. | Waiting for a service to come back. |
+| A | Check the service named in the details. Waiting jobs continue on their own once it is back; after 72 hours of failed attempts the job stops for review. | Nothing to do for a short outage: waiting jobs continue on their own. If it lasts, check the service named in the details. After 72 hours the job stops for review. |
 
 ### 4.2 Event codes
 
@@ -1477,6 +1558,9 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | `MAINTENANCE_REQUESTED` | New work paused for maintenance. | New work paused for maintenance. |
 | `MAINTENANCE_COMPLETED` | Maintenance completed. New work can start. | Maintenance finished; new work can start. |
 | `OPERATION_FAILED` | A processing operation failed. | An operation failed. |
+| `SERVICE_DOWN` | An external service is not usable; jobs that need it are waiting. | A service stopped working; jobs that need it wait. |
+| `SERVICE_RESTORED` | An external service is available again; waiting jobs continue. | A service is working again; waiting jobs continue. |
+| `SERVICE_STARTUP_REFUSED` | The worker did not start: a required service is not set up correctly. | The worker did not start: a required service is not set up correctly. |
 
 ### 4.3 Removed reason codes (old wording, for reference)
 
@@ -1496,10 +1580,15 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 ## 5. Open decisions
 
 1. **`SONARR_DISCOVERY_EPISODE_NOT_FOUND` and `SONARR_EPISODES_NOT_LISTED`.** These meant "Sonarr has no record of this series or its episodes", but Sonarr is no longer part of discovery. The proposal migrates them to `PROWLARR_UNAVAILABLE`, which keeps the affected jobs retry-eligible with no new code. The alternative is a dedicated historical code such as `DISCOVERY_STOPPED_BEFORE_PROWLARR` ("This search stopped under the old Sonarr-based discovery; press Search again to search Prowlarr"). That is clearer in History, but it adds a code that nothing emits.
-2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit.
+2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit. The new codes in §0 need the same review, in particular the proposed name `SEASON_PACK_SELECTION_CONFLICT`.
+3. **The per-service "unavailable" codes** (see §6). `services` now makes a job wait with `SERVICE_UNAVAILABLE` when a service is down, but the handlers still report their own code, kept as the `cause_reason_code`. `services/README.md` leaves retiring them to RF-006. Choose one:
+   - **Keep them as causes** (proposed). `SERVICE_UNAVAILABLE` is the state and the per-service code says which kind of failure it was. Only their wording changes.
+   - **Retire them.** The handlers report `SERVICE_UNAVAILABLE` naming the service, and stored rows migrate. This changes what `adm recover`, `review_retry` and the reports match on, so it is a behaviour change for NextGen first, not a refactor rename.
 
 Decided: "trial" is replaced by "user evaluation" (`USER_EVALUATION`), owner decision on 2026-11-04.
 
-## 6. Notes for the service-health foundation (later)
+## 6. Per-service "unavailable" codes and the service-health foundation
 
-`DOWNLOAD_CLIENT_UNAVAILABLE`, `KEEP_SERVICE_UNAVAILABLE`, `SHOKO_UNAVAILABLE`, `JELLYFIN_UNAVAILABLE`, `PROWLARR_UNAVAILABLE` and `PROVIDER_UNAVAILABLE` describe the same situation (a service cannot be reached) with different retry behavior. Their wording is aligned here. Their behavior is left for the planned cross-service health foundation.
+`DOWNLOAD_CLIENT_UNAVAILABLE`, `KEEP_SERVICE_UNAVAILABLE`, `SHOKO_UNAVAILABLE`, `JELLYFIN_UNAVAILABLE`, `PROWLARR_UNAVAILABLE` and `PROVIDER_UNAVAILABLE` describe the same situation (a service cannot be reached). Their wording is aligned here.
+
+The service-health foundation (`services`, merged into `refactor` in #284) added `SERVICE_UNAVAILABLE`: a job that hits an outage now waits with that reason, and the handler's own code above is kept as its `cause_reason_code`. Whether to retire the per-service codes is open decision 3 in §5. This audit keeps them.

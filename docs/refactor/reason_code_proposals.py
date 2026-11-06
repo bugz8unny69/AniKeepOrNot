@@ -647,6 +647,42 @@ REASONS = {
         'The worker started without any job handlers installed.',
         'The worker is not ready.',
         'Reinstall or upgrade the application, then restart the worker.'),
+
+    # --- Release choice (added after the first audit) --------------------------------
+    # Raised when the saved candidates no longer match what the job expected.
+    # Only the worker log shows these; the job itself ends with JOB_HANDLER_FAILED.
+    'SONARR_SELECTION_CONFLICT': ('RELEASE_SELECTION_CONFLICT',
+        'The saved list of releases for this episode no longer matches what this job expected, for example because another job changed it.',
+        'The release choice for this episode needs review.',
+        'Open the job report (adm report job --id <job>) to compare the saved releases, then press Retry.'),
+    'BATCH_SELECTION_CONFLICT': ('SEASON_PACK_SELECTION_CONFLICT',
+        'The saved list of season packs for this season no longer matches what this job expected, for example because another job changed it.',
+        'The season pack choice for this season needs review.',
+        'Open the job report (adm report job --id <job>) to compare the saved season packs, then press Retry.'),
+
+    # --- Releases submitted by hand (added after the first audit) ---------------------
+    'MANUAL_RELEASE_EPISODE_MISMATCH': ('MANUAL_RELEASE_EPISODE_MISMATCH',
+        'A release submitted by hand names a different episode, in its name or in its video file, than the episode it was submitted for.',
+        'This release is for a different episode.',
+        'Check the episode in the release name. A release can only be submitted from its own episode. Nothing was downloaded.'),
+    'MANUAL_RELEASE_TITLE_UNREADABLE': ('MANUAL_RELEASE_TITLE_UNREADABLE',
+        'No season and episode could be read from the name of a release submitted by hand.',
+        'The release name does not say which episode it is.',
+        'Paste the full release name, including its season and episode (for example S01E05). Nothing was downloaded.'),
+    'MANUAL_RELEASE_SOURCE_INVALID': ('MANUAL_RELEASE_SOURCE_INVALID',
+        'The magnet link or .torrent file submitted by hand is not valid.',
+        'The magnet link or torrent file is not valid.',
+        'Paste a magnet link that contains its info hash (xt=urn:btih:...), or choose a valid .torrent file. Nothing was downloaded.'),
+
+    # --- Service health (added after the first audit) ---------------------------------
+    'SERVICE_SETUP_INVALID': ('SERVICE_SETUP_INVALID',
+        'qBittorrent, AniDB or TVDB is not set up, rejected the login, client name or API key, or runs a version that is not supported. The worker did not start, because waiting would not fix this.',
+        'A required service is not set up correctly.',
+        'Fix the service named in the log in Settings, or run adm services check, then start the worker again.'),
+    'SERVICE_UNAVAILABLE': ('SERVICE_UNAVAILABLE',
+        'A service this job needs could not be reached. The job waits and tries again by itself, without using up its retries.',
+        'Waiting for a service to come back.',
+        'Nothing to do for a short outage: waiting jobs continue on their own. If it lasts, check the service named in the details. After 72 hours the job stops for review.'),
 }
 
 EVENTS = {
@@ -698,6 +734,10 @@ EVENTS = {
     'MAINTENANCE_REQUESTED': ('MAINTENANCE_REQUESTED', 'New work paused for maintenance.'),
     'MAINTENANCE_COMPLETED': ('MAINTENANCE_COMPLETED', 'Maintenance finished; new work can start.'),
     'OPERATION_FAILED': ('OPERATION_FAILED', 'An operation failed.'),
+    # Service health (added after the first audit).
+    'SERVICE_DOWN': ('SERVICE_DOWN', 'A service stopped working; jobs that need it wait.'),
+    'SERVICE_RESTORED': ('SERVICE_RESTORED', 'A service is working again; waiting jobs continue.'),
+    'SERVICE_STARTUP_REFUSED': ('SERVICE_STARTUP_REFUSED', 'The worker did not start: a required service is not set up correctly.'),
 }
 
 # Codes no longer emitted by current code. Their catalog entries are removed;
@@ -725,7 +765,6 @@ REMOVED = {
     'ACTIVITY_CHANGED': 'DEFERRED',
 }
 
-# Internal exception label that was never registered or stored; rename only.
-UNREGISTERED = {
-    'SONARR_SELECTION_CONFLICT': 'RELEASE_SELECTION_CONFLICT',
-}
+# Internal exception labels that are not registered or stored; rename only.
+# (SONARR_SELECTION_CONFLICT was here; #283 registered it, so it is in REASONS.)
+UNREGISTERED = {}
