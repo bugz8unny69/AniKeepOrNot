@@ -1,0 +1,431 @@
+"""Regression tests for WI-21 & WI-22:
+- Reusing authoritative saved episode context for Prowlarr fallback/exhausted candidate discovery
+- Explaining pre-search failures, distinguishing provider outages from identity conflicts
+- Excluding tried audio-failed hashes and recovering exhausted candidates (Plan #19 / Job #7264)
+- Actionable diagnostics in adm report job when no snapshot exists
+"""
+import io
+import json
+import unittest
+
+from src.nextgen.acquisition.episode_context import (
+    EpisodeSearchContext, load_authoritative_episode_context,
+)
+from src.nextgen.acquisition.prowlarr_search import (
+    Client, DiscoveryPolicy, EpisodeCatalog, EpisodeTarget, Options,
+    SearchReview, SearchUnavailable, SearchTimeout, SearchConfiguration, SearchUnauthorized,
+)
+from src.nextgen.job_contracts import Policy, Registry
+from src.nextgen.job_report import report_prowlarr_matching, prowlarr_matching_json
+from src.nextgen.jobs.discover_sonarr_backfill_job import (
+    KIND as DISCOVER_KIND, registration as discovery_registration,
+)
+from src.nextgen.providers.errors import ProviderUnavailable
+from src.nextgen.sonarr_episode import VerifiedEpisode, SonarrEpisodeMismatch
+from src.nextgen.storage.sqlite import accept_event_and_job, connect, enqueue_job, save_identity, transaction
+from src.nextgen.tests.test_prowlarr_matching_report import make_raw_prowlarr_row
+from src.nextgen.tests.test_trial_policy import TrialEvaluationTests
+from src.nextgen.worker import Worker
+
+
+def seed_plan(db, plan_id, aid, tid, anchor_ep=1, title='Test Anime', backfill_count=0, following_count=4):
+    event, release_job = accept_event_and_job(db, 'test', b'declared release', kind='VERIFY_RELEASE', payload={'anidb_id': aid})
+    identity = save_identity(db, event, {'schema_version': 2, 'anime': {'anidb_id': aid, 'tvdb_series_id': tid, 'title': title}})
+    eid = 10000 + anchor_ep
+    with transaction(db):
+        db.execute("UPDATE jobs SET state='DONE', attempt_count=1 WHERE job_id=?", (release_job,))
+        db.execute('INSERT OR IGNORE INTO identified_episodes VALUES(?, ?)', (eid, aid))
+        v_id = db.execute(
+            "INSERT INTO release_verifications(job_id, identity_result_id, anidb_id, release_sha256, verification_scope, "
+            "anidb_episode_number, anidb_episode_id, tvdb_series_id, tvdb_season, tvdb_episode, tvdb_episode_id, verified_at_ms) "
+            "VALUES(?, ?, ?, ?, 'DECLARED_SINGLE_EPISODE', ?, ?, ?, 1, ?, ?, 1)",
+            (release_job, identity, aid, 'a'*64, anchor_ep, eid, tid, anchor_ep, eid + 100000)
+        ).lastrowid
+        db.execute(
+            "INSERT INTO trial_plans(plan_id, anidb_id, tvdb_series_id, tvdb_season, tvdb_order, "
+            "anchor_verification_id, anchor_episode, backfill_count, following_count, configuration_revision, created_at_ms) "
+            "VALUES(?, ?, ?, 1, 'official', ?, ?, ?, ?, 1, 1000)",
+            (plan_id, aid, tid, v_id, anchor_ep, backfill_count, following_count)
+        )
+    return event, release_job, v_id
+
+
+class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = TrialEvaluationTests.asyncSetUp
+    rows = TrialEvaluationTests.rows
+
+    def setUpFixture(self, aid=19142, tid=459942, ep=2, tvdb_ep_id=12018298):
+        self.aid = aid
+        self.tid = tid
+        self.ep = ep
+        self.tvdb_ep_id = tvdb_ep_id
+        self.titles = ("Test Anime Series", "Test Anime Series Alt")
+
+    async def test_job_7264_reproduction_authoritative_context_bypasses_offline_catalog(self):
+        """Job #7264 reproduction: Plan #19, ep 2 (TVDB S01E02, ID 12018298).
+
+        6 existing candidates FAILED with MEDIA_AUDIO_REQUIRED.
+        Catalog provider is OFFLINE (raises ProviderUnavailable).
+        Authoritative saved episode context allows Prowlarr search to proceed directly,
+        finds new Dual Audio candidate, appends at rank 7, and leaves previous 6 candidates FAILED.
+        """
+        self.setUpFixture()
+        self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
+
+        failed_hashes = [f"{i:02d}" + "a" * 38 for i in range(1, 7)]
+        new_candidate_hash = "77" + "b" * 38
+
+        db = connect(self.database)
+        try:
+            event, release_job, v_id = seed_plan(db, 19, self.aid, self.tid, anchor_ep=1, title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO anime_title_metadata(anidb_id, english_title, romaji_title) VALUES(?, ?, ?)",
+                    (self.aid, self.titles[0], self.titles[1])
+                )
+                db.execute(
+                    "INSERT INTO recognized_seasons(tvdb_series_id, tvdb_season, anidb_id, display_title, "
+                    "evidence_verification_id, recognized_at_ms) VALUES(?, 1, ?, ?, ?, 1000)",
+                    (self.tid, self.aid, self.titles[0], v_id)
+                )
+                db.execute(
+                    "INSERT INTO recognized_episodes(tvdb_series_id, tvdb_season, anidb_id, anidb_episode_number, "
+                    "anidb_episode_id, tvdb_episode, tvdb_episode_id, evidence_verification_id, recognized_at_ms) "
+                    "VALUES(?, 1, ?, ?, 99002, ?, ?, ?, 1000)",
+                    (self.tid, self.aid, self.ep, self.ep, self.tvdb_ep_id, v_id)
+                )
+
+                # Seed the 6 failed candidates from Job #7264
+                for rank, h in enumerate(failed_hashes, 1):
+                    db.execute(
+                        "INSERT INTO sonarr_episode_candidates(plan_id, anidb_episode_number, rank, info_hash, state, reason_code) "
+                        "VALUES(19, ?, ?, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
+                        (self.ep, rank, h)
+                    )
+
+                # Selection points to the last tried failed candidate
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id, anidb_episode_number, tvdb_season, tvdb_episode, "
+                    "tvdb_episode_id, info_hash, selected_at_ms) VALUES(19, ?, 1, ?, ?, ?, 1000)",
+                    (self.ep, self.ep, self.tvdb_ep_id, failed_hashes[-1])
+                )
+
+                # Enqueue exhausted candidate discovery job #7264
+                job_id = enqueue_job(
+                    db, kind=DISCOVER_KIND, component="worker", event_id=event,
+                    payload={"plan_id": 19, "start": 1, "exhausted_episode": self.ep, "delete_cache": True},
+                    available_at_ms=0
+                )
+        finally:
+            db.close()
+
+        # Mock Prowlarr client with an OFFLINE catalog that raises ProviderUnavailable
+        def catalog_factory_offline(conf):
+            def catalog(aid, tid):
+                raise ProviderUnavailable("AniDB provider offline")
+            return catalog
+
+        row_failed = make_raw_prowlarr_row(
+            f"[Group] {self.titles[0]} - 02 [Dual-Audio] (1080p).mkv",
+            indexer="Nyaa", seeders=20, size=500_000_000,
+            info_hash=failed_hashes[0], magnet="magnet:?xt=urn:btih:" + failed_hashes[0],
+        )
+        row_new = make_raw_prowlarr_row(
+            f"[NewGroup] {self.titles[0]} - 02 [Dual-Audio] (1080p).mkv",
+            indexer="Nyaa", seeders=25, size=600_000_000,
+            info_hash=new_candidate_hash, magnet="magnet:?xt=urn:btih:" + new_candidate_hash,
+        )
+
+        def client_factory(conf, sec):
+            policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, prefer_audio_tag=True)
+            c = Client(Options("http://127.0.0.1:9696", 60), "key",
+                       catalog=catalog_factory_offline(conf), policy=policy)
+            c._transport = lambda req, timeout: None
+            c._get = lambda q: [row_failed, row_new]
+            return c
+
+        registry = Registry((
+            discovery_registration(None, client_factory=client_factory,
+                                   select_candidates=True, acquire_candidates=True),
+        ))
+        worker = Worker(self.store, self.startup, registry, policy=Policy(lease_ms=30000))
+        claim = await worker.attempt()
+        self.assertIsNotNone(claim)
+        await worker.close()
+
+        # Verify candidate recovery
+        db = connect(self.database)
+        try:
+            job_state = db.execute("SELECT state FROM jobs WHERE job_id=?", (job_id,)).fetchone()[0]
+            self.assertEqual(job_state, "DONE")
+
+            candidates = db.execute(
+                "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
+                "WHERE plan_id=19 AND anidb_episode_number=? ORDER BY rank",
+                (self.ep,)
+            ).fetchall()
+            self.assertEqual(len(candidates), 7)
+
+            # First 6 candidates remain FAILED with MEDIA_AUDIO_REQUIRED
+            for i in range(6):
+                self.assertEqual(candidates[i][0], i + 1)
+                self.assertEqual(candidates[i][1], failed_hashes[i])
+                self.assertEqual(candidates[i][2], "FAILED")
+                self.assertEqual(candidates[i][3], "MEDIA_AUDIO_REQUIRED")
+
+            # 7th candidate is the new discovery
+            self.assertEqual(candidates[6][0], 7)
+            self.assertEqual(candidates[6][1], new_candidate_hash)
+            self.assertEqual(candidates[6][2], "READY")
+            self.assertIsNone(candidates[6][3])
+
+            successor = db.execute(
+                "SELECT kind, payload_json FROM jobs WHERE kind=? AND job_id > ? ORDER BY job_id DESC LIMIT 1",
+                (DISCOVER_KIND, job_id)
+            ).fetchone()
+            self.assertIsNotNone(successor)
+            self.assertEqual(json.loads(successor[1]), {"plan_id": 19, "start": 1, "fallback_episode": self.ep})
+        finally:
+            db.close()
+
+    async def test_exhausted_search_excludes_tried_hashes_and_waits_for_dub(self):
+        """When Prowlarr search only returns already-failed hashes, job enters WAITING_FOR_DUB with snapshots."""
+        self.setUpFixture()
+        self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
+
+        failed_hash = "11" + "a" * 38
+
+        db = connect(self.database)
+        try:
+            event, release_job, v_id = seed_plan(db, 19, self.aid, self.tid, anchor_ep=1, title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO sonarr_episode_candidates(plan_id, anidb_episode_number, rank, info_hash, state, reason_code) "
+                    "VALUES(19, ?, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
+                    (self.ep, failed_hash)
+                )
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id, anidb_episode_number, tvdb_season, tvdb_episode, "
+                    "tvdb_episode_id, info_hash, selected_at_ms) VALUES(19, ?, 1, ?, ?, ?, 1000)",
+                    (self.ep, self.ep, self.tvdb_ep_id, failed_hash)
+                )
+                job_id = enqueue_job(
+                    db, kind=DISCOVER_KIND, component="worker", event_id=event,
+                    payload={"plan_id": 19, "start": 1, "exhausted_episode": self.ep, "delete_cache": True},
+                    available_at_ms=0
+                )
+        finally:
+            db.close()
+
+        row_only_failed = make_raw_prowlarr_row(
+            f"[Group] {self.titles[0]} - 02 [Dual-Audio] (1080p).mkv",
+            indexer="Nyaa", seeders=20, size=500_000_000,
+            info_hash=failed_hash, magnet="magnet:?xt=urn:btih:" + failed_hash,
+        )
+
+        def client_factory(conf, sec):
+            policy = DiscoveryPolicy(max_resolution=1080, min_seeders=5, prefer_audio_tag=True)
+            c = Client(Options("http://127.0.0.1:9696", 60), "key",
+                       catalog=lambda a, t: None, policy=policy)
+            c._transport = lambda req, timeout: None
+            c._get = lambda q: [row_only_failed]
+            return c
+
+        registry = Registry((
+            discovery_registration(None, client_factory=client_factory,
+                                   select_candidates=True, acquire_candidates=True),
+        ))
+        worker = Worker(self.store, self.startup, registry, policy=Policy(lease_ms=30000))
+        await worker.attempt()
+        await worker.close()
+
+        db = connect(self.database)
+        try:
+            job_row = db.execute("SELECT state, last_reason_code FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            self.assertEqual(job_row[0], "CANCELED")
+            self.assertEqual(job_row[1], "WAITING_FOR_DUB")
+
+            c_count = db.execute("SELECT count(*) FROM sonarr_episode_candidates WHERE plan_id=19").fetchone()[0]
+            self.assertEqual(c_count, 1)
+
+            snap_count = db.execute("SELECT count(*) FROM prowlarr_search_snapshots WHERE job_id=?", (job_id,)).fetchone()[0]
+            self.assertGreaterEqual(snap_count, 1)
+        finally:
+            db.close()
+
+    def test_provider_outage_retries_while_identity_conflict_stops_for_review(self):
+        """Distinguish provider outage (lets ProviderUnavailable raise) from identity conflict (SearchReview with failed_check)."""
+        self.setUpFixture()
+
+        # 1. When legacy VerifiedEpisode is used and catalog raises ProviderUnavailable -> it bubbles up
+        def catalog_offline(aid, tid):
+            raise ProviderUnavailable()
+
+        policy = DiscoveryPolicy()
+        options = Options("http://127.0.0.1:9696", 60)
+        client_offline = Client(options, "apikey", catalog=catalog_offline, policy=policy)
+
+        legacy_identity = VerifiedEpisode(self.tid, self.tvdb_ep_id, 1, self.ep)
+        with self.assertRaises(ProviderUnavailable):
+            client_offline.search(self.aid, self.ep, legacy_identity)
+
+        # 2. When catalog returns conflicting placement -> stops with SearchReview and EPISODE_PLACEMENT_CONFLICT
+        target_conflict = EpisodeTarget(
+            tvdb_episode=99,  # Mismatched episode number (expected 2)
+            tvdb_season=1,
+            status="SEARCHABLE",
+            anidb_episode=self.ep,
+            tvdb_episode_id=self.tvdb_ep_id,
+            absolute_episode=99,
+        )
+        catalog_conflict = EpisodeCatalog(self.titles, {self.ep: target_conflict})
+        client_conflict = Client(options, "apikey", catalog=lambda a, t: catalog_conflict, policy=policy)
+
+        with self.assertRaises(SearchReview) as cm:
+            client_conflict.search(self.aid, self.ep, legacy_identity)
+        self.assertIn("EPISODE_PLACEMENT_CONFLICT", cm.exception.failed_check)
+
+    async def test_empty_search_queries_stops_for_review_with_failed_check(self):
+        """When no search queries can be built from anime titles, stops for review with SEARCH_QUERIES_EMPTY."""
+        self.setUpFixture()
+        policy = DiscoveryPolicy()
+        options = Options("http://127.0.0.1:9696", 60)
+        client = Client(options, "apikey", policy=policy)
+
+        # Context with Japanese Kanji only (no ascii titles), which causes search_aliases to return ()
+        context = EpisodeSearchContext(
+            tvdb_series_id=self.tid,
+            tvdb_episode_id=self.tvdb_ep_id,
+            tvdb_season=1,
+            tvdb_episode=self.ep,
+            anidb_id=self.aid,
+            anidb_episode=self.ep,
+            titles=("薬屋のひとりごと",),
+        )
+        with self.assertRaises(SearchReview) as cm:
+            client.search(self.aid, self.ep, context)
+        self.assertIn("SEARCH_QUERIES_EMPTY", cm.exception.failed_check)
+
+    def test_adm_report_job_explains_pre_search_failure_without_snapshot(self):
+        """adm report job explains why no Prowlarr request occurred when snapshot is None."""
+        self.setUpFixture()
+
+        db = connect(self.database)
+        try:
+            event, release_job, v_id = seed_plan(db, 19, self.aid, self.tid, anchor_ep=1, title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id, anidb_episode_number, tvdb_season, tvdb_episode, "
+                    "tvdb_episode_id, info_hash, selected_at_ms) VALUES(19, ?, 1, ?, ?, ?, 1000)",
+                    (self.ep, self.ep, self.tvdb_ep_id, "aa" * 20)
+                )
+                job_id = enqueue_job(
+                    db, kind=DISCOVER_KIND, component="worker", event_id=event,
+                    payload={"plan_id": 19, "start": 1, "exhausted_episode": self.ep},
+                    available_at_ms=0
+                )
+                db.execute(
+                    "UPDATE jobs SET state='NEEDS_REVIEW', last_reason_code='PROWLARR_SEARCH_REVIEW' WHERE job_id=?",
+                    (job_id,)
+                )
+                details = {
+                    "attempt": 1,
+                    "failed_check": "src/nextgen/acquisition/prowlarr_search.py:891 search EPISODE_PLACEMENT_CONFLICT",
+                }
+                db.execute(
+                    "INSERT INTO job_history(job_id, event_code, reason_code, details_json, occurred_at_ms) "
+                    "VALUES(?, 'OUTCOME_RECORDED', 'PROWLARR_SEARCH_REVIEW', ?, 2000)",
+                    (job_id, json.dumps(details))
+                )
+
+            out_lines = []
+            report_prowlarr_matching(db, job_id, out=out_lines.append)
+            output = "\n".join(out_lines)
+
+            self.assertIn("No Prowlarr request was made (PROWLARR_SEARCH_REVIEW)", output)
+            self.assertIn("EPISODE_PLACEMENT_CONFLICT", output)
+            self.assertIn(f"AniDB {self.aid}", output)
+            self.assertIn(f"TVDB {self.tid}", output)
+            self.assertIn(f"TVDB S01E02", output)
+            self.assertIn(f"TVDB ID {self.tvdb_ep_id}", output)
+
+            data = prowlarr_matching_json(db, job_id)
+            self.assertFalse(data["recorded"])
+            self.assertEqual(data["no_request_reason"], "PROWLARR_SEARCH_REVIEW")
+            self.assertIn("EPISODE_PLACEMENT_CONFLICT", data["failed_check"])
+            self.assertEqual(data["plan_id"], 19)
+            self.assertEqual(data["episode"], self.ep)
+            self.assertEqual(data["anidb_id"], self.aid)
+            self.assertEqual(data["tvdb_series_id"], self.tid)
+        finally:
+            db.close()
+
+    def test_episode_context_validation_and_provenance(self):
+        """EpisodeSearchContext validation bounds and provenance loading."""
+        self.setUpFixture()
+
+        # Rejects non-positive or empty
+        with self.assertRaises(SonarrEpisodeMismatch):
+            EpisodeSearchContext(
+                tvdb_series_id=0,
+                tvdb_episode_id=self.tvdb_ep_id,
+                tvdb_season=1,
+                tvdb_episode=self.ep,
+                anidb_id=self.aid,
+                anidb_episode=self.ep,
+                titles=self.titles,
+            )
+
+        with self.assertRaises(SonarrEpisodeMismatch):
+            EpisodeSearchContext(
+                tvdb_series_id=self.tid,
+                tvdb_episode_id=self.tvdb_ep_id,
+                tvdb_season=1,
+                tvdb_episode=self.ep,
+                anidb_id=0,
+                anidb_episode=self.ep,
+                titles=self.titles,
+            )
+
+        with self.assertRaises(SonarrEpisodeMismatch):
+            EpisodeSearchContext(
+                tvdb_series_id=self.tid,
+                tvdb_episode_id=self.tvdb_ep_id,
+                tvdb_season=1,
+                tvdb_episode=self.ep,
+                anidb_id=self.aid,
+                anidb_episode=self.ep,
+                titles=(),
+            )
+
+        # Loading from DB
+        db = connect(self.database)
+        try:
+            event, release_job, v_id = seed_plan(db, 19, self.aid, self.tid, anchor_ep=1, title=self.titles[0])
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id, anidb_episode_number, tvdb_season, tvdb_episode, "
+                    "tvdb_episode_id, info_hash, selected_at_ms) VALUES(19, ?, 1, ?, ?, ?, 1000)",
+                    (self.ep, self.ep, self.tvdb_ep_id, "aa" * 20)
+                )
+
+            ctx = load_authoritative_episode_context(db, 19, self.ep)
+            self.assertIsNotNone(ctx)
+            self.assertEqual(ctx.tvdb_series_id, self.tid)
+            self.assertEqual(ctx.tvdb_episode_id, self.tvdb_ep_id)
+            self.assertEqual(ctx.tvdb_season, 1)
+            self.assertEqual(ctx.tvdb_episode, self.ep)
+            self.assertEqual(ctx.anidb_id, self.aid)
+            self.assertEqual(ctx.anidb_episode, self.ep)
+            self.assertEqual(ctx.titles[0], self.titles[0])
+            self.assertEqual(ctx.absolute_episode, self.ep)
+            self.assertEqual(ctx.status, "SEARCHABLE")
+            self.assertTrue(ctx.verified)
+            self.assertEqual(ctx.provenance, "SAVED_SELECTION")
+
+            # Missing plan returns None
+            self.assertIsNone(load_authoritative_episode_context(db, 999, self.ep))
+            # Missing episode returns None
+            self.assertIsNone(load_authoritative_episode_context(db, 19, 999))
+        finally:
+            db.close()

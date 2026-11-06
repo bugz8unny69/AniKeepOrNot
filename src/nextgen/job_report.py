@@ -367,6 +367,63 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
         else:
             out('=== Prowlarr matching')
         out('Prowlarr matching: Not recorded for this attempt (older search or capture unavailable). No Prowlarr request was made.')
+
+        job_row = db.execute(
+            "SELECT kind, state, last_reason_code, payload_json, attempt_count FROM jobs WHERE job_id=?",
+            (job_id,)
+        ).fetchone()
+        if job_row:
+            kind, state, reason, payload_raw, attempts = job_row
+            payload = {}
+            if payload_raw:
+                try: payload = json.loads(payload_raw)
+                except Exception: pass
+
+            hist_row = db.execute(
+                "SELECT reason_code, details_json FROM job_history WHERE job_id=? AND details_json IS NOT NULL ORDER BY history_id DESC LIMIT 1",
+                (job_id,)
+            ).fetchone()
+            details = {}
+            if hist_row and hist_row[1]:
+                try: details = json.loads(hist_row[1])
+                except Exception: pass
+
+            failed_check = details.get('failed_check')
+            failed_path = details.get('failed_path')
+            plan_id = payload.get('plan_id')
+            ep = payload.get('exhausted_episode') or payload.get('fallback_episode') or payload.get('retry_episode')
+
+            out(f'Pre-search status: No Prowlarr request was made ({reason or "NO_REQUEST"})')
+            if failed_check:
+                out(f'Failed check: {failed_check}')
+            if failed_path:
+                out(f'Failed path: {failed_path}')
+
+            if plan_id:
+                p_row = db.execute(
+                    "SELECT anidb_id, tvdb_series_id, tvdb_season FROM trial_plans WHERE plan_id=?",
+                    (plan_id,)
+                ).fetchone()
+                if p_row:
+                    aid, tid, s_num = p_row
+                    anime_row = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (aid,)).fetchone()
+                    anime_title = anime_row[0] if anime_row else f'AniDB #{aid}'
+                    ep_str = f'ep {ep}' if ep else 'window'
+                    out(f'Target: {anime_title} (AniDB {aid}, TVDB {tid}) · {ep_str}')
+
+                    if ep:
+                        sel_row = db.execute(
+                            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id, info_hash FROM sonarr_episode_selections WHERE plan_id=? AND anidb_episode_number=?",
+                            (plan_id, ep)
+                        ).fetchone()
+                        if sel_row:
+                            out(f'Saved selection: TVDB S{sel_row[0]:02d}E{sel_row[1]:02d} (TVDB ID {sel_row[2]}) · hash {sel_row[3][:8]}…')
+                        rec_row = db.execute(
+                            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM recognized_episodes WHERE anidb_id=? AND anidb_episode_number=?",
+                            (aid, ep)
+                        ).fetchone()
+                        if rec_row and (not sel_row or rec_row != sel_row[:3]):
+                            out(f'Recognized episode: TVDB S{rec_row[0]:02d}E{rec_row[1]:02d} (TVDB ID {rec_row[2]})')
         return 0
 
     att = snapshot.get('attempt', 1)
@@ -605,6 +662,55 @@ def prowlarr_matching_json(db, job_id, attempt=None):
     from src.nextgen.storage.prowlarr_snapshots import load_latest_snapshot
     snapshot = load_latest_snapshot(db, job_id, attempt=attempt)
     if snapshot is None:
+        job_row = db.execute(
+            "SELECT kind, state, last_reason_code, payload_json, attempt_count FROM jobs WHERE job_id=?",
+            (job_id,)
+        ).fetchone()
+        pre_search = {
+            'recorded': False,
+            'message': 'Not recorded for this attempt (older search or capture unavailable). No Prowlarr request was made.',
+        }
+        if job_row:
+            kind, state, reason, payload_raw, attempts = job_row
+            payload = {}
+            if payload_raw:
+                try: payload = json.loads(payload_raw)
+                except Exception: pass
+
+            hist_row = db.execute(
+                "SELECT reason_code, details_json FROM job_history WHERE job_id=? AND details_json IS NOT NULL ORDER BY history_id DESC LIMIT 1",
+                (job_id,)
+            ).fetchone()
+            details = {}
+            if hist_row and hist_row[1]:
+                try: details = json.loads(hist_row[1])
+                except Exception: pass
+
+            failed_check = details.get('failed_check')
+            failed_path = details.get('failed_path')
+            plan_id = payload.get('plan_id')
+            ep = payload.get('exhausted_episode') or payload.get('fallback_episode') or payload.get('retry_episode')
+
+            msg = 'Not recorded for this attempt (older search or capture unavailable). '
+            msg += f'No Prowlarr request was made ({reason or "NO_REQUEST"}).'
+            if failed_check:
+                msg += f' Failed check: {failed_check}'
+
+            pre_search.update({
+                'no_request_reason': reason,
+                'failed_check': failed_check,
+                'failed_path': failed_path,
+                'plan_id': plan_id,
+                'episode': ep,
+                'message': msg,
+            })
+            if plan_id:
+                p_row = db.execute("SELECT anidb_id, tvdb_series_id FROM trial_plans WHERE plan_id=?", (plan_id,)).fetchone()
+                if p_row:
+                    pre_search['anidb_id'] = p_row[0]
+                    pre_search['tvdb_series_id'] = p_row[1]
+        return pre_search
+
         return {
             'recorded': False,
             'message': 'Not recorded for this attempt (older search or capture unavailable). No Prowlarr request was made.',
