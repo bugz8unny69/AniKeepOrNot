@@ -52,8 +52,17 @@ def _scope(db, plan_id, episode, *, allow_staged=False):
     return aid, tid, season, number, anchor, backfill, following
 
 
-def _owners(db, plan_id, episode, aid, season, number):
-    """Operation and source job for ALL matching releases, including manual ones."""
+# Jobs that share a release's event but own nothing: the reset itself and the
+# cleanup controls it queues. Treating them as owners made a reset cancel
+# its own operation (and later its own cleanup), so it never finished.
+_CONTROL_KINDS = "('RESET_EPISODE_SEARCH','CLEANUP_CANCELED_OPERATION')"
+
+
+def _owners(db, plan_id, episode, aid, season, number, *, job_id=None):
+    """Operation and source job for ALL matching releases, including manual ones.
+
+    Never the calling reset job's own operation (job_id), and never a control job.
+    """
     rows = db.execute(
         'SELECT m.operation_id,MIN(target.job_id) FROM ('
         ' SELECT r.owner_job_id AS job_id FROM episode_reservations r '
@@ -63,12 +72,17 @@ def _owners(db, plan_id, episode, aid, season, number):
         ' UNION ALL SELECT j.job_id FROM manual_release_submissions s '
         ' JOIN jobs j ON j.event_id=s.event_id '
         ' WHERE s.anidb_id=? AND s.tvdb_season=? AND s.tvdb_episode=? '
+        f' AND j.kind NOT IN {_CONTROL_KINDS} '
         ' UNION ALL SELECT j.job_id FROM sonarr_magnet_intents i '
         ' JOIN jobs j ON j.event_id=i.event_id '
         ' WHERE i.plan_id=? AND i.anidb_episode_number=? '
+        f' AND j.kind NOT IN {_CONTROL_KINDS} '
         ') target JOIN job_operation_members m ON m.job_id=target.job_id '
+        'WHERE m.operation_id NOT IN '
+        ' (SELECT operation_id FROM job_operation_members WHERE job_id=?) '
         'GROUP BY m.operation_id ORDER BY m.operation_id',
-        (aid,season,number,aid,season,number,aid,season,number,plan_id,episode)
+        (aid,season,number,aid,season,number,aid,season,number,plan_id,episode,
+         job_id if job_id is not None else -1)
     ).fetchall()
     return tuple(rows)
 
@@ -105,11 +119,11 @@ def _pending_unowned_manual(db, aid, season, number):
     ).fetchall()
 
 
-def _ready(db, plan_id, episode):
+def _ready(db, plan_id, episode, *, job_id=None):
     aid, tid, season, number, *_ = _scope(db, plan_id, episode)
     if _pending_discovery(db, plan_id) or _pending_unowned_manual(db,aid,season,number):
         return False
-    for op, _ in _owners(db,plan_id,episode,aid,season,number):
+    for op, _ in _owners(db,plan_id,episode,aid,season,number,job_id=job_id):
         if _foreign_reservation(db,op,aid,season,number):
             raise EpisodeResetUnavailable()
         row=db.execute('SELECT state,cleanup_state FROM job_operations WHERE operation_id=?',(op,)).fetchone()
@@ -132,8 +146,11 @@ def _ready(db, plan_id, episode):
     return True
 
 
-def progress(database,plan_id,episode):
-    """Idempotent cancellation scheduling. Never deletes a reservation or torrent."""
+def progress(database,plan_id,episode,*,job_id=None):
+    """Idempotent cancellation scheduling. Never deletes a reservation or torrent.
+
+    job_id is the calling reset job: its own operation is never a target.
+    """
     from src.nextgen.storage.cancellation import CancellationStore, can_cancel_operation, cancel_job
     from src.nextgen.storage.management_actions import ActionUnavailable
     from src.nextgen.cancellation import CancellationError
@@ -143,7 +160,7 @@ def progress(database,plan_id,episode):
         now=queue.now()
         if _pending_discovery(db,plan_id):
             return 'WAIT'
-        owners=_owners(db,plan_id,episode,aid,season,number)
+        owners=_owners(db,plan_id,episode,aid,season,number,job_id=job_id)
         # Validate every target before starting any cancellation: a batch
         # owning another episode must not be partially torn down.
         for op,_ in owners:
@@ -200,7 +217,7 @@ def progress(database,plan_id,episode):
                     )
                 elif old[1] in ('NEEDS_REVIEW','BLOCKED','FAILED','DONE'):
                     return 'REVIEW'
-        return 'READY' if _ready(db,plan_id,episode) else 'WAIT'
+        return 'READY' if _ready(db,plan_id,episode,job_id=job_id) else 'WAIT'
 
 
 def _size_source(db,plan_id,episode,aid,season,number):
@@ -274,7 +291,7 @@ def _replay(db,claim,source,aid,season,number,now):
 
 def finish(db,claim,plan_id,episode,mode='search'):
     """Worker-fenced transaction: archive only AFTER the owned cleanup completed."""
-    if not db.in_transaction or not _ready(db,plan_id,episode):
+    if not db.in_transaction or not _ready(db,plan_id,episode,job_id=claim.job_id):
         raise EpisodeResetUnavailable()
     from src.nextgen.storage.sonarr_cached_retry import clear_cached
     from src.nextgen.storage.sonarr_backfill import PAGE_SIZE,plan_window
