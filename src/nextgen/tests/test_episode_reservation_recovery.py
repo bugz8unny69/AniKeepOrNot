@@ -232,3 +232,58 @@ class RegisteredCodesTests(unittest.TestCase):
                         and node.args[1].value not in REGISTRY):
                     bad.append((path.name,node.lineno,node.args[1].value))
         self.assertEqual(bad,[])
+
+
+class ResetReviewNamesCheckTests(unittest.IsolatedAsyncioTestCase):
+    """A reset stopped by CANCELLATION_REVIEW records which rule stopped it and,
+    when an owner's cleanup job stopped, that job: retrying the reset alone
+    cannot help, and the report must not claim no check was recorded."""
+    asyncSetUp = ApiV1Tests.asyncSetUp
+    rows = ApiV1Tests.rows
+    seeded_episode = EpisodeResetTests.seeded_episode
+    reset_on_anchor_magnet = ResetJobWorkerTests.reset_on_anchor_magnet
+
+    async def test_a_stopped_cleanup_job_is_named_on_the_reset(self):
+        import asyncio, json
+        from src.nextgen.jobs.reset_episode_search_job import registration
+        from src.nextgen.job_contracts import Registry
+        from src.nextgen.worker import Policy, Worker
+        from src.nextgen.api.app import failed_detail
+        job,plan,episode=await self.reset_on_anchor_magnet()
+        worker=Worker(self.store,self.startup,Registry([registration()]),policy=Policy(lease_ms=3000))
+        self.addAsyncCleanup(worker.close)
+        await asyncio.wait_for(worker.attempt(),10)                   # Queues the owners' cleanup; waits.
+        cleanup=self.rows("SELECT job_id FROM jobs WHERE kind='CLEANUP_CANCELED_OPERATION' ORDER BY job_id")[0][0]
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                # The cleanup job stops for review on a file it does not own.
+                db.execute("UPDATE jobs SET state='NEEDS_REVIEW',last_reason_code='CANCELLATION_REVIEW',attempt_count=1 WHERE job_id=?",(cleanup,))
+                append_job_history(db,job_id=cleanup,event_code='NEEDS_REVIEW',reason_code='CANCELLATION_REVIEW',
+                                   component='worker',occurred_at_ms=2000,
+                                   details={'attempt':1,'failed_check':'src/nextgen/cancellation_service.py:1 cleanup TORRENT_MOVED',
+                                            'failed_path':'/downloads/unowned.mkv'})
+                db.execute('UPDATE jobs SET available_at_ms=0 WHERE job_id=?',(job,))
+        finally:
+            db.close()
+        await asyncio.wait_for(worker.attempt(),10)
+        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)),
+                         [('NEEDS_REVIEW','CANCELLATION_REVIEW')])
+        details=json.loads(self.rows("SELECT details_json FROM job_history WHERE job_id=? AND event_code='NEEDS_REVIEW'",(job,))[0][0])
+        self.assertRegex(details['failed_check'],r'^src/nextgen/storage/episode_reset\.py:\d+ progress CLEANUP_JOB_STOPPED$')
+        self.assertEqual(details['blocking_job_id'],cleanup)
+        self.assertEqual(details['failed_path'],'/downloads/unowned.mkv')
+        self.assertIn(f'see Job #{cleanup}',failed_detail(details))
+        # The recorded line really is the rule that stopped it.
+        import pathlib
+        number=int(details['failed_check'].split(':')[1].split()[0])
+        line=pathlib.Path('src/nextgen/storage/episode_reset.py').read_text().split('\n')[number-1]
+        self.assertIn('CLEANUP_JOB_STOPPED',line)
+
+    def test_every_reset_review_names_its_rule(self):
+        # No bare refusal: each one says which rule stopped the reset.
+        import pathlib, re
+        source=pathlib.Path('src/nextgen/storage/episode_reset.py').read_text()
+        self.assertNotIn("return 'REVIEW'",source)
+        self.assertEqual(re.findall(r'raise EpisodeResetUnavailable\(\)',
+                                    source.split('def schedule(')[0]),[])

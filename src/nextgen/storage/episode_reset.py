@@ -14,6 +14,51 @@ from src.nextgen.storage.sqlite import enqueue_job_with_receipt, transaction
 class EpisodeResetUnavailable(ValueError):
     reason_code = 'MANAGEMENT_ACTION_UNAVAILABLE'
 
+    def __init__(self, review=None):
+        super().__init__()
+        self.review = review                      # Review naming the failed rule, if any.
+
+
+class Review(str):
+    """progress() result 'REVIEW' that names which rule stopped the reset.
+
+    Compares equal to 'REVIEW'. facts() are bounded History facts: the failed
+    check (this file, line and rule), the operation, the blocking cleanup job
+    and, when that job recorded one, the file it stopped on.
+    """
+    def __new__(cls, rule, *, operation_id=None, blocking_job_id=None, failed_path=None, _depth=1):
+        self = super().__new__(cls, 'REVIEW')
+        import sys
+        caller = sys._getframe(_depth)          # The line that applied the rule.
+        self.check = (f'src/nextgen/storage/episode_reset.py:{caller.f_lineno} '
+                      f'{caller.f_code.co_name} {rule}')
+        self.operation_id, self.blocking_job_id, self.failed_path = operation_id, blocking_job_id, failed_path
+        return self
+
+    def facts(self):
+        facts = {'failed_check': self.check, 'operation_id': self.operation_id,
+                 'blocking_job_id': self.blocking_job_id, 'failed_path': self.failed_path}
+        return {k: v for k, v in facts.items() if v is not None}
+
+
+def _cleanup_review(db, operation_id, rule):
+    """Review for an owner whose cleanup stopped: name its cleanup job and file."""
+    import json
+    row = db.execute("SELECT job_id FROM management_actions WHERE operation_id=? AND action='CLEANUP' "
+                     "ORDER BY job_id DESC LIMIT 1", (operation_id,)).fetchone()
+    job, path = (row[0] if row else None), None
+    if job is not None:
+        found = db.execute("SELECT details_json FROM job_history WHERE job_id=? "
+                           "AND json_extract(details_json,'$.failed_path') IS NOT NULL "
+                           "ORDER BY history_id DESC LIMIT 1", (job,)).fetchone()
+        try:
+            path = json.loads(found[0])['failed_path'] if found else None
+        except (ValueError, TypeError, KeyError):
+            path = None
+    if type(path) is not str or not path.startswith('/'):
+        path = None
+    return Review(rule, operation_id=operation_id, blocking_job_id=job, failed_path=path, _depth=2)
+
 
 def _scope(db, plan_id, episode, *, allow_staged=False):
     from src.nextgen.storage.series_intake import _placements
@@ -23,18 +68,18 @@ def _scope(db, plan_id, episode, *, allow_staged=False):
         'FROM trial_plans WHERE plan_id=?', (plan_id,)
     ).fetchone()
     if row is None:
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('PLAN_MISSING'))
     aid, tid, anchor, backfill, following = row
     if episode not in set(plan_window(db, plan_id, anchor, backfill, following)) | {anchor}:
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('EPISODE_OUTSIDE_PLAN'))
     place = _placements(db, aid, plan_id).get(episode)
     if place is None:
         # Cannot safely enumerate all owners by guessed TVDB placement.
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('EPISODE_NOT_PLACED'))
     if db.execute(
         'SELECT 1 FROM anime_review_decisions WHERE anidb_id=?', (aid,)
     ).fetchone():
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('SERIES_DECIDED'))
     season, number = place
     for table, join in (() if allow_staged else (
         ('staging_publications',
@@ -48,7 +93,7 @@ def _scope(db, plan_id, episode, *, allow_staged=False):
             'AND r.tvdb_season=? AND r.tvdb_episode=? LIMIT 1',
             (aid, season, number)
         ).fetchone():
-            raise EpisodeResetUnavailable()
+            raise EpisodeResetUnavailable(Review('EPISODE_PUBLISHED'))
     return aid, tid, season, number, anchor, backfill, following
 
 
@@ -125,10 +170,12 @@ def _ready(db, plan_id, episode, *, job_id=None):
         return False
     for op, _ in _owners(db,plan_id,episode,aid,season,number,job_id=job_id):
         if _foreign_reservation(db,op,aid,season,number):
-            raise EpisodeResetUnavailable()
+            raise EpisodeResetUnavailable(Review('OWNER_HOLDS_OTHER_EPISODE',operation_id=op))
         row=db.execute('SELECT state,cleanup_state FROM job_operations WHERE operation_id=?',(op,)).fetchone()
-        if row is None or row[0]=='STAGED' or row[0]=='CANCELED' and row[1]=='REVIEW':
-            raise EpisodeResetUnavailable()
+        if row is not None and row[0]=='CANCELED' and row[1]=='REVIEW':
+            raise EpisodeResetUnavailable(_cleanup_review(db,op,'OWNER_CLEANUP_IN_REVIEW'))
+        if row is None or row[0]=='STAGED':
+            raise EpisodeResetUnavailable(Review('OWNER_NOT_CANCELLABLE',operation_id=op))
         if row == ('CANCELED','COMPLETE'):
             continue
         # An idle operation is harmless only when it owns no resources or live work.
@@ -165,13 +212,14 @@ def progress(database,plan_id,episode,*,job_id=None):
         # owning another episode must not be partially torn down.
         for op,_ in owners:
             if _foreign_reservation(db,op,aid,season,number):
-                return 'REVIEW'
+                return Review('OWNER_HOLDS_OTHER_EPISODE',operation_id=op)
             owner_state=db.execute(
                 'SELECT state,cleanup_state FROM job_operations WHERE operation_id=?',(op,)
             ).fetchone()
-            if owner_state is None or owner_state[0]=='STAGED' or (
-                    owner_state[0]=='CANCELED' and owner_state[1]=='REVIEW'):
-                return 'REVIEW'
+            if owner_state is not None and owner_state[0]=='CANCELED' and owner_state[1]=='REVIEW':
+                return _cleanup_review(db,op,'OWNER_CLEANUP_IN_REVIEW')
+            if owner_state is None or owner_state[0]=='STAGED':
+                return Review('OWNER_NOT_CANCELLABLE',operation_id=op)
         # A queued manual VERIFY_RELEASE may not yet have been claimed/assigned
         # an operation. Cancel it only after the entire reset passes preflight.
         for (job_id,) in _pending_unowned_manual(db,aid,season,number):
@@ -181,15 +229,17 @@ def progress(database,plan_id,episode,*,job_id=None):
                 'SELECT operation_id,state,cleanup_state,reason_code FROM job_operations '
                 'WHERE operation_id=?',(op,)
             ).fetchone()
-            if row is None or row[1]=='STAGED' or (row[1]=='CANCELED' and row[2]=='REVIEW'):
-                return 'REVIEW'
+            if row is not None and row[1]=='CANCELED' and row[2]=='REVIEW':
+                return _cleanup_review(db,op,'OWNER_CLEANUP_IN_REVIEW')
+            if row is None or row[1]=='STAGED':
+                return Review('OWNER_NOT_CANCELLABLE',operation_id=op)
             if row[1]=='ACTIVE':
                 if not can_cancel_operation(db,row):
                     continue
                 try:
                     CancellationStore(database).request_in_transaction(db,target)
                 except CancellationError:
-                    return 'REVIEW'
+                    return Review('CANCELLATION_REQUEST_REFUSED',operation_id=op,blocking_job_id=target)
                 row=db.execute(
                     'SELECT operation_id,state,cleanup_state,reason_code FROM job_operations '
                     'WHERE operation_id=?',(op,)
@@ -199,7 +249,7 @@ def progress(database,plan_id,episode,*,job_id=None):
                 if active(db,op):
                     # An invariant failed: finished cleanup must have released
                     # the reservation. Never silently wait or delete the row.
-                    return 'REVIEW'
+                    return Review('RESERVATION_NOT_RELEASED',operation_id=op)
             if row[1] in ('CANCEL_REQUESTED','CANCELED') and row[2]!='COMPLETE':
                 old=db.execute(
                     "SELECT a.job_id,j.state FROM management_actions a "
@@ -216,7 +266,10 @@ def progress(database,plan_id,episode,*,job_id=None):
                         "VALUES(?,'CLEANUP',?,?,?)",(op,target,control,now)
                     )
                 elif old[1] in ('NEEDS_REVIEW','BLOCKED','FAILED','DONE'):
-                    return 'REVIEW'
+                    # The owner's cleanup job stopped (or ended without completing
+                    # cleanup). Retrying this reset cannot help: that job is the one
+                    # to inspect and retry.
+                    return _cleanup_review(db,op,'CLEANUP_JOB_STOPPED')
         return 'READY' if _ready(db,plan_id,episode,job_id=job_id) else 'WAIT'
 
 
@@ -268,7 +321,7 @@ def _replay(db,claim,source,aid,season,number,now):
             or type(document.get('release_name')) is not str
             or type(document.get('magnet_uri')) is not str
             or method not in ('torrent','magnet')):
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('REPLAY_SOURCE_INVALID'))
     new_event=db.execute(
         'INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)',
         ('manual-release',raw,now)
@@ -292,15 +345,15 @@ def _replay(db,claim,source,aid,season,number,now):
 def finish(db,claim,plan_id,episode,mode='search'):
     """Worker-fenced transaction: archive only AFTER the owned cleanup completed."""
     if not db.in_transaction or not _ready(db,plan_id,episode,job_id=claim.job_id):
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('CLEANUP_NOT_FINISHED'))
     from src.nextgen.storage.sonarr_cached_retry import clear_cached
     from src.nextgen.storage.sonarr_backfill import PAGE_SIZE,plan_window
     aid,_,season,number,anchor,backfill,following=_scope(db,plan_id,episode)
     if mode not in ('search','replay'):
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('MODE_INVALID'))
     source=_size_source(db,plan_id,episode,aid,season,number) if mode=='replay' else None
     if mode=='replay' and source is None:
-        raise EpisodeResetUnavailable()
+        raise EpisodeResetUnavailable(Review('REPLAY_SOURCE_MISSING'))
     now=time.time_ns()//1_000_000
     # Keep episode/job/hash history and exact TVDB links, but retire the active
     # candidate registry so the same hash can be submitted after a size change.
@@ -329,7 +382,7 @@ def finish(db,claim,plan_id,episode,mode='search'):
     else:
         numbers=tuple(sorted(set(plan_window(db,plan_id,anchor,backfill,following)) | ({anchor} if episode==anchor else set())))
         if episode not in numbers:
-            raise EpisodeResetUnavailable()
+            raise EpisodeResetUnavailable(Review('EPISODE_OUTSIDE_PLAN'))
         start=(numbers.index(episode)//PAGE_SIZE)*PAGE_SIZE+1
         job,audit=enqueue_job_with_receipt(
             db,kind='DISCOVER_SONARR_BACKFILL',
