@@ -60,13 +60,9 @@ class CancellationService:
                          **({} if path is None else {'failed_path':path}),
                          'attempt':job_attempt(db,job_id)}),)
             if state=='COMPLETE':
-                from src.nextgen.storage.reservation_release import release_cancelled
-                records+=release_cancelled(db,op[0],job_id,now,component=self.component)
-                if op[2]!='COMPLETE':
-                    from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
-                    records+=schedule_after_cleanup(db,op[0])
-                    from src.nextgen.storage.batch_candidates import schedule_after_cleanup_batch
-                    records+=schedule_after_cleanup_batch(db,op[0])
+                from src.nextgen.storage.reservation_release import cleanup_completed
+                records+=cleanup_completed(db,op[0],job_id,now,component=self.component,
+                                           previous_cleanup_state=op[2])
         self._log(records)
     def cleanup(self,job_id,*,max_targets=1):
         """Delete what the canceled work owns (see cancel_cleanup), then free its slots.
