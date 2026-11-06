@@ -8,7 +8,7 @@ import json
 import sqlite3
 import time
 
-from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
+from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english, is_audio_incompatible
 from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.prowlarr_search import resolution
 from src.nextgen.batch.recognition import release_scope_hint
@@ -307,22 +307,9 @@ def schedule_winner(db, scope_id, candidate_id, *, created_by_job_id=None, now_m
     top = next_candidate(db, scope_id)
     if top is None or top.candidate_id != candidate_id:
         return ()
-    if top.source_event_id is None:
-        raise CandidateConflict()
     anidb_id = db.execute("SELECT anidb_id FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()[0]
-    marks = ','.join('?' * len(_OPEN_JOB_STATES))
-    open_job = db.execute(
-        f"SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id=? AND state IN ({marks}) "
-        "ORDER BY job_id LIMIT 1", (top.source_event_id, *_OPEN_JOB_STATES)).fetchone()
-    if open_job is not None:
-        activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, open_job[0]), now_ms=now)
-        return ()
-    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
-    job_id, receipt = enqueue_job_with_receipt(
-        db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': anidb_id},
-        event_id=top.source_event_id, created_by_job_id=created_by_job_id, available_at_ms=now)
-    activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, job_id), now_ms=now)
-    return (receipt,)
+    receipt = _start_candidate(db, scope_id, anidb_id, top, created_by_job_id=created_by_job_id, now_ms=now)
+    return () if receipt is None else (receipt,)
 
 
 def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='resolution'):
@@ -332,6 +319,9 @@ def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='reso
 
     def sort_key(cand):
         title = cand.title
+        # Incompatible foreign dubs ranked last when japanese_english is required (WI-06)
+        incompatible = 1 if is_audio_incompatible(title, audio_check) else 0
+
         # Audio suitability: Dual/Multi Audio tag prioritized when Japanese+English required
         is_dual = dual_audio_tagged(title)
         audio_priority = 0 if (not req_dual or is_dual) else 1
@@ -344,21 +334,25 @@ def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='reso
         seed = cand.seeders or 0
 
         pref = (-res, -seed) if rank_by == 'resolution' else (-seed, -res)
-        return (audio_priority, meta_priority, pref[0], pref[1], cand.candidate_id)
+        return (incompatible, audio_priority, meta_priority, pref[0], pref[1], cand.candidate_id)
 
     return tuple(sorted(items, key=sort_key))
 
 
 def reorder_candidates(db, scope_id, ranked_candidates, *, now_ms=None):
-    """Update ranks for READY candidates to reflect latest policy ranking."""
+    """Update ranks for READY candidates to reflect latest policy ranking.
+
+    Only rows whose rank changes are written, so seeing the same releases
+    again leaves their records (and updated_at_ms) untouched.
+    """
     integer(scope_id, positive=True)
     now = now_ms if now_ms is not None else _now()
     rank = 1
     for cand in ranked_candidates:
         if cand.state == 'READY':
             db.execute(
-                "UPDATE batch_candidates SET rank=?, updated_at_ms=? WHERE candidate_id=?",
-                (rank, now, cand.candidate_id))
+                "UPDATE batch_candidates SET rank=?, updated_at_ms=? WHERE candidate_id=? AND rank<>?",
+                (rank, now, cand.candidate_id, rank))
             rank += 1
 
 
@@ -515,3 +509,147 @@ def exhaust_scope(db, scope_id, *, now_ms=None):
         "UPDATE batch_candidate_scopes SET state='EXHAUSTED', active_candidate_id=NULL, updated_at_ms=? "
         "WHERE scope_id=?",
         (now, scope_id))
+
+
+STOP_DISPOSITIONS = ('FAILED', 'CANCELED')
+
+
+def _active_for_operation(db, operation_id):
+    """(scope_id, active candidate) for the scope this operation is running, or None."""
+    row = db.execute("SELECT scope_id FROM batch_candidate_scopes WHERE operation_id=? "
+                     "AND active_candidate_id IS NOT NULL", (operation_id,)).fetchone()
+    if row is None:
+        return None
+    active = get_active_candidate(db, row[0])
+    return None if active is None else (row[0], active)
+
+
+def record_candidate_stop(db, operation_id, disposition, reason_code, *, now_ms=None):
+    """Remember why the active candidate of this operation is stopping (WI-13).
+
+    Called where the decision is made: a user Cancel (CANCELED) or a job that
+    failed verification, metadata, size or audio checks (FAILED). The first
+    decision wins; cleanup applies it later. Returns True when recorded.
+    """
+    if not db.in_transaction or disposition not in STOP_DISPOSITIONS:
+        raise CandidateConflict()
+    if type(reason_code) is not str or not 1 <= len(reason_code.strip()) <= 64:
+        raise CandidateConflict()
+    found = _active_for_operation(db, operation_id)
+    if found is None:
+        return False
+    now = now_ms if now_ms is not None else _now()
+    return db.execute(
+        "INSERT OR IGNORE INTO batch_candidate_stops(candidate_id,operation_id,disposition,reason_code,recorded_at_ms) "
+        "VALUES(?,?,?,?,?)", (found[1].candidate_id, operation_id, disposition, reason_code.strip(), now)).rowcount == 1
+
+
+def auto_cleanup_failed_batch_candidate(db, claim):
+    """A definitive failure of the active candidate's job: record FAILED, then clean up.
+
+    Uses the same cancellation transition and cleanup control job as a user
+    Cancel (sonarr_candidates.request_automatic_cleanup); only the recorded
+    disposition differs.
+    """
+    if not db.in_transaction or claim.event_id is None:
+        return ()
+    from src.nextgen.storage.cancellation import operation
+    op = operation(db, claim.job_id)
+    if op[1] != 'ACTIVE' or _active_for_operation(db, op[0]) is None:
+        return ()
+    if db.execute("SELECT 1 FROM management_actions WHERE operation_id=? AND action='CLEANUP'", (op[0],)).fetchone():
+        return ()
+    reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()[0]
+    record_candidate_stop(db, op[0], 'FAILED', reason or 'JOB_FAILED')
+    from src.nextgen.storage.sonarr_candidates import request_automatic_cleanup
+    return request_automatic_cleanup(db, claim)
+
+
+def _legacy_disposition(db, operation_id):
+    """Stops recorded before batch_candidate_stops existed.
+
+    Same rule as single episodes (sonarr_candidates.schedule_after_cleanup):
+    only a cleanup control created BY a job of this operation is an automatic
+    failure; any other cleanup was requested by a person.
+    """
+    row = db.execute(
+        "SELECT target.last_reason_code FROM management_actions a "
+        "JOIN jobs control ON control.job_id=a.job_id AND control.kind='CLEANUP_CANCELED_OPERATION' "
+        "JOIN job_operation_members source ON source.job_id=control.created_by_job_id "
+        "AND source.operation_id=a.operation_id "
+        "JOIN jobs target ON target.job_id=a.target_job_id "
+        "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1", (operation_id,)).fetchone()
+    if row is None:
+        return 'CANCELED', 'JOB_CANCELED'
+    return 'FAILED', row[0] or 'JOB_FAILED'
+
+
+def _anime_rejected(db, anidb_id):
+    return db.execute("SELECT 1 FROM anime_review_decisions WHERE anidb_id=? AND decision='REJECT'",
+                      (anidb_id,)).fetchone() is not None
+
+
+def _start_candidate(db, scope_id, anidb_id, candidate, *, created_by_job_id=None, now_ms=None):
+    """Activate a READY candidate with the VERIFY_RELEASE job that runs it.
+
+    An open VERIFY_RELEASE job for the candidate's delivery (one that was
+    pooled and has not run yet) is adopted instead of creating a second one.
+    Returns the new job's receipt, or None when an open job was adopted.
+    """
+    if candidate.source_event_id is None:
+        raise CandidateConflict()
+    marks = ','.join('?' * len(_OPEN_JOB_STATES))
+    open_job = db.execute(
+        f"SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id=? AND state IN ({marks}) "
+        "ORDER BY job_id LIMIT 1", (candidate.source_event_id, *_OPEN_JOB_STATES)).fetchone()
+    if open_job is not None:
+        activate_candidate(db, scope_id, candidate.info_hash, operation_id=_job_operation(db, open_job[0]),
+                           now_ms=now_ms)
+        return None
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    job_id, receipt = enqueue_job_with_receipt(
+        db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': anidb_id},
+        event_id=candidate.source_event_id, created_by_job_id=created_by_job_id,
+        available_at_ms=now_ms if now_ms is not None else _now())
+    activate_candidate(db, scope_id, candidate.info_hash, operation_id=_job_operation(db, job_id), now_ms=now_ms)
+    return receipt
+
+
+def schedule_after_cleanup_batch(db, operation_id):
+    """Cleanup of the active candidate is COMPLETE: apply its stop, then advance (WI-04, WI-13).
+
+    Runs in the cleanup's completion transaction, after its torrents, files
+    and reservations were released, so the next candidate never starts
+    early. Idempotent: once applied, the operation no longer belongs to an
+    active candidate and a repeat does nothing.
+    """
+    if not db.in_transaction:
+        raise CandidateConflict()
+    found = _active_for_operation(db, operation_id)
+    if found is None:
+        return ()
+    scope_id, active = found
+    now = _now()
+    stop = db.execute("SELECT disposition,reason_code FROM batch_candidate_stops WHERE candidate_id=?",
+                      (active.candidate_id,)).fetchone()
+    disposition, reason = stop if stop is not None else _legacy_disposition(db, operation_id)
+    if disposition == 'CANCELED':
+        cancel_candidate(db, scope_id, active.info_hash, reason, now_ms=now)
+    else:
+        fail_candidate(db, scope_id, active.info_hash, reason, now_ms=now)
+    anidb_id = db.execute("SELECT anidb_id FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()[0]
+    if _anime_rejected(db, anidb_id):
+        return ()   # Rejecting the series stops the season; it does not try the next release.
+    nxt = next_candidate(db, scope_id)
+    if nxt is None:
+        exhaust_scope(db, scope_id, now_ms=now)
+        return ()
+    receipt = _start_candidate(db, scope_id, anidb_id, nxt, now_ms=now)
+    return () if receipt is None else (receipt,)
+
+
+def succeed_operation_candidate(db, operation_id, *, now_ms=None):
+    """The operation reached STAGED: its active candidate and scope SUCCEEDED."""
+    found = _active_for_operation(db, operation_id)
+    if found is not None:
+        succeed_candidate(db, found[0], found[1].info_hash, now_ms=now_ms)

@@ -165,8 +165,11 @@ class ManagementActions:
                                "reason_code='CANCELLATION_COMPLETE',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
                     records.append(append_job_history(db,job_id=job_id,event_code='CANCELLATION_CLEANUP_CHANGED',
                         reason_code='CANCELLATION_COMPLETE',component='api',occurred_at_ms=now,details={'attempt':job_attempt(db,job_id)}))
-                    from src.nextgen.storage.reservation_release import release_cancelled
-                    records.extend(release_cancelled(db,op[0],job_id,now,component='api'))
+                    # Same follow-ups as the cleanup service: free the slots,
+                    # then the candidate controllers move on (nothing to delete).
+                    from src.nextgen.storage.reservation_release import cleanup_completed
+                    records.extend(cleanup_completed(db,op[0],job_id,now,component='api',
+                                                     previous_cleanup_state=op[2]))
                     return 200,{'completed':True,'disable_action':True,
                                 'notification':CATALOG.reason('CANCELLATION_COMPLETE')},tuple(records)
             event=db.execute('SELECT event_id FROM jobs WHERE job_id=?',(job_id,)).fetchone()[0]

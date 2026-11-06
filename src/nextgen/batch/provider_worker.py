@@ -138,6 +138,12 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
             if decision.action=='POOLED':
                 return BatchCandidatePooled(source,decision.candidate_id,decision.scope_id,digest,
                                             decision.winner_candidate_id)
+
+        # Reject known incompatible audio releases before metadata or probe download (WI-06)
+        from src.nextgen.acquisition.audio import is_audio_incompatible
+        if is_audio_incompatible(delivery_title(source), configuration.value('acquisition.audio_check')):
+            from src.nextgen.acquisition.media import AudioMissing
+            raise AudioMissing(('eng', 'jpn'), (), ('eng', 'jpn'))
         # The built-in reader needs the leased VERIFY_RELEASE claim before
         # issuing any older-client stopped-magnet admission. Custom injected
         # readers used by tests retain their three-argument contract.
@@ -158,6 +164,16 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
             verify_batch_files,inventory,client=client,credentials=secret,
             anidb_id=source.anidb_id,tvdb_series_id=source.tvdb_series_id,
             season=hint.season_hint,cancelled=cancelled)
+
+        # Validate per-episode file size limits before downloading video probe (WI-07)
+        from src.nextgen.acquisition.settings import size_limits
+        limits = size_limits(configuration)
+        by_index = {f.index: f for f in inventory.files}
+        for fact in verified.files:
+            file = by_index.get(fact.index)
+            if file is not None:
+                limits.admit(file.size)
+
         if cancelled.is_set():
             raise ReleaseNotReady()
         return BatchVerificationCompletion(source,inventory,verified)

@@ -11,7 +11,9 @@ from src.nextgen.providers.errors import (ProviderDeferred, ProviderUnavailable,
 from src.nextgen.release_contracts import VerifiedRelease, ReleaseNotReady, ReleaseConflict
 from src.nextgen.batch.provider_worker import BatchVerificationCompletion, BatchCandidatePooled
 from src.nextgen.batch.selection import BatchPlanningError
+from src.nextgen.acquisition.media import MediaInvalid
 from src.nextgen.acquisition.metadata import MetadataInvalid, SourceMissing
+from src.nextgen.acquisition.settings import SizeLimitExceeded
 from src.nextgen.storage.batch_verifications import persist_batch_verification
 from src.nextgen.acquisition.metainfo_source import (
     MetadataSourceWaiting, MetadataSourceUnavailable,
@@ -87,6 +89,8 @@ def registration(verify, *, trial_kind=None, batch_kind=None):
         except ProviderDeferred as exc: return Outcome("defer","JOB_WAITING",delay_ms=exc.delay_ms)
         except (ProviderUnavailable,ProviderInvalidResponse) as exc: return Outcome("retry",exc.reason_code)
         except ProviderAuthenticationFailed as exc: return Outcome("review","PROVIDER_AUTH_FAILED", facts=failure_facts(exc))
+        except SizeLimitExceeded as exc: return Outcome("fail", exc.reason_code, facts=exc.facts)
+        except MediaInvalid as exc: return Outcome("fail" if exc.reason_code == 'MEDIA_AUDIO_REQUIRED' else "review", exc.reason_code, facts=failure_facts(exc))
         except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         if type(result) not in (VerifiedRelease,BatchVerificationCompletion,BatchCandidatePooled) or result.source!=source:
             return Outcome("review","RELEASE_CONFLICT")

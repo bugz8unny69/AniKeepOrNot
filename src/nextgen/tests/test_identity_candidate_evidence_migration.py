@@ -60,6 +60,7 @@ class IdentityCandidateEvidenceMigrationTests(unittest.TestCase):
             initialize(fresh)
             upgraded = self.migrate()
             upgraded.executescript((SQL_DIR / '060_batch_candidate_operations.sql').read_text())
+            upgraded.executescript((SQL_DIR / '061_batch_candidate_stops.sql').read_text())
             self.assertEqual(_structure(upgraded), _structure(fresh))
         finally:
             fresh.close()
