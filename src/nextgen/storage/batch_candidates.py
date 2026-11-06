@@ -137,81 +137,188 @@ def add_candidate(db, scope_id, info_hash, title, *, source_event_id=None,
                           source_event_id, now, now)
 
 
-def discover_existing_candidates(db, scope_id, anidb_id, season, *,
-                                 client=None, qb_torrents=None, now_ms=None):
-    """WI-02: Discover and register existing candidate releases from incoming_events and qBittorrent observations."""
-    integer(scope_id, positive=True)
+@dataclass(frozen=True)
+class ReleaseFacts:
+    """One identified season-pack delivery for a scope, read from its event."""
+    event_id: int
+    info_hash: str
+    title: str
+    seeders: int | None = None
+    size_bytes: int | None = None
+
+
+def _event_document(raw_body):
+    body = json.loads(bytes(raw_body).decode('utf-8') if isinstance(raw_body, (bytes, memoryview)) else raw_body)
+    if not isinstance(body, dict):
+        raise ValueError('event body is not an object')
+    return body
+
+
+def _count(value, *, positive=False):
+    return value if type(value) is int and (value > 0 if positive else value >= 0) else None
+
+
+def scope_releases(db, anidb_id, season):
+    """Read-only: identified season-pack deliveries for (anidb_id, season).
+
+    A delivery whose stored body cannot describe a candidate (no title or no
+    valid infohash) is skipped; database errors propagate.
+    """
     integer(anidb_id, positive=True)
     integer(season, positive=True)
-    now = now_ms if now_ms is not None else _now()
-
-    # 1. Discover from incoming_events linked via identity_results to this anidb_id
     rows = db.execute(
-        "SELECT e.event_id, e.raw_body, e.received_at_ms "
-        "FROM incoming_events e "
+        "SELECT e.event_id, e.raw_body FROM incoming_events e "
         "JOIN identity_results r ON r.event_id=e.event_id "
-        "WHERE r.anidb_id=?",
+        "WHERE r.anidb_id=? ORDER BY e.event_id",
         (anidb_id,)).fetchall()
-
-    added = []
-    for event_id, raw_body, received_at in rows:
+    found = []
+    for event_id, raw_body in rows:
         try:
-            body = json.loads(bytes(raw_body).decode('utf-8')) if isinstance(raw_body, (bytes, memoryview)) else json.loads(raw_body)
-            if not isinstance(body, dict):
-                continue
+            body = _event_document(raw_body)
             title = body.get('release_name') or body.get('title') or ''
-            hash_val = body.get('torrent_infohash') or body.get('info_hash') or ''
-            if not title or not hash_val:
+            if type(title) is not str or not title.strip():
                 continue
-            digest = infohash(hash_val)
-            hint = release_scope_hint(title)
-            if hint.kind not in ('season_pack', 'mixed_pack') or hint.season_hint != season:
-                continue
-
-            seeders = body.get('seeders')
-            size_bytes = body.get('size')
-
-            # Check if metadata is already available in admissions or verifications
-            has_meta = 0
-            meta_json = None
-            adm = db.execute(
-                "SELECT inventory_json FROM batch_metadata_admissions WHERE info_hash=? AND inventory_json IS NOT NULL",
-                (digest,)).fetchone()
-            if adm is not None and adm[0]:
-                has_meta = 1
-                meta_json = adm[0]
-            else:
-                v_row = db.execute(
-                    "SELECT batch_id FROM batch_verifications WHERE info_hash=?",
-                    (digest,)).fetchone()
-                if v_row is not None:
-                    has_meta = 1
-
-            # Check qB torrents or client read-only if passed
-            if not has_meta:
-                if qb_torrents:
-                    qb_info = qb_torrents.get(digest)
-                    if qb_info is not None:
-                        files = getattr(qb_info, 'files', None)
-                        if files or getattr(qb_info, 'has_metadata', False):
-                            has_meta = 1
-                elif client is not None and hasattr(client, 'inspect'):
-                    try:
-                        obs = client.inspect(digest, include_files=True)
-                        if obs is not None and getattr(obs, 'files', None):
-                            has_meta = 1
-                            meta_json = json.dumps({'files': [{'index': f.index, 'name': f.name, 'size': f.size} for f in obs.files]})
-                    except Exception:
-                        pass
-
-            cand = add_candidate(db, scope_id, digest, title, source_event_id=event_id,
-                                 seeders=seeders, size_bytes=size_bytes, has_metadata=has_meta,
-                                 metadata_json=meta_json, now_ms=now)
-            added.append(cand)
-        except Exception:
+            digest = infohash(body.get('torrent_infohash') or body.get('info_hash'))
+        except (ValueError, TypeError, UnicodeError):
             continue
+        hint = release_scope_hint(title)
+        if hint.kind not in ('season_pack', 'mixed_pack') or hint.season_hint != season:
+            continue
+        found.append(ReleaseFacts(event_id, digest, title.strip(),
+                                  _count(body.get('seeders')), _count(body.get('size'), positive=True)))
+    return tuple(found)
 
+
+def _metadata_evidence(db, digest, observations):
+    """(has_metadata, metadata_json) from durable admissions/verifications or a read-only observation."""
+    row = db.execute(
+        "SELECT inventory_json FROM batch_metadata_admissions WHERE info_hash=? AND inventory_json IS NOT NULL",
+        (digest,)).fetchone()
+    if row is not None and row[0]:
+        return 1, row[0]
+    if db.execute("SELECT 1 FROM batch_verifications WHERE info_hash=?", (digest,)).fetchone():
+        return 1, None
+    observed = (observations or {}).get(digest)
+    if observed is not None:
+        return 1, observed.evidence_json()
+    return 0, None
+
+
+def discover_existing_candidates(db, scope_id, anidb_id, season, *, observations=None, now_ms=None):
+    """WI-02: register the scope's existing deliveries as candidates.
+
+    observations maps infohash to ExistingMetadata read from qBittorrent
+    *before* this transaction (acquisition/existing_metadata.py). They are
+    evidence for ranking only and never authorize adopting a torrent.
+    """
+    integer(scope_id, positive=True)
+    now = now_ms if now_ms is not None else _now()
+    added = []
+    for release in scope_releases(db, anidb_id, season):
+        has_meta, meta_json = _metadata_evidence(db, release.info_hash, observations)
+        added.append(add_candidate(db, scope_id, release.info_hash, release.title,
+                                   source_event_id=release.event_id, seeders=release.seeders,
+                                   size_bytes=release.size_bytes, has_metadata=has_meta,
+                                   metadata_json=meta_json, now_ms=now))
     return tuple(added)
+
+
+@dataclass(frozen=True)
+class CoordinationDecision:
+    """PROCEED: this delivery is the scope's active candidate and continues.
+    POOLED: another candidate is active or ranks higher; winner_candidate_id,
+    when set, must be activated and scheduled by the pooled job's completion.
+    """
+    action: str
+    scope_id: int
+    candidate_id: int
+    winner_candidate_id: int | None = None
+
+
+_OPEN_JOB_STATES = ('PENDING', 'RUNNING', 'RETRY_WAIT', 'ON_HOLD')
+
+
+def _job_operation(db, job_id):
+    row = db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?", (job_id,)).fetchone()
+    if row is None:
+        raise CandidateConflict()
+    return row[0]
+
+
+def coordinate_release(db, *, anidb_id, tvdb_series_id, season, info_hash, title, event_id, job_id,
+                       seeders=None, size_bytes=None, observations=None,
+                       audio_check='japanese_english', now_ms=None):
+    """Register one arriving season pack and decide, inside one write transaction.
+
+    Every input that came from the network was gathered before this
+    transaction; everything decided here is re-read under the write lock, so
+    concurrent arrivals cannot activate two candidates.
+    """
+    if not db.in_transaction:
+        raise CandidateConflict()
+    now = now_ms if now_ms is not None else _now()
+    digest = infohash(info_hash)
+    scope = get_or_create_scope(db, anidb_id, tvdb_series_id, season, now_ms=now)
+    discover_existing_candidates(db, scope.scope_id, anidb_id, season, observations=observations, now_ms=now)
+    has_meta, meta_json = _metadata_evidence(db, digest, observations)
+    cand = add_candidate(db, scope.scope_id, digest, title, source_event_id=event_id,
+                         seeders=_count(seeders), size_bytes=_count(size_bytes, positive=True),
+                         has_metadata=has_meta, metadata_json=meta_json, now_ms=now)
+    reorder_candidates(db, scope.scope_id,
+                       rank_candidates(get_candidate_pool(db, scope.scope_id), audio_check=audio_check),
+                       now_ms=now)
+    state = db.execute("SELECT state FROM batch_candidate_scopes WHERE scope_id=?", (scope.scope_id,)).fetchone()[0]
+    active = get_active_candidate(db, scope.scope_id)
+    if active is not None:
+        # A restarted job of the active candidate continues; anything else waits.
+        action = 'PROCEED' if active.info_hash == digest else 'POOLED'
+        return CoordinationDecision(action, scope.scope_id, cand.candidate_id)
+    if state == 'SUCCEEDED':
+        return CoordinationDecision('POOLED', scope.scope_id, cand.candidate_id)
+    top = next_candidate(db, scope.scope_id)
+    if top is None:
+        # This delivery already failed or was canceled in this cycle.
+        return CoordinationDecision('POOLED', scope.scope_id, cand.candidate_id)
+    if top.info_hash == digest:
+        activate_candidate(db, scope.scope_id, digest, operation_id=_job_operation(db, job_id), now_ms=now)
+        return CoordinationDecision('PROCEED', scope.scope_id, cand.candidate_id)
+    return CoordinationDecision('POOLED', scope.scope_id, cand.candidate_id, top.candidate_id)
+
+
+def schedule_winner(db, scope_id, candidate_id, *, created_by_job_id=None, now_ms=None):
+    """Activate a higher-ranked READY candidate and make sure a job runs it.
+
+    Called in the pooled job's completion transaction. Re-checks that nothing
+    else became active meanwhile and that the candidate is still the best
+    READY one; otherwise does nothing. An open VERIFY_RELEASE job for the
+    candidate's delivery is reused instead of creating a second one.
+    """
+    if not db.in_transaction:
+        raise CandidateConflict()
+    integer(scope_id, positive=True)
+    now = now_ms if now_ms is not None else _now()
+    state = db.execute("SELECT state FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()
+    if state is None or state[0] == 'SUCCEEDED' or get_active_candidate(db, scope_id) is not None:
+        return ()
+    top = next_candidate(db, scope_id)
+    if top is None or top.candidate_id != candidate_id:
+        return ()
+    if top.source_event_id is None:
+        raise CandidateConflict()
+    anidb_id = db.execute("SELECT anidb_id FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()[0]
+    marks = ','.join('?' * len(_OPEN_JOB_STATES))
+    open_job = db.execute(
+        f"SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id=? AND state IN ({marks}) "
+        "ORDER BY job_id LIMIT 1", (top.source_event_id, *_OPEN_JOB_STATES)).fetchone()
+    if open_job is not None:
+        activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, open_job[0]), now_ms=now)
+        return ()
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    job_id, receipt = enqueue_job_with_receipt(
+        db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': anidb_id},
+        event_id=top.source_event_id, created_by_job_id=created_by_job_id, available_at_ms=now)
+    activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, job_id), now_ms=now)
+    return (receipt,)
 
 
 def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='resolution'):
@@ -291,8 +398,10 @@ def activate_candidate(db, scope_id, info_hash, *, operation_id=None, now_ms=Non
     db.execute(
         "UPDATE batch_candidates SET state='ACTIVE', updated_at_ms=? WHERE candidate_id=?",
         (now, cid))
+    # Activating a candidate reopens a scope that had run out of candidates.
     db.execute(
-        "UPDATE batch_candidate_scopes SET active_candidate_id=?, operation_id=?, updated_at_ms=? "
+        "UPDATE batch_candidate_scopes SET active_candidate_id=?, operation_id=?, "
+        "state=CASE state WHEN 'EXHAUSTED' THEN 'ACTIVE' ELSE state END, updated_at_ms=? "
         "WHERE scope_id=?",
         (cid, operation_id, now, scope_id))
     return True

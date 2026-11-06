@@ -36,7 +36,14 @@ def _persist(db,claim,value):
         raise ValueError("release completion does not match its job")
     try:
         if type(value.verified) is BatchCandidatePooled:
-            return ()
+            # A higher-ranked candidate nothing is running gets activated and
+            # scheduled here, atomically with this job's completion (WI-11).
+            pooled=value.verified
+            if pooled.winner_candidate_id is None:
+                return ()
+            from src.nextgen.storage.batch_candidates import schedule_winner
+            return schedule_winner(db,pooled.scope_id,pooled.winner_candidate_id,
+                                   created_by_job_id=claim.job_id,now_ms=time.time_ns()//1000000)
         elif type(value.verified) is BatchVerificationCompletion:
             result=value.verified
             persist_batch_verification(db,claim,result.source,result.inventory,result.verified,
