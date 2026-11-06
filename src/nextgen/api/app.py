@@ -133,6 +133,10 @@ def failed_detail(details):
     cause=details.get('cause_reason_code')
     blocker=details.get('blocking_job_id')
     op=details.get('operation_id')
+    service=details.get('service_detail')
+    if type(service) is str:
+        # A service outage: say which service and what is wrong.
+        return service + (f' (cause: {cause})' if type(cause) is str else '')
     if blocker is not None:
         msg = f'Waiting for reservation owned by Job #{blocker}' + (f' (operation #{op})' if op is not None else '')
         return msg

@@ -215,6 +215,10 @@ _ENTRIES = (
     Reason("JOB_RETRY_EXHAUSTED", "A job reached its allowed attempt limit.",
            "Automatic retries have stopped.", "Review the job before retrying manually.",
            "ERROR", False),
+    Reason("SERVICE_UNAVAILABLE", "A service this job needs could not be reached. The job waits and tries again by itself; it does not use up its retries.",
+           "Waiting for a service that is unavailable.",
+           "Check the service named in the details. Waiting jobs continue on their own once it is back; after 72 hours of failed attempts the job stops for review.",
+           "WARNING", True),
     Reason("STORAGE_UNAVAILABLE", "Storage access failed; the cause and commit outcome require investigation.",
            "Processing is temporarily unavailable.", "Check database health and storage.",
            "ERROR", None),
@@ -312,7 +316,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  failed_check=None, failed_path=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
-                 blocking_job_id=None, operation_id=None) -> dict:
+                 blocking_job_id=None, operation_id=None,
+                 service=None, service_detail=None, waiting_since_ms=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -330,7 +335,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
     for key, value in (("retry_at_ms", retry_at_ms), ("attempt", attempt),
                        ("max_attempts", max_attempts), ("video_mb", video_mb),
                        ("limit_mb", limit_mb), ("plan_used_mb", plan_used_mb),
-                       ("blocking_job_id", blocking_job_id), ("operation_id", operation_id)):
+                       ("blocking_job_id", blocking_job_id), ("operation_id", operation_id),
+                       ("waiting_since_ms", waiting_since_ms)):
         if value is not None:
             if type(value) is not int or not 0 <= value <= _MAX_INTEGER:
                 raise ValueError("invalid diagnostic integer")
@@ -365,6 +371,17 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
         if type(missing_audio) is not str or len(missing_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in missing_audio):
             raise ValueError("invalid missing audio tags")
         details["missing_audio"] = missing_audio
+    # The external service involved, by registry name, and a readable status
+    # line such as "Prowlarr is unavailable: HTTP 503 at http://...".
+    if service is not None:
+        if type(service) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", service):
+            raise ValueError("invalid service name")
+        details["service"] = service
+    if service_detail is not None:
+        if (type(service_detail) is not str or not service_detail or len(service_detail) > 300
+                or any(ord(c) < 32 or ord(c) == 127 for c in service_detail)):
+            raise ValueError("invalid service detail")
+        details["service_detail"] = service_detail
     if cause_reason_code is not None:
         cause = get_reason(cause_reason_code)
         if cause is None:

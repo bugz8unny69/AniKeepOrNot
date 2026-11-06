@@ -17,10 +17,16 @@ class Policy:
     max_retries: int = 3
     backoff_ms: int = 1000
     max_backoff_ms: int = 60000
+    # While a needed service is unavailable a job waits (no retry is spent),
+    # checking again after service_wait_ms, and stops for review once it has
+    # kept failing on the outage for service_give_up_ms (72 hours).
+    service_wait_ms: int = 60000
+    service_give_up_ms: int = 72 * 3600 * 1000
 
     def __post_init__(self):
         for name, lower, upper in (("lease_ms",1000,86400000), ("poll_ms",10,60000),
-                ("max_retries",0,100), ("backoff_ms",1,86400000), ("max_backoff_ms",1,86400000)):
+                ("max_retries",0,100), ("backoff_ms",1,86400000), ("max_backoff_ms",1,86400000),
+                ("service_wait_ms",1000,86400000), ("service_give_up_ms",60000,30*86400000)):
             value = getattr(self, name)
             if type(value) is not int or not lower <= value <= upper:
                 raise ValueError("invalid worker policy")
@@ -96,9 +102,9 @@ class Outcome:
             raise ValueError("invalid outcome candidate evidence")
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
-        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "cancel", "fail")
-                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code"}
-                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code") else (type(v) is not int or v < 0)
+        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "defer", "cancel", "fail")
+                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code", "service", "service_detail"}
+                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code", "service", "service_detail") else (type(v) is not int or v < 0)
                        for k, v in self.facts.items())):
             raise ValueError("invalid outcome facts")
         if type(self.kind) is not str or self.kind not in _STATES:

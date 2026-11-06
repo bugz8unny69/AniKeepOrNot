@@ -162,6 +162,39 @@ class Worker:
                       if spec.services and health.unavailable(spec.services))
         return kinds or None
 
+    def _waiting_outcome(self, service, cause=None, facts=None):
+        """Wait for an unavailable service: no retry is spent, and the details name it."""
+        details = {k: v for k, v in (facts or {}).items() if k in ("failed_check", "failed_path")}
+        details["service"] = service
+        details["service_detail"] = self._service_health.state(service).message()[:300]
+        if cause is not None:
+            details["cause_reason_code"] = cause
+        return Outcome("defer", "SERVICE_UNAVAILABLE", delay_ms=self.policy.service_wait_ms, facts=details)
+
+    def _service_wait(self, spec, outcome):
+        """A retry caused by an unavailable service becomes a wait instead."""
+        health = self._service_health
+        if (health is None or spec is None or not spec.services or outcome.kind != "retry"
+                or outcome.reason_code is None):
+            return outcome
+        from src.nextgen.services import DOWN
+        for service in spec.services:
+            if health.registry.get(service).status_for_reason(outcome.reason_code) == DOWN:
+                return self._waiting_outcome(service, outcome.reason_code, outcome.facts)
+        return outcome
+
+    def _exception_wait(self, spec, exc):
+        """An uncaught client error that means a needed service is down: wait, not fail."""
+        health = self._service_health
+        if health is None or spec is None or not spec.services:
+            return None
+        from src.nextgen.services import DOWN
+        for service in spec.services:
+            if health.registry.get(service).classify(exc) == DOWN:
+                self._log_service_changes(tuple(c for c in (health.mark_failed(service, exc),) if c))
+                return self._waiting_outcome(service, None, failure_facts(exc))
+        return None
+
     def _observe_services(self, spec, outcome):
         """Passive health: a job's own result marks its services without another request."""
         health = self._service_health
@@ -224,6 +257,9 @@ class Worker:
                 # Storage/configuration failure is not a provider retry decision.
                 raise
             except Exception as exc:
+                waiting = self._exception_wait(spec, exc)
+                if waiting is not None:
+                    return waiting
                 # Catch-boundary diagnostic with exact redacted error
                 exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
@@ -317,6 +353,7 @@ class Worker:
                     context = Context(claim,configuration,logger,threading.Event())
                     outcome = await self._invoke(claim,spec,context)
             self._observe_services(spec, outcome)
+            outcome = self._service_wait(spec, outcome)
             try:
                 records = await self._io(self.queue.finish,claim,outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
