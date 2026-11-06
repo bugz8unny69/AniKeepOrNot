@@ -580,7 +580,7 @@ def auto_cleanup_failed_batch_candidate(db, claim):
     if db.execute("SELECT 1 FROM management_actions WHERE operation_id=? AND action='CLEANUP'", (op[0],)).fetchone():
         return ()
     reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()[0]
-    record_candidate_stop(db, op[0], 'FAILED', reason or 'JOB_FAILED')
+    record_candidate_stop(db, op[0], 'FAILED', reason or 'JOB_HANDLER_FAILED')
     from src.nextgen.storage.sonarr_candidates import request_automatic_cleanup
     return request_automatic_cleanup(db, claim)
 
@@ -601,7 +601,7 @@ def _legacy_disposition(db, operation_id):
         "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1", (operation_id,)).fetchone()
     if row is None:
         return 'CANCELED', 'JOB_CANCELED'
-    return 'FAILED', row[0] or 'JOB_FAILED'
+    return 'FAILED', row[0] or 'JOB_HANDLER_FAILED'
 
 
 def _anime_rejected(db, anidb_id):

@@ -167,6 +167,35 @@ function tvdbLabel(episode) {
   return 'S' + String(episode.season).padStart(2, '0') +
     'E' + String(episode.episode).padStart(2, '0');
 }
+// Read SxxEyy as the server does (acquisition/release_titles.EXPLICIT). Only one
+// unambiguous episode counts; anything else is left to the server to decide.
+const RELEASE_EPISODE = /(?<![A-Za-z0-9])S(\d{1,2})\s?E(\d{1,4})(?:v\d{1,2})?(?![0-9A-Za-z])/gi;
+function releaseEpisode(title) {
+  const found = new Set([...title.matchAll(RELEASE_EPISODE)].map(m => Number(m[1]) + ':' + Number(m[2])));
+  if (found.size !== 1) return null;
+  const [season, episode] = [...found][0].split(':').map(Number);
+  return {season, episode};
+}
+// The server accepts exactly one xt=urn:btih: with a 40-character hex info hash.
+function validMagnet(uri) {
+  if (!uri.startsWith('magnet:?') || uri.length > 8192) return false;
+  const xt = new URLSearchParams(uri.slice('magnet:?'.length)).getAll('xt');
+  return xt.length === 1 && /^urn:btih:[0-9a-f]{40}$/i.test(xt[0]);
+}
+// What the dashboard can tell before sending; the server checks everything again.
+function manualSubmissionProblem(target, title, magnet) {
+  if (!title) return 'Enter the release name.';
+  const declared = releaseEpisode(title);
+  if (declared && (declared.season !== target.season || declared.episode !== target.episode)) {
+    return 'This release is ' + tvdbLabel(declared) + ', but this is ' + tvdbLabel(target) +
+      '. Only a release for ' + tvdbLabel(target) + ' can be submitted here.';
+  }
+  if (magnet === '') return 'Paste the magnet link.';
+  if (magnet !== null && !validMagnet(magnet)) {
+    return 'This magnet link is not valid. It must start with magnet:? and contain its info hash (xt=urn:btih:…).';
+  }
+  return null;
+}
 // Missing episodes are AniDB-numbered; the verified TVDB placement is a label when known.
 function missingLabel(item) {
   return 'E' + String(item.anidb_episode).padStart(2, '0') +
@@ -385,6 +414,7 @@ function openManualSubmission(anidbId, episode) {
   state.manualTarget = {anidbId, season: episode.season, episode: episode.episode};
   $('series-manual-episode').textContent = tvdbLabel(episode);
   $('series-manual-form').reset();
+  $('series-manual-error').textContent = '';
   $('series-manual-source').value = 'magnet';
   $('series-manual-magnet-label').hidden = false;
   $('series-manual-torrent-label').hidden = true;
@@ -1432,6 +1462,7 @@ $('series-manual-source').addEventListener('change', () => {
 });
 $('series-manual-dismiss').addEventListener('click', () => {
   $('series-manual-panel').hidden = true;
+  $('series-manual-error').textContent = '';
   state.manualTarget = null;
 });
 $('series-manual-form').addEventListener('submit', async event => {
@@ -1440,9 +1471,16 @@ $('series-manual-form').addEventListener('submit', async event => {
   if (!target || state.seriesBusy) return;
   state.seriesBusy = true;
   const submit = $('series-manual-submit'); submit.disabled = true;
+  // The form is inside the series dialog, so its errors are shown there too;
+  // the page notice is behind the dialog.
+  const problemText = $('series-manual-error'); problemText.textContent = '';
   try {
     const body = {release_name: $('series-manual-title').value.trim()};
-    if ($('series-manual-source').value === 'magnet') {
+    const magnet = $('series-manual-source').value === 'magnet';
+    const problem = manualSubmissionProblem(
+      target, body.release_name, magnet ? $('series-manual-magnet').value.trim() : null);
+    if (problem) throw new Error(problem);
+    if (magnet) {
       body.magnet_uri = $('series-manual-magnet').value.trim();
     } else {
       const file = $('series-manual-file').files?.[0];
@@ -1465,7 +1503,10 @@ $('series-manual-form').addEventListener('submit', async event => {
     state.manualTarget = null;
     $('series-dialog').close();
     await loadActivity();
-  } catch (error) { displayError(error); }
+  } catch (error) {
+    if (error.name !== 'AbortError') problemText.textContent = error.message || COPY['dashboard.request_failed'];
+    displayError(error);
+  }
   finally { state.seriesBusy = false; submit.disabled = false; }
 });
 $('series-close').addEventListener('click', () => $('series-dialog').close());

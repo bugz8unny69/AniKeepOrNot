@@ -680,8 +680,8 @@ class Application:
                         release_name=body['release_name'],
                         magnet_uri=body.get('magnet_uri'),
                         torrent_b64=body.get('torrent_b64'))
-                except ManualSubmissionInvalid:
-                    raise ApiError(400,'API_REQUEST_INVALID') from None
+                except ManualSubmissionInvalid as exc:
+                    raise ApiError(400,exc.reason_code) from None
                 except ManualSubmissionUnavailable:
                     raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
                 return (200 if result['reused'] else 202),{
