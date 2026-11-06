@@ -153,6 +153,10 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
         worker = Worker(self.store, self.startup, registry, policy=Policy(lease_ms=30000))
         claim = await worker.attempt()
         self.assertIsNotNone(claim)
+        # A fresh candidate must be routed through the original VERIFY_RELEASE
+        # pipeline. It must not be acquired directly from Prowlarr discovery.
+        fallback_claim = await worker.attempt()
+        self.assertIsNotNone(fallback_claim)
         await worker.close()
 
         # Verify candidate recovery
@@ -187,6 +191,17 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
             ).fetchone()
             self.assertIsNotNone(successor)
             self.assertEqual(json.loads(successor[1]), {"plan_id": 19, "start": 1, "fallback_episode": self.ep})
+            fallback_job = db.execute(
+                "SELECT job_id, state FROM jobs WHERE kind=? AND created_by_job_id=?",
+                (DISCOVER_KIND, job_id)
+            ).fetchone()
+            self.assertIsNotNone(fallback_job)
+            self.assertEqual(fallback_job[1], "DONE")
+            verify_jobs = db.execute(
+                "SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND created_by_job_id=?",
+                (fallback_job[0],)
+            ).fetchall()
+            self.assertEqual(len(verify_jobs), 1, 'New release must enter VERIFY_RELEASE exactly once')
         finally:
             db.close()
 
