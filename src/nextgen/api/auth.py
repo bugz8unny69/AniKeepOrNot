@@ -15,8 +15,10 @@ TOKEN=re.compile(r'[A-Za-z0-9_-]{32,256}')
 
 
 class ApiError(ValueError):
-    def __init__(self,status,reason):
-        self.status,self.reason_code=status,reason
+    def __init__(self,status,reason,*,detail=None):
+        # detail: a specific, already safe message that replaces the generic
+        # catalog message, e.g. "Sonarr is unavailable: HTTP 503 at ...".
+        self.status,self.reason_code,self.detail=status,reason,detail
         super().__init__('The API request could not be completed.')
 
 

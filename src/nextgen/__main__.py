@@ -13,6 +13,7 @@ from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationSnapshot, decode
 from src.nextgen.maintenance import MaintenanceGate, MaintenancePending
 from src.nextgen.secrets import SecretStore
+from src.nextgen.services.startup import EXIT_CODE as STARTUP_EXIT_CODE, StartupRefused
 from src.nextgen.storage import migrations
 from src.nextgen.storage.sqlite import connect, initialize
 
@@ -133,6 +134,12 @@ def main(argv=None):
         print(json.dumps(output,sort_keys=True))
         return 0
     except KeyboardInterrupt:return 130
+    except StartupRefused as exc:
+        # One clear line per misconfigured required service. The exit code
+        # tells systemd not to restart until the settings are fixed.
+        print(exc.reason_code+': The worker did not start.',file=sys.stderr)
+        for line in exc.lines():print(line,file=sys.stderr)
+        return STARTUP_EXIT_CODE
     except Exception as exc:
         # Do not print raw settings, URLs, transport responses or credentials.
         code=getattr(exc,'reason_code','SERVICE_SETUP_FAILED')

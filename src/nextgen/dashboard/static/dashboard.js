@@ -51,7 +51,14 @@ const state = {
   search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams((location.hash || '').slice(1)).get('job') || '')
     ? '#' + new URLSearchParams((location.hash || '').slice(1)).get('job') : '',
   recognizedSearch: '', searchTimer: null,
+  services: null, servicesAt: 0,
 };
+// Status bar: what each service state looks like and says.
+const SERVICE_STATES = Object.freeze({
+  UP: ['Available', 'ok'], DOWN: ['Unavailable', 'bad'], NOT_CONFIGURED: ['Not set up', 'bad'],
+  AUTH_FAILED: ['Login rejected', 'bad'], UNSUPPORTED: ['Unsupported version', 'bad'],
+  DISABLED: ['Off', 'off'], UNKNOWN: ['Unknown', 'unknown'],
+});
 function notice(message = '', error = false) {
   $('notice').textContent = message;
   $('notice').classList.toggle('error', error);
@@ -68,6 +75,7 @@ function clearPrivate(message = '') {
   state.settingsVersion += 1;
   state.historyJob = null; state.historyVersion += 1;
   state.matchingJob = null; state.matchingVersion += 1;
+  state.services = null; state.servicesAt = 0; renderServices();
   $('job-rows').replaceChildren(); $('settings-fields').replaceChildren();
   $('history-rows').replaceChildren();
   $('matching-body').replaceChildren(); $('matching-summary').textContent = '';
@@ -574,9 +582,13 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       } catch (error) { displayError(error); }
       finally { state.seriesBusy = false; reject.disabled = false; }
     };
-    const keep = $('series-keep');
-    keep.disabled = !!series.rejection || series.keep_operations.length === 0;
-    keep.hidden = !!series.rejection;
+    const keep = $('series-keep'), keepTip = $('series-keep-tooltip');
+    const keepBlocked = series.keep_operations.length ? keepBlockedMessage() : null;
+    keep.disabled = !!series.rejection || series.keep_operations.length === 0 || !!keepBlocked;
+    keepTip.hidden = !!series.rejection;
+    keepTip.title = keep.title = keepBlocked || '';
+    keepTip.tabIndex = keepBlocked ? 0 : -1;
+    keepTip.dataset.disabled = keepBlocked ? 'true' : 'false';
     keep.textContent = 'Keep all staged (' + series.keep_operations.length + ' acquisition' +
       (series.keep_operations.length === 1 ? '' : 's') + ')';
     keep.onclick = async () => {
@@ -588,7 +600,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         notice(result.message + (result.failed.length ?
           ' ' + result.failed.length + ' acquisition(s) require another attempt.' : ''));
         dialog.close(); await loadActivity();
-      } catch (error) { displayError(error); }
+      } catch (error) { displayError(error); if (error.status) void loadServices(); }
       finally { state.seriesBusy = false; }
     };
     if (!dialog.open) dialog.showModal();
@@ -639,7 +651,34 @@ async function loadActivity() {
   })();
   try { await state.loading; } finally { state.loading = null; }
 }
+function renderServices() {
+  const bar = $('service-bar'); bar.replaceChildren();
+  bar.hidden = !state.services;
+  for (const item of state.services || []) {
+    const [label, tone] = item.stale ? ['Not checked recently', 'unknown'] :
+      SERVICE_STATES[item.status] || SERVICE_STATES.UNKNOWN;
+    const chip = node('span', null, 'service ' + tone);
+    chip.appendChild(node('strong', item.label)); chip.appendChild(node('span', ' ' + label));
+    chip.title = item.message + (item.stale ? ' The worker has not updated this recently.' : '') +
+      (item.checked_at_ms ? ' Checked ' + date(item.checked_at_ms) + '.' : '');
+    chip.tabIndex = 0; chip.setAttribute('aria-label', item.label + ': ' + chip.title);
+    bar.appendChild(chip);
+  }
+}
+async function loadServices() {
+  state.servicesAt = Date.now();
+  try { state.services = (await request(API + '/services')).services; }
+  catch (error) { if (error.name === 'AbortError') return; state.services = null; }
+  renderServices();
+}
+// Keep needs Sonarr: the reason it cannot run now, or null. The server
+// refuses the same request with the same message.
+function keepBlockedMessage() {
+  const sonarr = state.services?.find(item => item.service === 'sonarr');
+  return !sonarr || sonarr.stale || ['UP', 'UNKNOWN'].includes(sonarr.status) ? null : sonarr.message;
+}
 async function tick() {
+  if (state.csrf && !document.hidden && Date.now() - state.servicesAt >= 30000) await loadServices();
   if (state.csrf && state.page !== 'settings' && !document.hidden) await loadActivity();
   if (state.csrf) state.timer = setTimeout(tick, 5000);
 }
@@ -1257,6 +1296,7 @@ function queueSearch() {
 }
 async function showWorkspace() {
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
+  await loadServices();
   $('activity-panel').hidden = state.page === 'settings' || state.page === 'recognized';
   $('settings-panel').hidden = state.page !== 'settings';
   $('recognized-panel').hidden = state.page !== 'recognized';

@@ -24,6 +24,7 @@ from src.nextgen.storage.sqlite import enqueue_job, transaction
 from src.nextgen.storage.submissions import _intent
 
 KIND='CLEANUP_DECIDED_DOWNLOAD'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Remove the finished download from qBittorrent')
 STOPPED_JOBS=('NEEDS_REVIEW','BLOCKED')
 STAGING_CLEANUP_DELAY_MS=60_000
@@ -200,4 +201,4 @@ def registration(secrets,*,service_factory=Service):
         except (ValueError,KeyError,TypeError):return Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW')
         if not done:return Outcome('defer','DECISION_DOWNLOAD_CLEANUP_WAITING',delay_ms=30000)
         return Outcome(value=decision if stage_job is None else ('staging',stage_job))
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)
