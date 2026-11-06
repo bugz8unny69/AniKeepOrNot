@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from src.nextgen.cancellation_service import CancellationService
+from src.nextgen.reasons import get_reason
 from src.nextgen.storage.batch_candidates import (
     coordinate_release, schedule_after_cleanup_batch, succeed_operation_candidate,
     auto_cleanup_failed_batch_candidate,
@@ -138,6 +139,19 @@ class CandidateTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.candidates(), {digest(1): 'FAILED', digest(2): 'ACTIVE'})
         self.assertEqual(self.sql("SELECT reason_code FROM batch_candidates WHERE info_hash=?", (digest(1),)),
                          [('TORRENT_METADATA_TIMEOUT',)])
+
+    async def test_a_failure_without_a_recorded_reason_uses_a_registered_code(self):
+        a, b, claim = self.setup_two()
+        db = connect(self.database)
+        try:
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='FAILED',last_reason_code=NULL WHERE job_id=?", (a,))
+                auto_cleanup_failed_batch_candidate(db, SimpleNamespace(job_id=a, event_id=1))
+        finally:
+            db.close()
+        self.assertEqual(self.sql("SELECT disposition,reason_code FROM batch_candidate_stops"),
+                         [('FAILED', 'JOB_HANDLER_FAILED')])
+        self.assertIsNotNone(get_reason('JOB_HANDLER_FAILED'))
 
     async def test_advancing_is_idempotent_across_restarts(self):
         a, b, claim = self.setup_two()
