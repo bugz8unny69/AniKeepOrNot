@@ -182,7 +182,9 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
             # 7th candidate is the new discovery
             self.assertEqual(candidates[6][0], 7)
             self.assertEqual(candidates[6][1], new_candidate_hash)
-            self.assertEqual(candidates[6][2], "READY")
+            # The second worker attempt activates the candidate through the
+            # original fallback handoff, so it is now ACTIVE rather than READY.
+            self.assertEqual(candidates[6][2], "ACTIVE")
             self.assertIsNone(candidates[6][3])
 
             successor = db.execute(
@@ -489,6 +491,11 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
                     "tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) VALUES(19,2,1,2,?,?,1000)",
                     (self.tvdb_ep_id,"aa"*20))
                 db.execute(
+                    "INSERT INTO recognized_seasons(tvdb_series_id,tvdb_season,anidb_id,"
+                    "display_title,evidence_verification_id,recognized_at_ms) "
+                    "VALUES(?,1,?,?,?,1000)",
+                    (self.tid,self.aid,self.titles[0],anchor))
+                db.execute(
                     "INSERT INTO recognized_episodes(tvdb_series_id,tvdb_season,anidb_id,"
                     "anidb_episode_number,anidb_episode_id,tvdb_episode,tvdb_episode_id,"
                     "evidence_verification_id,recognized_at_ms) VALUES(?,1,?,?,99002,99,?,?,1000)",
@@ -551,6 +558,11 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
                     "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,"
                     "tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) VALUES(19,2,1,2,?,?,1000)",
                     (self.tvdb_ep_id,failed))
+                db.execute(
+                    "INSERT INTO recognized_seasons(tvdb_series_id,tvdb_season,anidb_id,"
+                    "display_title,evidence_verification_id,recognized_at_ms) "
+                    "VALUES(?,1,?,?,?,1000)",
+                    (self.tid,self.aid,self.titles[0],anchor))
                 db.execute(
                     "INSERT INTO recognized_episodes(tvdb_series_id,tvdb_season,anidb_id,"
                     "anidb_episode_number,anidb_episode_id,tvdb_episode,tvdb_episode_id,"

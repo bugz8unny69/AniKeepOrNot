@@ -276,6 +276,14 @@ def _selected(db,plan_id,episode):
         "WHERE p.plan_id=? AND s.anidb_episode_number=?",(plan_id,episode)).fetchone()
     if row is None:
         return None
+    # Legacy pre-migration schemas, including historical lightweight adapters,
+    # lack the authoritative AniDB plan ID entirely. Detect that structural
+    # absence explicitly; do not turn arbitrary SQLite query failures into
+    # missing episode evidence.
+    if db.execute('PRAGMA user_version').fetchone()[0] == 0:
+        columns = {col[1] for col in db.execute('PRAGMA table_info(trial_plans)').fetchall()}
+        if 'anidb_id' not in columns:
+            return (VerifiedEpisode(*row[:4]), row[4])
     try:
         ctx = load_authoritative_episode_context(db, plan_id, episode)
     except EpisodeContextMissing:
