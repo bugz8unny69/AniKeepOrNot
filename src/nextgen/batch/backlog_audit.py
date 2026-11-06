@@ -169,7 +169,20 @@ def audit_batch_backlog(db, *, observations=None):
                 'operation_id': o['operation_id'], 'has_metadata': has_meta, 'metadata_json': meta_json,
                 'ownership': torrent_ownership(db, digest, observed) if observed is not None else 'NOT_IN_QBITTORRENT',
             })
+        owners = {}
+        for c in candidates:
+            owners[c['ownership']] = owners.get(c['ownership'], 0) + 1
         plan.append({
+            'summary': {
+                'known_candidates': len(candidates),
+                'metadata_ready': sum(1 for c in candidates if c['has_metadata']),
+                'ownership': owners,
+                'competing_operations': len(active),
+                # Cancelled earlier, cleanup not finished yet: resources may still exist.
+                'cleanup_in_progress': [o['operation_id'] for o in ops
+                                        if o['state'] in ('CANCEL_REQUESTED', 'CANCELED')
+                                        and o['cleanup_state'] != 'COMPLETE'],
+            },
             'anidb_id': anidb_id, 'tvdb_series_id': tvdb[0] if tvdb else None, 'season': season,
             'controller_scope_id': controller[0] if controller else None,
             'operations': ops,
@@ -234,13 +247,17 @@ def apply_batch_consolidation(db, audit, *, now_ms=None):
             continue
         scope = get_or_create_scope(db, item['anidb_id'], item['tvdb_series_id'], item['season'], now_ms=now)
         result['scopes'] += 1
+        added = False
         for cand in item['register_candidates']:
             before = get_candidate(db, scope.scope_id, cand['info_hash'])
             add_candidate(db, scope.scope_id, cand['info_hash'], cand['title'],
                           source_event_id=cand['source_event_id'], has_metadata=cand['has_metadata'],
                           metadata_json=cand['metadata_json'], now_ms=now)
-            result['candidates_registered'] += before is None
-        reorder_candidates(db, scope.scope_id, rank_candidates(get_candidate_pool(db, scope.scope_id)), now_ms=now)
+            if before is None:
+                result['candidates_registered'] += 1
+                added = True
+        if added:   # Only new candidates change the ranking; a repeat rewrites nothing.
+            reorder_candidates(db, scope.scope_id, rank_candidates(get_candidate_pool(db, scope.scope_id)), now_ms=now)
 
         primary = item['primary_operation_id']
         state = db.execute("SELECT state FROM job_operations WHERE operation_id=?", (primary,)).fetchone() \
@@ -263,20 +280,30 @@ def apply_batch_consolidation(db, audit, *, now_ms=None):
             except (CancellationError, ValueError) as exc:
                 result['needs_review'].append({'operation_id': op,
                                                'reason': getattr(exc, 'reason_code', None) or str(exc)})
-    result['message'] = (f"Registered {result['candidates_registered']} candidates across {result['scopes']} "
-                         f"seasons; linked {result['primaries_linked']} primary operations; requested cleanup "
-                         f"of {result['cleanups_requested']} duplicate operations"
-                         + (f"; {len(result['needs_review'])} need review." if result['needs_review'] else '.'))
+    # Two different things happened: the candidate pool is consolidated now;
+    # resource cleanup was only requested and is done later by cleanup jobs.
+    result['message'] = (
+        f"Candidate pool: registered {result['candidates_registered']} candidates across {result['scopes']} "
+        f"seasons and linked {result['primaries_linked']} primary operations.\n"
+        f"Cleanup: requested cleanup of {result['cleanups_requested']} duplicate operations. This is NOT "
+        f"completed cleanup: the worker's cleanup jobs drain them, remove only owned torrents and release "
+        f"reservations. Run 'adm batch-audit preview' to see cleanup still in progress."
+        + (f"\nNeeds review: {len(result['needs_review'])}." if result['needs_review'] else ''))
     return result
 
 
-def _qbittorrent(config_dir, configuration, digests):
-    """Read-only observations, or (None, reason) when qBittorrent could not be checked."""
+def _qbittorrent(config_dir, configuration, digests, *, client_factory=None):
+    """Read-only observations, or (None, reason) when qBittorrent could not be checked.
+
+    Logs in and reads torrent info and file lists only; nothing is sent that
+    changes a torrent.
+    """
     try:
         from src.nextgen.acquisition.qbittorrent import Client
         from src.nextgen.acquisition.settings import download_options
         from src.nextgen.secrets import SecretStore
-        client = Client(download_options(configuration), SecretStore(config_dir).qbittorrent_credentials())
+        client = (client_factory or Client)(download_options(configuration),
+                                            SecretStore(config_dir).qbittorrent_credentials())
         client.login()
         return observe_torrents(client, digests), None
     except Exception as exc:          # Reported to the operator, never hidden.
@@ -288,8 +315,15 @@ def _print_plan(audit, qb_note):
     if qb_note:
         print(f'qBittorrent was not checked ({qb_note}); torrent ownership is unknown.')
     for s in audit['scopes']:
-        print(f"\nAniDB {s['anidb_id']} season {s['season']}: {len(s['operations'])} operation(s); "
-              f"keep operation {s['primary_operation_id']}")
+        summary = s['summary']
+        owners = ', '.join(f'{k.lower()} {v}' for k, v in sorted(summary['ownership'].items())) or 'none'
+        print(f"\nAniDB {s['anidb_id']} season {s['season']}: {summary['known_candidates']} known candidate(s), "
+              f"{summary['metadata_ready']} with a file list; torrents: {owners}; "
+              f"{summary['competing_operations']} competing active operation(s); keep operation "
+              f"{s['primary_operation_id']}")
+        if summary['cleanup_in_progress']:
+            print(f"  cleanup still in progress for operation(s) "
+                  f"{', '.join(map(str, summary['cleanup_in_progress']))}")
         for c in s['register_candidates']:
             print(f"  candidate {c['info_hash']} (operation {c['operation_id']}, torrent {c['ownership']}): {c['title']}")
         for d in s['cancel_operations']:
@@ -303,7 +337,7 @@ def _print_plan(audit, qb_note):
     print(f"\nTo apply exactly this plan: adm batch-audit apply --plan-token {audit['plan_token']}\n")
 
 
-def main(argv=None):
+def main(argv=None, *, qb_client_factory=None):
     p = argparse.ArgumentParser(prog='adm batch-audit',
                                 description='Batch backlog audit and consolidation (WI-08, WI-16)')
     p.add_argument('action', choices=('preview', 'apply'), nargs='?', default='preview')
@@ -321,13 +355,23 @@ def main(argv=None):
     from src.nextgen.storage.sqlite import transaction
     configuration = ConfigurationStore(args.config_dir).read()
     queue = JobQueue(configuration.value('storage.database_path'))
-    with queue.connection() as db:
+    from src.nextgen.storage.migrations import _open
+    db = _open(configuration.value('storage.database_path'), readonly=True, timeout_ms=5000)
+    try:
+        db.execute('PRAGMA query_only=ON')
         digests = [c['info_hash'] for s in audit_batch_backlog(db)['scopes'] for c in s['register_candidates']]
+    finally:
+        db.close()
     # qBittorrent is read before any write transaction is opened.
-    observations, qb_note = _qbittorrent(args.config_dir, configuration, digests)
+    observations, qb_note = _qbittorrent(args.config_dir, configuration, digests, client_factory=qb_client_factory)
     if args.action == 'preview':
-        with queue.connection() as db:
+        from src.nextgen.storage.migrations import _open
+        db = _open(configuration.value('storage.database_path'), readonly=True, timeout_ms=5000)
+        try:
+            db.execute('PRAGMA query_only=ON')           # The preview can never write.
             audit = audit_batch_backlog(db, observations=observations)
+        finally:
+            db.close()
         if args.json:
             print(json.dumps({**audit, 'qbittorrent_note': qb_note}, indent=2))
         else:

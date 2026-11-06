@@ -198,6 +198,125 @@ class BacklogAuditAndReconciliationTests(unittest.TestCase):
         self.assertIn(state[1], ('PENDING', 'REVIEW'))
 
 
+class Recorder:
+    """qBittorrent stand-in for cleanup: records every call; deleting is recorded, never real."""
+    calls = []
+
+    def __init__(self, *args):
+        pass
+
+    def login(self):
+        Recorder.calls.append(('login',))
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            Recorder.calls.append((name, *args))
+            return None
+        return record
+
+
+class ReconciliationLifecycleTests(BacklogAuditAndReconciliationTests):
+    """WI-16 acceptance: reservations, external torrents, running work and repeats, with real cleanup."""
+    # Run only the tests defined here, not the inherited ones again.
+    for _name in [n for n in dir(BacklogAuditAndReconciliationTests) if n.startswith('test_')]:
+        locals()[_name] = None
+    del _name
+
+    def reserve(self, owner_job):
+        db = sqlite3.connect(self.db_path)        # A bare reservation row; its plan is not needed here.
+        with db:
+            db.execute("INSERT INTO batch_episode_reservations(plan_id, owner_job_id, file_index, anidb_id, "
+                   "anidb_episode_id, tvdb_series_id, tvdb_season, tvdb_episode, tvdb_episode_id, state, "
+                       "reserved_at_ms) VALUES(1, ?, 0, 16999, 1001, 393400, 1, 1, 2001, 'ACTIVE', ?)",
+                       (owner_job, self.now))
+        db.close()
+
+    def cleanup(self, job):
+        from src.nextgen.cancellation_service import CancellationService
+        from src.nextgen.tests.test_torrent_submission import Secrets
+        Recorder.calls = []
+        config = ConfigurationSnapshot(1, {'storage': {'database_path': str(self.db_path)}})
+        return CancellationService(config, Secrets(), client_factory=Recorder).cleanup(job)
+
+    def reservation(self):
+        return self.rows("SELECT state, ended_by_job_id FROM batch_episode_reservations")
+
+    def test_reservations_are_released_only_by_the_authorized_cleanup(self):
+        with self.connect() as db, transaction(db):
+            op1, (j1, r1) = self.delivery(db, 1, HASH_1, '[GroupA] Cyberpunk Edgerunners - S01 [1080p]',
+                                          kinds=('VERIFY_RELEASE', 'RESERVE_BATCH'))
+            db.execute("UPDATE jobs SET state='DONE' WHERE job_id=?", (j1,))
+            self.delivery(db, 2, HASH_2, '[GroupB] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]')
+        self.reserve(r1)
+        with self.connect() as db, transaction(db):
+            audit = audit_batch_backlog(db)
+            self.assertEqual([d['operation_id'] for d in audit['scopes'][0]['cancel_operations']], [op1])
+            apply_batch_consolidation(db, audit)
+        self.assertEqual(self.reservation(), [('ACTIVE', None)])        # Consolidation did not release it.
+        status = self.cleanup(r1)                                       # The cleanup job does.
+        self.assertEqual(status['cleanup_state'], 'COMPLETE')
+        state, ended_by = self.reservation()[0]
+        self.assertEqual(state, 'RELEASED')
+        self.assertIsNotNone(ended_by)
+
+    def test_external_torrents_are_never_touched(self):
+        with self.connect() as db, transaction(db):
+            op1, (j1,) = self.delivery(db, 1, HASH_FOREIGN, '[Other] Cyberpunk Edgerunners - S01 [1080p]')
+            self.delivery(db, 2, HASH_2, '[GroupB] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]')
+        external = {HASH_FOREIGN: Observation(HASH_FOREIGN, 'uploading', '/downloads/other', 'tv', (), False, FILES)}
+        with self.connect() as db, transaction(db):
+            audit = audit_batch_backlog(db, observations=external)
+            ownership = {c['info_hash']: c['ownership'] for c in audit['scopes'][0]['register_candidates']}
+            self.assertEqual(ownership[HASH_FOREIGN], 'FOREIGN')
+            apply_batch_consolidation(db, audit)
+        self.assertEqual(self.cleanup(j1)['cleanup_state'], 'COMPLETE')
+        # Nothing the journals own, so cleanup never even talked to qBittorrent.
+        self.assertEqual(Recorder.calls, [])
+
+    def test_a_running_duplicate_is_not_cleaned_until_it_drains(self):
+        with self.connect() as db, transaction(db):
+            op1, (j1,) = self.delivery(db, 1, HASH_1, '[GroupA] Cyberpunk Edgerunners - S01 [1080p]')
+            op2, (j2,) = self.delivery(db, 2, HASH_2, '[GroupB] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]')
+        claim, _ = JobQueue(str(self.db_path)).claim()                  # j1 is running under its lease.
+        self.assertEqual(claim.job_id, j1)
+        with self.connect() as db, transaction(db):
+            audit = audit_batch_backlog(db)
+            primary = audit['scopes'][0]['primary_operation_id']
+            self.assertEqual(primary, op1)                              # Running work is the one kept.
+            # Force the running one to be the duplicate: the other was linked to the controller first.
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            add_candidate(db, scope.scope_id, HASH_2, '[GroupB] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]',
+                          source_event_id=2)
+            activate_candidate(db, scope.scope_id, HASH_2, operation_id=op2)
+            audit = audit_batch_backlog(db)
+            self.assertEqual(audit['scopes'][0]['primary_operation_id'], op2)
+            apply_batch_consolidation(db, audit)
+        # The worker running j1 holds the operation gate (worker.py), exactly as here.
+        from src.nextgen.cancellation import OperationGate
+        with OperationGate(str(self.db_path)).hold(op1):
+            status = self.cleanup(j1)
+        self.assertNotEqual(status['cleanup_state'], 'COMPLETE')        # Still running: not declared clean.
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE job_id=?", (j1,)), [('RUNNING',)])
+        from src.nextgen.storage.cancellation import CancellationStore
+        CancellationStore(str(self.db_path)).acknowledge(claim)         # The worker drains...
+        self.assertEqual(self.cleanup(j1)['cleanup_state'], 'COMPLETE')  # ...then cleanup completes.
+
+    def test_repeated_runs_after_cleanup_change_nothing(self):
+        with self.connect() as db, transaction(db):
+            op1, (j1,) = self.delivery(db, 1, HASH_1, '[GroupA] Cyberpunk Edgerunners - S01 [1080p]')
+            self.delivery(db, 2, HASH_2, '[GroupB] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]')
+        with self.connect() as db, transaction(db):
+            apply_batch_consolidation(db, audit_batch_backlog(db))
+        self.cleanup(j1)
+        tables = ('batch_candidates', 'batch_candidate_scopes', 'management_actions', 'job_operations', 'jobs')
+        before = {t: self.rows(f"SELECT * FROM {t} ORDER BY 1") for t in tables}
+        for _ in range(3):
+            with self.connect() as db, transaction(db):
+                result = apply_batch_consolidation(db, audit_batch_backlog(db))
+            self.assertEqual((result['cleanups_requested'], result['candidates_registered']), (0, 0))
+        self.assertEqual({t: self.rows(f"SELECT * FROM {t} ORDER BY 1") for t in tables}, before)
+
+
 class DashboardBatchVisibilityTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
