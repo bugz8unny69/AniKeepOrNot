@@ -667,6 +667,19 @@ class Application:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]
             # Series-scoped batch controller diagnostics & views (WI-09)
+            size_retry_match=re.fullmatch(
+                PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([1-9][0-9]{0,8})/acquire',path)
+            if size_retry_match:
+                if query or body: raise ApiError(400,'API_REQUEST_INVALID')
+                if method!='POST': raise ApiError(405,'API_METHOD_INVALID')
+                from src.nextgen.storage.episode_reset import schedule,EpisodeResetUnavailable
+                aid,episode=map(int,size_retry_match.groups())
+                try:
+                    result=schedule(configuration.value('storage.database_path'),
+                                    aid,episode,mode='replay')
+                except EpisodeResetUnavailable:
+                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
+                return 202,result,[]
             batch_scope_match = re.fullmatch(PREFIX + r'/intake/series/([1-9][0-9]{0,18})/batch/([1-9][0-9]{0,3})', path)
             if batch_scope_match:
                 if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
