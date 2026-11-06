@@ -319,3 +319,9 @@ credential separation. These reasons do not dictate Worker retry policy.
 All include static suggested actions and translation keys through MessageCatalog.
 `MANAGEMENT_ACTION_RESUMED` is a registered readable job event for explicit
 cleanup resubmission after review. No arbitrary exception text is presented.
+
+SONARR_SELECTION_CONFLICT and BATCH_SELECTION_CONFLICT name an inconsistent
+candidate or selection state for one episode or one season. They appear in the
+worker log of a job that hits one; the job itself still ends with
+JOB_HANDLER_FAILED. A batch candidate whose failing job recorded no reason is
+stopped with JOB_HANDLER_FAILED.
