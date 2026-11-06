@@ -151,6 +151,7 @@ def report(db, job_id, out=print):
         if h['reason_code']: line += ' · ' + reason_text(h['reason_code'])
         elif h['event_code'] in EVENTS: line += ' · ' + EVENTS[h['event_code']].message
         if details.get('cause_reason_code'): line += f' (cause {reason_text(details["cause_reason_code"])})'
+        if details.get('service_detail'): line += f' · {details["service_detail"]}'
         if details.get('attempt'): line += f' · attempt {details["attempt"]}'
         if h['handler_label']: line += f' [{h["handler_label"]}]'
         out(line)

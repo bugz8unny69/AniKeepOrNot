@@ -13,7 +13,8 @@ class QbittorrentAdapter(ServiceAdapter):
     reasons = {
         'DOWNLOAD_CLIENT_UNAVAILABLE': DOWN,
         'TORRENT_METADATA_UNAVAILABLE': DOWN,
-        'DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE': DOWN,
+        # Not DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE: it also covers filesystem
+        # failures, which must not be reported as "qBittorrent is unavailable".
         'DOWNLOAD_CLIENT_AUTH_FAILED': AUTH_FAILED,
         'DOWNLOAD_CLIENT_UNSUPPORTED': UNSUPPORTED,
         'DOWNLOAD_CONFIGURATION_INVALID': NOT_CONFIGURED,

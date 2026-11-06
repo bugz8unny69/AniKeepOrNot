@@ -42,6 +42,7 @@ not a port of a complete legacy catalog. No runtime dependency on legacy exists.
 | `JOB_LEASE_EXPIRED` | Processing was interrupted. | Potentially transient |
 | `JOB_HANDLER_FAILED` | An unexpected processing error occurred. | Context required |
 | `JOB_RETRY_EXHAUSTED` | Automatic retries have stopped. | Review needed |
+| `SERVICE_UNAVAILABLE` | Waiting for a service that is unavailable. | Potentially transient |
 | `STORAGE_UNAVAILABLE` | Processing is temporarily unavailable. | Context required |
 | `STORAGE_STATEMENT_INVALID` | An internal database statement error stopped processing. | Component change needed |
 | `UNSUPPORTED_JOB_KIND` | This type of work cannot be processed. | Component change needed |

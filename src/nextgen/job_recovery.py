@@ -25,6 +25,11 @@ from src.nextgen.storage.review_retry import (
 CATALOG = MessageCatalog()
 
 RECOVERY_MATRIX = {
+    'SERVICE_UNAVAILABLE': {
+        'category': 'AUTONOMOUS_RETRY',
+        'description': 'A needed service was unavailable for too long; retry once the service is back.',
+        'action': 'retry',
+    },
     'TORRENT_METADATA_TIMEOUT': {
         'category': 'AUTONOMOUS_RETRY',
         'description': 'Candidate metadata timed out; retrying activates the next candidate.',

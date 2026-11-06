@@ -85,6 +85,20 @@ When a real request fails, the service is marked at once, without an extra netwo
 
 Expected waits, such as a planned AniDB pacing delay, return `NOT_A_FAILURE` and never mark a service down. Each status change is returned once as a `Transition`, so it is logged once instead of on every attempt.
 
+## Outages: waiting, not failing
+
+When a job hits an unavailable service, it **waits** with the reason `SERVICE_UNAVAILABLE` instead of failing:
+
+- **What converts:** a `retry` whose reason the job's service adapter maps to `DOWN` (for example `DOWNLOAD_CLIENT_UNAVAILABLE`), or an uncaught client error that the adapter's `classify()` reports as `DOWN`. The job is deferred for `Policy.service_wait_ms` (60 s) and **spends no retry**. While the service stays down, claim gating keeps it waiting.
+- **What the history shows:**
+  - `service` (for example `prowlarr`);
+  - `service_detail` (`Prowlarr is unavailable: HTTP 503 at …`), which the dashboard and `adm report` display;
+  - the original per-service code as `cause_reason_code`;
+  - any `failed_check`;
+  - `waiting_since_ms`.
+- **Giving up:** once a job has kept running into the outage for `Policy.service_give_up_ms` (**72 hours**), it goes to `NEEDS_REVIEW` with `SERVICE_UNAVAILABLE`. The clock counts the current run of service waits, and a manual retry or any unrelated outcome starts a new run. `adm recover` treats `SERVICE_UNAVAILABLE` as safe to retry once the service is back.
+- **What does not convert:** configuration and credential problems (`NOT_CONFIGURED`, `AUTH_FAILED`, `UNSUPPORTED`) keep their own review codes, because waiting would not fix them. Planned startup checks will catch them (roadmap step 4). Codes that also cover local disk failures, such as `DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE`, are not mapped to a service, so a disk problem is never reported as an outage.
+
 ## Adding a service
 
 1. Create `adapters/<name>.py` with a subclass of `ServiceAdapter`:
@@ -113,5 +127,5 @@ Expected waits, such as a planned AniDB pacing delay, return `NOT_A_FAILURE` and
 
 1. **Done:** adapters, registry, monitor and `adm services check`.
 2. **Done:** jobs declare which services they need, the worker skips jobs whose services are down, and job results mark services passively. This replaced `QbittorrentReadiness` and `ACQUISITION_KINDS`.
-3. **Then:** an outage means waiting, not failing. The generic `SERVICE_UNAVAILABLE` code names the service, and a job gives up after **72 hours**. The old per-service `*_UNAVAILABLE` codes are migrated.
+3. **Done:** an outage means waiting, not failing, with `SERVICE_UNAVAILABLE` naming the service and a 72-hour give-up. Handlers still report their per-service code, which is kept as the `cause_reason_code`. Retiring those codes from the handlers and migrating stored rows is part of the code-rename migration (RF-006).
 4. **Then:** startup fails when a required service is not set up correctly; a dashboard banner shows each service's status.
