@@ -55,9 +55,10 @@ Before each work item, and after significant changes land on `NextGen`:
 1. Run `git fetch origin` and review `git log refactor..origin/NextGen`, noting which subsystems are affected.
 2. Merge `origin/NextGen` into `refactor`. Do not rebase, so that each incorporated upstream SHA stays visible in the history.
 3. Resolve conflicts with `NextGen` as the authority for behavior. Keep refactor's structural changes only where they don't alter behavior. Never pick a side just because it is the refactor side. Document any conflict that can't be resolved with confidence in the merge commit and the PR, rather than guessing.
-4. Run the affected tests, then the complete suite.
+4. Run the affected tests, then the complete suite. `test_refactor_ledger` fails if the merge brought back something the refactor removed or renamed, or left code using a name that no longer exists. Decide each finding as described in [LEDGER.md](LEDGER.md).
 5. Record the incorporated upstream SHA in the table below.
 6. Update `DEAD_CODE_AUDIT.md` and `NAMING_MAP.md` if the new upstream code adds references they cover.
+7. Every later removal or rename adds its entry to `removed.json` in the same PR.
 
 ### Incorporated upstream revisions
 

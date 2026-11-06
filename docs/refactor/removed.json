@@ -1,0 +1,32 @@
+{
+  "about": "What the refactor removed or renamed, so a NextGen merge cannot quietly bring it back. Enforced by src/nextgen/tests/test_refactor_ledger.py; see docs/refactor/LEDGER.md. Add an entry in the same PR that removes or renames something.",
+  "removed": [
+    {"id": "RF-003 D1", "kind": "method", "module": "src.nextgen.sonarr", "name": "Client.add_payload",
+     "why": "The superseded Sonarr add-series path; Keep requires the series to exist already."},
+    {"id": "RF-003 D2", "kind": "function", "module": "src.nextgen.acquisition.prowlarr_search", "name": "_release",
+     "why": "Inlined into Client._search() for the explainable matching report."},
+    {"id": "RF-003 D3", "kind": "function", "module": "src.nextgen.acquisition.audio", "name": "audio_tagged",
+     "why": "Replaced by dual_audio_tagged()."},
+    {"id": "RF-003 D3", "kind": "constant", "module": "src.nextgen.acquisition.audio", "name": "_TAG",
+     "why": "Used only by audio_tagged()."},
+    {"id": "RF-003 D5", "kind": "constant", "module": "src.nextgen.acquisition.audio", "name": "MODES",
+     "why": "Nothing referenced it; configuration validates audio modes itself."},
+    {"id": "RF-003 D6", "kind": "constant", "module": "src.nextgen.storage.prowlarr_snapshots", "name": "MAX_INDEXER_LEN",
+     "why": "Nothing referenced it."},
+    {"id": "1c785beb A1", "kind": "constant", "module": "src.nextgen.acquisition.metadata_service", "name": "METADATA_TIMEOUT_SECONDS",
+     "why": "METADATA_TIMEOUT_MS is the one used."}
+  ],
+  "renamed": [
+    {"id": "1c785beb A5", "kind": "class", "module": "src.nextgen.storage.batch_candidates",
+     "old": "CandidateConflict", "new": "BatchCandidateConflict",
+     "why": "storage/sonarr_candidates.py has its own, different CandidateConflict."}
+  ],
+  "text": [
+    {"id": "1c785beb A3", "rule": "only_in", "pattern": "['\"](?:paused|stopped)(?:DL|UP)['\"]",
+     "files": ["src/nextgen/acquisition/metadata_service.py"],
+     "why": "qBittorrent's stopped states have one definition: import STOPPED from acquisition.metadata_service."},
+    {"id": "1c785beb A2", "rule": "not_in", "pattern": "sqlite_master",
+     "files": ["src/nextgen/storage/batch_candidates.py"],
+     "why": "Connections have passed the schema-version check, so the batch tables exist; a probe only hides a broken database."}
+  ]
+}
