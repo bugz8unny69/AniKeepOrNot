@@ -27,7 +27,15 @@ from src.nextgen.storage.series_intake import plan_window, _placements
 
 
 class ManualSubmissionInvalid(ValueError):
-    pass
+    """A submission the API refuses; reason_code says why, for the person submitting."""
+    def __init__(self, reason_code='API_REQUEST_INVALID'):
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+SOURCE_INVALID = 'MANUAL_RELEASE_SOURCE_INVALID'
+TITLE_UNREADABLE = 'MANUAL_RELEASE_TITLE_UNREADABLE'
+EPISODE_MISMATCH = 'MANUAL_RELEASE_EPISODE_MISMATCH'
 
 
 class ManualSubmissionUnavailable(ValueError):
@@ -37,36 +45,38 @@ class ManualSubmissionUnavailable(ValueError):
 def _metainfo(raw):
     """Compute the v1 hash over the original info bytes before full validation."""
     if not isinstance(raw, bytes) or not 1 <= len(raw) <= MAX_METAINFO:
-        raise ManualSubmissionInvalid()
+        raise ManualSubmissionInvalid(SOURCE_INVALID)
     try:
         decoder = _Decoder(raw)
         root = decoder.value()
         if (type(root) is not dict or decoder.pos != len(raw)
                 or decoder.info_span is None):
-            raise ManualSubmissionInvalid()
+            raise ManualSubmissionInvalid(SOURCE_INVALID)
         a, b = decoder.info_span
         digest = hashlib.sha1(raw[a:b]).hexdigest()
         manifest = parse_metainfo(raw, digest)
         return digest, manifest
     except (MetadataInvalid, TypeError, ValueError, KeyError, IndexError, RecursionError):
-        raise ManualSubmissionInvalid() from None
+        raise ManualSubmissionInvalid(SOURCE_INVALID) from None
 
 
 def _admit_release(name, season, episode, known_anidb=None):
     if (type(name) is not str or not 1 <= len(name.strip()) <= 512
             or any(ord(c) < 32 or ord(c) == 127 for c in name)):
-        raise ManualSubmissionInvalid()
+        raise ManualSubmissionInvalid(TITLE_UNREADABLE)
     try:
         origin, declared_season, declared_episode_number = declared_episode(name)
     except (ReleaseNotReady, ValueError, TypeError):
-        raise ManualSubmissionInvalid() from None
+        raise ManualSubmissionInvalid(TITLE_UNREADABLE) from None
     if origin == 'tvdb':
         if (declared_season, declared_episode_number) != (season, episode):
-            raise ManualSubmissionInvalid()
-    elif known_anidb is None or declared_episode_number != known_anidb:
+            raise ManualSubmissionInvalid(EPISODE_MISMATCH)
+    elif known_anidb is None:
         # An unrecognized AniDB number cannot establish the requested TVDB
         # placement; a user can supply an explicit SxxEyy release title.
-        raise ManualSubmissionInvalid()
+        raise ManualSubmissionInvalid(TITLE_UNREADABLE)
+    elif declared_episode_number != known_anidb:
+        raise ManualSubmissionInvalid(EPISODE_MISMATCH)
 
 
 def _candidate(db, aid, season, episode):
@@ -115,20 +125,20 @@ def submit(database, aid, season, episode, *, release_name, magnet_uri=None, tor
     if magnet_uri is not None:
         digest = _magnet_hash(magnet_uri)
         if digest is None:
-            raise ManualSubmissionInvalid()
+            raise ManualSubmissionInvalid(SOURCE_INVALID)
         magnet = hash_magnet(digest, magnet_uri)
         if magnet is None:
-            raise ManualSubmissionInvalid()
+            raise ManualSubmissionInvalid(SOURCE_INVALID)
         metainfo = None
         method = 'magnet'
     else:
         if (type(torrent_b64) is not str
                 or len(torrent_b64) > ((MAX_METAINFO + 2)//3)*4):
-            raise ManualSubmissionInvalid()
+            raise ManualSubmissionInvalid(SOURCE_INVALID)
         try:
             metainfo = base64.b64decode(torrent_b64, validate=True)
         except (ValueError, binascii.Error):
-            raise ManualSubmissionInvalid() from None
+            raise ManualSubmissionInvalid(SOURCE_INVALID) from None
         digest, manifest = _metainfo(metainfo)
         # The file inventory must independently identify the requested episode.
         # (The selected release title alone cannot authorize a different file.)

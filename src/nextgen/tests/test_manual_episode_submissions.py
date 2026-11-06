@@ -21,6 +21,17 @@ def bencode(obj):
     raise ValueError('unsupported BEP3 test value')
 
 
+class DashboardParityTests(unittest.TestCase):
+    def test_dashboard_reads_episodes_with_the_server_pattern(self):
+        # The submit form refuses another episode's release before sending it;
+        # it must never refuse a title the server would accept.
+        from pathlib import Path
+        from src.nextgen.acquisition.release_titles import EXPLICIT
+        script=(Path(__file__).parents[1]/'dashboard'/'static'/'dashboard.js').read_text()
+        self.assertIn(f'const RELEASE_EPISODE = /{EXPLICIT.pattern}/gi;',script)
+        self.assertEqual(EXPLICIT.flags & 2, 2)  # re.IGNORECASE, matching the JS 'i' flag
+
+
 class ManualReleaseTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp=ApiV1Tests.asyncSetUp
     rows=ApiV1Tests.rows
@@ -65,13 +76,19 @@ class ManualReleaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_wrong_episode_or_malformed_magnet_is_rejected(self):
         aid,season,episode,title=await self.seed()
-        with self.assertRaises(ManualSubmissionInvalid):
+        with self.assertRaises(ManualSubmissionInvalid) as wrong:
             submit(self.database,aid,season,episode,release_name=
                    f'Test Anime S{season:02d}E{episode+1:02d}',
                    magnet_uri='magnet:?xt=urn:btih:'+'c'*40)
-        with self.assertRaises(ManualSubmissionInvalid):
+        self.assertEqual(wrong.exception.reason_code,'MANUAL_RELEASE_EPISODE_MISMATCH')
+        with self.assertRaises(ManualSubmissionInvalid) as malformed:
             submit(self.database,aid,season,episode,release_name=title,
                    magnet_uri='http://not-a-magnet/')
+        self.assertEqual(malformed.exception.reason_code,'MANUAL_RELEASE_SOURCE_INVALID')
+        with self.assertRaises(ManualSubmissionInvalid) as unreadable:
+            submit(self.database,aid,season,episode,release_name='Test Anime 1080p',
+                   magnet_uri='magnet:?xt=urn:btih:'+'c'*40)
+        self.assertEqual(unreadable.exception.reason_code,'MANUAL_RELEASE_TITLE_UNREADABLE')
         self.assertEqual(self.rows('SELECT count(*) FROM manual_release_submissions'),[(0,)])
 
     async def test_torrent_bytes_are_preserved_for_exact_existing_submission(self):
@@ -104,3 +121,24 @@ class ManualReleaseTests(unittest.IsolatedAsyncioTestCase):
         status,reused,_=await self.request('POST',url,body,token=ADMIN)
         self.assertEqual(status,200)
         self.assertTrue(reused['data']['reused'])
+
+    async def test_api_says_why_a_submission_is_refused(self):
+        # A release for another episode, as seen in production (an S01E05 title
+        # submitted from the S01E01 row), names the problem instead of a bare
+        # "request is invalid".
+        aid,season,episode,title=await self.seed()
+        url=f'/api/v1/intake/series/{aid}/episodes/{season}/{episode}/submit'
+        magnet='magnet:?xt=urn:btih:'+'f'*40
+        for body,code in (
+                ({'release_name':f'Test Anime S{season:02d}E{episode+4:02d} 1080p','magnet_uri':magnet},
+                 'MANUAL_RELEASE_EPISODE_MISMATCH'),
+                ({'release_name':'Test Anime 1080p','magnet_uri':magnet},'MANUAL_RELEASE_TITLE_UNREADABLE'),
+                ({'release_name':title,'magnet_uri':'magnet:?dn=no-hash'},'MANUAL_RELEASE_SOURCE_INVALID'),
+                ({'release_name':title,'torrent_b64':'not base64!'},'MANUAL_RELEASE_SOURCE_INVALID'),
+                ({'release_name':title},'API_REQUEST_INVALID')):
+            with self.subTest(code=code,body=sorted(body)):
+                status,result,_=await self.request('POST',url,body,token=ADMIN)
+                self.assertEqual((status,result['error']['code']),(400,code))
+                if code!='API_REQUEST_INVALID':
+                    self.assertNotEqual(result['error']['message'],'The API request is invalid.')
+        self.assertEqual(self.rows('SELECT count(*) FROM manual_release_submissions'),[(0,)])
