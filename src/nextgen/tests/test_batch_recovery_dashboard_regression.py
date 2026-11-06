@@ -109,7 +109,6 @@ class BacklogAuditAndReconciliationTests(unittest.TestCase):
         self.assertEqual(ownership, {HASH_1: 'OWNED', HASH_2: 'FOREIGN'})
         evidence = {c['info_hash']: c['has_metadata'] for c in scope['register_candidates']}
         self.assertEqual(evidence, {HASH_1: 1, HASH_2: 1})                     # Admission, then qB file list.
-        self.assertTrue(audit['plan_token'])
 
     def test_payload_fields_alone_never_associate_a_job(self):
         with self.connect() as db, transaction(db):

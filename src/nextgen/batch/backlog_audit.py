@@ -5,8 +5,10 @@ for each anime season, the operations and jobs found, the one operation that
 stays (the primary), the duplicate operations that would be cancelled and
 the candidates that would be registered with the series-scoped controller.
 
-`adm recover batch-audit --apply --plan-token TOKEN` applies exactly that plan. It
-refuses if anything changed since the preview. Duplicates are never marked
+`adm recover batch-audit --apply` plans again and applies in one write
+transaction, and prints what it applied. It is safe while jobs run: other
+writers wait for that transaction, and running jobs are never interrupted.
+Duplicates are never marked
 cleaned directly: their cancellation is requested through the established
 lifecycle and the existing cleanup job does the rest. Running jobs drain
 first, only torrents the journals own are deleted, reservations are
@@ -15,7 +17,6 @@ history, timestamps and failure reasons are kept. Consolidation never runs
 automatically, for example during a schema migration.
 """
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -116,13 +117,6 @@ def operation_scope(db, operation_id):
     return identity[0], hint.season_hint, 'verified_identity'
 
 
-def _plan_token(scopes):
-    actions = [(s['anidb_id'], s['season'], s['primary_operation_id'],
-                [d['operation_id'] for d in s['cancel_operations']],
-                [c['info_hash'] for c in s['register_candidates']]) for s in scopes]
-    return hashlib.sha256(json.dumps(actions, sort_keys=True).encode()).hexdigest()[:16]
-
-
 def audit_batch_backlog(db, *, observations=None):
     """Read-only plan. observations: {infohash: Observation} gathered beforehand."""
     observations = observations or {}
@@ -200,7 +194,6 @@ def audit_batch_backlog(db, *, observations=None):
         'owned_torrents': ownership.count('OWNED'),
         'foreign_torrents': ownership.count('FOREIGN'),
         'uncertain_torrents': ownership.count('UNCERTAIN'),
-        'plan_token': _plan_token(plan),
     }
 
 
@@ -310,8 +303,9 @@ def _qbittorrent(config_dir, configuration, digests, *, client_factory=None):
         return None, f'{type(exc).__name__}: {exc}'
 
 
-def _print_plan(audit, qb_note):
-    print('\n=== Batch backlog consolidation (dry run: nothing is changed) ===')
+def _print_plan(audit, qb_note, *, applied=False):
+    print('\n=== Batch backlog consolidation: ' + ('applied plan ===' if applied else
+                                                    'dry run, nothing is changed ==='))
     if qb_note:
         print(f'qBittorrent was not checked ({qb_note}); torrent ownership is unknown.')
     for s in audit['scopes']:
@@ -334,21 +328,19 @@ def _print_plan(audit, qb_note):
         print(f"\nOperation {o['operation_id']} ({o['state']}) has no verified anime/season; left unchanged.")
     print(f"\nTorrents: owned {audit['owned_torrents']}, foreign {audit['foreign_torrents']}, "
           f"uncertain {audit['uncertain_torrents']} (foreign and uncertain torrents are never touched).")
-    print(f"\nTo apply exactly this plan: adm recover batch-audit --apply --plan-token {audit['plan_token']}\n")
+    if not applied:
+        print("\nTo apply it: adm recover batch-audit --apply (safe while jobs run).\n")
 
 
 def main(argv=None, *, qb_client_factory=None):
     p = argparse.ArgumentParser(prog='adm recover batch-audit',
                                 description='Batch backlog audit and consolidation. Without --apply this is '
                                             'a read-only preview (WI-08, WI-16).')
-    p.add_argument('--apply', action='store_true', help='Apply the previewed plan (requires --plan-token)')
+    p.add_argument('--apply', action='store_true', help='Plan again and apply it in one transaction')
     p.add_argument('--config-dir', default=os.environ.get('NEXTGEN_CONFIG_DIR', '/etc/anime-discovery'))
-    p.add_argument('--plan-token', help='Token printed by preview; apply refuses a changed plan')
     p.add_argument('--json', action='store_true', help='Print JSON')
     args = p.parse_args(argv)
     args.action = 'apply' if args.apply else 'preview'
-    if args.apply and not args.plan_token:
-        p.error('--apply requires --plan-token from a preview')
 
     import logging
     from src.nextgen.configuration import ConfigurationStore
@@ -379,16 +371,19 @@ def main(argv=None, *, qb_client_factory=None):
         else:
             _print_plan(audit, qb_note)
         return 0
+    # Planned and applied in one write transaction: the worker and API wait
+    # for it, so the plan cannot change half-way.
     with queue.connection() as db, transaction(db):
         audit = audit_batch_backlog(db, observations=observations)
-        if audit['plan_token'] != args.plan_token:
-            print('The plan changed since the preview. Run "adm recover batch-audit" again.', file=sys.stderr)
-            return 1
         result = apply_batch_consolidation(db, audit)
     logger = logging.getLogger('anime-discovery.batch-audit')
     for record in result.pop('receipts'):
         log_history(logger, record)
-    print(json.dumps(result, indent=2) if args.json else f"\n{result['message']}\n")
+    if args.json:
+        print(json.dumps({'applied_plan': audit, 'result': result, 'qbittorrent_note': qb_note}, indent=2))
+    else:
+        _print_plan(audit, qb_note, applied=True)
+        print(f"{result['message']}\n")
     return 0
 
 

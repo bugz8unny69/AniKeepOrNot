@@ -65,25 +65,19 @@ class BatchAuditCliTests(unittest.TestCase):
                     db.execute("SELECT * FROM job_operations ORDER BY operation_id").fetchall(),
                     db.execute("SELECT count(*) FROM batch_candidates").fetchall())
 
-    def test_preview_then_apply_exactly_that_plan(self):
+    def test_preview_then_apply(self):
         before = self.snapshot()
         code, out, _ = self.run_cli()
         self.assertEqual(code, 0)
-        self.assertIn('dry run: nothing is changed', out)
+        self.assertIn('dry run, nothing is changed', out)
         self.assertIn('qBittorrent was not checked', out)          # Reported, not silently skipped.
         self.assertIn('cancel duplicate operation', out)
         self.assertEqual(self.snapshot(), before)
-        token = out.split('--plan-token ')[1].split()[0]
+        self.assertIn('adm recover batch-audit --apply', out)
 
-        code, _, err = self.run_cli('--apply')
-        self.assertEqual(code, 2)                                   # A token is required.
-        code, _, err = self.run_cli('--apply', '--plan-token', 'stale')
-        self.assertEqual(code, 1)
-        self.assertIn('plan changed', err)
-        self.assertEqual(self.snapshot(), before)
-
-        code, out, _ = self.run_cli('--apply', '--plan-token', token)
+        code, out, _ = self.run_cli('--apply')
         self.assertEqual(code, 0)
+        self.assertIn('applied plan', out)                          # It shows what it did.
         self.assertIn('requested cleanup of 1 duplicate operations', out)
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM job_operations WHERE state='CANCEL_REQUESTED'").fetchone(),
@@ -120,11 +114,11 @@ class AdmRoutingTests(unittest.TestCase):
         from unittest import mock
         from src.nextgen.api import adm
         with mock.patch('src.nextgen.job_recovery.main', return_value=0) as recover, \
-                mock.patch('sys.argv', ['adm', 'recover', 'batch-audit', '--apply', '--plan-token', 't']), \
+                mock.patch('sys.argv', ['adm', 'recover', 'batch-audit', '--apply']), \
                 self.assertRaises(SystemExit) as done:
             adm.main()
         self.assertEqual(done.exception.code, 0)
-        recover.assert_called_once_with(['batch-audit', '--apply', '--plan-token', 't'])
+        recover.assert_called_once_with(['batch-audit', '--apply'])
         with mock.patch('sys.argv', ['adm', 'batch-audit']), contextlib.redirect_stderr(io.StringIO()), \
                 self.assertRaises(SystemExit) as old:
             adm.main()
