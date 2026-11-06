@@ -666,6 +666,26 @@ class Application:
             if path==PREFIX+'/intake':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]
+            # Series-scoped batch controller diagnostics & views (WI-09)
+            batch_scope_match = re.fullmatch(PREFIX + r'/intake/series/([1-9][0-9]{0,18})/batch/([1-9][0-9]{0,3})', path)
+            if batch_scope_match:
+                if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
+                if query: raise ApiError(400, 'API_REQUEST_INVALID')
+                aid, season = map(int, batch_scope_match.groups())
+                from src.nextgen.storage.batch_candidates import get_batch_scope_operation_view
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    db.execute('BEGIN')
+                    view = get_batch_scope_operation_view(db, aid, season)
+                if view is None: raise ApiError(404, 'API_ROUTE_NOT_FOUND')
+                return 200, view, []
+            if path == PREFIX + '/batch/scopes':
+                if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
+                if set(query) - {'limit'}: raise ApiError(400, 'API_REQUEST_INVALID')
+                limit = page_number(query, 'limit', 50, 1, 100)
+                from src.nextgen.storage.batch_candidates import list_batch_scopes
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    db.execute('BEGIN')
+                    return 200, {'scopes': list_batch_scopes(db, limit=limit)}, []
             if path==PREFIX+'/health' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 with JobQueue(configuration.value('storage.database_path')).connection():pass
@@ -711,7 +731,7 @@ class Application:
                             'reason':None if result.reason_code is None else CATALOG.reason(result.reason_code)},[]
             if method=='GET' and (path==PREFIX+'/jobs' or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/history',path)):
                 return 200,self._jobs(configuration,path,query),[]
-        if path in (PREFIX+'/',PREFIX+'/health',PREFIX+'/credentials',PREFIX+'/jobs') or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/(history|matching)',path):raise ApiError(405,'API_METHOD_INVALID')
+        if path in (PREFIX+'/',PREFIX+'/health',PREFIX+'/credentials',PREFIX+'/jobs',PREFIX+'/batch/scopes') or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/(history|matching)',path):raise ApiError(405,'API_METHOD_INVALID')
         raise ApiError(404,'API_ROUTE_NOT_FOUND')
 
     def _cookie(self,token,*,clear=False,secure=False):

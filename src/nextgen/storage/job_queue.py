@@ -286,8 +286,10 @@ class JobQueue:
                           (claim.job_id,)).fetchone() in (('FAILED',), ('NEEDS_REVIEW',)):
                 from src.nextgen.storage.sonarr_candidates import (
                     auto_cleanup_failed_candidate, auto_cleanup_oversized)
+                from src.nextgen.storage.batch_candidates import auto_cleanup_failed_batch_candidate
                 records.extend(auto_cleanup_failed_candidate(db,claim))
                 records.extend(auto_cleanup_oversized(db,claim))
+                records.extend(auto_cleanup_failed_batch_candidate(db,claim))
             return tuple(records)
 
     def recover_expired(self, limit=100):
