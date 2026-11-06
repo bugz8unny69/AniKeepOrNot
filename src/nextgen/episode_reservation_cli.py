@@ -1,7 +1,7 @@
 """Inspect or release failed episode reservations using the reset worker.
 
-adm recover resv --ep-id <TVDB episode ID>           # read-only
-adm recover resv --ep-id <TVDB episode ID> --release # guarded cleanup + re-search
+adm recover resv --ep-id <AniDB or TVDB episode ID>           # read-only
+adm recover resv --ep-id <AniDB or TVDB episode ID> --release # guarded cleanup + re-search
 """
 import argparse
 import json
@@ -13,10 +13,10 @@ from src.nextgen.storage.episode_reset import find_episode, schedule, EpisodeRes
 
 def main(argv=None):
     p=argparse.ArgumentParser(prog='adm recover resv',
-        description='Inspect TVDB episode ownership; --release safely queues cleanup and a fresh search.')
+        description='Inspect verified episode ownership; --release safely queues cleanup and a fresh search.')
     p.add_argument('--config-dir',default='/etc/anime-discovery')
     p.add_argument('--ep-id','--ep_id',dest='ep_id',type=int,required=True,
-                   help='Exact TVDB episode ID, not SxxEyy or an AniDB episode number')
+                   help='Exact AniDB or TVDB episode ID (not SxxEyy or a sequential episode number)')
     p.add_argument('--release',action='store_true',
                    help='Cancel owning operations, wait for cleanup, retire caches and search again')
     p.add_argument('--json',action='store_true')
@@ -34,7 +34,7 @@ def main(argv=None):
         if args.json:
             print(json.dumps(result,indent=2))
         else:
-            print('TVDB episode ID:',args.ep_id)
+            print('Episode ID:',args.ep_id)
             print('AniDB:',result['anidb_id'],'episode',result['anidb_episode'],
                   '| TVDB: S%02dE%02d' % (result['tvdb_season'],result['tvdb_episode']))
             for reservation_id,state,owner in result['reservations']:
