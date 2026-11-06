@@ -120,10 +120,12 @@ class SeriesIntakeTests(unittest.TestCase):
         episode = next(x for x in info['missing'] if x['anidb_episode'] == 2)
         self.assertEqual((episode['status'], episode['can_retry']),
                          ('WAITING_FOR_DUB', True))
+        self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 1)
+        # CANDIDATES also offers a recovery search, and no longer counts as waiting for dub.
         self.db.execute("UPDATE sonarr_backfill_results SET status='CANDIDATES' WHERE anidb_episode_number=2")
         self.assertTrue(next(x for x in detail(self.db,10)['missing']
                              if x['anidb_episode']==2)['can_retry'])
-        self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 1)
+        self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 0)
 
 
     def test_failed_anchor_is_visible_with_owner_and_three_held_releases(self):

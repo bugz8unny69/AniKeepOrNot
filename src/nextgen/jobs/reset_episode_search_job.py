@@ -23,7 +23,8 @@ def registration():
             return Outcome('review','JOB_PAYLOAD_INVALID')
         try:
             result=await blocking(
-                progress,context.configuration.value('storage.database_path'),plan_id,episode)
+                progress,context.configuration.value('storage.database_path'),plan_id,episode,
+                job_id=context.claim.job_id)
         except EpisodeResetUnavailable:
             return Outcome('review','CANCELLATION_REVIEW')
         if result=='REVIEW':
