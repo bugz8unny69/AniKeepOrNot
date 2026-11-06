@@ -3,9 +3,8 @@
 Maintains one active batch-acquisition operation per (anidb_id, season) scope,
 with a durable, ranked list of candidate releases.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
-import sqlite3
 import time
 
 from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english, is_audio_incompatible
@@ -13,11 +12,15 @@ from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.prowlarr_search import resolution
 from src.nextgen.batch.recognition import release_scope_hint
 from src.nextgen.history import integer
-from src.nextgen.providers.identity import delivery_title
-from src.nextgen.release_contracts import ReleaseInput
 
 
-class CandidateConflict(ValueError):
+class BatchCandidateConflict(ValueError):
+    """A batch candidate or scope is not in the state this step requires.
+
+    Distinct from sonarr_candidates.CandidateConflict (single-episode backfill).
+    It never becomes a job's reason: callers turn it into a review or the
+    worker reports JOB_HANDLER_FAILED.
+    """
     reason_code = 'BATCH_SELECTION_CONFLICT'
 
 
@@ -88,7 +91,7 @@ def add_candidate(db, scope_id, info_hash, title, *, source_event_id=None,
     integer(scope_id, positive=True)
     digest = infohash(info_hash)
     if not isinstance(title, str) or not title.strip():
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     clean_title = title.strip()
     now = now_ms if now_ms is not None else _now()
 
@@ -163,6 +166,25 @@ def _count(value, *, positive=False):
     return value if type(value) is int and (value > 0 if positive else value >= 0) else None
 
 
+def release_facts(event_id, raw_body):
+    """One stored delivery as ReleaseFacts, or None when it cannot describe a candidate.
+
+    The only parser of delivery bodies for batch candidates; used by the
+    controller and by the backlog audit. A body without a title or a valid
+    infohash is None; database errors are not caught here.
+    """
+    try:
+        body = _event_document(raw_body)
+        title = body.get('release_name') or body.get('title') or ''
+        if type(title) is not str or not title.strip():
+            return None
+        digest = infohash(body.get('torrent_infohash') or body.get('info_hash'))
+    except (ValueError, TypeError, UnicodeError):
+        return None
+    return ReleaseFacts(event_id, digest, title.strip(),
+                        _count(body.get('seeders')), _count(body.get('size'), positive=True))
+
+
 def scope_releases(db, anidb_id, season):
     """Read-only: identified season-pack deliveries for (anidb_id, season).
 
@@ -178,19 +200,12 @@ def scope_releases(db, anidb_id, season):
         (anidb_id,)).fetchall()
     found = []
     for event_id, raw_body in rows:
-        try:
-            body = _event_document(raw_body)
-            title = body.get('release_name') or body.get('title') or ''
-            if type(title) is not str or not title.strip():
-                continue
-            digest = infohash(body.get('torrent_infohash') or body.get('info_hash'))
-        except (ValueError, TypeError, UnicodeError):
+        facts = release_facts(event_id, raw_body)
+        if facts is None:
             continue
-        hint = release_scope_hint(title)
-        if hint.kind not in ('season_pack', 'mixed_pack') or hint.season_hint != season:
-            continue
-        found.append(ReleaseFacts(event_id, digest, title.strip(),
-                                  _count(body.get('seeders')), _count(body.get('size'), positive=True)))
+        hint = release_scope_hint(facts.title)
+        if hint.kind in ('season_pack', 'mixed_pack') and hint.season_hint == season:
+            found.append(facts)
     return tuple(found)
 
 
@@ -246,7 +261,7 @@ _OPEN_JOB_STATES = ('PENDING', 'RUNNING', 'RETRY_WAIT', 'ON_HOLD')
 def _job_operation(db, job_id):
     row = db.execute("SELECT operation_id FROM job_operation_members WHERE job_id=?", (job_id,)).fetchone()
     if row is None:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     return row[0]
 
 
@@ -260,7 +275,7 @@ def coordinate_release(db, *, anidb_id, tvdb_series_id, season, info_hash, title
     concurrent arrivals cannot activate two candidates.
     """
     if not db.in_transaction:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     now = now_ms if now_ms is not None else _now()
     digest = infohash(info_hash)
     scope = get_or_create_scope(db, anidb_id, tvdb_series_id, season, now_ms=now)
@@ -303,7 +318,7 @@ def schedule_winner(db, scope_id, candidate_id, *, created_by_job_id=None, now_m
     candidate's delivery is reused instead of creating a second one.
     """
     if not db.in_transaction:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     integer(scope_id, positive=True)
     now = now_ms if now_ms is not None else _now()
     state = db.execute("SELECT state FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()
@@ -389,13 +404,13 @@ def activate_candidate(db, scope_id, info_hash, *, operation_id=None, now_ms=Non
                     "UPDATE batch_candidate_scopes SET operation_id=?, updated_at_ms=? WHERE scope_id=?",
                     (operation_id, now, scope_id))
             return True
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
 
     cand = db.execute(
         "SELECT candidate_id, state FROM batch_candidates WHERE scope_id=? AND info_hash=?",
         (scope_id, digest)).fetchone()
     if cand is None or cand[1] != 'READY':
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
 
     cid = cand[0]
     db.execute(
@@ -451,7 +466,7 @@ def fail_candidate(db, scope_id, info_hash, reason_code, *, now_ms=None):
     integer(scope_id, positive=True)
     digest = infohash(info_hash)
     if not isinstance(reason_code, str) or not reason_code.strip():
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     now = now_ms if now_ms is not None else _now()
 
     updated = db.execute(
@@ -459,7 +474,7 @@ def fail_candidate(db, scope_id, info_hash, reason_code, *, now_ms=None):
         "WHERE scope_id=? AND info_hash=? AND state='ACTIVE'",
         (reason_code.strip(), now, scope_id, digest))
     if updated.rowcount != 1:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
 
     db.execute(
         "UPDATE batch_candidate_scopes SET active_candidate_id=NULL, updated_at_ms=? "
@@ -472,7 +487,7 @@ def cancel_candidate(db, scope_id, info_hash, reason_code='JOB_CANCELED', *, now
     integer(scope_id, positive=True)
     digest = infohash(info_hash)
     if not isinstance(reason_code, str) or not reason_code.strip():
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     now = now_ms if now_ms is not None else _now()
 
     updated = db.execute(
@@ -480,7 +495,7 @@ def cancel_candidate(db, scope_id, info_hash, reason_code='JOB_CANCELED', *, now
         "WHERE scope_id=? AND info_hash=? AND state='ACTIVE'",
         (reason_code.strip(), now, scope_id, digest))
     if updated.rowcount != 1:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
 
     db.execute(
         "UPDATE batch_candidate_scopes SET active_candidate_id=NULL, updated_at_ms=? "
@@ -499,7 +514,7 @@ def succeed_candidate(db, scope_id, info_hash, *, now_ms=None):
         "WHERE scope_id=? AND info_hash=? AND state='ACTIVE'",
         (now, scope_id, digest))
     if updated.rowcount != 1:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
 
     db.execute(
         "UPDATE batch_candidate_scopes SET state='SUCCEEDED', updated_at_ms=? WHERE scope_id=?",
@@ -537,9 +552,9 @@ def record_candidate_stop(db, operation_id, disposition, reason_code, *, now_ms=
     decision wins; cleanup applies it later. Returns True when recorded.
     """
     if not db.in_transaction or disposition not in STOP_DISPOSITIONS:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     if type(reason_code) is not str or not 1 <= len(reason_code.strip()) <= 64:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     found = _active_for_operation(db, operation_id)
     if found is None:
         return False
@@ -602,7 +617,7 @@ def _start_candidate(db, scope_id, anidb_id, candidate, *, created_by_job_id=Non
     Returns the new job's receipt, or None when an open job was adopted.
     """
     if candidate.source_event_id is None:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     marks = ','.join('?' * len(_OPEN_JOB_STATES))
     open_job = db.execute(
         f"SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id=? AND state IN ({marks}) "
@@ -629,7 +644,7 @@ def schedule_after_cleanup_batch(db, operation_id):
     active candidate and a repeat does nothing.
     """
     if not db.in_transaction:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     found = _active_for_operation(db, operation_id)
     if found is None:
         return ()
@@ -682,7 +697,7 @@ def request_prowlarr_fallback(db, scope_id, *, event_id, created_by_job_id=None,
     a search within the cooldown is delayed, not skipped.
     """
     if not db.in_transaction:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     integer(scope_id, positive=True)
     now = now_ms if now_ms is not None else _now()
     if _open_discovery(db, scope_id) is not None:
@@ -732,7 +747,7 @@ def prepare_batch_prowlarr_search(db, scope_id):
                       (anidb_id,)).fetchone() or (None, None)
     titles = tuple(dict.fromkeys(t for t in (main[0] if main else None, *meta) if t))
     if not titles:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     return SearchParameters(scope_id, anidb_id, tvdb_series_id, season, titles, tried)
 
 
@@ -746,11 +761,11 @@ def _verified_series(db, anidb_id, tvdb_series_id):
         "WHERE s.anidb_id=? AND r.anidb_id=? ORDER BY r.validated_at_ms DESC LIMIT 1",
         (anidb_id, anidb_id)).fetchone()
     if row is None:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     series = parse_payload(row[0])
     anime = series.get('anime', {})
     if anime.get('anidb_id') != anidb_id or anime.get('tvdb_series_id') != tvdb_series_id:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     return series
 
 
@@ -767,7 +782,7 @@ def _deliver(db, release, series, now):
     digest = infohash(release.info_hash)
     magnet = hash_magnet(digest, release.magnet_url)
     if magnet is None:
-        raise CandidateConflict()      # The magnet names a different torrent.
+        raise BatchCandidateConflict()      # The magnet names a different torrent.
     body = json.dumps({'release_name': release.title, 'torrent_infohash': digest, 'magnet_uri': magnet,
                        'seeders': release.seeders, 'size': release.size or None, 'indexer': release.indexer},
                       sort_keys=True, separators=(',', ':')).encode('utf-8')
@@ -791,7 +806,7 @@ def ingest_batch_prowlarr_results(db, params, result, *, snapshots=None, job_id=
     nothing eligible was found.
     """
     if not db.in_transaction or type(params) is not SearchParameters:
-        raise CandidateConflict()
+        raise BatchCandidateConflict()
     now = now_ms if now_ms is not None else _now()
     if job_id is not None and snapshots:
         from src.nextgen.storage.prowlarr_snapshots import save_snapshots
@@ -831,11 +846,6 @@ def get_batch_scope_operation_view(db, anidb_id, season):
     integer(anidb_id, positive=True)
     integer(season, positive=True)
 
-    has_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
-    if not has_table:
-        return None
-
     scope_row = db.execute(
         "SELECT scope_id, anidb_id, tvdb_series_id, tvdb_season, operation_id, "
         "active_candidate_id, controller_job_id, state, created_at_ms, updated_at_ms "
@@ -849,12 +859,9 @@ def get_batch_scope_operation_view(db, anidb_id, season):
 
     # Anime title
     anime_title = None
-    has_anime = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='identified_anime'").fetchone()
-    if has_anime:
-        row = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
-        if row:
-            anime_title = row[0]
+    row = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
+    if row:
+        anime_title = row[0]
 
     # Candidates
     candidates = get_candidate_pool(db, scope_id)
@@ -897,37 +904,31 @@ def get_batch_scope_operation_view(db, anidb_id, season):
     # Metadata progress for active candidate
     metadata_progress = None
     if active_cand_dict is not None:
-        has_adm = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_metadata_admissions'").fetchone()
-        if has_adm:
-            adm_row = db.execute(
-                "SELECT created_at_ms, state, inventory_json IS NOT NULL "
-                "FROM batch_metadata_admissions WHERE info_hash=?",
-                (active_cand_dict['info_hash'],)).fetchone()
-            if adm_row:
-                metadata_progress = {
-                    'created_at_ms': adm_row[0],
-                    'state': adm_row[1],
-                    'has_inventory': bool(adm_row[2]),
-                }
+        adm_row = db.execute(
+            "SELECT created_at_ms, state, inventory_json IS NOT NULL "
+            "FROM batch_metadata_admissions WHERE info_hash=?",
+            (active_cand_dict['info_hash'],)).fetchone()
+        if adm_row:
+            metadata_progress = {
+                'created_at_ms': adm_row[0],
+                'state': adm_row[1],
+                'has_inventory': bool(adm_row[2]),
+            }
 
     # Prowlarr search state
     searching_prowlarr = False
     last_prowlarr_search = None
-    has_prowlarr = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prowlarr_search_snapshots'").fetchone()
-    if has_prowlarr:
-        snap_row = db.execute(
-            "SELECT captured_at_ms, status, snapshot_json "
-            "FROM prowlarr_search_snapshots "
-            "WHERE tvdb_series_id=? AND season=? AND search_mode='batch_fallback' "
-            "ORDER BY captured_at_ms DESC LIMIT 1",
-            (tvdb_series_id, tvdb_season)).fetchone()
-        if snap_row:
-            last_prowlarr_search = {
-                'captured_at_ms': snap_row[0],
-                'status': snap_row[1],
-            }
+    snap_row = db.execute(
+        "SELECT captured_at_ms, status, snapshot_json "
+        "FROM prowlarr_search_snapshots "
+        "WHERE tvdb_series_id=? AND season=? AND search_mode='batch_fallback' "
+        "ORDER BY captured_at_ms DESC LIMIT 1",
+        (tvdb_series_id, tvdb_season)).fetchone()
+    if snap_row:
+        last_prowlarr_search = {
+            'captured_at_ms': snap_row[0],
+            'status': snap_row[1],
+        }
 
     # Check if a DISCOVER_BATCH_PROWLARR job is currently running or queued
     pending_prowlarr = db.execute(
@@ -941,19 +942,16 @@ def get_batch_scope_operation_view(db, anidb_id, season):
     # Operation and cleanup status
     op_status = None
     if operation_id is not None:
-        has_op = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_operations'").fetchone()
-        if has_op:
-            op_row = db.execute(
-                "SELECT state, cleanup_state, reason_code FROM job_operations WHERE operation_id=?",
-                (operation_id,)).fetchone()
-            if op_row:
-                op_status = {
-                    'operation_id': operation_id,
-                    'operation_state': op_row[0],
-                    'cleanup_state': op_row[1],
-                    'reason_code': op_row[2],
-                }
+        op_row = db.execute(
+            "SELECT state, cleanup_state, reason_code FROM job_operations WHERE operation_id=?",
+            (operation_id,)).fetchone()
+        if op_row:
+            op_status = {
+                'operation_id': operation_id,
+                'operation_state': op_row[0],
+                'cleanup_state': op_row[1],
+                'reason_code': op_row[2],
+            }
 
     return {
         'scope_id': scope_id,
@@ -980,11 +978,6 @@ def get_batch_scope_operation_view(db, anidb_id, season):
 def list_batch_scopes(db, limit=50):
     """List batch candidate scopes for dashboard overview (WI-09)."""
     integer(limit, positive=True)
-    has_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
-    if not has_table:
-        return ()
-
     rows = db.execute(
         "SELECT s.scope_id, s.anidb_id, s.tvdb_series_id, s.tvdb_season, s.state, "
         "s.active_candidate_id, s.created_at_ms, s.updated_at_ms, "

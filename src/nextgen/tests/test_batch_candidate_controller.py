@@ -17,7 +17,7 @@ from src.nextgen.jobs.verify_release_job import KIND as RELEASE_KIND, registrati
 from src.nextgen.providers.releases import make_verifier
 from src.nextgen.release_contracts import ReleaseInput, VerifiedRelease
 from src.nextgen.storage.batch_candidates import (
-    CandidateConflict,
+    BatchCandidateConflict,
     get_or_create_scope,
     add_candidate,
     discover_existing_candidates,
@@ -132,7 +132,7 @@ class BatchCandidateControllerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(active.info_hash, HASH_1)
 
             # Attempting to activate HASH_2 while HASH_1 is ACTIVE fails closed
-            with self.assertRaises(CandidateConflict):
+            with self.assertRaises(BatchCandidateConflict):
                 activate_candidate(db, scope.scope_id, HASH_2)
 
             # Fail candidate 1 and advance to candidate 2

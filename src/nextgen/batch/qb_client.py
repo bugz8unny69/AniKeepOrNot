@@ -6,6 +6,7 @@ No file priority updates, start, or cleanup commands are offered here.
 import uuid
 
 from src.nextgen.acquisition.metadata import parse_batch_metainfo
+from src.nextgen.acquisition.metadata_service import STOPPED
 from src.nextgen.acquisition.qbittorrent import Client
 from src.nextgen.acquisition.submission import ClientInvalid
 from src.nextgen.storage.batch_submission_journal import (
@@ -66,7 +67,7 @@ class BatchClient(Client):
                     and row.category==self.options.category
                     and row.auto_tmm is False
                     and (not require_stopped or row.state in
-                         ('pausedDL','pausedUP','stoppedDL','stoppedUP'))
+                         STOPPED)
                     and 'ad-'+marker in row.tags
                     and not any(t.startswith('ad-') and t!='ad-'+marker
                                 for t in row.tags)

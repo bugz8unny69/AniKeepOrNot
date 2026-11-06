@@ -22,7 +22,7 @@ from src.nextgen.storage.migrations import _open, LATEST_VERSION
 from src.nextgen.storage.sqlite import transaction
 from src.nextgen.acquisition.submission import ClientInvalid
 
-STOPPED = frozenset(('pausedDL','pausedUP','stoppedDL','stoppedUP'))
+from src.nextgen.acquisition.metadata_service import STOPPED  # The one definition of qBittorrent's stopped states.
 
 
 @dataclass(frozen=True)
