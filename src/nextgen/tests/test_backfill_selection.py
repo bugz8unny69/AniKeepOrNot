@@ -47,7 +47,7 @@ class SelectionTests(unittest.TestCase):
               PRIMARY KEY(plan_id,anidb_episode_number), UNIQUE(plan_id,info_hash));
             INSERT INTO user_evaluation_plans VALUES (1,50,100,1,'official',10,10,6,1);
             INSERT INTO user_evaluation_checks VALUES (1,1,10,1);
-            INSERT INTO job_history VALUES (1,1,'TRIAL_AUDIO_SEARCH');
+            INSERT INTO job_history VALUES (1,1,'USER_EVALUATION_AUDIO_SEARCH');
             INSERT INTO recognized_episodes VALUES (50,100,1,10,200,10);
         """)
         self.db.commit()

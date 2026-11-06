@@ -183,8 +183,8 @@ class DiscoveryJobTests(Base):
 
     async def test_partial_failure_with_nothing_found_waits(self):
         outcome, _ = await self.run_job(
-            lambda *a, **k: BatchSearchResult((), complete=False, failed=(('q', 'PROWLARR_SEARCH_TIMEOUT'),)))
-        self.assertEqual((outcome.kind, outcome.reason_code), ('defer', 'PROWLARR_SEARCH_TIMEOUT'))
+            lambda *a, **k: BatchSearchResult((), complete=False, failed=(('q', 'RELEASE_SEARCH_TIMEOUT'),)))
+        self.assertEqual((outcome.kind, outcome.reason_code), ('defer', 'RELEASE_SEARCH_TIMEOUT'))
         self.assertEqual(self.scope_state(), 'ACTIVE')
 
     async def test_a_complete_empty_search_exhausts(self):

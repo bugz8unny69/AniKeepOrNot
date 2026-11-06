@@ -10,10 +10,10 @@ from src.nextgen.reasons import REGISTRY
 class MessageTests(unittest.TestCase):
     def test_intake_copy_keeps_existing_diagnostic_keys(self):
         expected={
-            'TRIAL_SELECTED':'This episode is selected for Intake.',
-            'TRIAL_OUTSIDE_WINDOW':'This episode is outside the Intake selection.',
-            'TRIAL_DISABLED':'Intake episode selection is disabled.',
-            'TRIAL_PLAN_CONFLICT':'The Intake selection plan needs review.',
+            'USER_EVALUATION_SELECTED':'This episode is picked for your evaluation.',
+            'USER_EVALUATION_OUTSIDE_WINDOW':'This episode is not picked for your evaluation.',
+            'USER_EVALUATION_DISABLED':'Picking episodes for evaluation is turned off.',
+            'USER_EVALUATION_PLAN_CONFLICT':'The evaluation episode list needs review.',
         }
         for code,message in expected.items():
             with self.subTest(code=code):
@@ -21,9 +21,9 @@ class MessageTests(unittest.TestCase):
                 self.assertEqual(rendered['message'],message)
                 self.assertEqual(rendered['message_key'],f'reason.{code}.message')
                 self.assertNotIn('trial',rendered['action'].lower())
-        event=DEFAULT_CATALOG.event('TRIAL_EVALUATED')
-        self.assertEqual(event['message'],'Intake episode selection evaluated.')
-        self.assertEqual(event['message_key'],'event.TRIAL_EVALUATED.message')
+        event=DEFAULT_CATALOG.event('USER_EVALUATION_CHECKED')
+        self.assertEqual(event['message'],'Checked whether this episode is picked for your evaluation.')
+        self.assertEqual(event['message_key'],'event.USER_EVALUATION_CHECKED.message')
 
     def test_every_registered_marker_has_readable_copy_and_a_stable_key(self):
         for code, entry in EVENTS.items():
@@ -60,7 +60,7 @@ class MessageTests(unittest.TestCase):
         self.assertEqual(catalog.event("CREATED")["message"], "Job created.")
 
     def test_historical_episode_selection_codes_use_current_plain_language(self):
-        for code in ("TRIAL_SELECTED", "TRIAL_OUTSIDE_WINDOW", "TRIAL_DISABLED", "TRIAL_PLAN_CONFLICT"):
+        for code in ("USER_EVALUATION_SELECTED", "USER_EVALUATION_OUTSIDE_WINDOW", "USER_EVALUATION_DISABLED", "USER_EVALUATION_PLAN_CONFLICT"):
             rendered = DEFAULT_CATALOG.reason(code)
             self.assertTrue(rendered["message"])
             self.assertTrue(rendered["action"])

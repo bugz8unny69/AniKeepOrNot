@@ -13,7 +13,7 @@ class ProwlarrAdapter(KeyedServiceAdapter):
     off_detail = 'no address is set, so automatic search is off'
     reasons = {
         'PROWLARR_UNAVAILABLE': DOWN,
-        'PROWLARR_SEARCH_TIMEOUT': DOWN,
+        'RELEASE_SEARCH_TIMEOUT': DOWN,
         'PROWLARR_AUTH_FAILED': AUTH_FAILED,
         'PROWLARR_CONFIGURATION_INVALID': NOT_CONFIGURED,
     }

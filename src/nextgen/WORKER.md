@@ -182,7 +182,7 @@ job registries; no HTTP management transport or supervisor is added here.
 The concrete composition also registers SELECT_USER_EVALUATION after VERIFY_RELEASE.
 Feature-owned completion adapters atomically freeze trial windows and decisions;
 the generic worker remains concerned only with execution, fencing and auditing.
-TRIAL_EVALUATED receipts are logged only after commit. No acquisition handler or
+USER_EVALUATION_CHECKED receipts are logged only after commit. No acquisition handler or
 resource lease is supplied by numeric selection policy. See USER_EVALUATION_POLICY.md.
 
 The default provider composition now includes RESERVE_EPISODE after evaluation.

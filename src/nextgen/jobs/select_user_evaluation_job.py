@@ -42,7 +42,7 @@ def _persist(db,claim,value,*,discovery_kind=None):
         if discovery_kind is not None:
             from src.nextgen.storage.episode_discovery import schedule_first, BackfillConflict
             try: receipts+=schedule_first(db,claim,value.proposal.source,kind=discovery_kind)
-            except BackfillConflict:raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
+            except BackfillConflict:raise CompletionRejected(Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')) from None
         return receipts
     except AnimeRejected as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
     except UserEvaluationConflict as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
@@ -67,7 +67,7 @@ def registration(*, reservation_kind=None, discovery_kind=None):
             value=UserEvaluationProposal(source,Window(context.configuration.value('trial.backfill_count'),
                                              context.configuration.value('trial.following_count')),
                                 context.configuration.desired_revision)
-        except UserEvaluationConflict:return Outcome('review','TRIAL_PLAN_CONFLICT')
+        except UserEvaluationConflict:return Outcome('review','USER_EVALUATION_PLAN_CONFLICT')
         # Gate the webhook release; Prowlarr uses the same eligibility rule.
         audio_search=(discovery_kind is not None and origin=='autobrr'
                       and wants_english(context.configuration.value('acquisition.audio_check'))

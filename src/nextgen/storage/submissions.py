@@ -100,7 +100,7 @@ class SubmissionJournal:
                        'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                        (plan.plan_id,claim.job_id,claim.attempt,options.base_url,options.download_root,options.category,
                         options.timeout_seconds,api_major,fingerprint,configuration_revision,state,reason,now,now))
-            record=append_job_history(db,job_id=claim.job_id,event_code='TORRENT_INTENT_RECORDED',reason_code=reason,
+            record=append_job_history(db,job_id=claim.job_id,event_code='TORRENT_SUBMISSION_RECORDED',reason_code=reason,
                                       component='worker',occurred_at_ms=now,details={'attempt':claim.attempt})
             self.queue._owns(db,claim,self.queue.now())
             intent=Intent(plan,options,state,fingerprint,api_major)
@@ -122,7 +122,7 @@ class SubmissionJournal:
             current=_intent(db,plan)
             if current is None or current.fingerprint!=intent.fingerprint:raise AcquisitionConflict()
             if current.state in ('EXTERNAL','REVIEW'):
-                return current.state,'TORRENT_ALREADY_PRESENT' if current.state=='EXTERNAL' else 'TORRENT_PROVENANCE_CONFLICT',()
+                return current.state,'TORRENT_ALREADY_PRESENT' if current.state=='EXTERNAL' else 'TORRENT_OWNERSHIP_CONFLICT',()
             if current.state=='OWNED_STOPPED' and db.execute(
                     'SELECT 1 FROM torrent_transfers WHERE plan_id=?',(plan.plan_id,)).fetchone() is not None:
                 return 'OWNED_STOPPED','TORRENT_STOPPED_CONFIRMED',()

@@ -138,7 +138,7 @@ def _reason(state):
     return {
         'UNCERTAIN':'TORRENT_SUBMISSION_UNCERTAIN',
         'EXTERNAL':'TORRENT_ALREADY_PRESENT',
-        'REVIEW':'TORRENT_PROVENANCE_CONFLICT',
+        'REVIEW':'TORRENT_OWNERSHIP_CONFLICT',
         'OWNED_STOPPED':'TORRENT_STOPPED_CONFIRMED',
     }[state]
 
@@ -153,11 +153,11 @@ def _classify(intent,observation):
             or 'ad-'+intent.marker not in observation.tags
             or any(t.startswith('ad-') and t!='ad-'+intent.marker
                    for t in observation.tags)):
-        return 'REVIEW','TORRENT_PROVENANCE_CONFLICT'
+        return 'REVIEW','TORRENT_OWNERSHIP_CONFLICT'
     if observation.state in CHECKING or not observation.files:
         return 'UNCERTAIN','TORRENT_SUBMISSION_UNCERTAIN'
     if observation.files!=intent.inventory.files or observation.state not in STOPPED:
-        return 'REVIEW','TORRENT_PROVENANCE_CONFLICT'
+        return 'REVIEW','TORRENT_OWNERSHIP_CONFLICT'
     return 'OWNED_STOPPED','TORRENT_STOPPED_CONFIRMED'
 
 
@@ -288,7 +288,7 @@ class BatchSubmissionJournal:
                     "WHERE event_id=? AND state='OWNED_STOPPED'",
                     (now,early.event_id))
             receipt=append_job_history(
-                db,job_id=claim.job_id,event_code='TORRENT_INTENT_RECORDED',
+                db,job_id=claim.job_id,event_code='TORRENT_SUBMISSION_RECORDED',
                 reason_code=reason,component='worker',occurred_at_ms=now,
                 details={'attempt':claim.attempt})
             self._owns(db,claim,candidate.reservation_job_id)
@@ -325,7 +325,7 @@ class BatchSubmissionJournal:
             if current.state=='OWNED_STOPPED' and state!='OWNED_STOPPED':
                 # Ownership changed after adoption: fail closed. Never
                 # silently treat a once-owned torrent as permanently valid.
-                state,reason='REVIEW','TORRENT_PROVENANCE_CONFLICT'
+                state,reason='REVIEW','TORRENT_OWNERSHIP_CONFLICT'
             receipt=()
             if state!=current.state:
                 db.execute('UPDATE batch_torrent_submissions SET state=?,reason_code=?,'

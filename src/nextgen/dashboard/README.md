@@ -41,7 +41,7 @@ SQLite/JSON, invoking legacy endpoints or shelling out to media scripts.
   wrapper with a tooltip and accessible explanation. Queued/running action jobs
   disable competing buttons with their actual explanation. Submission immediately
   disables buttons locally and displays the API's notification, such as
-  `Job submitted.` A response is never interpreted as completed background work.
+  `Action submitted.` A response is never interpreted as completed background work.
   Uncertain requests cause status reads, never automatic mutation retries.
 - Cancel is offered before successful staging; the STAGED milestone closes it.
   A completed queue job is not described as staged. Keep remains disabled because

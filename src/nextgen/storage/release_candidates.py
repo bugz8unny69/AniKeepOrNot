@@ -6,7 +6,7 @@ from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, SearchResul
 
 
 class CandidateConflict(ValueError):
-    reason_code='SONARR_SELECTION_CONFLICT'
+    reason_code='RELEASE_SELECTION_CONFLICT'
 
 
 def save_candidates(db, *, plan_id, episode, result, policy):

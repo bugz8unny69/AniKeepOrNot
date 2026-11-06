@@ -520,10 +520,10 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.snapshots), 1)
         snapshot = client.snapshots[0]
         self.assertEqual(snapshot["status"], "PARTIAL")
-        self.assertEqual(snapshot["error"], "PROWLARR_SEARCH_TIMEOUT")
+        self.assertEqual(snapshot["error"], "RELEASE_SEARCH_TIMEOUT")
         self.assertEqual(len(snapshot["queries"]), 2)
         self.assertEqual(snapshot["queries"][0]["status"], "SUCCESS")
-        self.assertEqual(snapshot["queries"][1]["status"], "PROWLARR_SEARCH_TIMEOUT")
+        self.assertEqual(snapshot["queries"][1]["status"], "RELEASE_SEARCH_TIMEOUT")
 
         # Save partial snapshot and test report
         db = connect(self.database)
@@ -540,7 +540,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(code, 0)
         self.assertIn("status: PARTIAL", out_partial)
-        self.assertIn("PROWLARR_SEARCH_TIMEOUT", out_partial)
+        self.assertIn("RELEASE_SEARCH_TIMEOUT", out_partial)
 
     def test_json_mode_and_compress_dest(self):
         """9. JSON mode output, and --compress / --dest safe handling."""

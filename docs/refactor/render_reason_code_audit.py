@@ -2,8 +2,10 @@
 
 Run from the repository root:
     python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md
-Reads the current catalog from src/nextgen (reasons.py, messages.py) for the
-old wording and usage counts. Data only; nothing at runtime imports this.
+Reads the catalog from src/nextgen (reasons.py, messages.py) for the old
+wording and usage counts, so it renders correctly only on a tree from before
+RF-006b applied the audit (refactor 8da06cd2 or earlier). Data only; nothing at
+runtime imports this.
 """
 import pathlib
 import re

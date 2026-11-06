@@ -72,7 +72,7 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
                     before is not None)
             if intent.state in ('REVIEW','EXTERNAL'):
                 return Outcome('review','TORRENT_ALREADY_PRESENT' if intent.state=='EXTERNAL'
-                               else 'TORRENT_PROVENANCE_CONFLICT')
+                               else 'TORRENT_OWNERSHIP_CONFLICT')
             owned=client_factory(intent.options,credentials)
             await blocking(owned.login)
             if permit is not None:
@@ -96,7 +96,7 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
                                             intent.options.category):
                 state=await blocking(journal.reconcile,context.claim,intent,current)
                 if state=='REVIEW':
-                    return Outcome('review','TORRENT_PROVENANCE_CONFLICT')
+                    return Outcome('review','TORRENT_OWNERSHIP_CONFLICT')
                 return PENDING
             snapshot = await poll_or_stop_metadata(
                 owned, intent, current, context.cancelled, configuration,
@@ -108,7 +108,7 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
             state=await blocking(journal.reconcile,context.claim,intent,snapshot)
             if state in ('REVIEW','EXTERNAL'):
                 return Outcome('review','TORRENT_ALREADY_PRESENT' if state=='EXTERNAL'
-                               else 'TORRENT_PROVENANCE_CONFLICT')
+                               else 'TORRENT_OWNERSHIP_CONFLICT')
             if state=='OWNED_STOPPED' and snapshot is not None:
                 inventory=ObservedInventory.from_observation(snapshot)
                 size_limits(configuration).admit(
@@ -145,5 +145,5 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
                       attempt=context.claim.attempt)
             return Outcome('review',exc.reason_code)
         except SelectionConflict:
-            return Outcome('review','TORRENT_PROVENANCE_CONFLICT')
+            return Outcome('review','TORRENT_OWNERSHIP_CONFLICT')
     return bootstrap

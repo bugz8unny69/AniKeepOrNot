@@ -36,7 +36,7 @@ class UserEvaluationWindowTests(unittest.TestCase):
         for make in (lambda:ConfigurationSnapshot(1,settings),
                      lambda:convert_document({'schema_version':5,'revision':1,'settings':settings})):
             with self.assertRaises(ConfigurationError) as error:make()
-            self.assertEqual(error.exception.reason_code,'TRIAL_COUNTS_INVALID')
+            self.assertEqual(error.exception.reason_code,'USER_EVALUATION_COUNTS_INVALID')
             self.assertIn('at least 1',str(error.exception))
         for backfill,following in ((6,0),(0,1)):
             snapshot=ConfigurationSnapshot(1,{'trial':{'backfill_count':backfill,'following_count':following}})
@@ -110,8 +110,8 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT anchor_episode,backfill_count,following_count FROM user_evaluation_plans'),[(10,6,1)])
         # AniDB window: backfill 4-9 and the trigger 10; E01 is outside it.
         self.assertEqual(self.rows('SELECT selected,reason_code FROM user_evaluation_checks ORDER BY evaluation_id'),
-                         [(1,'TRIAL_SELECTED'),(0,'TRIAL_OUTSIDE_WINDOW'),(0,'TRIAL_OUTSIDE_WINDOW')])
-        self.assertIn(('TRIAL_EVALUATED','TRIAL_SELECTED'),[(row.event_code,row.reason_code) for row in audits])
+                         [(1,'USER_EVALUATION_SELECTED'),(0,'USER_EVALUATION_OUTSIDE_WINDOW'),(0,'USER_EVALUATION_OUTSIDE_WINDOW')])
+        self.assertIn(('USER_EVALUATION_CHECKED','USER_EVALUATION_SELECTED'),[(row.event_code,row.reason_code) for row in audits])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','SELECT_USER_EVALUATION')"),[(0,)])
 
     async def test_live_changes_apply_only_to_new_plans_and_later_seasons_reuse_the_plan(self):
@@ -147,7 +147,7 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         before=self.store.read()
         with self.assertRaises(ConfigurationError) as error:
             self.store.update({'trial':{'backfill_count':0,'following_count':0}},expected_revision=1)
-        self.assertEqual(error.exception.reason_code,'TRIAL_COUNTS_INVALID')
+        self.assertEqual(error.exception.reason_code,'USER_EVALUATION_COUNTS_INVALID')
         self.assertEqual(self.store.read(),before)
         self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_plans'),[(0,)])
         self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_checks'),[(0,)])
@@ -170,7 +170,7 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await worker.attempt()
         for table in ('user_evaluation_plans','user_evaluation_checks'):
             self.assertEqual(self.rows('SELECT count(*) FROM '+table),[(0,)])
-        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='TRIAL_EVALUATED'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='USER_EVALUATION_CHECKED'"),[(0,)])
 
     async def test_stale_lease_cannot_create_a_user_evaluation_plan(self):
         event,release_job,_=self.source(10)

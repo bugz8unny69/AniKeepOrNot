@@ -48,7 +48,7 @@ class SearchUnavailable(RuntimeError):
 
 
 class SearchTimeout(SearchUnavailable):
-    reason_code = 'PROWLARR_SEARCH_TIMEOUT'
+    reason_code = 'RELEASE_SEARCH_TIMEOUT'
     def __init__(self): RuntimeError.__init__(self, 'Prowlarr search timed out.')
 
 

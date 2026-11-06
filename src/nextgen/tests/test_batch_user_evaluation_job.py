@@ -161,7 +161,7 @@ class BatchUserEvaluationWorkerTests(unittest.IsolatedAsyncioTestCase):
                         intent.options.download_root,intent.options.category,
                         ('ad-'+('f'*32),),False,intent.inventory.files)
         state,reason,_=reopened.observe(claim,intent,bad)
-        self.assertEqual((state,reason),('REVIEW','TORRENT_PROVENANCE_CONFLICT'))
+        self.assertEqual((state,reason),('REVIEW','TORRENT_OWNERSHIP_CONFLICT'))
         self.assertEqual(self.rows(
             "SELECT state FROM batch_torrent_submissions"),[('REVIEW',)])
         self.assertEqual(self.rows("SELECT count(*) FROM torrent_submissions"),[(0,)])
@@ -248,5 +248,5 @@ class BatchUserEvaluationWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(self.rows('SELECT kind,state,last_reason_code FROM jobs ORDER BY job_id'),[
             ('VERIFY_RELEASE','DONE',None),
-            ('EVALUATE_BATCH','NEEDS_REVIEW','TRIAL_PLAN_CONFLICT')])
+            ('EVALUATE_BATCH','NEEDS_REVIEW','USER_EVALUATION_PLAN_CONFLICT')])
         self.assertEqual(self.rows('SELECT count(*) FROM batch_user_evaluation_plans'),[(0,)])

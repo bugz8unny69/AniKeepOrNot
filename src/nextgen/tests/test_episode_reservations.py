@@ -130,7 +130,7 @@ class EpisodeReservationTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(self.rows('SELECT tvdb_episode FROM episode_reservations'),[(10,)])
         self.assertEqual(self.rows("SELECT reason_code FROM job_history WHERE event_code='EPISODE_RESERVATION_SKIPPED'"),
-                         [('TRIAL_OUTSIDE_WINDOW',)])
+                         [('USER_EVALUATION_OUTSIDE_WINDOW',)])
 
     async def test_conflicting_anidb_ownership_is_review_not_duplicate(self):
         worker=self.worker()

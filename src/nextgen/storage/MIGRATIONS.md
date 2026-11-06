@@ -292,3 +292,18 @@ SCHEMA and the migration runner match v62. See
 
 The code knows only the new names. `ALTER TABLE ... RENAME` updates the foreign keys and indexes that refer to the renamed tables and column. `episode_discovery_results.sonarr_episode_id` keeps its name, because historical rows can hold real Sonarr episode IDs. Fresh SCHEMA and the migration runner match v63.
 
+## v63 → v64: renamed and removed reason and event codes
+
+064_renamed_codes.sql applies the reason and event code audit (refactor RF-006b; `docs/refactor/REASON_CODE_AUDIT.md`). It was generated from `docs/refactor/reason_code_proposals.py` and the v63 schema.
+
+- **Renamed:** 14 reason codes and 4 event codes, for example `TRIAL_SELECTED` → `USER_EVALUATION_SELECTED`, `PROWLARR_SEARCH_TIMEOUT` → `RELEASE_SEARCH_TIMEOUT`, `TORRENT_PROVENANCE_CONFLICT` → `TORRENT_OWNERSHIP_CONFLICT` and `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`.
+- **Removed codes** (no longer emitted) are rewritten to their replacement:
+  - the nine `SONARR_DISCOVERY_*` and `SONARR_EPISODES_NOT_LISTED` codes → `EPISODE_DISCOVERY_OUTDATED`;
+  - `KEEP_NOT_READY` → `KEEP_IMPORT_REVIEW`;
+  - the event `ACTIVITY_CHANGED` → `DEFERRED`.
+- **Where:** every `reason_code`, `last_reason_code` and `event_code` column, history included, and every `*_json` column where a code is a whole JSON string value (for example `cause_reason_code` in history details, or a retry's `expected_reason` in a job payload).
+- **Rebuilt tables:** `torrent_submissions`, `batch_torrent_submissions` and `user_evaluation_checks`, because their CHECK constraints name codes. Foreign keys are off during the rebuild and checked before the commit.
+- **Not touched:** `incoming_events.raw_body`, which is what external senders sent.
+
+The per-service codes that are being retired keep their names until v65. Fresh SCHEMA and the migration runner match v64.
+

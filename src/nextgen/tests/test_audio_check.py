@@ -164,7 +164,7 @@ class IntakeAudioSearchTests(unittest.IsolatedAsyncioTestCase):
         worker = self.worker(fake)
         for _ in range(3):
             await worker.attempt()
-        marked = self.rows("SELECT reason_code FROM job_history WHERE event_code='TRIAL_AUDIO_SEARCH'")
+        marked = self.rows("SELECT reason_code FROM job_history WHERE event_code='USER_EVALUATION_AUDIO_SEARCH'")
         return [call[1] for call in fake.calls], marked
 
     async def test_untagged_release_searches_its_own_episode(self):

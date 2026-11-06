@@ -81,7 +81,7 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT state FROM torrent_submissions'),[('OWNED_STOPPED',)])
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='SUBMIT_TORRENT'"),[('DONE',)])
         self.assertTrue(self.targets[0].download_root.startswith('/srv/downloads/ad-'))
-        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='TORRENT_INTENT_RECORDED'"),[(1,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='TORRENT_SUBMISSION_RECORDED'"),[(1,)])
 
     async def test_backfill_starts_only_after_confirmed_submission(self):
         worker=self.worker(backfill=True)

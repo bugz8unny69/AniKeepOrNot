@@ -74,8 +74,8 @@ def persist_user_evaluation(db,claim,proposal):
     else:
         plan,anchor,backfill,following=row
         selected=source.anidb_episode_number in Window(backfill,following).anidb_episodes(anchor)
-        reason='TRIAL_SELECTED' if selected else 'TRIAL_OUTSIDE_WINDOW'
+        reason='USER_EVALUATION_SELECTED' if selected else 'USER_EVALUATION_OUTSIDE_WINDOW'
     db.execute("INSERT INTO user_evaluation_checks(job_id,verification_id,plan_id,selected,reason_code,evaluated_at_ms) VALUES(?,?,?,?,?,?)",
                (claim.job_id,source.verification_id,plan,int(selected),reason,now))
-    return append_job_history(db,job_id=claim.job_id,event_code='TRIAL_EVALUATED',reason_code=reason,
+    return append_job_history(db,job_id=claim.job_id,event_code='USER_EVALUATION_CHECKED',reason_code=reason,
                               component='worker',occurred_at_ms=now,details={'attempt':claim.attempt})

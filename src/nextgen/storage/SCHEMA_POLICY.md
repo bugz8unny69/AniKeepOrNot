@@ -274,7 +274,7 @@ The unique scope makes first committed plan creation safe under concurrency.
 
 user_evaluation_checks records one decision per job, with source verification, selected
 boolean, readable allowlisted reason and timestamp. plan_id is nullable only for
-TRIAL_DISABLED with selected=0; other decisions reference a plan and have matching
+USER_EVALUATION_DISABLED with selected=0; other decisions reference a plan and have matching
 selected/reason semantics. idx_user_evaluation_checks_plan supports plan history.
 Neither table grants an acquisition lease or proves file/provider availability.
 Backfill/following numbers are requested season positions, not invented episode IDs.

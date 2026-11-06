@@ -95,8 +95,8 @@ requires its own scoped design and must not be simulated with acquisition Cancel
 - An item's status explains what is happening; Intake is not a job status.
   Examples include Downloading, Ready to watch and Needs attention. Exact
   mappings and readiness requirements remain part of feature planning.
-- Keep familiar job wording. Submission can say **Job submitted.** A disabled
-  action while its job runs can say **A job is already in progress.**
+- Keep familiar job wording. Submission can say **Action submitted.** A disabled
+  action while its job runs can say **An action is already running.**
 - Use the shared diagnostic catalog and stable message keys for API-provided
   explanations. Queued, waiting, blocked and completed work must be described
   accurately rather than all being called running.

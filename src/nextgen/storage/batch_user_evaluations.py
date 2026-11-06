@@ -88,6 +88,6 @@ def persist_batch_user_evaluation(db,claim,proposal):
                    'selected_size_bytes) VALUES(?,?,?,?)',
                    (plan,item.file_index,item.tvdb_episode,item.size_bytes))
     return append_job_history(
-        db,job_id=claim.job_id,event_code='TRIAL_EVALUATED',
-        reason_code='TRIAL_SELECTED',component='worker',
+        db,job_id=claim.job_id,event_code='USER_EVALUATION_CHECKED',
+        reason_code='USER_EVALUATION_SELECTED',component='worker',
         occurred_at_ms=now,details={'attempt':claim.attempt})

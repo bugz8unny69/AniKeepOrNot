@@ -120,7 +120,7 @@ class KeepSonarrTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((fake.root/'Series'/'episode.mkv').is_file())
         _,again,_=actions.submit(target,'keep')
         self.assertEqual(again['job_id'],job);self.assertTrue(again['reused'])
-        self.assertEqual(again['completion']['message'],'This episode has been kept.')
+        self.assertEqual(again['completion']['message'],'This episode is kept.')
         self.assertNotIn('sonarr-private-key',str(self.rows('SELECT * FROM keep_imports')))
 
     async def test_completed_keep_queues_refresh_in_an_independent_operation(self):

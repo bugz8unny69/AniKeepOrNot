@@ -137,6 +137,8 @@ Historical intermediate names (`*_v43`, `*_v48`, `*_v53`, `*_v56`, `*_v57`, `son
 
 ### 4.6 Reason and event codes
 
+**Done in RF-006b** (migration `064`): renames, removed codes and the new wording. The retired per-service codes follow in RF-006c (migration `065`).
+
 **Decided (2026-11-04): rename and migrate; old names removed.** The full audit of every reason and event code is in [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md), with the data in [reason_code_proposals.py](reason_code_proposals.py). It covers the renamed codes, the removed codes and the code each one migrates to, and new human-readable wording for every code.
 
 - Renamed: `SONARR_BACKFILL_PLAN_CONFLICT` → `EPISODE_DISCOVERY_PLAN_CONFLICT`, `SONARR_CANDIDATES_EXHAUSTED` → `RELEASE_CANDIDATES_EXHAUSTED`, and event `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`. `SONARR_SELECTION_CONFLICT` becomes `RELEASE_SELECTION_CONFLICT` (NextGen #283 has since registered it) and its season counterpart `BATCH_SELECTION_CONFLICT` becomes `SEASON_PACK_SELECTION_CONFLICT`.

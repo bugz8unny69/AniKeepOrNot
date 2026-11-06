@@ -11,7 +11,7 @@ RESERVE_EPISODE. Each selection evaluation queues the gate with only its own job
 ID; the decision and successor creation are atomic. The gate reads the committed
 evaluation in its own attempt. An outside-window evaluation completes the gate
 without taking a reservation and records EPISODE_RESERVATION_SKIPPED with the
-readable TRIAL_OUTSIDE_WINDOW reason. This uniform handoff avoids a routing
+readable USER_EVALUATION_OUTSIDE_WINDOW reason. This uniform handoff avoids a routing
 prediction based on a window that a concurrent evaluation could anchor first.
 Standalone selection registration retains an optional successor for offline or
 custom compositions. No dynamic module loading is added.

@@ -12,7 +12,7 @@ from src.nextgen.episode_identity import VerifiedEpisode
 
 
 class SelectionConflict(ValueError):
-    reason_code = 'SONARR_SELECTION_CONFLICT'
+    reason_code = 'RELEASE_SELECTION_CONFLICT'
     def __init__(self, message=None, *, failed_check=None, failed_path=None):
         super().__init__(message or 'Backfill candidate selection needs review.')
         self.failed_check = failed_check

@@ -347,7 +347,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         fake.backfill = timeout
         worker = await self.fail_twice(fake)
         self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind=?",(DISCOVER_KIND,)),
-                         [('BLOCKED','PROWLARR_SEARCH_TIMEOUT')])
+                         [('BLOCKED','RELEASE_SEARCH_TIMEOUT')])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[(1,)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='DEFERRED'"),[(1,)])
         self.make_due()
@@ -378,7 +378,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         try:
             with transaction(db):
                 db.execute("UPDATE jobs SET state='ON_HOLD',attempt_count=1,"
-                    "last_reason_code='SONARR_DISCOVERY_EPISODE_NOT_FOUND' WHERE kind=?",(DISCOVER_KIND,))
+                    "last_reason_code='EPISODE_DISCOVERY_OUTDATED' WHERE kind=?",(DISCOVER_KIND,))
         finally: db.close()
         await worker._recover()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[('ON_HOLD',)])
@@ -415,7 +415,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         try:
             with transaction(db):
                 db.execute("UPDATE jobs SET state='ON_HOLD',attempt_count=1,"
-                    "last_reason_code='SONARR_DISCOVERY_REVIEW' WHERE kind=?",(DISCOVER_KIND,))
+                    "last_reason_code='EPISODE_DISCOVERY_PLAN_CONFLICT' WHERE kind=?",(DISCOVER_KIND,))
         finally: db.close()
         await worker._recover()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[('ON_HOLD',)])
