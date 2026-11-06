@@ -274,7 +274,14 @@ def detail(db, anidb_id, language='english'):
                 and status == 'CANDIDATES'
                 and can_replay(db,plan_id,number,anidb_id,season,episode)
             )
-            result['missing'].append({
+            reset = db.execute(
+                "SELECT job_id FROM jobs WHERE kind='RESET_EPISODE_SEARCH' "
+                "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
+                "AND json_extract(payload_json,'$.plan_id')=? "
+                "AND json_extract(payload_json,'$.episode')=? "
+                "ORDER BY job_id DESC LIMIT 1", (plan_id,number)
+            ).fetchone()
+            entry = {
                 'can_retry_size': can_retry_size,
                 'anidb_episode': number,
                 # Verified TVDB placement is a label only; None when not yet known.
@@ -286,7 +293,14 @@ def detail(db, anidb_id, language='english'):
                              and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED',
                                             'MAPPING_MISSING', 'CANDIDATES', WAITING_FOR_DUB),
                 **(work or {})
-            })
+            }
+            if reset:
+                entry.update({
+                    'job_id':reset[0], 'status':'RECOVERY_PENDING',
+                    'can_retry':False, 'can_retry_size':False,
+                    'can_retry_job':False, 'can_try_next':False
+                })
+            result['missing'].append(entry)
     return result
 
 
