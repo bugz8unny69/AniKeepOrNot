@@ -893,8 +893,12 @@ class Application:
                             WHERE jobs.kind='RESET_EPISODE_SEARCH'
                             AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
                             AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM prowlarr_search_snapshots s
+                            JOIN trial_plans p ON p.plan_id=s.plan_id
+                            WHERE s.job_id=jobs.job_id AND p.anidb_id=?
+                            AND s.season=? AND s.episode=?)
                         )""")
-                    values.extend(episode_filter*9)
+                    values.extend(episode_filter*10)
                 if not show_completed:criteria.append("state<>'DONE'")
                 if not show_canceled:
                     criteria.append("state<>'CANCELED'")
