@@ -418,6 +418,11 @@ def parser():
 
 
 def main(argv=None):
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args[:1] == ['batch-audit']:
+        # Batch backlog audit and consolidation; preview unless --apply.
+        from src.nextgen.batch.backlog_audit import main as batch_audit
+        return batch_audit(args[1:])
     parsed = parser().parse_args(argv)
     action = parsed.action or 'summary'
     is_json = getattr(parsed, 'json', False)

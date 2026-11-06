@@ -201,6 +201,30 @@ def resolution(title):
     return found.pop() if len(found) == 1 else 0
 
 
+def release_source(row):
+    """(info_hash, magnet, conflict) from one Prowlarr result row.
+
+    Shared by every search. A magnet or GUID naming a different hash than
+    infoHash is a conflict: the row is rejected, never reconciled by falling
+    back to a bare hash. A hash without a magnet becomes a bare hash magnet,
+    which qBittorrent resolves through DHT/PEX like a bare webhook hash.
+    """
+    raw_hash = row.get('infoHash')
+    info_hash = (raw_hash.lower() if type(raw_hash) is str
+                 and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
+    magnet = None
+    for source in (row.get('magnetUrl'), row.get('guid')):
+        source_hash = _magnet_hash(source)
+        if source_hash is None: continue
+        if info_hash is not None and source_hash != info_hash:
+            return None, None, True
+        info_hash, magnet = source_hash, source
+        break
+    if info_hash is not None and magnet is None:
+        magnet = 'magnet:?xt=urn:btih:' + info_hash
+    return info_hash, magnet, False
+
+
 def _magnet_hash(uri):
     if not uri: return None
     if type(uri) is not str or len(uri) > 8192 or not uri.startswith('magnet:?'):
@@ -294,21 +318,9 @@ def _release(row, titles, target, season, prepared=None):
     seeders = row.get('seeders')
     seeders = seeders if type(seeders) is int and seeders >= 0 else None
     size = row.get('size') if type(row.get('size')) is int and row['size'] >= 0 else 0
-    raw_hash = row.get('infoHash')
-    info_hash = (raw_hash.lower() if type(raw_hash) is str
-                 and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
-    magnet = None
-    for source in (row.get('magnetUrl'), row.get('guid')):
-        source_hash = _magnet_hash(source)
-        if source_hash is None: continue
-        if info_hash is not None and source_hash != info_hash:
-            # Conflicting identities are never silently reconciled.
-            return None
-        info_hash, magnet = source_hash, source
-        break
-    if info_hash is not None and magnet is None:
-        # Hash only: qBittorrent resolves it through DHT/PEX like a bare webhook hash.
-        magnet = 'magnet:?xt=urn:btih:' + info_hash
+    info_hash, magnet, conflict = release_source(row)
+    if conflict:
+        return None          # Conflicting identities are never silently reconciled.
     return Release(title[:2048], indexer[:256], resolution(title), seeders, size,
                    target.tvdb_episode_id, info_hash, magnet, info_hash is not None,
                    declared_title(titles, target.anidb_episode))
@@ -323,12 +335,24 @@ def _unavailable(headers):
     return error
 
 
+@dataclass(frozen=True)
+class BatchSearchResult:
+    """Eligible season packs from one batch search.
+
+    complete is False when some queries failed (their reason codes are in
+    failed); such a search can never prove that no release exists.
+    """
+    releases: tuple
+    complete: bool = True
+    failed: tuple = ()
+
+
 class Client:
     """GET-only Prowlarr transport plus a provider-backed episode catalog."""
-    def __init__(self, options, api_key, *, catalog, transport=None, policy=None, sleep=time.sleep):
+    def __init__(self, options, api_key, *, catalog=None, transport=None, policy=None, sleep=time.sleep):
         if (type(options) is not Options or type(api_key) is not str or not api_key
                 or len(api_key) > 1024 or any(ord(c) < 33 or ord(c) > 126 for c in api_key)
-                or not callable(catalog)):
+                or (catalog is not None and not callable(catalog))):
             raise SearchConfiguration()
         if policy is not None and type(policy) is not DiscoveryPolicy: raise SearchConfiguration()
         self.options, self._key = options, api_key
@@ -344,15 +368,19 @@ class Client:
         opener = urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}))
         self._transport = transport or (lambda request, timeout: opener.open(request, timeout=timeout))
 
-    def set_context(self, plan_id=None, search_mode='initial'):
+    def set_context(self, plan_id=None, search_mode='initial', anidb_id=None, tvdb_series_id=None):
         self._plan_id = plan_id
         self._search_mode = search_mode
+        if anidb_id is not None:
+            self._current_anidb_id = anidb_id
+        if tvdb_series_id is not None:
+            self._current_tvdb_series_id = tvdb_series_id
 
     @classmethod
-    def from_context(cls, configuration, secrets, *, catalog, transport=None):
+    def from_context(cls, configuration, secrets, *, catalog=None, transport=None):
         try: key = secrets.prowlarr_api_key()
-        except ValueError: raise SearchConfiguration() from None
-        return cls(Options.capture(configuration), key, catalog=catalog, transport=transport,
+        except (ValueError, AttributeError): raise SearchConfiguration() from None
+        return cls(Options.capture(configuration), key, catalog=catalog or (lambda *args: None), transport=transport,
                    policy=DiscoveryPolicy.capture(configuration))
 
     def _get(self, query, *, search_type='search', params=None):
@@ -592,21 +620,7 @@ class Client:
                 if has_dual:
                     matched_dual_audio_count += 1
 
-                raw_hash = row.get('infoHash')
-                info_hash = (raw_hash.lower() if type(raw_hash) is str
-                             and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
-                magnet = None
-                magnet_conflict = False
-                for source in (row.get('magnetUrl'), row.get('guid')):
-                    source_hash = _magnet_hash(source)
-                    if source_hash is None: continue
-                    if info_hash is not None and source_hash != info_hash:
-                        magnet_conflict = True
-                        break
-                    info_hash, magnet = source_hash, source
-                    break
-                if info_hash is not None and magnet is None:
-                    magnet = 'magnet:?xt=urn:btih:' + info_hash
+                info_hash, magnet, magnet_conflict = release_source(row)
 
                 dedup_key = info_hash or title_clean
                 is_duplicate = dedup_key in seen_keys
@@ -813,3 +827,274 @@ class Client:
             raise SearchReview()
         return SearchResult(identity.tvdb_series_id, identity.tvdb_episode_id,
                             self._search(catalog, target.tvdb_season, target, tried=tried, target_hash=target_hash))
+
+    def search_batch(self, anime_titles, season, *, tried=()):
+        """Search Prowlarr for batch season pack candidates (WI-05)."""
+        from src.nextgen.acquisition.release_titles import (
+            batch_search_queries, AnimeTitles,
+        )
+        from src.nextgen.batch.recognition import release_scope_hint
+        from src.nextgen.acquisition.audio import is_audio_incompatible, dual_audio_tagged
+        from src.nextgen.storage.prowlarr_snapshots import sanitize_text
+
+        titles_tuple = tuple(anime_titles) if isinstance(anime_titles, (list, tuple, set)) else (str(anime_titles),)
+        english_title = getattr(self.catalog, 'english_title', None) if self.catalog else None
+        queries = batch_search_queries(
+            titles_tuple, season, english_title=english_title,
+            prefer_audio=self.policy.prefer_audio_tag,
+        )
+        if not queries:
+            raise SearchReview()          # Nothing usable to search for is not "no releases".
+
+        found = []
+        seen_keys = {}
+        tried_set = {h.lower() for h in tried if h}
+
+        captured_queries = []
+        captured_results = []
+        counts_dispositions = {
+            'UNMATCHED_SCOPE': 0,
+            'MISSING_INFO_HASH': 0,
+            'CONFLICTING_INFO_HASH': 0,
+            'PREVIOUSLY_TRIED': 0,
+            'RESOLUTION_OUT_OF_POLICY': 0,
+            'INSUFFICIENT_SEEDERS': 0,
+            'AUDIO_INCOMPATIBLE': 0,
+            'PASSES_POLICY': 0,
+        }
+
+        mode = self._search_mode if getattr(self, '_search_mode', 'initial') != 'initial' else 'batch_fallback'
+        snapshot = {
+            'plan_id': getattr(self, '_plan_id', None),
+            'anidb_id': getattr(self, '_current_anidb_id', None),
+            'tvdb_series_id': getattr(self, '_current_tvdb_series_id', None),
+            'season': season,
+            'episode': None,
+            'search_mode': mode,
+            'target': {
+                'anidb_id': getattr(self, '_current_anidb_id', None),
+                'tvdb_series_id': getattr(self, '_current_tvdb_series_id', None),
+                'season': season,
+                'anime_titles': list(titles_tuple),
+            },
+            'policy': {
+                'max_resolution': self.policy.max_resolution,
+                'min_seeders': self.policy.min_seeders,
+                'rank_by': self.policy.rank_by,
+                'prefer_audio_tag': self.policy.prefer_audio_tag,
+            },
+            'queries': captured_queries,
+            'results': captured_results,
+            'counts': counts_dispositions,
+            'status': 'COMPLETE',
+            'error': None,
+            'truncated': False,
+        }
+        self.snapshots.append(snapshot)
+
+        row_number = 0
+        failed = []
+        last_error = None
+        for query_idx, query in enumerate(queries, 1):
+            q_start = time.monotonic()
+            try:
+                # _get already retries timeouts, 429 and 5xx with backoff.
+                rows = self._get(query)
+                q_elapsed = time.monotonic() - q_start
+            except SearchUnavailable as exc:      # includes SearchTimeout
+                # Unauthorized, configuration and unreadable responses are not
+                # caught: they stop the whole search with their own reason.
+                last_error = exc
+                failed.append((query, exc.reason_code))
+                captured_queries.append({
+                    'index': query_idx,
+                    'query_text': query,
+                    'result_count': 0,
+                    'elapsed_seconds': round(time.monotonic() - q_start, 3),
+                    'status': exc.reason_code,
+                })
+                continue
+
+            captured_queries.append({
+                'index': query_idx,
+                'query_text': query,
+                'result_count': len(rows),
+                'elapsed_seconds': round(q_elapsed, 3),
+                'status': 'SUCCESS',
+            })
+
+            for row in rows:
+                row_number += 1
+                title = sanitize_text(row.get('title') or '')
+                indexer = sanitize_text(row.get('indexer') or 'unknown', 256)
+                protocol = row.get('protocol')
+                seeders = row.get('seeders')
+                size = row.get('size') or 0
+                res = resolution(title)
+
+                # 1. Scope check (must be a season_pack or mixed_pack)
+                hint = release_scope_hint(title)
+                if hint.kind not in ('season_pack', 'mixed_pack') or (
+                    hint.season_hint is not None and hint.season_hint != season
+                ):
+                    counts_dispositions['UNMATCHED_SCOPE'] += 1
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': res,
+                        'info_hash': None,
+                        'primary_disposition': 'UNMATCHED_SCOPE',
+                        'reason': f"hint kind '{hint.kind}' season '{hint.season_hint}' does not match season {season}",
+                    })
+                    continue
+
+                # 2. Hash and magnet, through the parser every search uses.
+                info_hash, magnet, conflict = release_source(row)
+                if conflict:
+                    counts_dispositions['CONFLICTING_INFO_HASH'] += 1
+                    captured_results.append({
+                        'row_number': row_number, 'query_index': query_idx, 'title': title,
+                        'indexer': indexer, 'protocol': protocol or 'torrent', 'seeders': seeders,
+                        'size_bytes': size, 'resolution': res, 'info_hash': None,
+                        'primary_disposition': 'CONFLICTING_INFO_HASH',
+                        'reason': 'the magnet names a different torrent than the info hash',
+                    })
+                    continue
+
+                if not info_hash:
+                    counts_dispositions['MISSING_INFO_HASH'] += 1
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': res,
+                        'info_hash': None,
+                        'primary_disposition': 'MISSING_INFO_HASH',
+                        'reason': 'no valid bittorrent infohash found',
+                    })
+                    continue
+
+                # 3. Check if previously tried
+                if info_hash.lower() in tried_set:
+                    counts_dispositions['PREVIOUSLY_TRIED'] += 1
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': res,
+                        'info_hash': info_hash,
+                        'primary_disposition': 'PREVIOUSLY_TRIED',
+                        'reason': 'infohash already in candidate pool or failed',
+                    })
+                    continue
+
+                # 4. Check policy
+                if res > self.policy.max_resolution:
+                    counts_dispositions['RESOLUTION_OUT_OF_POLICY'] += 1
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': res,
+                        'info_hash': info_hash,
+                        'primary_disposition': 'RESOLUTION_OUT_OF_POLICY',
+                        'reason': f"resolution {res} exceeds max {self.policy.max_resolution}",
+                    })
+                    continue
+
+                if seeders is not None and seeders < self.policy.min_seeders:
+                    counts_dispositions['INSUFFICIENT_SEEDERS'] += 1
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': res,
+                        'info_hash': info_hash,
+                        'primary_disposition': 'INSUFFICIENT_SEEDERS',
+                        'reason': f"seeders {seeders} below min {self.policy.min_seeders}",
+                    })
+                    continue
+
+                # 5. Audio compatibility
+                audio_incompat = is_audio_incompatible(title, 'japanese_english' if self.policy.prefer_audio_tag else 'any')
+                if audio_incompat:
+                    counts_dispositions['AUDIO_INCOMPATIBLE'] += 1
+                    captured_results.append({
+                        'row_number': row_number,
+                        'query_index': query_idx,
+                        'title': title,
+                        'indexer': indexer,
+                        'protocol': protocol or 'torrent',
+                        'seeders': seeders,
+                        'size_bytes': size,
+                        'resolution': res,
+                        'info_hash': info_hash,
+                        'primary_disposition': 'AUDIO_INCOMPATIBLE',
+                        'reason': 'explicit foreign dub without dual/multi audio',
+                    })
+                    continue
+
+                # 6. Deduplicate by info_hash
+                if info_hash in seen_keys:
+                    continue
+                seen_keys[info_hash] = row_number
+
+                counts_dispositions['PASSES_POLICY'] += 1
+                captured_results.append({
+                    'row_number': row_number,
+                    'query_index': query_idx,
+                    'title': title,
+                    'indexer': indexer,
+                    'protocol': protocol or 'torrent',
+                    'seeders': seeders,
+                    'size_bytes': size,
+                    'resolution': res,
+                    'info_hash': info_hash,
+                    'primary_disposition': 'PASSES_POLICY',
+                    'reason': 'eligible batch candidate',
+                })
+
+                rel = Release(
+                    title=title,
+                    indexer=indexer,
+                    resolution=res,
+                    seeders=seeders,
+                    size=size,
+                    tvdb_episode_id=None,
+                    info_hash=info_hash,
+                    magnet_url=magnet,
+                    eligible_for_handoff=True,
+                    declared_title=title,
+                )
+                found.append(rel)
+
+        if failed and len(failed) == len(queries):
+            # Every query failed: Prowlarr is unavailable, nothing was searched.
+            snapshot['status'] = 'FAILED'
+            snapshot['error'] = last_error.reason_code
+            raise last_error
+        if failed:
+            snapshot['status'] = 'PARTIAL'
+            snapshot['error'] = f'{len(failed)} of {len(queries)} queries failed'
+        return BatchSearchResult(tuple(found), complete=not failed, failed=tuple(failed))

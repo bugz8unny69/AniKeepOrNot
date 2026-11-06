@@ -799,6 +799,59 @@ CREATE TABLE IF NOT EXISTS identity_candidate_evidence (
 CREATE INDEX IF NOT EXISTS idx_candidate_evidence_job ON identity_candidate_evidence(job_id, attempt, rank);
 CREATE INDEX IF NOT EXISTS idx_candidate_evidence_anidb ON identity_candidate_evidence(anidb_id);
 
+CREATE TABLE IF NOT EXISTS batch_candidate_scopes (
+ scope_id INTEGER PRIMARY KEY,
+ anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
+ tvdb_series_id INTEGER NOT NULL CHECK(tvdb_series_id > 0),
+ tvdb_season INTEGER NOT NULL CHECK(tvdb_season > 0),
+ operation_id INTEGER REFERENCES job_operations(operation_id),
+ active_candidate_id INTEGER,
+ controller_job_id INTEGER REFERENCES jobs(job_id),
+ state TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(state IN ('ACTIVE','EXHAUSTED','SUCCEEDED')),
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms >= 0),
+ updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= created_at_ms),
+ UNIQUE(anidb_id, tvdb_season),
+ FOREIGN KEY(anidb_id) REFERENCES identified_anime(anidb_id)
+);
+CREATE INDEX IF NOT EXISTS idx_batch_candidate_scopes_operation ON batch_candidate_scopes(operation_id);
+
+CREATE TABLE IF NOT EXISTS batch_candidates (
+ candidate_id INTEGER PRIMARY KEY,
+ scope_id INTEGER NOT NULL REFERENCES batch_candidate_scopes(scope_id),
+ info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
+ title TEXT NOT NULL CHECK(length(trim(title)) > 0),
+ rank INTEGER NOT NULL CHECK(rank > 0),
+ state TEXT NOT NULL DEFAULT 'READY' CHECK(state IN ('READY','ACTIVE','FAILED','SUCCEEDED','CANCELED')),
+ reason_code TEXT,
+ has_metadata INTEGER NOT NULL DEFAULT 0 CHECK(has_metadata IN (0, 1)),
+ metadata_json TEXT CHECK(metadata_json IS NULL OR json_valid(metadata_json)),
+ seeders INTEGER CHECK(seeders IS NULL OR seeders >= 0),
+ size_bytes INTEGER CHECK(size_bytes IS NULL OR size_bytes > 0),
+ source_event_id INTEGER REFERENCES incoming_events(event_id),
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms >= 0),
+ updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= created_at_ms),
+ UNIQUE(scope_id, info_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_batch_candidates_scope_state ON batch_candidates(scope_id, state, rank);
+CREATE INDEX IF NOT EXISTS idx_batch_candidates_hash ON batch_candidates(info_hash);
+
+CREATE TABLE IF NOT EXISTS batch_candidate_events (
+ scope_id INTEGER NOT NULL REFERENCES batch_candidate_scopes(scope_id),
+ info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
+ event_id INTEGER NOT NULL REFERENCES incoming_events(event_id),
+ received_at_ms INTEGER NOT NULL CHECK(received_at_ms >= 0),
+ PRIMARY KEY(scope_id, info_hash, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_batch_candidate_events_event ON batch_candidate_events(event_id);
+CREATE TABLE IF NOT EXISTS batch_candidate_stops (
+ candidate_id INTEGER PRIMARY KEY REFERENCES batch_candidates(candidate_id),
+ operation_id INTEGER NOT NULL REFERENCES job_operations(operation_id),
+ disposition TEXT NOT NULL CHECK(disposition IN ('FAILED','CANCELED')),
+ reason_code TEXT NOT NULL CHECK(length(reason_code) BETWEEN 1 AND 64),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_batch_candidate_stops_operation ON batch_candidate_stops(operation_id);
+
 """
 
 def connect(path):
@@ -838,7 +891,7 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v59; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema v60; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.
