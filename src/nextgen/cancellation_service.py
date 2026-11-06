@@ -65,6 +65,8 @@ class CancellationService:
                 if op[2]!='COMPLETE':
                     from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
                     records+=schedule_after_cleanup(db,op[0])
+                    from src.nextgen.storage.batch_candidates import schedule_after_cleanup_batch
+                    records+=schedule_after_cleanup_batch(db,op[0])
         self._log(records)
     def cleanup(self,job_id,*,max_targets=1):
         """Delete what the canceled work owns (see cancel_cleanup), then free its slots.

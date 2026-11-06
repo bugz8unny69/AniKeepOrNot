@@ -8,7 +8,7 @@ import json
 import sqlite3
 import time
 
-from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
+from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english, is_audio_incompatible
 from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.prowlarr_search import resolution
 from src.nextgen.batch.recognition import release_scope_hint
@@ -221,6 +221,9 @@ def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='reso
 
     def sort_key(cand):
         title = cand.title
+        # Incompatible foreign dubs ranked last when japanese_english is required (WI-06)
+        incompatible = 1 if is_audio_incompatible(title, audio_check) else 0
+
         # Audio suitability: Dual/Multi Audio tag prioritized when Japanese+English required
         is_dual = dual_audio_tagged(title)
         audio_priority = 0 if (not req_dual or is_dual) else 1
@@ -233,7 +236,7 @@ def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='reso
         seed = cand.seeders or 0
 
         pref = (-res, -seed) if rank_by == 'resolution' else (-seed, -res)
-        return (audio_priority, meta_priority, pref[0], pref[1], cand.candidate_id)
+        return (incompatible, audio_priority, meta_priority, pref[0], pref[1], cand.candidate_id)
 
     return tuple(sorted(items, key=sort_key))
 
@@ -402,3 +405,98 @@ def exhaust_scope(db, scope_id, *, now_ms=None):
         "UPDATE batch_candidate_scopes SET state='EXHAUSTED', active_candidate_id=NULL, updated_at_ms=? "
         "WHERE scope_id=?",
         (now, scope_id))
+
+
+def auto_cleanup_failed_batch_candidate(db, claim):
+    """Enqueue the existing cancellation worker for a failed batch candidate."""
+    if not db.in_transaction or claim.event_id is None:
+        return ()
+    has_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
+    if not has_table:
+        return ()
+    row = db.execute(
+        "SELECT s.scope_id, s.operation_id FROM job_operation_members m "
+        "JOIN batch_candidate_scopes s ON s.operation_id=m.operation_id "
+        "WHERE m.job_id=? AND s.active_candidate_id IS NOT NULL",
+        (claim.job_id,)).fetchone()
+    if row is None:
+        return ()
+    from src.nextgen.storage.sonarr_candidates import request_automatic_cleanup
+    return request_automatic_cleanup(db, claim)
+
+
+def schedule_after_cleanup_batch(db, operation_id):
+    """After cleanup of a failed batch candidate completes, advance to the next candidate (WI-04)."""
+    if not db.in_transaction:
+        raise CandidateConflict()
+    has_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
+    if not has_table:
+        return ()
+    scope_row = db.execute(
+        "SELECT scope_id, anidb_id, tvdb_series_id, tvdb_season, active_candidate_id "
+        "FROM batch_candidate_scopes WHERE operation_id=?",
+        (operation_id,)).fetchone()
+    if scope_row is None:
+        return ()
+    scope_id, anidb_id, tvdb_series_id, season, active_cid = scope_row
+
+    automated = db.execute(
+        "SELECT a.target_job_id, control.payload_json FROM management_actions a "
+        "JOIN jobs control ON control.job_id=a.job_id "
+        "AND control.kind='CLEANUP_CANCELED_OPERATION' "
+        "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1",
+        (operation_id,)).fetchone()
+    if automated is None:
+        return ()
+    target_job_id, payload_str = automated
+    issue = None
+    if payload_str:
+        try:
+            issue = json.loads(payload_str).get('failure_reason')
+        except Exception:
+            pass
+    if not issue:
+        try:
+            t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
+            if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
+                issue = t_row[0]
+        except sqlite3.OperationalError:
+            pass
+    if not issue:
+        try:
+            h_row = db.execute(
+                "SELECT reason_code FROM job_history WHERE job_id=? AND event_code IN ('FAILED','NEEDS_REVIEW') "
+                "ORDER BY history_id DESC LIMIT 1", (target_job_id,)).fetchone()
+            if h_row and h_row[0]:
+                issue = h_row[0]
+        except sqlite3.OperationalError:
+            pass
+    if not issue:
+        issue = 'OPERATION_FAILED'
+
+    # Mark active candidate as FAILED
+    active_cand = get_active_candidate(db, scope_id)
+    if active_cand is not None:
+        fail_candidate(db, scope_id, active_cand.info_hash, issue)
+
+    # Pick next candidate in ranked pool
+    next_cand = next_candidate(db, scope_id)
+    if next_cand is None:
+        exhaust_scope(db, scope_id)
+        return ()
+
+    now = _now()
+    new_op_id = db.execute(
+        "INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)",
+        (now, now)).lastrowid
+    activate_candidate(db, scope_id, next_cand.info_hash, operation_id=new_op_id)
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    _, receipt = enqueue_job_with_receipt(db, component='worker', kind='VERIFY_RELEASE',
+                                          payload={'anidb_id': anidb_id},
+                                          available_at_ms=0,
+                                          event_id=next_cand.source_event_id,
+                                          operation_id=new_op_id)
+    return (receipt,)
+
