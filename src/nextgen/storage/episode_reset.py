@@ -177,6 +177,12 @@ def progress(database,plan_id,episode):
                     'SELECT operation_id,state,cleanup_state,reason_code FROM job_operations '
                     'WHERE operation_id=?',(op,)
                 ).fetchone()
+            if row[1]=='CANCELED' and row[2]=='COMPLETE':
+                from src.nextgen.storage.reservation_release import active
+                if active(db,op):
+                    # An invariant failed: finished cleanup must have released
+                    # the reservation. Never silently wait or delete the row.
+                    return 'REVIEW'
             if row[1] in ('CANCEL_REQUESTED','CANCELED') and row[2]!='COMPLETE':
                 old=db.execute(
                     "SELECT a.job_id,j.state FROM management_actions a "
