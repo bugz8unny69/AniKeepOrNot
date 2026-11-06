@@ -23,6 +23,7 @@ _ENTRIES = (
     Reason('PROWLARR_SEARCH_TIMEOUT','A Prowlarr search exceeded the configured timeout three times in a row.','Prowlarr search timed out.','The search runs again once after 30 minutes. If it still times out, check Prowlarr and indexer response times or raise the timeout, then retry.','ERROR',True),
     Reason('PROWLARR_UNAVAILABLE','Prowlarr could not be reached, was busy, or failed the search three times in a row.','Prowlarr search failed.','The search runs again once after 30 minutes. If it still fails, check that Prowlarr and its indexers are running, then retry.','ERROR',True),
     Reason('PROWLARR_RELEASE_WITHDRAWN','The next ranked torrent is no longer returned by Prowlarr.','Trying the next ranked release.','No action needed; the next ranked release is tried without a new torrent being sent.','WARNING',True),
+    Reason('EPISODE_CONTEXT_CONFLICT','Saved selection, recognized episode or verified release disagree on TVDB placement.','Saved episode identity needs review.','Inspect the conflicting saved placements before retrying; a fresh provider catalog must not override this conflict.','WARNING',False),
     Reason('SONARR_BACKFILL_PLAN_CONFLICT','Frozen backfill scope or stored search receipt did not match the worker plan.','Backfill discovery needs review.','Check the immutable episode window and persisted discovery receipts; no download occurred.','WARNING',False),
     Reason('SONARR_DISCOVERY_EPISODE_NOT_FOUND','The requested TVDB series is absent from Sonarr; its release API requires existing catalog records.','Sonarr cannot search this series.','No series was created. Check the series mapping; this search source requires existing Sonarr records.','ERROR',False),
     Reason('SONARR_DISCOVERY_AUTH_FAILED','Sonarr rejected the configured API key.','Sonarr search authentication failed.','Check the existing Sonarr API key, then resume discovery.','WARNING',False),
@@ -283,6 +284,7 @@ if len(REGISTRY) != len(_ENTRIES):
 
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}", re.ASCII)
 _MAX_INTEGER = (1 << 63) - 1
+_CONTEXT_IDENTITY = re.compile(r'(selection|recognized|verification):(INVALID|S(?:0|[1-9][0-9]{0,3})E[1-9][0-9]{0,4}#[1-9][0-9]{0,11})', re.ASCII)
 _CHECK = re.compile(r"src/nextgen/[a-z0-9_/]{1,120}\.py:[1-9][0-9]{0,5} [A-Za-z_][A-Za-z0-9_]{0,63}( [A-Z0-9_]{1,32})?")
 _FIELDS = frozenset({
     "schema_version", "anime.anidb_id", "anime.tvdb_series_id", "anime.title",
@@ -317,6 +319,7 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  attempt=None, max_attempts=None, cause_reason_code=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
                  failed_check=None, failed_path=None,
+                 context_left=None, context_right=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
                  blocking_job_id=None, operation_id=None) -> dict:
@@ -364,6 +367,11 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                 or any(ord(c) < 32 or ord(c) == 127 for c in failed_path)):
             raise ValueError("invalid failed path")
         details["failed_path"] = failed_path
+    for key, value in (('context_left', context_left), ('context_right', context_right)):
+        if value is not None:
+            if type(value) is not str or not _CONTEXT_IDENTITY.fullmatch(value):
+                raise ValueError('invalid persisted identity diagnostic')
+            details[key] = value
     if observed_audio is not None:
         if type(observed_audio) is not str or len(observed_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in observed_audio):
             raise ValueError("invalid observed audio tags")

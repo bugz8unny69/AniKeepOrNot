@@ -3,6 +3,7 @@
 The job kind keeps its historical name so existing jobs and history stay valid.
 """
 from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
+from src.nextgen.acquisition.episode_context import EpisodeContextConflict
 from src.nextgen.acquisition.prowlarr_search import (
     Client, CandidateSelection, SearchConfiguration, SearchUnauthorized, SearchReview,
     SearchUnavailable, _magnet_hash,
@@ -79,7 +80,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             if type(delete_cache) is not bool or ('delete_cache' in payload and exhausted_episode is None):
                 raise ValueError()
         except (ValueError, TypeError):
-            return Outcome('review', 'JOB_PAYLOAD_INVALID')
+            return Outcome('review', 'JOB_PAYLOAD_INVALID',
+                           facts={'failed_check': 'src/nextgen/jobs/discover_sonarr_backfill_job.py:82 execute JOB_PAYLOAD_INVALID'})
         log = context.logger
         try:
             plan = await blocking(load_batch,
@@ -170,8 +172,17 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                          item.number, item.status, item.candidates, item.accepted)
             snapshots = getattr(client, 'snapshots', None)
             return Outcome(value=BackfillCompletion(plan,observed,retry_episode),search_snapshots=snapshots)
+        except EpisodeContextConflict as exc:
+            log.warning('Persisted episode identity conflict: %s != %s',
+                        exc.context_left, exc.context_right)
+            return Outcome('review', exc.reason_code, facts={
+                'failed_check': exc.failed_check,
+                'context_left': exc.context_left,
+                'context_right': exc.context_right,
+            })
         except BackfillConflict:
-            return Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')
+            return Outcome('review', 'SONARR_BACKFILL_PLAN_CONFLICT',
+                           facts={'failed_check': 'src/nextgen/jobs/discover_sonarr_backfill_job.py:175 execute BACKFILL_CONFLICT'})
         except SearchUnavailable as exc:   # includes SearchTimeout
             # The client already tried three times. Wait 30 minutes once, then
             # stop for a manual Retry; nothing is published for this page.
@@ -179,27 +190,38 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             used = await blocking(automatic_retry_used,
                 context.configuration.value('storage.database_path'),context.claim.job_id)
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            if used: return Outcome('blocked',reason,search_snapshots=snapshots)
+            facts = {}
+            if getattr(exc, 'failed_check', None): facts['failed_check'] = exc.failed_check
+            if getattr(exc, 'failed_path', None): facts['failed_path'] = exc.failed_path
+            if used: return Outcome('blocked', reason, search_snapshots=snapshots, facts=facts or None)
             log.warning('Backfill search will run again in %s minutes: %s',
                         AUTOMATIC_RETRY_MS//60000, reason)
-            return Outcome('defer',reason,delay_ms=AUTOMATIC_RETRY_MS,search_snapshots=snapshots)
-        except SearchUnauthorized:
+            return Outcome('defer', reason, delay_ms=AUTOMATIC_RETRY_MS, search_snapshots=snapshots, facts=facts or None)
+        except SearchUnauthorized as exc:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','PROWLARR_AUTH_FAILED',search_snapshots=snapshots)
-        except SearchConfiguration:
+            facts = {'failed_check': exc.failed_check} if getattr(exc, 'failed_check', None) else None
+            return Outcome('review', 'PROWLARR_AUTH_FAILED', search_snapshots=snapshots, facts=facts)
+        except SearchConfiguration as exc:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','PROWLARR_CONFIGURATION_INVALID',search_snapshots=snapshots)
-        except SearchReview:
+            facts = {'failed_check': exc.failed_check} if getattr(exc, 'failed_check', None) else None
+            return Outcome('review', 'PROWLARR_CONFIGURATION_INVALID', search_snapshots=snapshots, facts=facts)
+        except SearchReview as exc:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','PROWLARR_SEARCH_REVIEW',search_snapshots=snapshots)
+            facts = {}
+            if getattr(exc, 'failed_check', None): facts['failed_check'] = exc.failed_check
+            if getattr(exc, 'failed_path', None): facts['failed_path'] = exc.failed_path
+            return Outcome('review', 'PROWLARR_SEARCH_REVIEW', search_snapshots=snapshots, facts=facts or None)
         except ProviderDeferred as exc:
-            return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)
-        except (ProviderUnavailable,ProviderInvalidResponse) as exc:
-            return Outcome('retry',exc.reason_code)
+            return Outcome('defer', 'JOB_WAITING', delay_ms=exc.delay_ms)
+        except (ProviderUnavailable, ProviderInvalidResponse) as exc:
+            facts = {'failed_check': f'src/nextgen/jobs/discover_sonarr_backfill_job.py:207 execute {exc.reason_code}'}
+            return Outcome('retry', exc.reason_code, facts=facts)
         except ProviderAuthenticationFailed:
-            return Outcome('review','PROVIDER_AUTH_FAILED')
-        except (ReleaseNotReady,ReleaseConflict) as exc:
-            return Outcome('review',exc.reason_code)
+            facts = {'failed_check': 'src/nextgen/jobs/discover_sonarr_backfill_job.py:210 execute PROVIDER_AUTH_FAILED'}
+            return Outcome('review', 'PROVIDER_AUTH_FAILED', facts=facts)
+        except (ReleaseNotReady, ReleaseConflict) as exc:
+            facts = {'failed_check': f'src/nextgen/jobs/discover_sonarr_backfill_job.py:213 execute {exc.reason_code}'}
+            return Outcome('review', exc.reason_code, facts=facts)
 
     def persist(db,claim,value):
         try:
@@ -218,7 +240,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_cached(db,claim,value[0],value[1],value[2],eng)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
         except BackfillConflict:
-            raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
+            raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT',
+                                             facts={'failed_check': 'src/nextgen/jobs/discover_sonarr_backfill_job.py:236 persist BACKFILL_CONFLICT'})) from None
 
     def route(value):
         if (type(value) in (FallbackCompletion,FallbackMissing,DubFound,DubExhausted,CandidatesExhausted)

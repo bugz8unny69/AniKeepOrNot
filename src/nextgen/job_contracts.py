@@ -96,11 +96,16 @@ class Outcome:
             raise ValueError("invalid outcome candidate evidence")
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
-        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "cancel", "fail")
-                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code"}
-                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code") else (type(v) is not int or v < 0)
+        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "defer", "cancel", "fail")
+                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code", "context_left", "context_right"}
+                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code", "context_left", "context_right") else (type(v) is not int or v < 0)
                        for k, v in self.facts.items())):
             raise ValueError("invalid outcome facts")
+        if self.facts is not None:
+            from src.nextgen.reasons import _CONTEXT_IDENTITY
+            if any(not _CONTEXT_IDENTITY.fullmatch(self.facts[key])
+                   for key in ('context_left', 'context_right') if key in self.facts):
+                raise ValueError("invalid persisted identity diagnostic")
         if type(self.kind) is not str or self.kind not in _STATES:
             raise ValueError("invalid handler outcome")
         if self.kind in ("complete", "skip"):

@@ -316,6 +316,10 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
                 db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'MEDIA_AUDIO_REQUIRED')")
                 db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
+                # Saved identity is authoritative. Make the expected query
+                # title part of that persisted context, not catalog enrichment.
+                db.execute("UPDATE identified_anime SET title=? WHERE anidb_id=123",
+                           ("FX Senshi Kurumi-chan",))
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, component="worker", event_id=event_id,
                                      payload={"plan_id": 1, "start": 1, "exhausted_episode": 2, "delete_cache": True},
                                      available_at_ms=0)

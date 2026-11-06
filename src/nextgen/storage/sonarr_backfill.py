@@ -265,13 +265,31 @@ def persist_fallback_missing(db,claim,value):
 
 
 def _selected(db,plan_id,episode):
-    """(VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
+    """(EpisodeSearchContext or VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
+    from src.nextgen.acquisition.episode_context import (
+        EpisodeContextMissing, load_authoritative_episode_context,
+    )
     from src.nextgen.sonarr_episode import VerifiedEpisode
     row=db.execute(
         "SELECT p.tvdb_series_id,s.tvdb_episode_id,s.tvdb_season,s.tvdb_episode,s.info_hash "
         "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
         "WHERE p.plan_id=? AND s.anidb_episode_number=?",(plan_id,episode)).fetchone()
-    return None if row is None else (VerifiedEpisode(*row[:4]),row[4])
+    if row is None:
+        return None
+    # Legacy pre-migration schemas, including historical lightweight adapters,
+    # lack the authoritative AniDB plan ID entirely. Detect that structural
+    # absence explicitly; do not turn arbitrary SQLite query failures into
+    # missing episode evidence.
+    if db.execute('PRAGMA user_version').fetchone()[0] == 0:
+        columns = {col[1] for col in db.execute('PRAGMA table_info(trial_plans)').fetchall()}
+        if 'anidb_id' not in columns:
+            return (VerifiedEpisode(*row[:4]), row[4])
+    try:
+        ctx = load_authoritative_episode_context(db, plan_id, episode)
+    except EpisodeContextMissing:
+        # Only true legacy absence permits provider-backed resolution.
+        return (VerifiedEpisode(*row[:4]), row[4])
+    return (ctx, row[4])
 
 
 def load_fallback(database,plan_id,episode):

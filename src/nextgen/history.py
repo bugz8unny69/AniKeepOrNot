@@ -37,7 +37,8 @@ def encode_details(details=None):
                "retry_at_ms", "cause_reason_code", "matching",
                "video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "metadata_evidence",
                "delete_cache", "cache_entries_deleted", "cached_replay",
-               "observed_audio", "missing_audio", "blocking_job_id", "operation_id"}
+               "observed_audio", "missing_audio", "blocking_job_id", "operation_id",
+                "context_left", "context_right"}
     if any(type(key) is not str or key not in allowed for key in details):
         raise ValueError("invalid diagnostic detail key")
     safe = safe_details(**{k: v for k, v in details.items() if k not in ("matching", "metadata_evidence")})
