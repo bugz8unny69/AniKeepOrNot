@@ -266,7 +266,9 @@ def persist_fallback_missing(db,claim,value):
 
 def _selected(db,plan_id,episode):
     """(EpisodeSearchContext or VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
-    from src.nextgen.acquisition.episode_context import load_authoritative_episode_context
+    from src.nextgen.acquisition.episode_context import (
+        EpisodeContextMissing, load_authoritative_episode_context,
+    )
     from src.nextgen.sonarr_episode import VerifiedEpisode
     row=db.execute(
         "SELECT p.tvdb_series_id,s.tvdb_episode_id,s.tvdb_season,s.tvdb_episode,s.info_hash "
@@ -274,10 +276,12 @@ def _selected(db,plan_id,episode):
         "WHERE p.plan_id=? AND s.anidb_episode_number=?",(plan_id,episode)).fetchone()
     if row is None:
         return None
-    ctx = load_authoritative_episode_context(db, plan_id, episode)
-    if ctx is not None:
-        return (ctx, row[4])
-    return (VerifiedEpisode(*row[:4]), row[4])
+    try:
+        ctx = load_authoritative_episode_context(db, plan_id, episode)
+    except EpisodeContextMissing:
+        # Only true legacy absence permits provider-backed resolution.
+        return (VerifiedEpisode(*row[:4]), row[4])
+    return (ctx, row[4])
 
 
 def load_fallback(database,plan_id,episode):

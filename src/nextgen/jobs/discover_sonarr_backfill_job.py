@@ -3,6 +3,7 @@
 The job kind keeps its historical name so existing jobs and history stay valid.
 """
 from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
+from src.nextgen.acquisition.episode_context import EpisodeContextConflict
 from src.nextgen.acquisition.prowlarr_search import (
     Client, CandidateSelection, SearchConfiguration, SearchUnauthorized, SearchReview,
     SearchUnavailable, _magnet_hash,
@@ -171,6 +172,11 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                          item.number, item.status, item.candidates, item.accepted)
             snapshots = getattr(client, 'snapshots', None)
             return Outcome(value=BackfillCompletion(plan,observed,retry_episode),search_snapshots=snapshots)
+        except EpisodeContextConflict as exc:
+            log.warning('Persisted episode identity conflict: %s != %s',
+                        exc.context_left, exc.context_right)
+            return Outcome('review', exc.reason_code,
+                           facts={'failed_check': exc.failed_check})
         except BackfillConflict:
             return Outcome('review', 'SONARR_BACKFILL_PLAN_CONFLICT',
                            facts={'failed_check': 'src/nextgen/jobs/discover_sonarr_backfill_job.py:175 execute BACKFILL_CONFLICT'})
