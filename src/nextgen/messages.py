@@ -26,6 +26,7 @@ _EVENTS = (
     EventDefinition('KEEP_COMPLETED','job','Episode kept in the permanent library.',True),
     EventDefinition("MANAGEMENT_ACTION_RESUMED", "job", "The action was submitted again after review."),
     EventDefinition("SERIES_REJECTED", "job", "Series rejected; future Intake is blocked.", True, "ANIME_REJECTED"),
+    EventDefinition("EPISODE_SEARCH_RESET", "job", "Failed episode attempts were cleaned up; searching again."),
     EventDefinition("API_SESSION_CREATED", "runtime", "A management browser session was created."),
     EventDefinition("API_SESSION_CLOSED", "runtime", "A management browser session was closed."),
     EventDefinition("API_CREDENTIALS_UPDATED", "runtime", "Private service credentials were updated."),
