@@ -345,15 +345,19 @@ def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='reso
 
 
 def reorder_candidates(db, scope_id, ranked_candidates, *, now_ms=None):
-    """Update ranks for READY candidates to reflect latest policy ranking."""
+    """Update ranks for READY candidates to reflect latest policy ranking.
+
+    Only rows whose rank changes are written, so seeing the same releases
+    again leaves their records (and updated_at_ms) untouched.
+    """
     integer(scope_id, positive=True)
     now = now_ms if now_ms is not None else _now()
     rank = 1
     for cand in ranked_candidates:
         if cand.state == 'READY':
             db.execute(
-                "UPDATE batch_candidates SET rank=?, updated_at_ms=? WHERE candidate_id=?",
-                (rank, now, cand.candidate_id))
+                "UPDATE batch_candidates SET rank=?, updated_at_ms=? WHERE candidate_id=? AND rank<>?",
+                (rank, now, cand.candidate_id, rank))
             rank += 1
 
 
