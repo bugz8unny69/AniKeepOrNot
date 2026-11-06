@@ -91,7 +91,7 @@ The worker **does not claim** a job while any service it needs is blocking: `DOW
 | Service | Job kinds |
 |---|---|
 | qBittorrent | `PREPARE_ACQUISITION`, `SUBMIT_TORRENT`, `DOWNLOAD_TORRENT`, `SUBMIT_BATCH`, `TRANSFER_BATCH`, `UNLOCK_BATCH`, `CLEANUP_BATCH_DOWNLOAD`, `CLEANUP_CANCELED_OPERATION`, `CLEANUP_DECIDED_DOWNLOAD` |
-| Prowlarr | `DISCOVER_SONARR_BACKFILL` |
+| Prowlarr | `DISCOVER_EPISODE_RELEASES` |
 | Sonarr | `KEEP_MEDIA`, `KEEP_BATCH`, `CLEANUP_KEPT_MEDIA`, `CLEANUP_BATCH_KEPT_MEDIA` |
 | Jellyfin | `REFRESH_JELLYFIN` |
 | Shoko | `ENRICH_SHOKO_METADATA` |

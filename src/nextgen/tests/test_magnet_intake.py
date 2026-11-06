@@ -32,14 +32,14 @@ class MagnetJournalTests(unittest.TestCase):
             CREATE TABLE staging_publications(job_id INTEGER,state TEXT);
             INSERT INTO job_operation_members VALUES(21,7);
             INSERT INTO job_operations VALUES(7,'ACTIVE','NONE');
-            CREATE TABLE sonarr_magnet_intents (
+            CREATE TABLE magnet_intents (
                 event_id INTEGER PRIMARY KEY,job_id INTEGER,plan_id INTEGER,
                 anidb_episode_number INTEGER,info_hash TEXT,marker TEXT,
                 api_major INTEGER,base_url TEXT,save_path TEXT,
                 category TEXT,timeout_seconds INTEGER,inventory_json TEXT,state TEXT,
                 created_at_ms INTEGER,updated_at_ms INTEGER
             );
-            CREATE UNIQUE INDEX idx_magnet_active_hash ON sonarr_magnet_intents(info_hash) WHERE state<>'RELEASED';
+            CREATE UNIQUE INDEX idx_magnet_active_hash ON magnet_intents(info_hash) WHERE state<>'RELEASED';
         """)
         self.options=DownloadOptions('http://localhost:8080','/downloads','anime',10)
         self.source=AcquisitionInput(1,2,3,4,HASH,'0'*64,1,1,10,'Example')
@@ -67,7 +67,7 @@ class MagnetJournalTests(unittest.TestCase):
         self.assertIsInstance(permit,MagnetPermit)
         self.assertEqual(intent.options.download_root,'/downloads/ad-'+intent.marker)
         self.assertEqual(self.db.execute(
-            "SELECT state FROM sonarr_magnet_intents").fetchone(),('UNCERTAIN',))
+            "SELECT state FROM magnet_intents").fetchone(),('UNCERTAIN',))
         permit.take(intent)
         with self.assertRaises(ClientInvalid):
             permit.take(intent)
@@ -98,7 +98,7 @@ class MagnetJournalTests(unittest.TestCase):
                  patch('src.nextgen.storage.magnet_intake._source',return_value=source), \
                  self.assertRaises(AcquisitionConflict):
                 self.journal.authorize(claim,source,self.options,4,False)
-            self.assertEqual(self.db.execute('SELECT event_id,marker FROM sonarr_magnet_intents').fetchall(),
+            self.assertEqual(self.db.execute('SELECT event_id,marker FROM magnet_intents').fetchall(),
                              [(4,original.marker)])
 
     def test_complete_cleanup_cannot_release_an_active_reservation(self):
@@ -110,7 +110,7 @@ class MagnetJournalTests(unittest.TestCase):
         with patch('src.nextgen.storage.magnet_intake._source',return_value=source), \
              self.assertRaises(AcquisitionConflict):
             self.journal.authorize(claim,source,self.options,4,False)
-        self.assertEqual(self.db.execute('SELECT state FROM sonarr_magnet_intents').fetchall(),[('UNCERTAIN',)])
+        self.assertEqual(self.db.execute('SELECT state FROM magnet_intents').fetchall(),[('UNCERTAIN',)])
 
     def test_upgrade_does_not_rearm_the_prior_42_submission(self):
         intent,permit,_=self.journal.authorize(
@@ -160,7 +160,7 @@ class MagnetJournalTests(unittest.TestCase):
         self.assertEqual(self.journal.reconcile(self.claim,intent,owned),
                          'OWNED_STOPPED')
         self.assertEqual(self.db.execute(
-            "SELECT state FROM sonarr_magnet_intents").fetchone(),
+            "SELECT state FROM magnet_intents").fetchone(),
             ('OWNED_STOPPED',))
 
     def test_immutable_observed_inventory_is_not_a_fabricated_metainfo_hash(self):
@@ -176,7 +176,7 @@ class MagnetJournalTests(unittest.TestCase):
         self.journal.capture(self.claim,intent,self.source,inventory)
         import json
         data=json.loads(self.db.execute(
-            'SELECT inventory_json FROM sonarr_magnet_intents').fetchone()[0])
+            'SELECT inventory_json FROM magnet_intents').fetchone()[0])
         self.assertEqual(data['evidence'],'qbittorrent_stopped_inventory')
         self.assertNotIn('info_sha256',data)
         changed=ObservedInventory(HASH,

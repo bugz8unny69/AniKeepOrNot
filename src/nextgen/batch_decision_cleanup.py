@@ -166,7 +166,7 @@ class BatchDecisionCleanup(OwnedCleanup):
             "SELECT s.job_id,m.operation_id,s.state FROM batch_staging_publications s "
             "JOIN job_operation_members m ON m.job_id=s.job_id WHERE s.plan_id=?",
             (self.series_plan_id,)).fetchall()
-        selected = db.execute('SELECT count(*) FROM batch_trial_files WHERE plan_id=?',
+        selected = db.execute('SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?',
                               (self.series_plan_id,)).fetchone()[0]
         operations = {op for _, op, _ in source}
         if (len(operations) != 1 or len(source) != selected

@@ -67,7 +67,7 @@ def persist_batch_user_evaluation(db,claim,proposal):
     if (row is None or row[0]!='RUNNING' or row[1]!=claim.attempt
             or row[2]!=claim.token or row[3] is None or row[3]<=now):
         raise UserEvaluationConflict()
-    if db.execute('SELECT 1 FROM batch_trial_plans WHERE batch_id=? OR evaluation_job_id=?',
+    if db.execute('SELECT 1 FROM batch_user_evaluation_plans WHERE batch_id=? OR evaluation_job_id=?',
                   (src.batch_id,claim.job_id)).fetchone():
         raise UserEvaluationConflict()
     total=sum(x.size_bytes for x in proposal.selected)
@@ -76,7 +76,7 @@ def persist_batch_user_evaluation(db,claim,proposal):
         from src.nextgen.acquisition.settings import SizeLimitExceeded
         raise SizeLimitExceeded()
     plan=db.execute(
-        'INSERT INTO batch_trial_plans(batch_id,evaluation_job_id,anchor_episode,'
+        'INSERT INTO batch_user_evaluation_plans(batch_id,evaluation_job_id,anchor_episode,'
         'backfill_count,following_count,configuration_revision,max_episode_bytes,'
         'max_plan_bytes,planned_size_bytes,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)',
         (src.batch_id,claim.job_id,proposal.anchor_episode,
@@ -84,7 +84,7 @@ def persist_batch_user_evaluation(db,claim,proposal):
          proposal.configuration_revision,limits.episode_bytes,limits.plan_bytes,
          total,now)).lastrowid
     for item in proposal.selected:
-        db.execute('INSERT INTO batch_trial_files(plan_id,file_index,tvdb_episode,'
+        db.execute('INSERT INTO batch_user_evaluation_files(plan_id,file_index,tvdb_episode,'
                    'selected_size_bytes) VALUES(?,?,?,?)',
                    (plan,item.file_index,item.tvdb_episode,item.size_bytes))
     return append_job_history(

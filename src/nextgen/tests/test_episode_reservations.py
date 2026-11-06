@@ -50,7 +50,7 @@ class EpisodeReservationTests(unittest.IsolatedAsyncioTestCase):
                     "anidb_episode_number,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms) "
                     "VALUES(?,?,?,?,'DECLARED_SINGLE_EPISODE',?,?,456,?,?,?,1)",
                     (release,identity,aid,hashlib.sha256(body).hexdigest(),episode,eid,season,episode,tveid))
-                evaluation=enqueue_job(db,kind='EVALUATE_TRIAL',payload={'verification_job_id':release},
+                evaluation=enqueue_job(db,kind='SELECT_USER_EVALUATION',payload={'verification_job_id':release},
                     component='worker',event_id=event,created_by_job_id=release,available_at_ms=0)
             return event,evaluation
         finally:db.close()
@@ -74,7 +74,7 @@ class EpisodeReservationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='RESERVE_EPISODE'"),[('DONE',)])
         self.assertIn(('EPISODE_RESERVATION_CREATED','EPISODE_RESERVATION_GRANTED'),
                       [(r.event_code,r.reason_code) for r in receipts])
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','EVALUATE_TRIAL','RESERVE_EPISODE')"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','SELECT_USER_EVALUATION','RESERVE_EPISODE')"),[(0,)])
 
     async def test_competing_releases_hold_even_after_owner_job_completes(self):
         self.source(10)

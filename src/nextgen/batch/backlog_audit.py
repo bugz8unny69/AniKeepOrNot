@@ -35,7 +35,7 @@ BATCH_KINDS = ('VERIFY_RELEASE', 'EVALUATE_BATCH', 'RESERVE_BATCH', 'SUBMIT_BATC
 # Journals that record which torrents Anime Discovery owns: (table, marker column).
 _JOURNALS = (('batch_metadata_admissions', 'ownership_marker'),
              ('batch_torrent_submissions', 'ownership_marker'),
-             ('sonarr_magnet_intents', 'marker'))
+             ('magnet_intents', 'marker'))
 
 
 def observe_torrents(client, digests):

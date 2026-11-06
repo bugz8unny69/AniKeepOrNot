@@ -96,10 +96,10 @@ STATES = MappingProxyType({
                              "BLOCKED": "Blocked", "CANCELED": "Canceled", "FAILED": "Step failed"}),
     "job_activity": JOB_ACTIVITIES,
     "job_result": MappingProxyType({"IDENTIFY_ANIME":"Series identified", "VERIFY_RELEASE":"Episode verified",
-        "EVALUATE_TRIAL":"Episode selection checked", "RESERVE_EPISODE":"Episode reserved",
+        "SELECT_USER_EVALUATION":"Episode selection checked", "RESERVE_EPISODE":"Episode reserved",
         "PREPARE_ACQUISITION":"Download prepared", "SUBMIT_TORRENT":"Torrent submitted",
         "DOWNLOAD_TORRENT":"Download finished", "VERIFY_MEDIA":"Video checked",
-        "STAGE_TRIAL_MEDIA":"Staged"}),
+        "STAGE_USER_EVALUATION_MEDIA":"Staged"}),
     "incoming_event": MappingProxyType({**_LABELS, "PENDING": "Received",
                                        "RUNNING": "Identifying", "IDENTIFIED": "Series identified"}),
 })

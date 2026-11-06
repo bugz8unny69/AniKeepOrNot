@@ -77,7 +77,7 @@ route for these new operations yet; future service-side handlers call the librar
 
 The PREPARE_ACQUISITION completion adapter checks the exact selected video's
 metadata size, not an advertised release total. It creates acquisition_budgets
-on the first accepted preparation for the frozen trial_plan_id, capturing the
+on the first accepted preparation for the frozen user_evaluation_plan_id, capturing the
 limits and configuration revision. Each acquisition_plans row records its actual
 selected_size_bytes. Subsequent preparations use the stored limits, not changed
 settings. New budgets capture current settings. Existing budgets do not silently

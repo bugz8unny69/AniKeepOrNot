@@ -99,6 +99,8 @@ These names are stored in user databases. A rename must be **versioned, repeatab
 
 ### 4.2 Job kind
 
+**Done in RF-006a** (migration `063`), for all three renamed kinds (also `EVALUATE_TRIAL` and `STAGE_TRIAL_MEDIA`, §8.2).
+
 | Existing | New | Where persisted / used | RF-006 handling |
 |---|---|---|---|
 | `DISCOVER_SONARR_BACKFILL` | `DISCOVER_EPISODE_RELEASES` | `jobs.kind` (CHECK only requires a non-empty value); `job_history.handler_code` (immutable); registry key; dashboard `HandlerCatalog`; `adm recover --kind` filter; `job_recovery`; `review_retry`; `fixes/` | **Migrate `jobs.kind` and `job_history.handler_code`** for every row, terminal ones included. Recovery, retry, the dashboard and History then see only the new kind. `adm recover --kind` accepts only the new value; the old one is removed. |
@@ -107,11 +109,15 @@ Why migrate every row and not just the active ones: if only active rows moved, t
 
 ### 4.3 Event source
 
+**Done in RF-006a** (migration `063`). One deviation from the plan below: the value stays a literal in the SQL rather than a shared constant. Job kinds and the other source, `'manual-release'`, are also written as literals in the same statements, and the literal SQL is what `test_sql_parameter_counts` checks. The ledger rule `RF-006a` stops the old value from coming back.
+
 | Existing | New | Where | RF-006 handling |
 |---|---|---|---|
 | `incoming_events.source = 'sonarr-discovery'` | `'release-discovery'` | Written in `storage/sonarr_dispatch.py:98`. Read by 12 queries and checks in `backfill_attempts`, `releases`, `sonarr_candidates` (×4), `sonarr_selection`, `sonarr_magnet_intake` (×2) and `sonarr_cached_retry` (×2). | **Migrate the column value.** These rows are internal deliveries created by NextGen, never external webhooks; `raw_body` is not touched. Afterwards the code uses a single shared constant instead of 13 string literals. |
 
 ### 4.4 Tables
+
+**Done in RF-006a** (migration `063`), together with the four "trial" tables, the column and the two indexes from §8.2.
 
 | Existing | New | Notes |
 |---|---|---|
@@ -197,6 +203,8 @@ Risks to carry into RF-005 and RF-006:
 
 ### 8.2 Persisted identifiers (RF-006)
 
+**Done in RF-006a** (migration `063`): the job kinds, tables, column, indexes and the API field. The `TRIAL_*` codes follow in RF-006b.
+
 | Existing | New | Where | Handling |
 |---|---|---|---|
 | Job kind `EVALUATE_TRIAL` | `SELECT_USER_EVALUATION` | `jobs.kind`, `job_history.handler_code`, registry, dashboard, `adm` filters | Migrate every row (as in §4.2). |
@@ -227,6 +235,8 @@ These keys live in the user's settings file, not in the database, so they need a
 - Historical documents in `docs/` that describe archived behavior.
 
 ### 8.5 Dashboard wording
+
+**Done in RF-006a**, except the settings section label, which changes with the settings upgrade (§8.3, RF-006d).
 
 | Existing | New |
 |---|---|

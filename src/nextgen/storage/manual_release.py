@@ -81,7 +81,7 @@ def _admit_release(name, season, episode, known_anidb=None):
 def _candidate(db, aid, season, episode):
     row = db.execute(
         'SELECT p.plan_id,p.tvdb_series_id,p.anchor_episode,p.backfill_count,p.following_count '
-        'FROM trial_plans p WHERE p.anidb_id=?', (aid,)).fetchone()
+        'FROM user_evaluation_plans p WHERE p.anidb_id=?', (aid,)).fetchone()
     if row is None:
         raise ManualSubmissionUnavailable()
     plan_id, tvdb_id, anchor, backfill, following = row
@@ -157,7 +157,7 @@ def submit(database, aid, season, episode, *, release_name, magnet_uri=None, tor
         if existing is not None:
             return {'event_id':existing[0],'job_id':existing[1],'reused':True}
         anchor = db.execute(
-            'SELECT i.series_json FROM trial_plans p '
+            'SELECT i.series_json FROM user_evaluation_plans p '
             'JOIN release_verifications r ON r.verification_id=p.anchor_verification_id '
             'JOIN identity_results i ON i.result_id=r.identity_result_id '
             'WHERE p.anidb_id=? AND p.tvdb_series_id=? '

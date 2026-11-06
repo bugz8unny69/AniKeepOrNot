@@ -56,7 +56,7 @@ class AcquisitionPreparationTests(unittest.IsolatedAsyncioTestCase):
                     "anidb_episode_number,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms) "
                     "VALUES(?,?,123,?,'DECLARED_SINGLE_EPISODE',?,?,456,1,?,?,1)",
                     (release,identity,hashlib.sha256(raw).hexdigest(),episode,900+episode,episode,100+episode))
-                evaluation=enqueue_job(db,kind='EVALUATE_TRIAL',payload={'verification_job_id':release},
+                evaluation=enqueue_job(db,kind='SELECT_USER_EVALUATION',payload={'verification_job_id':release},
                     component='worker',event_id=event,created_by_job_id=release,available_at_ms=0)
             return event,evaluation
         finally:db.close()

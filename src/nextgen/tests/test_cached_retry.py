@@ -17,11 +17,11 @@ class CachedRetryTests(unittest.TestCase):
         self.db=sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
         self.db.executescript("""
-            CREATE TABLE sonarr_episode_candidates (
+            CREATE TABLE episode_release_candidates (
                 plan_id INTEGER,anidb_episode_number INTEGER,rank INTEGER,
                 info_hash TEXT,state TEXT,reason_code TEXT
             );
-            CREATE TABLE sonarr_magnet_intents (
+            CREATE TABLE magnet_intents (
                 event_id INTEGER,job_id INTEGER,plan_id INTEGER,anidb_episode_number INTEGER,
                 info_hash TEXT,state TEXT,created_at_ms INTEGER
             );
@@ -43,10 +43,10 @@ class CachedRetryTests(unittest.TestCase):
             'release_name':'Show - 01',
             'magnet_uri':'magnet:?xt=urn:btih:'+digest
         }).encode()
-        self.db.execute("INSERT INTO sonarr_episode_candidates VALUES(1,1,?,?,'FAILED',?)",
+        self.db.execute("INSERT INTO episode_release_candidates VALUES(1,1,?,?,'FAILED',?)",
                         (rank,digest,reason))
-        self.db.execute("INSERT INTO incoming_events VALUES(?,'sonarr-discovery',?)",(event,body))
-        self.db.execute("INSERT INTO sonarr_magnet_intents VALUES(?,?,?,?,?,'RELEASED',?)",
+        self.db.execute("INSERT INTO incoming_events VALUES(?,'release-discovery',?)",(event,body))
+        self.db.execute("INSERT INTO magnet_intents VALUES(?,?,?,?,?,'RELEASED',?)",
                         (event,event,1,1,digest,self.now if created is None else created))
         self.db.execute("INSERT INTO job_operation_members VALUES(?,?)",(event,event))
         self.db.execute("INSERT INTO job_operations VALUES(? ,?,'COMPLETE')",
@@ -59,7 +59,7 @@ class CachedRetryTests(unittest.TestCase):
         self.assertEqual([c.info_hash for c in self.candidates()],[A])
 
     def test_already_replayed_hash_is_not_offered_twice(self):
-        self.db.execute("INSERT INTO sonarr_magnet_intents VALUES(7,7,1,1,?,'RELEASED',?)",
+        self.db.execute("INSERT INTO magnet_intents VALUES(7,7,1,1,?,'RELEASED',?)",
                         (A,self.now))
         self.assertEqual(self.candidates(),[])
 
@@ -85,7 +85,7 @@ class CachedRetryTests(unittest.TestCase):
         self.assertEqual(clear_cached(self.db,1,1),0)
 
     def test_expiry_scrubs_only_cleaned_old_magnets(self):
-        self.db.execute("UPDATE sonarr_magnet_intents SET created_at_ms=?",
+        self.db.execute("UPDATE magnet_intents SET created_at_ms=?",
                         (self.now-RETENTION_MS-1,))
         self.assertEqual(expire_cached(self.db,self.now),1)
         self.assertEqual(self.candidates(),[])

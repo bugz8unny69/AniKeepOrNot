@@ -24,19 +24,19 @@ from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # n
 # record suggests the episode has already been selected or acquired.
 ROWS = """
 SELECT s.plan_id, s.tvdb_episode,
-  EXISTS(SELECT 1 FROM sonarr_episode_selections x
+  EXISTS(SELECT 1 FROM episode_release_selections x
          WHERE x.plan_id=s.plan_id AND x.tvdb_episode=s.tvdb_episode),
-  EXISTS(SELECT 1 FROM sonarr_episode_candidates x
+  EXISTS(SELECT 1 FROM episode_release_candidates x
          WHERE x.plan_id=s.plan_id AND x.tvdb_episode=s.tvdb_episode),
-  EXISTS(SELECT 1 FROM trial_plans p JOIN episode_reservations r
+  EXISTS(SELECT 1 FROM user_evaluation_plans p JOIN episode_reservations r
          ON r.tvdb_series_id=p.tvdb_series_id AND r.tvdb_season=p.tvdb_season
          AND r.tvdb_episode=s.tvdb_episode AND r.state='ACTIVE'
          WHERE p.plan_id=s.plan_id),
-  EXISTS(SELECT 1 FROM trial_plans p JOIN batch_episode_reservations r
+  EXISTS(SELECT 1 FROM user_evaluation_plans p JOIN batch_episode_reservations r
          ON r.tvdb_series_id=p.tvdb_series_id AND r.tvdb_season=p.tvdb_season
          AND r.tvdb_episode=s.tvdb_episode AND r.state='ACTIVE'
          WHERE p.plan_id=s.plan_id)
-FROM sonarr_backfill_results s
+FROM episode_discovery_results s
 WHERE s.status='NOT_LISTED'
 ORDER BY s.plan_id, s.tvdb_episode
 """
@@ -113,7 +113,7 @@ def execute(path, apply=False):
                 raise RuntimeError('Backfill observations changed since preview; no changes applied')
             for plan, episode in eligible:
                 changed = db.execute(
-                    "DELETE FROM sonarr_backfill_results WHERE plan_id=? "
+                    "DELETE FROM episode_discovery_results WHERE plan_id=? "
                     "AND tvdb_episode=? AND status='NOT_LISTED'", (plan, episode)
                 ).rowcount
                 if changed != 1:

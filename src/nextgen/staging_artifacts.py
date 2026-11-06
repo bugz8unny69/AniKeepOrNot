@@ -9,7 +9,7 @@ from src.nextgen.storage.cancellation import operation
 def _stage_claim(db,claim):
     import time
     row=db.execute('SELECT state,lease_token,attempt_count,lease_expires_at_ms FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()
-    if (not db.in_transaction or claim.kind not in ('STAGE_TRIAL_MEDIA','STAGE_BATCH_EPISODE') or row is None
+    if (not db.in_transaction or claim.kind not in ('STAGE_USER_EVALUATION_MEDIA','STAGE_BATCH_EPISODE') or row is None
             or row[:3]!=('RUNNING',claim.token,claim.attempt) or row[3]<=time.time_ns()//1000000):raise CancellationError()
     op=operation(db,claim.job_id)
     if op[1]!='ACTIVE':raise CancellationError()

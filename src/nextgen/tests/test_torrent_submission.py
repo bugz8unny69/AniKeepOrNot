@@ -54,7 +54,7 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         worker=Worker(self.store,self.startup,Registry((evaluate(reservation_kind='RESERVE_EPISODE'),
             reserve(preparation_kind='PREPARE_ACQUISITION'),prepare(read,submission_kind='SUBMIT_TORRENT'),
             submit(read,Secrets(),client_factory=FakeClient,journal_factory=journal_factory,
-                   discovery_kind='DISCOVER_SONARR_BACKFILL' if backfill else None),
+                   discovery_kind='DISCOVER_EPISODE_RELEASES' if backfill else None),
             *((discover(None,catalog_factory=lambda configuration:None),) if backfill else ()))),policy=Policy(lease_ms=30000))
         self.addAsyncCleanup(worker.close)
         self.store.update({'qbittorrent':{'base_url':'https://qb.example'},'storage':{'download_root':'/srv/downloads'},
@@ -86,16 +86,16 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
     async def test_backfill_starts_only_after_confirmed_submission(self):
         worker=self.worker(backfill=True)
         await self.queued(worker)
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES'"),[(0,)])
         await worker.attempt()
         self.assertEqual(self.adds,1)
         self.assertEqual(self.rows("SELECT d.state,p.kind,p.state FROM jobs d JOIN jobs p "
-                                   "ON p.job_id=d.created_by_job_id WHERE d.kind='DISCOVER_SONARR_BACKFILL'"),
+                                   "ON p.job_id=d.created_by_job_id WHERE d.kind='DISCOVER_EPISODE_RELEASES'"),
                          [('PENDING','SUBMIT_TORRENT','DONE')])
         # Backfill runs in its own operation, so the episode can be marked STAGED
         # while backfill is still searching (and backfill is not frozen by it).
         self.assertEqual(self.rows("SELECT count(DISTINCT m.operation_id) FROM jobs j JOIN job_operation_members m USING(job_id) "
-                                   "WHERE j.kind IN ('DISCOVER_SONARR_BACKFILL','SUBMIT_TORRENT')"),[(2,)])
+                                   "WHERE j.kind IN ('DISCOVER_EPISODE_RELEASES','SUBMIT_TORRENT')"),[(2,)])
 
     async def test_no_prowlarr_address_means_automatic_search_is_off(self):
         # A blank Prowlarr address turns automatic search off: the torrent is
@@ -105,21 +105,21 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(self.adds,1)
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='SUBMIT_TORRENT'"),[('DONE',)])
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES'"),[(0,)])
 
     async def test_review_submission_never_starts_backfill(self):
         worker=self.worker(backfill=True)
         await self.queued(worker)
         self.observation=Observation(self.digest,'downloading','/other','other',(),False,())
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES'"),[(0,)])
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='SUBMIT_TORRENT'"),[('NEEDS_REVIEW',)])
 
     async def test_uncertain_submission_never_starts_backfill(self):
         worker=self.worker(mode='timeout_absent',backfill=True)
         await self.queued(worker)
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL'"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES'"),[(0,)])
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='SUBMIT_TORRENT'"),[('RETRY_WAIT',)])
 
     async def test_add_timeout_then_reconcile_never_repeats_add_and_pins_target(self):

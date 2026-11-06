@@ -49,5 +49,5 @@ class UserEvaluationMigrationTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.Error):db.executescript(sql)
                 db.rollback()
                 self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],version)
-                self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='trial_plans'").fetchone())
+                self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='user_evaluation_plans'").fetchone())
             finally:db.close()

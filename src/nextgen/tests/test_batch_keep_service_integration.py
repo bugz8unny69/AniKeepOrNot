@@ -124,12 +124,12 @@ class BatchKeepServiceIntegrationTests(unittest.TestCase):
                 "INSERT INTO jobs(job_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms) "
                 "VALUES(51, 'EVALUATE_BATCH', '{}', 'DONE', 0, 0, 0)")
             self.db.execute(
-                "INSERT INTO batch_trial_plans(plan_id,batch_id,evaluation_job_id,anchor_episode,"
+                "INSERT INTO batch_user_evaluation_plans(plan_id,batch_id,evaluation_job_id,anchor_episode,"
                 "backfill_count,following_count,configuration_revision,max_episode_bytes,max_plan_bytes,"
                 "planned_size_bytes,created_at_ms) "
                 "VALUES(?,1,51,1,1,1,1,10000000,20000000,1000,0)", (plan_id,))
             self.db.execute(
-                "INSERT INTO batch_trial_files(plan_id,file_index,tvdb_episode,selected_size_bytes) "
+                "INSERT INTO batch_user_evaluation_files(plan_id,file_index,tvdb_episode,selected_size_bytes) "
                 "VALUES(?,?,1,1000)", (plan_id, file_index))
             self.db.execute(
                 "INSERT INTO batch_torrent_submissions(plan_id,reservation_job_id,first_job_id,first_attempt,"

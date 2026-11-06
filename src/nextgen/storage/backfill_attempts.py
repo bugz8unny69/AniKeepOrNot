@@ -7,7 +7,7 @@ import json
 
 from src.nextgen.history import trace_id
 
-KIND = 'DISCOVER_SONARR_BACKFILL'
+KIND = 'DISCOVER_EPISODE_RELEASES'
 STATES = {'READY': 'NOT_TRIED', 'ACTIVE': 'IN_PROGRESS', 'FAILED': 'FAILED',
           'SUCCEEDED': 'STAGED'}
 
@@ -33,7 +33,7 @@ def _episode(db, job_id):
         episode = next((data[k] for k in ('fallback_episode', 'exhausted_episode', 'retry_episode')
                         if type(data.get(k)) is int), None)
         return (data['plan_id'], episode) if episode and type(data.get('plan_id')) is int else None
-    if source != 'sonarr-discovery' or raw is None: return None
+    if source != 'release-discovery' or raw is None: return None
     digest = _body(raw).get('torrent_infohash')
     parent = db.execute("SELECT parent.payload_json FROM jobs verify JOIN jobs parent "
                         "ON parent.job_id=verify.created_by_job_id AND parent.kind=? "
@@ -42,7 +42,7 @@ def _episode(db, job_id):
     if parent is None or type(digest) is not str: return None
     try: plan_id = json.loads(parent[0])['plan_id']
     except (ValueError, KeyError, TypeError): return None
-    found = db.execute('SELECT anidb_episode_number FROM sonarr_episode_candidates '
+    found = db.execute('SELECT anidb_episode_number FROM episode_release_candidates '
                        'WHERE plan_id=? AND info_hash=?', (plan_id, digest.lower())).fetchone()
     return (plan_id, found[0]) if found else None
 
@@ -52,7 +52,7 @@ def _deliveries(db, plan_id):
     rows = db.execute("SELECT e.event_id,e.raw_body FROM incoming_events e "
                       "JOIN jobs verify ON verify.event_id=e.event_id AND verify.kind='VERIFY_RELEASE' "
                       "JOIN jobs parent ON parent.job_id=verify.created_by_job_id AND parent.kind=? "
-                      "WHERE e.source='sonarr-discovery' "
+                      "WHERE e.source='release-discovery' "
                       "AND json_extract(parent.payload_json,'$.plan_id')=? ORDER BY e.event_id",
                       (KIND, plan_id)).fetchall()
     found = {}
@@ -84,7 +84,7 @@ def backfill_attempts(db, job_id):
     deliveries = _deliveries(db, plan_id)
     attempts = []
     for rank, digest, state, reason_code in db.execute(
-            'SELECT rank,info_hash,state,reason_code FROM sonarr_episode_candidates '
+            'SELECT rank,info_hash,state,reason_code FROM episode_release_candidates '
             'WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank', (plan_id, episode)).fetchall():
         event_id, name = deliveries.get(digest, (None, None))
         stop, details = _stop(db, event_id) if event_id is not None else (None, {})

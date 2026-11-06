@@ -28,7 +28,7 @@ from src.nextgen.storage.episode_discovery import (
 from src.nextgen.storage.cached_release_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
 
-KIND = 'DISCOVER_SONARR_BACKFILL'
+KIND = 'DISCOVER_EPISODE_RELEASES'
 SERVICES=('prowlarr',)  # External services this job needs; see services/README.md.
 DEFINITION = HandlerDefinition(KIND, 'Search Prowlarr for backfill and continue episodes')
 

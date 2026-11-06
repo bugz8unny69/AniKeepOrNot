@@ -26,7 +26,7 @@ def save_candidates(db, *, plan_id, episode, result, policy):
             if digest not in hashes:
                 hashes.append(digest)
     previous=db.execute(
-        "SELECT info_hash FROM sonarr_episode_candidates WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
+        "SELECT info_hash FROM episode_release_candidates WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
         (plan_id,episode)).fetchall()
     if previous:
         if [row[0] for row in previous] != hashes:
@@ -34,7 +34,7 @@ def save_candidates(db, *, plan_id, episode, result, policy):
         return False
     for rank,digest in enumerate(hashes,1):
         db.execute(
-            "INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash) VALUES(?,?,?,?)",
+            "INSERT INTO episode_release_candidates(plan_id,anidb_episode_number,rank,info_hash) VALUES(?,?,?,?)",
             (plan_id,episode,rank,digest))
     return bool(hashes)
 
@@ -42,7 +42,7 @@ def save_candidates(db, *, plan_id, episode, result, policy):
 def next_candidate(db, *, plan_id, episode):
     """Read-only next candidate; selection does not grant a send permit."""
     row=db.execute(
-        "SELECT rank,info_hash FROM sonarr_episode_candidates WHERE plan_id=? "
+        "SELECT rank,info_hash FROM episode_release_candidates WHERE plan_id=? "
         "AND anidb_episode_number=? AND state='READY' ORDER BY rank LIMIT 1",
         (plan_id,episode)).fetchone()
     return row
@@ -58,7 +58,7 @@ def activate_candidate(db, *, plan_id, episode, info_hash):
         raise CandidateConflict()
     digest=infohash(info_hash)
     active=db.execute(
-        "SELECT info_hash FROM sonarr_episode_candidates "
+        "SELECT info_hash FROM episode_release_candidates "
         "WHERE plan_id=? AND anidb_episode_number=? AND state='ACTIVE'",
         (plan_id,episode)).fetchall()
     if active:
@@ -69,7 +69,7 @@ def activate_candidate(db, *, plan_id, episode, info_hash):
     if next_row is None or next_row[1]!=digest:
         raise CandidateConflict()
     changed=db.execute(
-        "UPDATE sonarr_episode_candidates SET state='ACTIVE' "
+        "UPDATE episode_release_candidates SET state='ACTIVE' "
         "WHERE plan_id=? AND anidb_episode_number=? AND rank=? AND state='READY'",
         (plan_id,episode,next_row[0]))
     if changed.rowcount!=1:
@@ -82,7 +82,7 @@ def succeed_candidate(db, *, plan_id, episode, info_hash):
     if not db.in_transaction:
         raise CandidateConflict()
     changed=db.execute(
-        "UPDATE sonarr_episode_candidates SET state='SUCCEEDED' "
+        "UPDATE episode_release_candidates SET state='SUCCEEDED' "
         "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=? AND state='ACTIVE'",
         (plan_id,episode,infohash(info_hash)))
     if changed.rowcount!=1:
@@ -94,7 +94,7 @@ def fail_candidate(db, *, plan_id, episode, info_hash, reason_code):
     if not db.in_transaction or type(reason_code) is not str or not reason_code:
         raise CandidateConflict()
     result=db.execute(
-        "UPDATE sonarr_episode_candidates SET state='FAILED',reason_code=? "
+        "UPDATE episode_release_candidates SET state='FAILED',reason_code=? "
         "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=? AND state='ACTIVE'",
         (reason_code,plan_id,episode,infohash(info_hash)))
     if result.rowcount!=1:raise CandidateConflict()
@@ -112,12 +112,12 @@ def mark_published(db, *, event_id, info_hash):
         "SELECT c.plan_id,c.anidb_episode_number FROM incoming_events e "
         "JOIN jobs verify ON verify.event_id=e.event_id AND verify.kind='VERIFY_RELEASE' "
         "JOIN jobs parent ON parent.job_id=verify.created_by_job_id "
-        " AND parent.kind='DISCOVER_SONARR_BACKFILL' "
-        "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
-        "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id AND s.info_hash=? "
-        "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+        " AND parent.kind='DISCOVER_EPISODE_RELEASES' "
+        "JOIN user_evaluation_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
+        "JOIN episode_release_selections s ON s.plan_id=p.plan_id AND s.info_hash=? "
+        "JOIN episode_release_candidates c ON c.plan_id=s.plan_id "
         " AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=? AND c.state='ACTIVE' "
-        "WHERE e.event_id=? AND e.source='sonarr-discovery'",
+        "WHERE e.event_id=? AND e.source='release-discovery'",
         (digest,digest,event_id)).fetchall()
     if not rows:
         return False
@@ -182,12 +182,12 @@ def schedule_after_cleanup(db,operation_id):
         "FROM job_operation_members m "
         "JOIN jobs verify ON verify.job_id=m.job_id AND verify.kind='VERIFY_RELEASE' "
         "JOIN incoming_events e ON e.event_id=verify.event_id "
-        "AND e.source='sonarr-discovery' "
+        "AND e.source='release-discovery' "
         "JOIN jobs parent ON parent.job_id=verify.created_by_job_id "
-        "AND parent.kind='DISCOVER_SONARR_BACKFILL' "
-        "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
-        "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
-        "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+        "AND parent.kind='DISCOVER_EPISODE_RELEASES' "
+        "JOIN user_evaluation_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
+        "JOIN episode_release_selections s ON s.plan_id=p.plan_id "
+        "JOIN episode_release_candidates c ON c.plan_id=s.plan_id "
         "AND c.anidb_episode_number=s.anidb_episode_number AND lower(c.info_hash)=lower(s.info_hash) "
         "AND c.state='ACTIVE' "
         "WHERE m.operation_id=? "
@@ -211,7 +211,7 @@ def schedule_after_cleanup(db,operation_id):
     from src.nextgen.storage.sqlite import enqueue_job_with_receipt
     from src.nextgen.storage.episode_discovery import PAGE_SIZE, plan_window
     scope=db.execute('SELECT anchor_episode,backfill_count,following_count '
-                     'FROM trial_plans WHERE plan_id=?',(plan_id,)).fetchone()
+                     'FROM user_evaluation_plans WHERE plan_id=?',(plan_id,)).fetchone()
     if scope is None:raise CandidateConflict()
     numbers=plan_window(db,plan_id,*scope)
     if episode not in numbers:raise CandidateConflict()
@@ -222,7 +222,7 @@ def schedule_after_cleanup(db,operation_id):
     if not pending and json.loads(parent_payload).get('delete_cache') is False:
         payload['delete_cache']=False
     _,receipt=enqueue_job_with_receipt(
-        db,kind='DISCOVER_SONARR_BACKFILL',payload=payload,
+        db,kind='DISCOVER_EPISODE_RELEASES',payload=payload,
         component='worker',event_id=parent_event,
         created_by_job_id=parent_job)
     return (receipt,)
@@ -236,9 +236,9 @@ def auto_cleanup_failed_candidate(db,claim):
     the backfill discovery worker are not canceled. Ordinary jobs are untouched.
     """
     if (not db.in_transaction or claim.event_id is None or claim.kind not in
-            ('VERIFY_RELEASE','EVALUATE_TRIAL','RESERVE_EPISODE',
+            ('VERIFY_RELEASE','SELECT_USER_EVALUATION','RESERVE_EPISODE',
              'PREPARE_ACQUISITION','SUBMIT_TORRENT','DOWNLOAD_TORRENT',
-             'VERIFY_MEDIA','STAGE_TRIAL_MEDIA')):
+             'VERIFY_MEDIA','STAGE_USER_EVALUATION_MEDIA')):
         return ()
     row=db.execute(
         "SELECT c.state FROM incoming_events e "
@@ -248,12 +248,12 @@ def auto_cleanup_failed_candidate(db,claim):
         "JOIN job_operation_members target ON target.operation_id=owner.operation_id "
         "AND target.job_id=? "
         "JOIN jobs parent ON parent.job_id=verify.created_by_job_id "
-        "AND parent.kind='DISCOVER_SONARR_BACKFILL' "
-        "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
-        "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
-        "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+        "AND parent.kind='DISCOVER_EPISODE_RELEASES' "
+        "JOIN user_evaluation_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
+        "JOIN episode_release_selections s ON s.plan_id=p.plan_id "
+        "JOIN episode_release_candidates c ON c.plan_id=s.plan_id "
         "AND c.anidb_episode_number=s.anidb_episode_number AND lower(c.info_hash)=lower(s.info_hash) "
-        "WHERE e.event_id=? AND e.source='sonarr-discovery' "
+        "WHERE e.event_id=? AND e.source='release-discovery' "
         "AND lower(s.info_hash)=lower(json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash'))",
         (claim.job_id,claim.event_id)).fetchall()
     if row!=[('ACTIVE',)]:return ()
@@ -269,7 +269,7 @@ def auto_cleanup_oversized(db,claim):
     if (not db.in_transaction or claim.event_id is None or claim.kind!='PREPARE_ACQUISITION'
             or db.execute('SELECT last_reason_code FROM jobs WHERE job_id=?',
                           (claim.job_id,)).fetchone() not in (('ACQUISITION_SIZE_LIMIT',),('ACQUISITION_PLAN_SIZE_LIMIT',))
-            or db.execute("SELECT 1 FROM incoming_events WHERE event_id=? AND source='sonarr-discovery'",
+            or db.execute("SELECT 1 FROM incoming_events WHERE event_id=? AND source='release-discovery'",
                           (claim.event_id,)).fetchone()):
         return ()
     return request_automatic_cleanup(db,claim)

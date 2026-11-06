@@ -1,12 +1,12 @@
 # Exact episode reservation
 
 RESERVE_EPISODE / reserve_episode_job.py is the next preparation step after
-EVALUATE_TRIAL. It reserves a selected, provider-verified received episode before
+SELECT_USER_EVALUATION. It reserves a selected, provider-verified received episode before
 future acquisition. It does not start a download or assert ownership of a torrent,
 file, folder or content hash. A completed reservation job means only that the gate
 has been recorded. Acquisition, reconciliation, staging and Keep remain separate.
 
-The installed pipeline is IDENTIFY_ANIME → VERIFY_RELEASE → EVALUATE_TRIAL →
+The installed pipeline is IDENTIFY_ANIME → VERIFY_RELEASE → SELECT_USER_EVALUATION →
 RESERVE_EPISODE. Each selection evaluation queues the gate with only its own job
 ID; the decision and successor creation are atomic. The gate reads the committed
 evaluation in its own attempt. An outside-window evaluation completes the gate
@@ -18,7 +18,7 @@ custom compositions. No dynamic module loading is added.
 
 ## Evidence and exclusivity
 
-The gate requires a completed EVALUATE_TRIAL job for the same incoming event,
+The gate requires a completed SELECT_USER_EVALUATION job for the same incoming event,
 completed VERIFY_RELEASE evidence with DECLARED_SINGLE_EPISODE scope and official
 TVDB order, a consistent frozen selection plan/anchor, an unchanged identity
 snapshot and incoming-body digest, canonical series identity and exact AniDB

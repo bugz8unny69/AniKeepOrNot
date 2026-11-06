@@ -18,7 +18,7 @@ class StagingCancellationTests(unittest.IsolatedAsyncioTestCase):
         self.path=self.root/self.name;self.path.write_bytes(b'partial')
         db=connect(self.database)
         try:
-            with transaction(db):job=enqueue_job(db,kind='STAGE_TRIAL_MEDIA',payload={},component='worker',available_at_ms=0)
+            with transaction(db):job=enqueue_job(db,kind='STAGE_USER_EVALUATION_MEDIA',payload={},component='worker',available_at_ms=0)
         finally:db.close()
         claim,_=JobQueue(self.database).claim()
         db=connect(self.database)

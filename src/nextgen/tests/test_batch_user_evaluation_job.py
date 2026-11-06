@@ -81,9 +81,9 @@ class BatchUserEvaluationWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT kind,state FROM jobs ORDER BY job_id'),[
             ('VERIFY_RELEASE','DONE'),('EVALUATE_BATCH','DONE')])
         self.assertEqual(self.rows('SELECT anchor_episode,backfill_count,'
-                                   'following_count,planned_size_bytes FROM batch_trial_plans'),
+                                   'following_count,planned_size_bytes FROM batch_user_evaluation_plans'),
                          [(1,6,1,600000000)])
-        self.assertEqual(self.rows('SELECT tvdb_episode,file_index FROM batch_trial_files '
+        self.assertEqual(self.rows('SELECT tvdb_episode,file_index FROM batch_user_evaluation_files '
                                    'ORDER BY tvdb_episode'),
                          [(i,i-1) for i in range(1,7)])
         for table in ('episode_reservations','acquisition_plans','torrent_submissions',
@@ -249,4 +249,4 @@ class BatchUserEvaluationWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT kind,state,last_reason_code FROM jobs ORDER BY job_id'),[
             ('VERIFY_RELEASE','DONE',None),
             ('EVALUATE_BATCH','NEEDS_REVIEW','TRIAL_PLAN_CONFLICT')])
-        self.assertEqual(self.rows('SELECT count(*) FROM batch_trial_plans'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM batch_user_evaluation_plans'),[(0,)])

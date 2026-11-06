@@ -54,7 +54,7 @@ def persist_user_evaluation(db,claim,proposal):
     if source.event_id!=claim.event_id or _source(db,source.verification_job_id,claim.event_id)!=source:
         raise UserEvaluationConflict()
     # One frozen plan per AniDB anime; later deliveries reuse it in any TVDB season.
-    row=db.execute("SELECT plan_id,anchor_episode,backfill_count,following_count,anchor_verification_id FROM trial_plans "
+    row=db.execute("SELECT plan_id,anchor_episode,backfill_count,following_count,anchor_verification_id FROM user_evaluation_plans "
                    "WHERE anidb_id=? AND tvdb_order='official'",(source.anidb_id,)).fetchone()
     if row is not None:
         anchor=db.execute("SELECT anidb_id,tvdb_series_id,anidb_episode_number,tvdb_order FROM release_verifications WHERE verification_id=?",(row[4],)).fetchone()
@@ -64,7 +64,7 @@ def persist_user_evaluation(db,claim,proposal):
     if row is None and (proposal.window.backfill_count or proposal.window.following_count):
         proposal.window.anidb_episodes(source.anidb_episode_number)
         plan_season = source.tvdb_season if source.tvdb_season is not None else 1
-        plan=db.execute("INSERT INTO trial_plans(anidb_id,tvdb_series_id,tvdb_season,anchor_verification_id,anchor_episode,"
+        plan=db.execute("INSERT INTO user_evaluation_plans(anidb_id,tvdb_series_id,tvdb_season,anchor_verification_id,anchor_episode,"
                         "backfill_count,following_count,configuration_revision,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?)",
                         (source.anidb_id,source.tvdb_series_id,plan_season,source.verification_id,source.anidb_episode_number,
                          proposal.window.backfill_count,proposal.window.following_count,proposal.configuration_revision,now)).lastrowid
@@ -75,7 +75,7 @@ def persist_user_evaluation(db,claim,proposal):
         plan,anchor,backfill,following=row
         selected=source.anidb_episode_number in Window(backfill,following).anidb_episodes(anchor)
         reason='TRIAL_SELECTED' if selected else 'TRIAL_OUTSIDE_WINDOW'
-    db.execute("INSERT INTO trial_evaluations(job_id,verification_id,plan_id,selected,reason_code,evaluated_at_ms) VALUES(?,?,?,?,?,?)",
+    db.execute("INSERT INTO user_evaluation_checks(job_id,verification_id,plan_id,selected,reason_code,evaluated_at_ms) VALUES(?,?,?,?,?,?)",
                (claim.job_id,source.verification_id,plan,int(selected),reason,now))
     return append_job_history(db,job_id=claim.job_id,event_code='TRIAL_EVALUATED',reason_code=reason,
                               component='worker',occurred_at_ms=now,details={'attempt':claim.attempt})

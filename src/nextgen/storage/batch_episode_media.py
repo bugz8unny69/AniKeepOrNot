@@ -42,9 +42,9 @@ def persist_batch_episode_media(db,claim,file_index,media):
         raise MediaInvalid()
     file=db.execute(
         "SELECT f.file_path,f.file_size_bytes,r.owner_job_id "
-        "FROM batch_trial_files t JOIN batch_verified_files f "
+        "FROM batch_user_evaluation_files t JOIN batch_verified_files f "
         "ON f.file_index=t.file_index "
-        "JOIN batch_trial_plans p ON p.plan_id=t.plan_id AND f.batch_id=p.batch_id "
+        "JOIN batch_user_evaluation_plans p ON p.plan_id=t.plan_id AND f.batch_id=p.batch_id "
         "JOIN batch_episode_reservations r ON r.plan_id=t.plan_id AND r.file_index=t.file_index "
         "WHERE t.plan_id=? AND t.file_index=? AND r.state='ACTIVE'",
         (media.plan_id,file_index)).fetchone()

@@ -19,19 +19,19 @@ class BackfillCleanupTests(unittest.TestCase):
         self.path = Path(self.temp.name) / 'nextgen.sqlite'
         with closing(sqlite3.connect(self.path)) as db:
             db.executescript('''
-                CREATE TABLE trial_plans(plan_id INTEGER, tvdb_series_id INTEGER, tvdb_season INTEGER);
-                CREATE TABLE sonarr_backfill_results(plan_id INTEGER, tvdb_episode INTEGER, status TEXT,
+                CREATE TABLE user_evaluation_plans(plan_id INTEGER, tvdb_series_id INTEGER, tvdb_season INTEGER);
+                CREATE TABLE episode_discovery_results(plan_id INTEGER, tvdb_episode INTEGER, status TEXT,
                     PRIMARY KEY(plan_id,tvdb_episode));
-                CREATE TABLE sonarr_episode_selections(plan_id INTEGER, tvdb_episode INTEGER);
-                CREATE TABLE sonarr_episode_candidates(plan_id INTEGER, tvdb_episode INTEGER);
+                CREATE TABLE episode_release_selections(plan_id INTEGER, tvdb_episode INTEGER);
+                CREATE TABLE episode_release_candidates(plan_id INTEGER, tvdb_episode INTEGER);
                 CREATE TABLE episode_reservations(tvdb_series_id INTEGER,tvdb_season INTEGER,
                     tvdb_episode INTEGER,state TEXT);
                 CREATE TABLE batch_episode_reservations(tvdb_series_id INTEGER,tvdb_season INTEGER,
                     tvdb_episode INTEGER,state TEXT);
-                INSERT INTO trial_plans VALUES (5,200,2);
-                INSERT INTO sonarr_backfill_results VALUES (5,1,'NOT_LISTED'),
+                INSERT INTO user_evaluation_plans VALUES (5,200,2);
+                INSERT INTO episode_discovery_results VALUES (5,1,'NOT_LISTED'),
                      (5,2,'NOT_LISTED'),(5,3,'CANDIDATES'),(5,4,'NO_RESULTS');
-                INSERT INTO sonarr_episode_selections VALUES (5,2);
+                INSERT INTO episode_release_selections VALUES (5,2);
                 PRAGMA user_version=%d;
             ''' % fix.SCHEMA_VERSION)
 
@@ -40,7 +40,7 @@ class BackfillCleanupTests(unittest.TestCase):
 
     def statuses(self):
         with closing(sqlite3.connect(self.path)) as db:
-            return db.execute('SELECT tvdb_episode,status FROM sonarr_backfill_results ORDER BY tvdb_episode').fetchall()
+            return db.execute('SELECT tvdb_episode,status FROM episode_discovery_results ORDER BY tvdb_episode').fetchall()
 
     def test_preview_never_changes_data(self):
         report = fix.execute(self.path)
@@ -55,7 +55,7 @@ class BackfillCleanupTests(unittest.TestCase):
         self.assertTrue(Path(report['backup']).is_file())
         self.assertEqual(self.statuses(),[(2,'NOT_LISTED'),(3,'CANDIDATES'),(4,'NO_RESULTS')])
         with closing(sqlite3.connect(report['backup'])) as db:
-            self.assertEqual(db.execute('SELECT count(*) FROM sonarr_backfill_results').fetchone(),(4,))
+            self.assertEqual(db.execute('SELECT count(*) FROM episode_discovery_results').fetchone(),(4,))
         with patch.object(fix,'ensure_stopped'):
             repeat=fix.execute(self.path,True)
         self.assertEqual(repeat['deleted'],0)

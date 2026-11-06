@@ -85,7 +85,7 @@ class RefreshJobTests(unittest.IsolatedAsyncioTestCase):
         current=self.store.read()
         self.store.update({'jellyfin':{'base_url':'http://jellyfin.invalid'}},expected_revision=current.revision)
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),[('DONE',)])
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'"),[('DONE',)])
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[('PENDING',)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(1,)])
         await worker.attempt()

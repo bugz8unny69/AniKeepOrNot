@@ -23,7 +23,7 @@ class BatchEpisodeSource:
             "JOIN jobs u ON u.job_id=verifying.created_by_job_id "
             "JOIN batch_torrent_unlocks t ON t.unlock_job_id=u.job_id "
             "JOIN batch_torrent_submissions s USING(plan_id) "
-            "JOIN batch_trial_files f ON f.plan_id=s.plan_id AND f.file_index=? "
+            "JOIN batch_user_evaluation_files f ON f.plan_id=s.plan_id AND f.file_index=? "
             "JOIN job_operation_members vm ON vm.job_id=verifying.job_id "
             "JOIN job_operation_members um ON um.job_id=u.job_id "
             "AND um.operation_id=vm.operation_id "

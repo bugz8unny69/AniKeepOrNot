@@ -35,7 +35,7 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         worker=StageMediaJobTests.worker(self)
         target,source=await self.staged_ready(worker)
         await worker.attempt()
-        job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'")[0][0]
+        job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'")[0][0]
         return worker,target,job
 
     def attach(self,worker,mode='normal',*,preserve_controls=False):

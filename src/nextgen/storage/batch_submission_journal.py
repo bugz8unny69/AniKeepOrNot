@@ -191,7 +191,7 @@ class BatchSubmissionJournal:
             self._owns(db,claim,reservation_job_id)
             rows=db.execute(
                 "SELECT DISTINCT b.info_hash FROM batch_episode_reservations r "
-                "JOIN batch_trial_plans p ON p.plan_id=r.plan_id "
+                "JOIN batch_user_evaluation_plans p ON p.plan_id=r.plan_id "
                 "JOIN batch_verifications b USING(batch_id) "
                 "JOIN jobs j ON j.job_id=r.owner_job_id "
                 "WHERE r.owner_job_id=? AND r.state='ACTIVE' "
@@ -242,7 +242,7 @@ class BatchSubmissionJournal:
             early=_select(db,info_hash=inventory.info_hash)
             if early is not None:
                 verification=db.execute(
-                    'SELECT b.job_id FROM batch_trial_plans p '
+                    'SELECT b.job_id FROM batch_user_evaluation_plans p '
                     'JOIN batch_verifications b USING(batch_id) WHERE p.plan_id=?',
                     (candidate.plan_id,)).fetchone()
                 old_inventory=_inventory(early)

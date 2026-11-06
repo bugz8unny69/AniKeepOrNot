@@ -299,16 +299,16 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("INSERT INTO identified_episodes VALUES(101,50)")
                 db.execute("INSERT INTO identity_results(result_id,event_id,anidb_id,schema_version,series_json,validated_at_ms) VALUES(1,1,50,2,'{}',0)")
                 db.execute("INSERT INTO release_verifications VALUES(1,1,1,50,?,'DECLARED_SINGLE_EPISODE',1,101,100,2,1,1001,'official',0)", ('a'*64,))
-                db.execute("INSERT INTO trial_plans VALUES(1,50,100,2,'official',1,1,6,1,1,0)")
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1,2,2,2,1002,? ,0)", ('b'*40,))
+                db.execute("INSERT INTO user_evaluation_plans VALUES(1,50,100,2,'official',1,1,6,1,1,0)")
+                db.execute("INSERT INTO episode_release_selections VALUES(1,2,2,2,1002,? ,0)", ('b'*40,))
                 jid_fb = db.execute(
                     "INSERT INTO jobs(event_id,kind,payload_json,state,available_at_ms,attempt_count,created_at_ms,updated_at_ms) "
-                    "VALUES(1,'DISCOVER_SONARR_BACKFILL','{\"plan_id\":1,\"start\":1,\"fallback_episode\":2}','NEEDS_REVIEW',0,1,0,0)"
+                    "VALUES(1,'DISCOVER_EPISODE_RELEASES','{\"plan_id\":1,\"start\":1,\"fallback_episode\":2}','NEEDS_REVIEW',0,1,0,0)"
                 ).lastrowid
                 db.execute("INSERT INTO job_operation_members(job_id,operation_id) VALUES(?,1)", (jid_fb,))
                 jid_rt = db.execute(
                     "INSERT INTO jobs(event_id,kind,payload_json,state,available_at_ms,attempt_count,created_at_ms,updated_at_ms) "
-                    "VALUES(1,'DISCOVER_SONARR_BACKFILL','{\"plan_id\":1,\"start\":1,\"retry_episode\":1}','NEEDS_REVIEW',0,1,0,0)"
+                    "VALUES(1,'DISCOVER_EPISODE_RELEASES','{\"plan_id\":1,\"start\":1,\"retry_episode\":1}','NEEDS_REVIEW',0,1,0,0)"
                 ).lastrowid
                 db.execute("INSERT INTO job_operation_members(job_id,operation_id) VALUES(?,1)", (jid_rt,))
             status, res_fb, _ = await self.request('GET', f'/api/v1/jobs/{jid_fb}', token=ADMIN)

@@ -18,7 +18,7 @@ class ReservationHandoffTests(unittest.TestCase):
                 tvdb_episode_id INTEGER, state TEXT);
             CREATE TABLE batch_episode_reservations(state TEXT,anidb_episode_id INTEGER,
                 tvdb_episode_id INTEGER,tvdb_series_id INTEGER,tvdb_season INTEGER,tvdb_episode INTEGER);
-            CREATE TABLE trial_evaluations(job_id INTEGER,verification_id INTEGER,selected INTEGER);
+            CREATE TABLE user_evaluation_checks(job_id INTEGER,verification_id INTEGER,selected INTEGER);
             CREATE TABLE release_verifications(verification_id INTEGER,anidb_id INTEGER,
                 anidb_episode_id INTEGER,tvdb_series_id INTEGER,tvdb_season INTEGER,
                 tvdb_episode INTEGER,tvdb_episode_id INTEGER);
@@ -30,7 +30,7 @@ class ReservationHandoffTests(unittest.TestCase):
             CREATE TABLE job_operations(operation_id INTEGER, state TEXT);
             CREATE TABLE job_operation_members(job_id INTEGER, operation_id INTEGER);
             INSERT INTO episode_reservations VALUES(99,19847,317547,472962,1,5,12013547,'ACTIVE');
-            INSERT INTO trial_evaluations VALUES(31,301,1),(32,302,1),(33,303,1);
+            INSERT INTO user_evaluation_checks VALUES(31,301,1),(32,302,1),(33,303,1);
             INSERT INTO release_verifications VALUES
               (301,19847,317547,472962,1,5,12013547),
               (302,19847,317547,472962,1,5,12013547),

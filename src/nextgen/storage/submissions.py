@@ -28,7 +28,7 @@ def _plan(db,preparation_job_id,event_id,*,cleanup=False):
     manifest=manifest_from_json(row[2],row[3],row[4])
     validate_declaration(source,manifest)
     if source.reservation_id!=row[1] or source.info_hash!=manifest.info_hash or not re.fullmatch('[a-f0-9]{32}',row[5]):raise AcquisitionConflict()
-    budget=db.execute('SELECT max_episode_bytes,max_plan_bytes FROM acquisition_budgets WHERE trial_plan_id=?',(row[8],)).fetchone()
+    budget=db.execute('SELECT max_episode_bytes,max_plan_bytes FROM acquisition_budgets WHERE user_evaluation_plan_id=?',(row[8],)).fetchone()
     sizes=db.execute('SELECT p.selected_size_bytes FROM acquisition_plans p JOIN episode_reservations r '
                      "ON r.reservation_id=p.reservation_id WHERE r.plan_id=? AND r.state='ACTIVE' AND p.state='PREPARED'",(row[8],)).fetchall()
     if (row[6]!=manifest.files[manifest.selected_index].size or budget is None or any(n[0] is None for n in sizes)):

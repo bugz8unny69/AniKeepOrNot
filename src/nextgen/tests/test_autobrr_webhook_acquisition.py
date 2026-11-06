@@ -89,7 +89,7 @@ class AutobrrWebhookAcquisitionTests(unittest.IsolatedAsyncioTestCase):
                     "tvdb_episode,tvdb_episode_id,verified_at_ms) "
                     "VALUES(?,?,123,?,'DECLARED_SINGLE_EPISODE',?,?,456,1,?,?,1)",
                     (release,identity,hashlib.sha256(raw).hexdigest(),episode,900+episode,episode,100+episode))
-                enqueue_job(db,kind='EVALUATE_TRIAL',payload={'verification_job_id':release},
+                enqueue_job(db,kind='SELECT_USER_EVALUATION',payload={'verification_job_id':release},
                     component='worker',event_id=event,created_by_job_id=release,available_at_ms=0)
             return event,raw
         finally:db.close()
@@ -136,7 +136,7 @@ class AutobrrWebhookAcquisitionTests(unittest.IsolatedAsyncioTestCase):
                          [('PREPARE_ACQUISITION','DONE'),('SUBMIT_TORRENT','DONE')])
         self.assertEqual(self.rows('SELECT state FROM torrent_submissions'),[('OWNED_STOPPED',)])
         marker=self.rows('SELECT submission_marker FROM acquisition_plans')[0][0]
-        self.assertEqual(self.rows('SELECT marker,state FROM sonarr_magnet_intents'),
+        self.assertEqual(self.rows('SELECT marker,state FROM magnet_intents'),
                          [(marker,'OWNED_STOPPED')])
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE reason_code="
                                    "'TORRENT_METADATA_CONFIGURATION_INVALID'"),[(0,)])

@@ -32,7 +32,7 @@ REASON = 'SONARR_CANDIDATES_EXHAUSTED'
 ROWS = """
 SELECT job_id, attempt_count, json_extract(payload_json,'$.plan_id'),
        json_extract(payload_json,'$.exhausted_episode')
-FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' AND state='NEEDS_REVIEW'
+FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES' AND state='NEEDS_REVIEW'
 AND last_reason_code=? AND json_extract(payload_json,'$.exhausted_episode') IS NOT NULL
 ORDER BY job_id
 """

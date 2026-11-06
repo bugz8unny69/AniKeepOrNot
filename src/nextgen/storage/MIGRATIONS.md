@@ -268,3 +268,27 @@ The worker writes it; the API reads it for the dashboard status bar and to
 refuse a Keep while Sonarr is unavailable. Existing data is unchanged; fresh
 SCHEMA and the migration runner match v62. See
 [services/README.md](../services/README.md).
+
+## v62 → v63: renamed stored names
+
+063_renamed_stored_names.sql renames the Sonarr-era and "trial" names (refactor RF-006a):
+
+- **Tables:**
+  - `sonarr_backfill_results` → `episode_discovery_results`;
+  - `sonarr_episode_candidates` → `episode_release_candidates`;
+  - `sonarr_episode_selections` → `episode_release_selections`;
+  - `sonarr_magnet_intents` → `magnet_intents`;
+  - `trial_plans` → `user_evaluation_plans`;
+  - `trial_evaluations` → `user_evaluation_checks`;
+  - `batch_trial_plans` → `batch_user_evaluation_plans`;
+  - `batch_trial_files` → `batch_user_evaluation_files`.
+- **Column:** `acquisition_budgets.trial_plan_id` → `user_evaluation_plan_id`.
+- **Indexes:** `idx_user_evaluation_checks_plan` and `idx_batch_user_evaluation_by_episode`.
+- **Job kinds,** in `jobs.kind` and in history (`job_history.handler_code`), for every row:
+  - `DISCOVER_SONARR_BACKFILL` → `DISCOVER_EPISODE_RELEASES`;
+  - `EVALUATE_TRIAL` → `SELECT_USER_EVALUATION`;
+  - `STAGE_TRIAL_MEDIA` → `STAGE_USER_EVALUATION_MEDIA`.
+- **Event source:** `incoming_events.source` `sonarr-discovery` → `release-discovery`.
+
+The code knows only the new names. `ALTER TABLE ... RENAME` updates the foreign keys and indexes that refer to the renamed tables and column. `episode_discovery_results.sonarr_episode_id` keeps its name, because historical rows can hold real Sonarr episode IDs. Fresh SCHEMA and the migration runner match v63.
+

@@ -54,7 +54,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'identity_candidate_evidence',  # v59 adds durable candidate evidence
             'batch_candidate_scopes',  # v60 adds batch candidate operations
             'batch_candidate_stops',  # v61 records why each candidate stopped
-            'service_status')  # v62 adds the last known status of each external service
+            'service_status',  # v62 adds the last known status of each external service
+            'user_evaluation_plans')  # v63 renames tables; a failed v63 leaves no new name behind
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

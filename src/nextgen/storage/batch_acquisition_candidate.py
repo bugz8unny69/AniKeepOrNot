@@ -31,10 +31,10 @@ def _candidate(db,reservation_job_id,inventory,*,cleanup=False):
     rows=db.execute(
         "SELECT r.plan_id,r.file_index,r.tvdb_episode,b.info_hash,b.info_sha256,"
         "p.anchor_episode,p.planned_size_bytes,f.file_path,f.file_size_bytes "
-        "FROM batch_episode_reservations r JOIN batch_trial_plans p USING(plan_id) "
+        "FROM batch_episode_reservations r JOIN batch_user_evaluation_plans p USING(plan_id) "
         "JOIN batch_verifications b USING(batch_id) "
         "JOIN batch_verified_files f ON f.batch_id=b.batch_id AND f.file_index=r.file_index "
-        "JOIN batch_trial_files t ON t.plan_id=p.plan_id AND t.file_index=r.file_index "
+        "JOIN batch_user_evaluation_files t ON t.plan_id=p.plan_id AND t.file_index=r.file_index "
         "AND t.tvdb_episode=r.tvdb_episode AND t.selected_size_bytes=f.file_size_bytes "
         "JOIN jobs j ON j.job_id=r.owner_job_id "
         "JOIN job_operation_members m ON m.job_id=j.job_id "
@@ -48,7 +48,7 @@ def _candidate(db,reservation_job_id,inventory,*,cleanup=False):
     if (info_hash,sha)!=(inventory.info_hash,inventory.info_sha256) or anchor!=1:
         raise AcquisitionConflict()
     count=db.execute(
-        "SELECT count(*) FROM batch_trial_files WHERE plan_id=?",(plan,)).fetchone()[0]
+        "SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?",(plan,)).fetchone()[0]
     if len(rows)!=count or len(rows)>1000:
         raise AcquisitionConflict()
     if db.execute(
@@ -57,12 +57,12 @@ def _candidate(db,reservation_job_id,inventory,*,cleanup=False):
         raise AcquisitionConflict()
     if db.execute(
         "SELECT 1 FROM batch_episode_reservations r "
-        "JOIN batch_trial_plans p USING(plan_id) JOIN batch_verifications b USING(batch_id) "
+        "JOIN batch_user_evaluation_plans p USING(plan_id) JOIN batch_verifications b USING(batch_id) "
         "WHERE r.state='ACTIVE' AND b.info_hash=? AND r.plan_id<>? LIMIT 1",
         (info_hash,plan)).fetchone():
         raise AcquisitionConflict()
     from src.nextgen.storage.review_decisions import require_allowed, AnimeRejected
-    aid=db.execute("SELECT b.anidb_id FROM batch_trial_plans p "
+    aid=db.execute("SELECT b.anidb_id FROM batch_user_evaluation_plans p "
                    "JOIN batch_verifications b USING(batch_id) WHERE p.plan_id=?",
                    (plan,)).fetchone()
     if aid is None:raise AcquisitionConflict()

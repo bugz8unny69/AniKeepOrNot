@@ -26,7 +26,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
     ready=VerifyMediaJobTests.ready
 
     def worker(self,publisher=None,additional=()):
-        verification=verify_registration(verify=partial(verify_file,read_probe=lambda *_:probe_bytes()),staging_kind='STAGE_TRIAL_MEDIA')
+        verification=verify_registration(verify=partial(verify_file,read_probe=lambda *_:probe_bytes()),staging_kind='STAGE_USER_EVALUATION_MEDIA')
         staging=stage_registration(publisher_factory=publisher or partial(Publisher,allow_root=True))
         return TorrentTransferTests.worker(self,verification=verification,additional=(staging,*additional))
 
@@ -35,13 +35,13 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         target=self.root/'staging';target.mkdir()
         self.store.update({'storage':{'trial_root':str(target)}},expected_revision=3)
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),[('PENDING',)])
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'"),[('PENDING',)])
         return target,path
 
     async def test_verified_copy_metadata_and_done_commit_with_staged_milestone(self):
         worker=self.worker();target,source=await self.staged_ready(worker)
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),[('DONE',)])
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'"),[('DONE',)])
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PUBLISHED',)])
         self.assertEqual(self.rows("SELECT json_extract(manifest_json,'$.transfer') FROM staging_publications"),[('COPY',)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(1,)])
@@ -49,14 +49,14 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(list(target.rglob('*.nfo'))),2)
         self.assertTrue(source.exists())
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[(0,)])
-        job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'")[0][0]
+        job=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'")[0][0]
         self.assertFalse(CancellationStore(self.database).status(job)['can_cancel'])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='KEEP_MEDIA'"),[(0,)])
 
     async def held_contender(self,worker):
         db=connect(self.database)
         try:
-            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=9999999999999 WHERE kind='STAGE_TRIAL_MEDIA'")
+            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=9999999999999 WHERE kind='STAGE_USER_EVALUATION_MEDIA'")
         finally:db.close()
         self.source()
         await worker.attempt();await worker.attempt()
@@ -65,7 +65,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
     def stage_due(self):
         db=connect(self.database)
         try:
-            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='STAGE_TRIAL_MEDIA'")
+            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='STAGE_USER_EVALUATION_MEDIA'")
         finally:db.close()
 
     async def test_staging_cancels_held_groups_and_late_releases_skip_without_download(self):
@@ -142,7 +142,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         worker=self.worker();await self.staged_ready(worker)
         with patch('src.nextgen.storage.episode_reservations.cancel_staged_waiters',side_effect=ReservationConflict()):
             self.assertTrue(await worker.attempt())
-        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'"),
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'"),
                          [('NEEDS_REVIEW','EPISODE_RESERVATION_CONFLICT')])
         # The refused save rolled back; nothing was marked published.
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PLANNED',)])
@@ -162,7 +162,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         worker=self.worker();await self.staged_ready(worker)
         db=connect(self.database)
         try:
-            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=9999999999999 WHERE kind='STAGE_TRIAL_MEDIA'")
+            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=9999999999999 WHERE kind='STAGE_USER_EVALUATION_MEDIA'")
         finally:db.close()
         event,evaluation=self.source();await worker.attempt()
         claim,_=worker.queue.claim();spec=worker.registry.entries['RESERVE_EPISODE']
@@ -230,7 +230,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         self.store.update({'storage':{'trial_root':str(second)}},expected_revision=4)
         db=connect(self.database)
         try:
-            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='STAGE_TRIAL_MEDIA' AND state='RETRY_WAIT'")
+            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='STAGE_USER_EVALUATION_MEDIA' AND state='RETRY_WAIT'")
         finally:db.close()
         await worker.attempt()
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PUBLISHED',)])
@@ -243,7 +243,7 @@ class CompletedStepLabelsTests(unittest.TestCase):
         from src.nextgen.messages import DEFAULT_CATALOG as catalog
         self.assertEqual(catalog.job_status('DONE',kind='IDENTIFY_ANIME')['message'],'Series identified')
         self.assertEqual(catalog.job_status('DONE',kind='VERIFY_RELEASE')['message'],'Episode verified')
-        self.assertEqual(catalog.job_status('DONE',kind='STAGE_TRIAL_MEDIA')['message'],'Staged')
+        self.assertEqual(catalog.job_status('DONE',kind='STAGE_USER_EVALUATION_MEDIA')['message'],'Staged')
         self.assertEqual(catalog.job_status('DONE')['message'],'Step completed')
         self.assertEqual(catalog.job_status('DONE','SKIPPED_DUPLICATE',kind='RESERVE_EPISODE')['message'],'Skipped duplicate')
-        self.assertEqual(catalog.job_status('NEEDS_REVIEW',kind='STAGE_TRIAL_MEDIA')['message'],'Needs review')
+        self.assertEqual(catalog.job_status('NEEDS_REVIEW',kind='STAGE_USER_EVALUATION_MEDIA')['message'],'Needs review')

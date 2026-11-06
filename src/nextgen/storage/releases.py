@@ -50,7 +50,7 @@ def persist_release(db, claim, value):
     if current!=source: raise ReleaseConflict()
     origin=db.execute("SELECT source FROM incoming_events WHERE event_id=?",
                       (source.event_id,)).fetchone()
-    if origin==('sonarr-discovery',):
+    if origin==('release-discovery',):
         from src.nextgen.storage.release_selection import require_verified_delivery
         require_verified_delivery(db,value)
     if origin==('manual-release',):

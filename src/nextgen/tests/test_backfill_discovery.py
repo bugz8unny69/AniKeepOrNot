@@ -53,24 +53,24 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.source(7)
         fake = FakeDiscovery()
         worker = self.worker(fake)
-        await worker.attempt()  # EVALUATE_TRIAL -> first DISCOVER job in same tx.
+        await worker.attempt()  # SELECT_USER_EVALUATION -> first DISCOVER job in same tx.
         self.assertEqual(self.rows(
             "SELECT kind,payload_json FROM jobs WHERE kind=?",(DISCOVER_KIND,)),
             [(DISCOVER_KIND,'{"plan_id": 1, "start": 1}')])
         await worker.attempt()  # E01–E04 -> E05–E06; the delivered E07 is not searched.
         await worker.attempt()
         self.assertEqual([row[0] for row in self.rows(
-            "SELECT anidb_episode_number FROM sonarr_backfill_results ORDER BY anidb_episode_number")],
+            "SELECT anidb_episode_number FROM episode_discovery_results ORDER BY anidb_episode_number")],
             [1,2,3,4,5,6])
         self.assertEqual(self.rows(
-            "SELECT status,candidates,approved,exact FROM sonarr_backfill_results "
+            "SELECT status,candidates,approved,exact FROM episode_discovery_results "
             "WHERE anidb_episode_number=6"), [('CANDIDATES',3,1,1)])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[(2,)])
         self.assertEqual([v[1] for v in fake.calls],[(1,2,3,4),(5,6)])
         self.source(8)
         await worker.attempt()
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[(2,)])
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_backfill_results"),[(6,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(6,)])
         self.assertEqual(self.rows(
             "SELECT count(*) FROM jobs WHERE kind IN "
             "('SUBMIT_TORRENT','RESERVE_EPISODE','DOWNLOAD_TORRENT')"),[(0,)])
@@ -82,7 +82,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         worker = self.worker(fake)
         await worker.attempt()
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_episode_selections"),
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_release_selections"),
                          [(0,)])
 
     async def _run_recognized_candidate(self, acquire=False, recognized=True):
@@ -133,17 +133,17 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()  # Additional episode evaluation.
         await worker.attempt()  # Search observation and selection.
         self.assertEqual(self.rows(
-            "SELECT anidb_episode_number,tvdb_episode_id,info_hash FROM sonarr_episode_selections"),
+            "SELECT anidb_episode_number,tvdb_episode_id,info_hash FROM episode_release_selections"),
             [(1,111001,'a'*40)])
         self.assertEqual(self.rows(
-            "SELECT candidates,approved,exact FROM sonarr_backfill_results WHERE anidb_episode_number=1"),
+            "SELECT candidates,approved,exact FROM episode_discovery_results WHERE anidb_episode_number=1"),
             [(1,1,1)])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM torrent_submissions"),[(0,)])
         self.assertEqual(self.rows(
-            "SELECT state FROM sonarr_episode_candidates WHERE plan_id=1 AND anidb_episode_number=1"),
+            "SELECT state FROM episode_release_candidates WHERE plan_id=1 AND anidb_episode_number=1"),
             [('ACTIVE' if acquire else 'READY',)])
 
-        events=self.rows("SELECT raw_body,state FROM incoming_events WHERE source='sonarr-discovery'")
+        events=self.rows("SELECT raw_body,state FROM incoming_events WHERE source='release-discovery'")
         if acquire:
             self.assertEqual(len(events),1)
             self.assertEqual(events[0][1],'IDENTIFIED')
@@ -157,14 +157,14 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
                              +'&tr=udp://tracker.example:1337/announce')
             self.assertEqual(self.rows(
                 "SELECT kind FROM jobs WHERE event_id IN "
-                "(SELECT event_id FROM incoming_events WHERE source='sonarr-discovery')"),
+                "(SELECT event_id FROM incoming_events WHERE source='release-discovery')"),
                 [('VERIFY_RELEASE',)])
             # The discovery page may spawn several episodes; cancellation of
             # one acquisition must not cancel its sibling or the backfill job.
             self.assertEqual(self.rows(
                 "SELECT count(DISTINCT m.operation_id) FROM job_operation_members m "
                 "JOIN jobs j USING(job_id) WHERE j.kind IN "
-                "('DISCOVER_SONARR_BACKFILL','VERIFY_RELEASE')"),
+                "('DISCOVER_EPISODE_RELEASES','VERIFY_RELEASE')"),
                 [(4,)])
         else:
             self.assertEqual(events,[])
@@ -174,7 +174,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await self._run_recognized_candidate(True)
         verify_job, event_id = self.rows(
             "SELECT job_id,event_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id IN "
-            "(SELECT event_id FROM incoming_events WHERE source='sonarr-discovery')")[0]
+            "(SELECT event_id FROM incoming_events WHERE source='release-discovery')")[0]
         db = connect(self.database)
         try:
             found = backfill_attempts(db, verify_job)
@@ -183,7 +183,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
                 (1, [(1, 'IN_PROGRESS', '[Group] Test - 01 [1080p]', f'AD-{event_id}')]))
             # A size-limit stop is shown with its numbers.
             with transaction(db):
-                db.execute("UPDATE sonarr_episode_candidates SET state='FAILED',"
+                db.execute("UPDATE episode_release_candidates SET state='FAILED',"
                            "reason_code='ACQUISITION_SIZE_LIMIT'")
                 db.execute("INSERT INTO job_history(job_id,event_code,reason_code,component,"
                            "occurred_at_ms,details_json) VALUES(?,'NEEDS_REVIEW',"
@@ -243,7 +243,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         await worker.attempt()
         self.assertEqual([v[1] for v in fake.calls],[(1,2,3,4),(6,7)])
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_backfill_results"),[(6,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(6,)])
 
     async def test_missing_episode_can_be_searched_again_without_resending_others(self):
         from src.nextgen.storage.series_intake import retry_episode
@@ -262,7 +262,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         await worker.attempt()
         self.assertEqual(self.rows(
-            "SELECT status FROM sonarr_backfill_results WHERE anidb_episode_number=2"),
+            "SELECT status FROM episode_discovery_results WHERE anidb_episode_number=2"),
             [('NO_RESULTS',)])
         fake.backfill = original
         receipt = retry_episode(self.database, 123, 2)
@@ -272,10 +272,10 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(fake.calls[-1][1], (2,))
         self.assertEqual(self.rows(
-            "SELECT status FROM sonarr_backfill_results WHERE anidb_episode_number=2"),
+            "SELECT status FROM episode_discovery_results WHERE anidb_episode_number=2"),
             [('CANDIDATES',)])
         self.assertEqual(self.rows(
-            "SELECT count(*) FROM sonarr_backfill_results"), [(6,)])
+            "SELECT count(*) FROM episode_discovery_results"), [(6,)])
 
     async def test_unavailable_episodes_do_not_block_episodes_with_releases(self):
         self.source(7)
@@ -291,13 +291,13 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=? ORDER BY job_id",(DISCOVER_KIND,)),
                          [('DONE',),('PENDING',)])
-        self.assertEqual(self.rows("SELECT anidb_episode_number,status FROM sonarr_backfill_results ORDER BY anidb_episode_number"),
+        self.assertEqual(self.rows("SELECT anidb_episode_number,status FROM episode_discovery_results ORDER BY anidb_episode_number"),
                          [(1,'NOT_AIRED'),(2,'NO_RESULTS'),(3,'MAPPING_MISSING'),(4,'CANDIDATES')])
 
     async def fail_twice(self, fake):
         """First failure waits 30 minutes; the second one stops for a manual Retry."""
         worker = self.worker(fake)
-        await worker.attempt()   # EVALUATE_TRIAL
+        await worker.attempt()   # SELECT_USER_EVALUATION
         await worker.attempt()   # search fails -> one delayed automatic retry
         state, available = self.rows(
             "SELECT state,available_at_ms-updated_at_ms FROM jobs WHERE kind=?",(DISCOVER_KIND,))[0]
@@ -312,7 +312,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         fake = FakeDiscovery()
         fake.error = True
         await self.fail_twice(fake)
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_backfill_results"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(0,)])
         self.assertEqual(self.rows(
             "SELECT state,last_reason_code FROM jobs WHERE kind=?",(DISCOVER_KIND,)),
             [('BLOCKED','PROWLARR_UNAVAILABLE')])
@@ -330,7 +330,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.make_due()
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=? ORDER BY job_id",(DISCOVER_KIND,))[0],('DONE',))
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_backfill_results"),[(4,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(4,)])
 
 
     def make_due(self):
@@ -368,7 +368,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         fake.error = False
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state,attempt_count FROM jobs WHERE job_id=?",(job,)),[('DONE',3)])
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_backfill_results"),[(4,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(4,)])
 
     async def test_old_missing_series_hold_is_not_automatically_restarted(self):
         self.source(7)
@@ -391,7 +391,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.source(7)
         fake = FakeDiscovery()
         worker = self.worker(fake)
-        await worker.attempt()  # EVALUATE_TRIAL
+        await worker.attempt()  # SELECT_USER_EVALUATION
         def misconfigured(*args, **kwargs): raise SearchConfiguration()
         fake.backfill = misconfigured
         await worker.attempt()
@@ -405,7 +405,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
                              expected_reason='PROWLARR_CONFIGURATION_INVALID')
         del fake.backfill  # settings fixed: the real fake search answers again
         await worker.attempt()
-        self.assertEqual(self.rows("SELECT count(*) FROM sonarr_backfill_results"),[(4,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(4,)])
 
     async def test_other_holds_are_not_resumed(self):
         self.source(7)
@@ -424,7 +424,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         from src.nextgen.storage.episode_discovery import plan_window, _plan
         self.source(1157)
         worker = self.worker(FakeDiscovery())
-        await worker.attempt()  # EVALUATE_TRIAL -> creates plan 1
+        await worker.attempt()  # SELECT_USER_EVALUATION -> creates plan 1
         db = connect(self.database)
         try:
             # Without stored results, window is computed from anchor 1157
@@ -434,7 +434,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
             with transaction(db):
                 for ep in (1, 2, 3, 4, 5, 6):
                     db.execute(
-                        "INSERT INTO sonarr_backfill_results(plan_id, anidb_episode_number, job_id, tvdb_episode_id, status, candidates, approved, exact, observed_at_ms) "
+                        "INSERT INTO episode_discovery_results(plan_id, anidb_episode_number, job_id, tvdb_episode_id, status, candidates, approved, exact, observed_at_ms) "
                         "VALUES(1, ?, 1, 2000+?, 'CANDIDATES', 3, 1, 1, 0)", (ep, ep))
 
             # With stored results that are not a subset of computed, stored results are returned
@@ -451,10 +451,10 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
 
             # When stored results ARE a subset of computed (e.g. current in-progress discovery)
             with transaction(db):
-                db.execute("DELETE FROM sonarr_backfill_results WHERE plan_id=1")
+                db.execute("DELETE FROM episode_discovery_results WHERE plan_id=1")
                 for ep in (1151, 1152):
                     db.execute(
-                        "INSERT INTO sonarr_backfill_results(plan_id, anidb_episode_number, job_id, tvdb_episode_id, status, candidates, approved, exact, observed_at_ms) "
+                        "INSERT INTO episode_discovery_results(plan_id, anidb_episode_number, job_id, tvdb_episode_id, status, candidates, approved, exact, observed_at_ms) "
                         "VALUES(1, ?, 1, 2000+?, 'CANDIDATES', 3, 1, 1, 0)", (ep, ep))
             self.assertEqual(plan_window(db, 1, 1157, 6, 0), (1151, 1152, 1153, 1154, 1155, 1156))
         finally:
@@ -487,7 +487,7 @@ class BackfillSchemaTests(unittest.TestCase):
         db = sqlite3.connect(':memory:')
         try:
             initialize(db)
-            sql = db.execute("SELECT sql FROM sqlite_master WHERE name='sonarr_backfill_results'").fetchone()[0]
+            sql = db.execute("SELECT sql FROM sqlite_master WHERE name='episode_discovery_results'").fetchone()[0]
             self.assertIn('exact BETWEEN 0 AND candidates', sql)
             self.assertNotIn('exact BETWEEN 0 AND approved', sql)
         finally:
@@ -502,6 +502,6 @@ class BackfillSchemaTests(unittest.TestCase):
             db.rollback()
             self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],40)
             self.assertIsNone(db.execute(
-                "SELECT name FROM sqlite_master WHERE name='sonarr_backfill_results'").fetchone())
+                "SELECT name FROM sqlite_master WHERE name='episode_discovery_results'").fetchone())
         finally:
             db.close()

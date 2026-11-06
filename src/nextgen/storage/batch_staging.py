@@ -61,7 +61,7 @@ def facts(db,claim,verification_job_id):
         raise StagingReview() from None
     planned=db.execute(
         "SELECT f.file_path,f.file_size_bytes,r.tvdb_episode "
-        "FROM batch_trial_files t JOIN batch_trial_plans p USING(plan_id) "
+        "FROM batch_user_evaluation_files t JOIN batch_user_evaluation_plans p USING(plan_id) "
         "JOIN batch_verified_files f ON f.batch_id=p.batch_id AND f.file_index=t.file_index "
         "JOIN batch_episode_reservations r ON r.plan_id=t.plan_id "
         "AND r.file_index=t.file_index AND r.state='ACTIVE' "
@@ -208,7 +208,7 @@ def persist_batch_stage(db,claim,value):
         "SELECT count(*) FROM batch_staging_publications "
         "WHERE plan_id=? AND state='PUBLISHED'",(plan_id,)).fetchone()[0]
     selected=db.execute(
-        "SELECT count(*) FROM batch_trial_files WHERE plan_id=?",
+        "SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?",
         (plan_id,)).fetchone()[0]
     if completed==selected:
         mark_staged(db,claim)

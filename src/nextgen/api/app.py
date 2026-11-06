@@ -457,22 +457,22 @@ class Application:
                     proof=db.execute("SELECT batch_id,tvdb_season,info_hash FROM batch_verifications "
                                      "WHERE job_id=?",(job,)).fetchone()
                     if proof is not None:
-                        plan=db.execute('SELECT plan_id,planned_size_bytes FROM batch_trial_plans '
+                        plan=db.execute('SELECT plan_id,planned_size_bytes FROM batch_user_evaluation_plans '
                                         'WHERE batch_id=?',(proof[0],)).fetchone()
                         planned_count=0 if plan is None else db.execute(
-                            'SELECT count(*) FROM batch_trial_files WHERE plan_id=?',
+                            'SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?',
                             (plan[0],)).fetchone()[0]
                         total=db.execute("SELECT count(*) FROM batch_verified_files WHERE batch_id=?",
                                          (proof[0],)).fetchone()[0]
                         rows=db.execute("SELECT f.file_index,f.file_path,f.anidb_episode_number,"
                                         "f.tvdb_episode,f.file_size_bytes,"
                                         "CASE WHEN p.file_index IS NOT NULL THEN 1 ELSE 0 END "
-                                        "FROM batch_verified_files f LEFT JOIN batch_trial_files p "
+                                        "FROM batch_verified_files f LEFT JOIN batch_user_evaluation_files p "
                                         "ON p.plan_id=? AND p.file_index=f.file_index "
                                         "WHERE f.batch_id=? ORDER BY f.tvdb_episode,f.file_index LIMIT 100",
                                         (None if plan is None else plan[0],proof[0])).fetchall()
                         evidence={'kind':'batch','tvdb_season':proof[1],'episode_count':total,
-                                  'trial_plan_ready':plan is not None,
+                                  'user_evaluation_plan_ready':plan is not None,
                                   'planned_episode_count':planned_count,
                                   'planned_size_bytes':None if plan is None else plan[1],
                                   'truncated':total>len(rows),'episodes':[
@@ -883,23 +883,23 @@ class Application:
                             WHERE submission.event_id=jobs.event_id
                             AND submission.anidb_id=? AND submission.tvdb_season=?
                             AND submission.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM sonarr_backfill_results b
-                            JOIN trial_plans p USING(plan_id)
+                        OR EXISTS (SELECT 1 FROM episode_discovery_results b
+                            JOIN user_evaluation_plans p USING(plan_id)
                             JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
                                   FROM recognized_episodes UNION
                                   SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                                  FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)) x
+                                  FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id)) x
                             ON x.anidb_id=p.anidb_id AND x.anidb_episode_number=b.anidb_episode_number
                             WHERE b.job_id=jobs.job_id AND p.anidb_id=?
                             AND x.tvdb_season=? AND x.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM trial_plans p
+                        OR EXISTS (SELECT 1 FROM user_evaluation_plans p
                             JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
                                   FROM recognized_episodes UNION
                                   SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                                  FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)) x
+                                  FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id)) x
                             ON x.anidb_id=p.anidb_id
                             AND x.anidb_episode_number=json_extract(jobs.payload_json,'$.exhausted_episode')
-                            WHERE jobs.kind='DISCOVER_SONARR_BACKFILL'
+                            WHERE jobs.kind='DISCOVER_EPISODE_RELEASES'
                             AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
                             AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
                         )""")
@@ -1026,22 +1026,22 @@ class Application:
             records=db.execute(
                 "SELECT tvdb_season,tvdb_episode FROM manual_release_submissions "
                 "WHERE event_id=? LIMIT 1",(event_id,)).fetchall()
-        if not records and kind=='DISCOVER_SONARR_BACKFILL':
+        if not records and kind=='DISCOVER_EPISODE_RELEASES':
             # Discovery keys are AniDB numbers; show their verified TVDB placement.
             placed="""(SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
                 FROM recognized_episodes UNION
                 SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id) UNION
+                FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id) UNION
                 SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
                 FROM release_verifications WHERE tvdb_order='official') x"""
             records=db.execute(f"""
-                SELECT x.tvdb_season,x.tvdb_episode FROM sonarr_backfill_results b
-                JOIN trial_plans p USING(plan_id) JOIN {placed}
+                SELECT x.tvdb_season,x.tvdb_episode FROM episode_discovery_results b
+                JOIN user_evaluation_plans p USING(plan_id) JOIN {placed}
                 ON x.anidb_id=p.anidb_id AND x.anidb_episode_number=b.anidb_episode_number
                 WHERE b.job_id=?
                 UNION
                 SELECT x.tvdb_season,x.tvdb_episode
-                FROM jobs j JOIN trial_plans p
+                FROM jobs j JOIN user_evaluation_plans p
                 ON p.plan_id=json_extract(j.payload_json,'$.plan_id') JOIN {placed}
                 ON x.anidb_id=p.anidb_id
                 AND x.anidb_episode_number=COALESCE(
@@ -1056,7 +1056,7 @@ class Application:
                 )
                 ORDER BY 1,2 LIMIT 101
             """,(job_id,job_id)).fetchall()
-        if not records and kind in ('VERIFY_RELEASE','EVALUATE_TRIAL','IDENTIFY_ANIME') and event_id is not None:
+        if not records and kind in ('VERIFY_RELEASE','SELECT_USER_EVALUATION','IDENTIFY_ANIME') and event_id is not None:
             records=db.execute("""
                 SELECT DISTINCT tvdb_season,tvdb_episode FROM release_verifications
                 WHERE job_id=? OR job_id IN

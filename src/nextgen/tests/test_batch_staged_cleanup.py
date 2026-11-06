@@ -19,14 +19,14 @@ class BatchStagedCleanupTests(unittest.TestCase):
             CREATE TABLE batch_staging_publications(plan_id INTEGER,file_index INTEGER,
                 job_id INTEGER,state TEXT);
             CREATE TABLE job_operation_members(operation_id INTEGER,job_id INTEGER);
-            CREATE TABLE batch_trial_files(plan_id INTEGER,file_index INTEGER);
+            CREATE TABLE batch_user_evaluation_files(plan_id INTEGER,file_index INTEGER);
             CREATE TABLE batch_torrent_submissions(plan_id INTEGER,reservation_job_id INTEGER,
                 info_hash TEXT,info_sha256 TEXT,state TEXT);
             INSERT INTO jobs VALUES(61,'STAGE_BATCH_EPISODE','DONE','{}',NULL),
                                    (62,'STAGE_BATCH_EPISODE','DONE','{}',NULL);
             INSERT INTO batch_staging_publications VALUES(15,0,61,'PUBLISHED'),(15,1,62,'PUBLISHED');
             INSERT INTO job_operation_members VALUES(7,61),(7,62);
-            INSERT INTO batch_trial_files VALUES(15,0),(15,1);
+            INSERT INTO batch_user_evaluation_files VALUES(15,0),(15,1);
             INSERT INTO batch_torrent_submissions VALUES(15,40,'h','s','OWNED_STOPPED');
         """)
 
@@ -66,7 +66,7 @@ class BatchStagedCleanupTests(unittest.TestCase):
         with self.assertRaises(CancellationError):
             self.facts()
         self.db.execute("UPDATE batch_staging_publications SET state='PUBLISHED'")
-        self.db.execute('INSERT INTO batch_trial_files VALUES(15,2)')   # One not staged yet.
+        self.db.execute('INSERT INTO batch_user_evaluation_files VALUES(15,2)')   # One not staged yet.
         with self.assertRaises(CancellationError):
             self.facts()
 

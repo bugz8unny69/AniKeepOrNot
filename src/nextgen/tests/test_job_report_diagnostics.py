@@ -174,7 +174,7 @@ class JobReportDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
     # 9
     async def test_missing_diagnostic_records_say_not_recorded(self):
         owner, held = await self.held()
-        self.raw('DELETE FROM trial_evaluations')
+        self.raw('DELETE FROM user_evaluation_checks')
         r = self.diag(held)['reservation']
         self.assertIsNone(r['episode'])
         self.assertTrue(any('not recorded' in n for n in r['limitations']))

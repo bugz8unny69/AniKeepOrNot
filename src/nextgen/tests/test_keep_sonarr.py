@@ -94,7 +94,7 @@ class KeepSonarrTests(unittest.IsolatedAsyncioTestCase):
         factory=partial(Service,client_factory=lambda options,key:Client(options,key,transport=fake))
         worker=StageMediaJobTests.worker(self,additional=(keep(secrets,service_factory=factory),))
         staging,_=await self.staged_ready(worker);await worker.attempt()
-        target=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_TRIAL_MEDIA'")[0][0]
+        target=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'")[0][0]
         db=connect(self.database)
         try:fake.selection=load_selection(db,target)
         finally:db.close()

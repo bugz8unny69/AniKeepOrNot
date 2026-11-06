@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 JOB_TABLES = (
     ('acquisition_plans', 'job_id', 'Acquisition plan'),
     ('episode_reservations', 'owner_job_id', 'Episode reservation'),
-    ('sonarr_magnet_intents', 'job_id', 'Magnet intake'),
+    ('magnet_intents', 'job_id', 'Magnet intake'),
     ('batch_metadata_admissions', 'verification_job_id', 'Batch metadata admission'),
     ('batch_episode_reservations', 'owner_job_id', 'Batch episode reservation'),
     ('staging_publications', 'job_id', 'Staging publication'),
@@ -404,10 +404,10 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
     prior_attempts = 0
     candidate_rows = []
     if plan_id is not None and episode is not None:
-        have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sonarr_episode_candidates'").fetchone()
+        have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_release_candidates'").fetchone()
         if have_candidates:
             candidate_rows = db.execute(
-                "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
+                "SELECT rank, info_hash, state, reason_code FROM episode_release_candidates "
                 "WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
                 (plan_id, target.get('anidb_episode') or episode)
             ).fetchall()
@@ -616,10 +616,10 @@ def prowlarr_matching_json(db, job_id, attempt=None):
     prior_attempts = 0
     candidate_rows = []
     if plan_id is not None and episode is not None:
-        have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sonarr_episode_candidates'").fetchone()
+        have_candidates = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_release_candidates'").fetchone()
         if have_candidates:
             candidate_rows = db.execute(
-                "SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates "
+                "SELECT rank, info_hash, state, reason_code FROM episode_release_candidates "
                 "WHERE plan_id=? AND anidb_episode_number=? ORDER BY rank",
                 (plan_id, target.get('anidb_episode') or episode)
             ).fetchall()

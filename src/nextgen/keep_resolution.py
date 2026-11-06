@@ -17,7 +17,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
 
     Returns (tvdb_episode_id, tvdb_season, tvdb_episode) if resolved, or None if still unavailable.
     When resolved, commits placement to release_verifications, episode_reservations,
-    sonarr_episode_selections, recognized_seasons, and recognized_episodes.
+    episode_release_selections, recognized_seasons, and recognized_episodes.
     """
     if client is None:
         raise KeepUnavailable()
@@ -101,7 +101,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
     batch_plan_id = None
 
     if target_job_id:
-        # Resolve trial_plans.plan_id through acquisition_plans and episode_reservations
+        # Resolve user_evaluation_plans.plan_id through acquisition_plans and episode_reservations
         row = db.execute(
             "SELECT r.plan_id FROM staging_publications sp "
             "JOIN acquisition_plans ap ON ap.plan_id = sp.plan_id "
@@ -149,7 +149,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             (target_season, target_episode, tvdb_eid, user_evaluation_plan_id, aid, eid)
         )
         existing_sel = db.execute(
-            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections "
+            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections "
             "WHERE plan_id=? AND anidb_episode_number=?",
             (user_evaluation_plan_id, anidb_number)
         ).fetchone()
@@ -158,7 +158,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             if curr_eid is not None and (curr_s, curr_ep, curr_eid) != (target_season, target_episode, tvdb_eid):
                 raise KeepReview(failed_check='src/nextgen/keep_resolution.py:140 resolve_tvdb_placement SELECTION_MISMATCH')
         db.execute(
-            "UPDATE sonarr_episode_selections SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
+            "UPDATE episode_release_selections SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
             "WHERE plan_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NULL",
             (target_season, target_episode, tvdb_eid, user_evaluation_plan_id, anidb_number)
         )

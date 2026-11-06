@@ -15,10 +15,10 @@ from src.nextgen.storage.sqlite import transaction
 # Deliberate allowlist: independent acquisition steps, not management decisions,
 # cleanup jobs, or independent post-Keep follow-ups with their own resume path.
 RETRY_KINDS = frozenset((
-    'IDENTIFY_ANIME', 'VERIFY_RELEASE', 'EVALUATE_TRIAL', 'RESERVE_EPISODE', 'DISCOVER_SONARR_BACKFILL',
+    'IDENTIFY_ANIME', 'VERIFY_RELEASE', 'SELECT_USER_EVALUATION', 'RESERVE_EPISODE', 'DISCOVER_EPISODE_RELEASES',
     'DISCOVER_BATCH_PROWLARR',
     'PREPARE_ACQUISITION', 'SUBMIT_TORRENT', 'DOWNLOAD_TORRENT',
-    'VERIFY_MEDIA', 'STAGE_TRIAL_MEDIA', 'EVALUATE_BATCH', 'RESERVE_BATCH',
+    'VERIFY_MEDIA', 'STAGE_USER_EVALUATION_MEDIA', 'EVALUATE_BATCH', 'RESERVE_BATCH',
     'SUBMIT_BATCH', 'TRANSFER_BATCH', 'VERIFY_BATCH_PROBE', 'UNLOCK_BATCH',
     'VERIFY_BATCH_EPISODE', 'STAGE_BATCH_EPISODE',
 ))
@@ -44,9 +44,9 @@ class RetryReceipt:
 def _retryable_state(kind, state, reason):
     return state in ('NEEDS_REVIEW', 'FAILED') or (
         # Waiting for dub: Retry is "Search again".
-        kind == 'DISCOVER_SONARR_BACKFILL' and state == 'ON_HOLD'
+        kind == 'DISCOVER_EPISODE_RELEASES' and state == 'ON_HOLD'
         and reason == 'WAITING_FOR_DUB') or (
-        kind == 'DISCOVER_SONARR_BACKFILL' and state == 'BLOCKED'
+        kind == 'DISCOVER_EPISODE_RELEASES' and state == 'BLOCKED'
         and reason in ('PROWLARR_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE',
                        # Jobs stopped before the Prowlarr search existed.
                        'SONARR_DISCOVERY_EPISODE_NOT_FOUND', 'SONARR_EPISODES_NOT_LISTED',
@@ -165,7 +165,7 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
         kind, state, attempt, reason, token, expiry = row
         payload = None
         if delete_cache is not None:
-            if (kind != 'DISCOVER_SONARR_BACKFILL'
+            if (kind != 'DISCOVER_EPISODE_RELEASES'
                     or state not in ('ON_HOLD', 'PENDING')
                     or state == 'ON_HOLD' and reason != 'WAITING_FOR_DUB'):
                 raise RetryNotAllowed()

@@ -109,11 +109,11 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         db = connect(self.database)
         try:
             with transaction(db):
-                db.execute("INSERT OR REPLACE INTO trial_plans VALUES(19, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
+                db.execute("INSERT OR REPLACE INTO user_evaluation_plans VALUES(19, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, payload={"plan_id": 19, "start": 1, "exhausted_episode": 1},
                                      component="worker", available_at_ms=0)
                 db.execute(
-                    "INSERT INTO sonarr_episode_candidates VALUES(19, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
+                    "INSERT INTO episode_release_candidates VALUES(19, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
                     (failed_hash,)
                 )
                 save_snapshots(db, job_id, attempt=6, snapshots=[snapshot])
@@ -171,7 +171,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(release29["candidate_history"]["reason_code"], "MEDIA_AUDIO_REQUIRED")
 
     async def test_job_5775_worker_stays_on_hold_does_not_reacquire(self):
-        """Worker executing DISCOVER_SONARR_BACKFILL on exhausted Job #5775 remains ON_HOLD/WAITING_FOR_DUB without reacquiring."""
+        """Worker executing DISCOVER_EPISODE_RELEASES on exhausted Job #5775 remains ON_HOLD/WAITING_FOR_DUB without reacquiring."""
         self.setUpFixture()
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
         self.source(7)
@@ -190,10 +190,10 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 event_id = db.execute("SELECT event_id FROM jobs WHERE kind=?", (DISCOVER_KIND,)).fetchone()[0]
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
                 db.execute(
-                    "INSERT INTO sonarr_episode_candidates VALUES(1, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
+                    "INSERT INTO episode_release_candidates VALUES(1, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')",
                     (failed_hash,)
                 )
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 1, 1, 1, 1001, ?, 1)", (failed_hash,))
+                db.execute("INSERT INTO episode_release_selections VALUES(1, 1, 1, 1, 1001, ?, 1)", (failed_hash,))
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, component="worker", event_id=event_id,
                                      payload={"plan_id": 1, "start": 1, "exhausted_episode": 1, "delete_cache": True},
                                      available_at_ms=0)
@@ -230,7 +230,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_state, ("CANCELED", "WAITING_FOR_DUB"))
 
         # Verify candidate table still has only 1 row (the failed hash) and was NOT reacquired
-        candidates = self.rows("SELECT rank, info_hash, state, reason_code FROM sonarr_episode_candidates WHERE plan_id=1 AND anidb_episode_number=1")
+        candidates = self.rows("SELECT rank, info_hash, state, reason_code FROM episode_release_candidates WHERE plan_id=1 AND anidb_episode_number=1")
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0], (1, failed_hash, "FAILED", "MEDIA_AUDIO_REQUIRED"))
 
@@ -260,12 +260,12 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         db = connect(self.database)
         try:
             with transaction(db):
-                db.execute("INSERT OR REPLACE INTO trial_plans VALUES(1, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
+                db.execute("INSERT OR REPLACE INTO user_evaluation_plans VALUES(1, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, payload={"plan_id": 1, "start": 1},
                                      component="worker", available_at_ms=0)
                 # Mixed failures in candidates: rank 1 metadata timeout, rank 2 audio required
-                db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 1, 1, ?, 'FAILED', 'TORRENT_METADATA_TIMEOUT')", (hash1,))
-                db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 1, 2, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')", (hash2,))
+                db.execute("INSERT INTO episode_release_candidates VALUES(1, 1, 1, ?, 'FAILED', 'TORRENT_METADATA_TIMEOUT')", (hash1,))
+                db.execute("INSERT INTO episode_release_candidates VALUES(1, 1, 2, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')", (hash2,))
                 save_snapshots(db, job_id, attempt=3, snapshots=[snapshot])
         finally:
             db.close()
@@ -323,7 +323,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
         db = connect(self.database)
         try:
             with transaction(db):
-                db.execute("INSERT OR REPLACE INTO trial_plans VALUES(1, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
+                db.execute("INSERT OR REPLACE INTO user_evaluation_plans VALUES(1, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
                 db.execute("INSERT INTO episode_reservations VALUES(1, 1, 2, 1, 1, 123, 11010, 456, 1, 10, 111010, 'official', 1, 'ACTIVE', NULL, NULL)")
                 # Operation and jobs setup
                 db.execute("INSERT INTO job_operations VALUES(10, 'ACTIVE', 'NONE', NULL, 0, 0)")
@@ -331,7 +331,7 @@ class ProwlarrCandidateReconciliationTests(unittest.IsolatedAsyncioTestCase):
                                      component="worker", available_at_ms=0, operation_id=10)
                 db.execute("UPDATE jobs SET attempt_count=1 WHERE job_id=?", (job_id,))
                 db.execute("INSERT INTO acquisition_plans(plan_id, job_id, reservation_id, info_hash, info_sha256, manifest_json, submission_marker, state, configuration_revision, prepared_at_ms) VALUES(1, ?, 1, ?, NULL, '{}', ?, 'PREPARED', 1, 0)", (job_id, hash_val, 'a'*32))
-                db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')", (hash_val,))
+                db.execute("INSERT INTO episode_release_candidates VALUES(1, 1, 1, ?, 'FAILED', 'MEDIA_AUDIO_REQUIRED')", (hash_val,))
 
                 # Record job_history with observed_audio and missing_audio details
                 from src.nextgen.history import append_job_history

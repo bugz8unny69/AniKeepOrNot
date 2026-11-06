@@ -54,7 +54,7 @@ def _facts(db,evaluation_job_id,event_id):
         "SELECT p.plan_id,p.batch_id,b.anidb_id,b.tvdb_series_id,b.tvdb_season,"
         "b.job_id,p.anchor_episode,p.backfill_count,p.following_count,"
         "p.planned_size_bytes "
-        "FROM batch_trial_plans p JOIN batch_verifications b USING(batch_id) "
+        "FROM batch_user_evaluation_plans p JOIN batch_verifications b USING(batch_id) "
         "JOIN jobs j ON j.job_id=p.evaluation_job_id "
         "WHERE p.evaluation_job_id=? AND j.event_id=? AND j.state='DONE' "
         "AND j.kind='EVALUATE_BATCH'",(evaluation_job_id,event_id)).fetchone()
@@ -70,7 +70,7 @@ def _facts(db,evaluation_job_id,event_id):
     selected=db.execute(
         "SELECT f.file_index,f.anidb_episode_id,f.tvdb_episode,f.tvdb_episode_id,"
         "f.file_size_bytes,t.selected_size_bytes "
-        "FROM batch_trial_files t JOIN batch_verified_files f "
+        "FROM batch_user_evaluation_files t JOIN batch_verified_files f "
         "ON f.batch_id=? AND f.file_index=t.file_index "
         "WHERE t.plan_id=? ORDER BY f.tvdb_episode,f.file_index",
         (batch_id,plan_id)).fetchall()

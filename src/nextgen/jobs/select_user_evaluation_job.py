@@ -12,7 +12,7 @@ from src.nextgen.storage.user_evaluations import load_user_evaluation_source, pe
 from src.nextgen.user_evaluation_policy import Window, UserEvaluationProposal, UserEvaluationConflict
 from src.nextgen.worker import blocking
 
-KIND='EVALUATE_TRIAL'
+KIND='SELECT_USER_EVALUATION'
 DEFINITION=HandlerDefinition(KIND,'Evaluate Intake episode selection')
 
 
