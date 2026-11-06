@@ -307,17 +307,9 @@ def schedule_winner(db, scope_id, candidate_id, *, created_by_job_id=None, now_m
     top = next_candidate(db, scope_id)
     if top is None or top.candidate_id != candidate_id:
         return ()
-    if top.source_event_id is None:
-        raise CandidateConflict()
     anidb_id = db.execute("SELECT anidb_id FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()[0]
-    marks = ','.join('?' * len(_OPEN_JOB_STATES))
-    open_job = db.execute(
-        f"SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id=? AND state IN ({marks}) "
-        "ORDER BY job_id LIMIT 1", (top.source_event_id, *_OPEN_JOB_STATES)).fetchone()
-    if open_job is not None:
-        activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, open_job[0]), now_ms=now)
-        return ()
-    return (_start_candidate(db, scope_id, anidb_id, top, created_by_job_id=created_by_job_id, now_ms=now),)
+    receipt = _start_candidate(db, scope_id, anidb_id, top, created_by_job_id=created_by_job_id, now_ms=now)
+    return () if receipt is None else (receipt,)
 
 
 def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='resolution'):
@@ -594,9 +586,22 @@ def _anime_rejected(db, anidb_id):
 
 
 def _start_candidate(db, scope_id, anidb_id, candidate, *, created_by_job_id=None, now_ms=None):
-    """Activate a READY candidate and enqueue the VERIFY_RELEASE job that runs it."""
+    """Activate a READY candidate with the VERIFY_RELEASE job that runs it.
+
+    An open VERIFY_RELEASE job for the candidate's delivery (one that was
+    pooled and has not run yet) is adopted instead of creating a second one.
+    Returns the new job's receipt, or None when an open job was adopted.
+    """
     if candidate.source_event_id is None:
         raise CandidateConflict()
+    marks = ','.join('?' * len(_OPEN_JOB_STATES))
+    open_job = db.execute(
+        f"SELECT job_id FROM jobs WHERE kind='VERIFY_RELEASE' AND event_id=? AND state IN ({marks}) "
+        "ORDER BY job_id LIMIT 1", (candidate.source_event_id, *_OPEN_JOB_STATES)).fetchone()
+    if open_job is not None:
+        activate_candidate(db, scope_id, candidate.info_hash, operation_id=_job_operation(db, open_job[0]),
+                           now_ms=now_ms)
+        return None
     from src.nextgen.storage.sqlite import enqueue_job_with_receipt
     job_id, receipt = enqueue_job_with_receipt(
         db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': anidb_id},
@@ -635,7 +640,8 @@ def schedule_after_cleanup_batch(db, operation_id):
     if nxt is None:
         exhaust_scope(db, scope_id, now_ms=now)
         return ()
-    return (_start_candidate(db, scope_id, anidb_id, nxt, now_ms=now),)
+    receipt = _start_candidate(db, scope_id, anidb_id, nxt, now_ms=now)
+    return () if receipt is None else (receipt,)
 
 
 def succeed_operation_candidate(db, operation_id, *, now_ms=None):
