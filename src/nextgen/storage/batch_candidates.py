@@ -129,6 +129,10 @@ def add_candidate(db, scope_id, info_hash, title, *, source_event_id=None,
         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (scope_id, digest, clean_title, next_rank, 'READY', int(bool(has_metadata)),
          metadata_json, seeders, size_bytes, source_event_id, now, now))
+    db.execute(
+        "UPDATE batch_candidate_scopes SET state='ACTIVE', updated_at_ms=? "
+        "WHERE scope_id=? AND state='EXHAUSTED'",
+        (now, scope_id))
     cid = db.execute(
         "SELECT candidate_id FROM batch_candidates WHERE scope_id=? AND info_hash=?",
         (scope_id, digest)).fetchone()[0]
@@ -426,8 +430,8 @@ def auto_cleanup_failed_batch_candidate(db, claim):
     return request_automatic_cleanup(db, claim)
 
 
-def schedule_after_cleanup_batch(db, operation_id):
-    """After cleanup of a failed batch candidate completes, advance to the next candidate (WI-04)."""
+def schedule_after_cleanup_batch(db, operation_id, *, prowlarr_fallback=True):
+    """After cleanup of a failed batch candidate completes, advance to the next candidate (WI-04, WI-05)."""
     if not db.in_transaction:
         raise CandidateConflict()
     has_table = db.execute(
@@ -494,22 +498,158 @@ def schedule_after_cleanup_batch(db, operation_id):
         else:
             fail_candidate(db, scope_id, active_cand.info_hash, issue)
 
+    now = _now()
+
     # Pick next candidate in ranked pool
     next_cand = next_candidate(db, scope_id)
-    if next_cand is None:
+    if next_cand is not None:
+        new_op_id = db.execute(
+            "INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)",
+            (now, now)).lastrowid
+        activate_candidate(db, scope_id, next_cand.info_hash, operation_id=new_op_id)
+        from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+        _, receipt = enqueue_job_with_receipt(db, component='worker', kind='VERIFY_RELEASE',
+                                              payload={'anidb_id': anidb_id},
+                                              available_at_ms=0,
+                                              event_id=next_cand.source_event_id,
+                                              operation_id=new_op_id)
+        return (receipt,)
+
+    # If no candidate in pool, check if Prowlarr fallback is enabled (WI-05)
+    if not prowlarr_fallback:
         exhaust_scope(db, scope_id)
         return ()
 
-    now = _now()
+    # Check if a DISCOVER_BATCH_PROWLARR job is already PENDING/RUNNING for this scope
+    pending = db.execute(
+        "SELECT 1 FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR' "
+        "AND json_extract(payload_json, '$.scope_id')=? "
+        "AND state IN ('PENDING', 'RUNNING')",
+        (scope_id,)).fetchone()
+    if pending is not None:
+        return ()
+
+    # Check rate limit: avoid repeated searches within cooldown (5 minutes)
+    has_snapshots = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prowlarr_search_snapshots'").fetchone()
+    if has_snapshots:
+        last = db.execute(
+            "SELECT max(captured_at_ms) FROM prowlarr_search_snapshots "
+            "WHERE tvdb_series_id=? AND season=? AND search_mode='batch_fallback'",
+            (tvdb_series_id, season)).fetchone()
+        if last and last[0] and (now - last[0]) < 300_000:
+            exhaust_scope(db, scope_id)
+            return ()
+
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    _, receipt = enqueue_job_with_receipt(
+        db, component='worker', kind='DISCOVER_BATCH_PROWLARR',
+        payload={
+            'scope_id': scope_id,
+            'anidb_id': anidb_id,
+            'tvdb_series_id': tvdb_series_id,
+            'tvdb_season': season,
+        },
+        available_at_ms=0,
+        event_id=active_cand.source_event_id if active_cand else None)
+    return (receipt,)
+
+
+def execute_batch_prowlarr_fallback(db, scope_id, client, *, audio_check='japanese_english',
+                                    now_ms=None, save_snapshot_job_id=None, save_snapshot_attempt=0):
+    """Execute Prowlarr fallback search after candidate exhaustion (WI-05)."""
+    integer(scope_id, positive=True)
+    now = now_ms if now_ms is not None else _now()
+
+    scope = db.execute(
+        "SELECT scope_id, anidb_id, tvdb_series_id, tvdb_season, state, active_candidate_id "
+        "FROM batch_candidate_scopes WHERE scope_id=?",
+        (scope_id,)).fetchone()
+    if scope is None or scope[4] != 'ACTIVE':
+        return ()
+
+    scope_id, anidb_id, tvdb_series_id, season, state, active_cid = scope
+    if active_cid is not None:
+        return ()
+
+    # Get previously tried infohashes for this scope
+    tried_rows = db.execute(
+        "SELECT info_hash FROM batch_candidates WHERE scope_id=?", (scope_id,)).fetchall()
+    tried = {r[0].lower() for r in tried_rows}
+
+    # Get anime titles
+    row = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
+    main_title = row[0] if row else None
+    eng_title = None
+    rom_title = None
+    has_meta = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='anime_title_metadata'").fetchone()
+    if has_meta:
+        meta = db.execute(
+            "SELECT english_title, romaji_title FROM anime_title_metadata WHERE anidb_id=?",
+            (anidb_id,)).fetchone()
+        if meta:
+            eng_title, rom_title = meta
+    titles = tuple(t for t in (main_title, eng_title, rom_title) if t)
+    if not titles:
+        exhaust_scope(db, scope_id, now_ms=now)
+        return ()
+
+    if hasattr(client, 'set_context'):
+        client.set_context(search_mode='batch_fallback', anidb_id=anidb_id, tvdb_series_id=tvdb_series_id)
+
+    # Perform Prowlarr batch search
+    matching_releases = client.search_batch(titles, season, tried=tried)
+
+    # Save diagnostic snapshots if job_id provided
+    if save_snapshot_job_id is not None and hasattr(client, 'snapshots'):
+        from src.nextgen.storage.prowlarr_snapshots import save_snapshots
+        save_snapshots(db, save_snapshot_job_id, save_snapshot_attempt, client.snapshots, now_ms=now)
+
+    if not matching_releases:
+        exhaust_scope(db, scope_id, now_ms=now)
+        return ()
+
+    # Add new eligible candidates to pool
+    for rel in matching_releases:
+        raw = json.dumps({
+            'title': rel.title,
+            'release_name': rel.title,
+            'torrent_infohash': rel.info_hash,
+            'seeders': rel.seeders,
+            'size': rel.size,
+            'indexer': rel.indexer,
+            'magnet_url': rel.magnet_url,
+        }).encode('utf-8')
+        event_id = db.execute(
+            "INSERT INTO incoming_events(source, raw_body, received_at_ms, state) "
+            "VALUES('prowlarr', ?, ?, 'IDENTIFIED')",
+            (raw, now)).lastrowid
+        add_candidate(db, scope_id, rel.info_hash, rel.title,
+                      source_event_id=event_id, seeders=rel.seeders, size_bytes=rel.size,
+                      now_ms=now)
+
+    # Reorder pool
+    pool = get_candidate_pool(db, scope_id)
+    ranked = rank_candidates(pool, audio_check=audio_check)
+    reorder_candidates(db, scope_id, ranked, now_ms=now)
+
+    # Activate top candidate
+    top = next_candidate(db, scope_id)
+    if top is None:
+        exhaust_scope(db, scope_id, now_ms=now)
+        return ()
+
     new_op_id = db.execute(
         "INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)",
         (now, now)).lastrowid
-    activate_candidate(db, scope_id, next_cand.info_hash, operation_id=new_op_id)
+    activate_candidate(db, scope_id, top.info_hash, operation_id=new_op_id, now_ms=now)
     from src.nextgen.storage.sqlite import enqueue_job_with_receipt
-    _, receipt = enqueue_job_with_receipt(db, component='worker', kind='VERIFY_RELEASE',
-                                          payload={'anidb_id': anidb_id},
-                                          available_at_ms=0,
-                                          event_id=next_cand.source_event_id,
-                                          operation_id=new_op_id)
+    _, receipt = enqueue_job_with_receipt(
+        db, component='worker', kind='VERIFY_RELEASE',
+        payload={'anidb_id': anidb_id},
+        available_at_ms=0,
+        event_id=top.source_event_id,
+        operation_id=new_op_id)
     return (receipt,)
 

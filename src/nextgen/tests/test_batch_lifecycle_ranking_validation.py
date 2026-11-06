@@ -207,7 +207,7 @@ class BatchLifecycleAndFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         with self.connect() as db, transaction(db):
             auto_cleanup_failed_batch_candidate(db, claim)
-            receipts = schedule_after_cleanup_batch(db, op_id)
+            receipts = schedule_after_cleanup_batch(db, op_id, prowlarr_fallback=False)
             self.assertEqual(receipts, ())
 
             scope_after = get_or_create_scope(db, 16999, 393400, 1)
