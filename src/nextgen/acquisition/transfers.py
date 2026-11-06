@@ -6,7 +6,7 @@ import math
 import threading
 from src.nextgen.acquisition.submission import Intent, Observation, ClientInvalid
 
-STOPPED=frozenset(('pausedDL','pausedUP','stoppedDL','stoppedUP'))
+from src.nextgen.acquisition.metadata_service import STOPPED  # The one definition of qBittorrent's stopped states.
 CHECKING=frozenset(('checkingDL','checkingUP','checkingResumeData','allocating','moving'))
 ACTIVE=frozenset(('downloading','stalledDL','forcedDL','queuedDL','uploading','stalledUP','forcedUP','queuedUP'))
 

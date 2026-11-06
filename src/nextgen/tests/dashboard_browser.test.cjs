@@ -157,6 +157,29 @@ test('release text is rendered as text and Keep never submits while execution is
   h.ctx.fetch = async () => { throw new Error('Keep must not send a request'); };
   await h.run("submitAction(fixture,'keep')");
 });
+test('status bar names each service and Keep is disabled with the Sonarr reason', async () => {
+  const h = await harness();
+  const services = [
+    {service: 'qbittorrent', label: 'qBittorrent', status: 'UP', message: 'qBittorrent is available.', checked_at_ms: 1, stale: false},
+    {service: 'sonarr', label: 'Sonarr', status: 'DOWN', message: 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989', checked_at_ms: 1, stale: false},
+    {service: 'prowlarr', label: 'Prowlarr', status: 'DISABLED', message: 'Prowlarr is turned off (optional).', checked_at_ms: 1, stale: false},
+  ];
+  h.ctx.fetch = async url => { assert.equal(url, '/api/v1/services'); return response({services}); };
+  await h.run('loadServices()');
+  const bar = h.elements.get('service-bar');
+  assert.equal(bar.hidden, false);
+  const text = element => [element.textContent || '', ...element.children.map(text)].join('');
+  assert.deepEqual(bar.children.map(text), ['qBittorrent Available', 'Sonarr Unavailable', 'Prowlarr Off']);
+  assert.ok(bar.children[1].title.startsWith('Sonarr is unavailable: HTTP 503 at http://sonarr:8989'));
+  assert.equal(h.run('keepBlockedMessage()'), 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989');
+  services[1] = {...services[1], stale: true};
+  await h.run('loadServices()');
+  assert.equal(h.run('keepBlockedMessage()'), null);        // A stopped worker's old status never blocks.
+  assert.equal(text(bar.children[1]), 'Sonarr Not checked recently');
+  h.run('clearPrivate()');
+  assert.equal(bar.hidden, true);
+  assert.equal(bar.children.length, 0);
+});
 test('session expiry clears private rows and in-memory session state', async () => {
   const h = await harness(); h.ctx.fixture = target();
   h.run("state.page='jobs'; state.jobs=[fixture]; renderJobs();");
@@ -634,4 +657,68 @@ test('manual candidate form submits the selected episode without a second modal'
   assert.equal(action.url,'/api/v1/intake/series/123/episodes/1/5/submit');
   assert.equal(JSON.parse(action.options.body).release_name,'Example Anime S01E05');
   assert.match(h.elements.get('notice').textContent,/Job #1600/);
+});
+
+async function manualForm(submitReply) {
+  const h = await harness();
+  const calls = [];
+  h.ctx.fetch = async (url,options={}) => {
+    calls.push({url,options});
+    if (url === '/api/v1/intake/series/123') return response({
+      anidb_id:123,title:'Example Anime',english_title:null,episodes:[],
+      missing:[{anidb_episode:1,season:1,episode:1,status:'WAITING_FOR_DUB',reservation_count:6}],
+      keep_operations:[],reject_operations:[],rejection:null});
+    if (url.endsWith('/submit')) return submitReply();
+    return response({items:[],next_before_id:null});
+  };
+  await h.run('openSeries(123)');
+  const open = () => h.elements.get('series-missing').children[0].children[2].children[1].listeners.click();
+  const fill = async (title, magnet) => {
+    open();  // A successful submit closes the form.
+    h.ctx.document.getElementById('series-manual-title').value = title;
+    h.ctx.document.getElementById('series-manual-source').value = 'magnet';
+    h.ctx.document.getElementById('series-manual-magnet').value = magnet;
+    await h.elements.get('series-manual-form').listeners.submit({preventDefault() {}});
+  };
+  const submits = () => calls.filter(x => x.url.endsWith('/submit')).length;
+  return {h, open, fill, submits, error: () => h.elements.get('series-manual-error').textContent};
+}
+
+test('manual form refuses a release for another episode before sending it', async () => {
+  // As seen in production: an S01E05 release submitted from the S01E01 row.
+  const f = await manualForm(() => response({message:'unexpected',job_id:1},202));
+  await f.fill('Reborn as a Space Mercenary S01E05 The Singing Crystal 1080p CR WEB-DL MULTi (Multi-Audio, Multi-Subs)',
+    'magnet:?xt=urn:btih:58460e26711f2b215e3d6e1a97fece18e953c41e&dn=x');
+  assert.equal(f.submits(), 0);
+  assert.equal(f.error(), 'This release is S01E05, but this is S01E01. Only a release for S01E01 can be submitted here.');
+  assert.equal(f.h.elements.get('series-manual-panel').hidden, false);
+  // The same title with the right episode, a repeated marker or none at all is left to the server.
+  await f.fill('Example Anime S1E1v2 1080p', 'magnet:?xt=urn:btih:' + 'A'.repeat(40));
+  await f.fill('Example Anime S01E01 [S01E01] 1080p', 'magnet:?xt=urn:btih:' + 'a'.repeat(40));
+  await f.fill('[Group] Example Anime - 01 [1080p]', 'magnet:?xt=urn:btih:' + 'a'.repeat(40));
+  assert.equal(f.submits(), 3);
+});
+
+test('manual form refuses a missing or malformed magnet before sending it', async () => {
+  const f = await manualForm(() => response({message:'unexpected',job_id:1},202));
+  for (const [magnet, text] of [
+      ['', /Paste the magnet link/],
+      ['https://example.invalid/x.torrent', /not valid/],
+      ['magnet:?dn=Example', /not valid/],
+      ['magnet:?xt=urn:btih:' + 'a'.repeat(39), /not valid/],
+      ['magnet:?xt=urn:btih:' + 'a'.repeat(40) + '&xt=urn:btih:' + 'b'.repeat(40), /not valid/]]) {
+    await f.fill('Example Anime S01E01', magnet);
+    assert.match(f.error(), text, magnet);
+  }
+  assert.equal(f.submits(), 0);
+});
+
+test('manual form shows the server refusal inside the dialog', async () => {
+  const f = await manualForm(() => response('This release is for a different episode than the one selected.', 400));
+  await f.fill('Example Anime S01E01', 'magnet:?xt=urn:btih:' + 'a'.repeat(40));
+  assert.equal(f.submits(), 1);
+  assert.equal(f.error(), 'This release is for a different episode than the one selected.');
+  // Opening the form again starts without the old error.
+  f.open();
+  assert.equal(f.error(), '');
 });

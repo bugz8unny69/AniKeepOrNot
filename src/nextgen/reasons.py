@@ -71,8 +71,8 @@ _ENTRIES = (
            'This qBittorrent version cannot export the batch torrent metadata.', 'The older-client batch path needs an owned, stopped magnet admission and verified inventory; do not submit or adopt an unrelated torrent.', 'WARNING', False),
     Reason('TORRENT_METADATA_UNAVAILABLE', 'A qBittorrent metadata-only request failed or timed out.',
            'qBittorrent metadata retrieval is temporarily unavailable.', 'Check the qBittorrent connection if retries continue failing.', 'WARNING', True),
-    Reason('TORRENT_METADATA_WAITING', 'The qBittorrent metadata-only response is not ready yet.',
-           'Waiting for torrent metadata.', 'The worker will retry the hash-bound metadata request without adding a torrent.', 'INFO', None),
+    Reason('TORRENT_METADATA_WAITING', 'qBittorrent has not yet supplied an acceptable torrent file inventory.',
+           'Waiting for torrent metadata.', 'The worker will retry metadata discovery for the same hash. Older qBittorrent uses the existing journal-owned magnet; newer versions can fetch metadata without adding a torrent.', 'INFO', None),
     Reason('TORRENT_METADATA_TIMEOUT', 'An admitted magnet did not provide metadata within ten minutes.',
            'The torrent metadata timed out.', 'The worker will safely retire this candidate before trying the next release.', 'WARNING', False),
     Reason('TORRENT_METADATA_DENIED', 'qBittorrent rejected the metadata-only request.',
@@ -92,6 +92,9 @@ _ENTRIES = (
     Reason('API_AUTH_UNCONFIGURED', 'Required route-specific access credentials are not configured.', 'API access has not been configured.', 'Initialize the separate management and webhook access keys locally.', 'WARNING', False),
     Reason('API_CSRF_REQUIRED', 'A browser mutation lacks the session-bound anti-forgery token.', 'This browser request could not be verified.', 'Refresh your session and try again.', 'WARNING', False),
     Reason('API_ORIGIN_INVALID', 'Request origin or host differs from the configured application origin.', 'This request came from an unexpected address.', 'Use the configured dashboard address.', 'WARNING', False),
+    Reason('MANUAL_RELEASE_EPISODE_MISMATCH', 'A manually submitted release title or torrent file names a different episode than the one it was submitted for.', 'This release is for a different episode than the one selected.', 'Check the episode in the release title, or submit it from that episode.', 'WARNING', False),
+    Reason('MANUAL_RELEASE_TITLE_UNREADABLE', 'No episode could be read from a manually submitted release title.', 'The release title does not say which episode it is.', 'Use the full release name, including its season and episode (for example S01E05).', 'WARNING', False),
+    Reason('MANUAL_RELEASE_SOURCE_INVALID', 'A manually submitted magnet link or torrent file failed validation.', 'The magnet link or torrent file is not valid.', 'Paste a magnet link that contains its info hash, or choose a valid .torrent file.', 'WARNING', False),
     Reason('API_REQUEST_INVALID', 'Request framing, JSON structure, fields or pagination failed validation.', 'The API request is invalid.', 'Review the required request fields.', 'WARNING', False),
     Reason('API_WEBHOOK_INVALID', 'Release name or supported v1 hash is missing, ambiguous or invalid.', 'The incoming release details are incomplete or invalid.', 'Send a release name and matching 40-character torrent hash.', 'WARNING', False),
     Reason('API_BODY_TOO_LARGE', 'The request exceeds the bounded body size.', 'The request is too large.', 'Send a smaller request.', 'WARNING', False),
@@ -193,6 +196,10 @@ _ENTRIES = (
            "More than one AniDB episode matches this season and episode number.", "Check the Anime-Lists episode mapping. This job has stopped because it cannot choose one episode safely.", "WARNING", False),
     Reason("RELEASE_TVDB_EPISODE_MISSING", "TVDB does not list the mapped season and episode.",
            "TVDB does not list the season and episode supplied by the mapping.", "Compare the Anime-Lists mapping with the TVDB episode list. Retry verification after the missing entry or incorrect mapping is fixed.", "WARNING", False),
+    Reason("SONARR_SELECTION_CONFLICT", "An episode's candidate releases or selection state are inconsistent.",
+           "The release choice for this episode needs review.", "Review the episode's candidate releases.", "WARNING", False),
+    Reason("BATCH_SELECTION_CONFLICT", "A season's candidate releases or selection state are inconsistent.",
+           "The release choice for this season needs review.", "Review the season's candidate releases.", "WARNING", False),
     Reason("RELEASE_CONFLICT", "Release mapping, episode ownership or persisted source evidence conflicts.",
            "Release episode information conflicts.", "Review the episode identifiers and mapping evidence.", "WARNING", False),
     Reason("PROVIDER_UNAVAILABLE", "A provider request could not complete due to availability.",
@@ -214,6 +221,14 @@ _ENTRIES = (
            "ERROR", None),
     Reason("JOB_RETRY_EXHAUSTED", "A job reached its allowed attempt limit.",
            "Automatic retries have stopped.", "Review the job before retrying manually.",
+           "ERROR", False),
+    Reason("SERVICE_UNAVAILABLE", "A service this job needs could not be reached. The job waits and tries again by itself; it does not use up its retries.",
+           "Waiting for a service that is unavailable.",
+           "Check the service named in the details. Waiting jobs continue on their own once it is back; after 72 hours of failed attempts the job stops for review.",
+           "WARNING", True),
+    Reason("SERVICE_SETUP_INVALID", "A required service (qBittorrent, AniDB or TVDB) is not set up, rejected the login, client name or API key, or is an unsupported version. The worker did not start; waiting would not fix this.",
+           "A required service is not set up correctly.",
+           "Fix the service named in the details in Settings, or run adm services check, then start the worker again.",
            "ERROR", False),
     Reason("STORAGE_UNAVAILABLE", "Storage access failed; the cause and commit outcome require investigation.",
            "Processing is temporarily unavailable.", "Check database health and storage.",
@@ -312,7 +327,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  failed_check=None, failed_path=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
-                 blocking_job_id=None, operation_id=None) -> dict:
+                 blocking_job_id=None, operation_id=None,
+                 service=None, service_detail=None, waiting_since_ms=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -330,7 +346,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
     for key, value in (("retry_at_ms", retry_at_ms), ("attempt", attempt),
                        ("max_attempts", max_attempts), ("video_mb", video_mb),
                        ("limit_mb", limit_mb), ("plan_used_mb", plan_used_mb),
-                       ("blocking_job_id", blocking_job_id), ("operation_id", operation_id)):
+                       ("blocking_job_id", blocking_job_id), ("operation_id", operation_id),
+                       ("waiting_since_ms", waiting_since_ms)):
         if value is not None:
             if type(value) is not int or not 0 <= value <= _MAX_INTEGER:
                 raise ValueError("invalid diagnostic integer")
@@ -365,6 +382,17 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
         if type(missing_audio) is not str or len(missing_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in missing_audio):
             raise ValueError("invalid missing audio tags")
         details["missing_audio"] = missing_audio
+    # The external service involved, by registry name, and a readable status
+    # line such as "Prowlarr is unavailable: HTTP 503 at http://...".
+    if service is not None:
+        if type(service) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", service):
+            raise ValueError("invalid service name")
+        details["service"] = service
+    if service_detail is not None:
+        if (type(service_detail) is not str or not service_detail or len(service_detail) > 300
+                or any(ord(c) < 32 or ord(c) == 127 for c in service_detail)):
+            raise ValueError("invalid service detail")
+        details["service_detail"] = service_detail
     if cause_reason_code is not None:
         cause = get_reason(cause_reason_code)
         if cause is None:

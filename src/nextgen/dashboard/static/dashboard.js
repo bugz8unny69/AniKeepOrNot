@@ -51,7 +51,14 @@ const state = {
   search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams((location.hash || '').slice(1)).get('job') || '')
     ? '#' + new URLSearchParams((location.hash || '').slice(1)).get('job') : '',
   recognizedSearch: '', searchTimer: null,
+  services: null, servicesAt: 0,
 };
+// Status bar: what each service state looks like and says.
+const SERVICE_STATES = Object.freeze({
+  UP: ['Available', 'ok'], DOWN: ['Unavailable', 'bad'], NOT_CONFIGURED: ['Not set up', 'bad'],
+  AUTH_FAILED: ['Login rejected', 'bad'], UNSUPPORTED: ['Unsupported version', 'bad'],
+  DISABLED: ['Off', 'off'], UNKNOWN: ['Unknown', 'unknown'],
+});
 function notice(message = '', error = false) {
   $('notice').textContent = message;
   $('notice').classList.toggle('error', error);
@@ -68,6 +75,7 @@ function clearPrivate(message = '') {
   state.settingsVersion += 1;
   state.historyJob = null; state.historyVersion += 1;
   state.matchingJob = null; state.matchingVersion += 1;
+  state.services = null; state.servicesAt = 0; renderServices();
   $('job-rows').replaceChildren(); $('settings-fields').replaceChildren();
   $('history-rows').replaceChildren();
   $('matching-body').replaceChildren(); $('matching-summary').textContent = '';
@@ -158,6 +166,35 @@ async function submitAction(job, action) {
 function tvdbLabel(episode) {
   return 'S' + String(episode.season).padStart(2, '0') +
     'E' + String(episode.episode).padStart(2, '0');
+}
+// Read SxxEyy as the server does (acquisition/release_titles.EXPLICIT). Only one
+// unambiguous episode counts; anything else is left to the server to decide.
+const RELEASE_EPISODE = /(?<![A-Za-z0-9])S(\d{1,2})\s?E(\d{1,4})(?:v\d{1,2})?(?![0-9A-Za-z])/gi;
+function releaseEpisode(title) {
+  const found = new Set([...title.matchAll(RELEASE_EPISODE)].map(m => Number(m[1]) + ':' + Number(m[2])));
+  if (found.size !== 1) return null;
+  const [season, episode] = [...found][0].split(':').map(Number);
+  return {season, episode};
+}
+// The server accepts exactly one xt=urn:btih: with a 40-character hex info hash.
+function validMagnet(uri) {
+  if (!uri.startsWith('magnet:?') || uri.length > 8192) return false;
+  const xt = new URLSearchParams(uri.slice('magnet:?'.length)).getAll('xt');
+  return xt.length === 1 && /^urn:btih:[0-9a-f]{40}$/i.test(xt[0]);
+}
+// What the dashboard can tell before sending; the server checks everything again.
+function manualSubmissionProblem(target, title, magnet) {
+  if (!title) return 'Enter the release name.';
+  const declared = releaseEpisode(title);
+  if (declared && (declared.season !== target.season || declared.episode !== target.episode)) {
+    return 'This release is ' + tvdbLabel(declared) + ', but this is ' + tvdbLabel(target) +
+      '. Only a release for ' + tvdbLabel(target) + ' can be submitted here.';
+  }
+  if (magnet === '') return 'Paste the magnet link.';
+  if (magnet !== null && !validMagnet(magnet)) {
+    return 'This magnet link is not valid. It must start with magnet:? and contain its info hash (xt=urn:btih:…).';
+  }
+  return null;
 }
 // Missing episodes are AniDB-numbered; the verified TVDB placement is a label when known.
 function missingLabel(item) {
@@ -377,6 +414,7 @@ function openManualSubmission(anidbId, episode) {
   state.manualTarget = {anidbId, season: episode.season, episode: episode.episode};
   $('series-manual-episode').textContent = tvdbLabel(episode);
   $('series-manual-form').reset();
+  $('series-manual-error').textContent = '';
   $('series-manual-source').value = 'magnet';
   $('series-manual-magnet-label').hidden = false;
   $('series-manual-torrent-label').hidden = true;
@@ -574,9 +612,13 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       } catch (error) { displayError(error); }
       finally { state.seriesBusy = false; reject.disabled = false; }
     };
-    const keep = $('series-keep');
-    keep.disabled = !!series.rejection || series.keep_operations.length === 0;
-    keep.hidden = !!series.rejection;
+    const keep = $('series-keep'), keepTip = $('series-keep-tooltip');
+    const keepBlocked = series.keep_operations.length ? keepBlockedMessage() : null;
+    keep.disabled = !!series.rejection || series.keep_operations.length === 0 || !!keepBlocked;
+    keepTip.hidden = !!series.rejection;
+    keepTip.title = keep.title = keepBlocked || '';
+    keepTip.tabIndex = keepBlocked ? 0 : -1;
+    keepTip.dataset.disabled = keepBlocked ? 'true' : 'false';
     keep.textContent = 'Keep all staged (' + series.keep_operations.length + ' acquisition' +
       (series.keep_operations.length === 1 ? '' : 's') + ')';
     keep.onclick = async () => {
@@ -588,7 +630,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         notice(result.message + (result.failed.length ?
           ' ' + result.failed.length + ' acquisition(s) require another attempt.' : ''));
         dialog.close(); await loadActivity();
-      } catch (error) { displayError(error); }
+      } catch (error) { displayError(error); if (error.status) void loadServices(); }
       finally { state.seriesBusy = false; }
     };
     if (!dialog.open) dialog.showModal();
@@ -639,7 +681,34 @@ async function loadActivity() {
   })();
   try { await state.loading; } finally { state.loading = null; }
 }
+function renderServices() {
+  const bar = $('service-bar'); bar.replaceChildren();
+  bar.hidden = !state.services;
+  for (const item of state.services || []) {
+    const [label, tone] = item.stale ? ['Not checked recently', 'unknown'] :
+      SERVICE_STATES[item.status] || SERVICE_STATES.UNKNOWN;
+    const chip = node('span', null, 'service ' + tone);
+    chip.appendChild(node('strong', item.label)); chip.appendChild(node('span', ' ' + label));
+    chip.title = item.message + (item.stale ? ' The worker has not updated this recently.' : '') +
+      (item.checked_at_ms ? ' Checked ' + date(item.checked_at_ms) + '.' : '');
+    chip.tabIndex = 0; chip.setAttribute('aria-label', item.label + ': ' + chip.title);
+    bar.appendChild(chip);
+  }
+}
+async function loadServices() {
+  state.servicesAt = Date.now();
+  try { state.services = (await request(API + '/services')).services; }
+  catch (error) { if (error.name === 'AbortError') return; state.services = null; }
+  renderServices();
+}
+// Keep needs Sonarr: the reason it cannot run now, or null. The server
+// refuses the same request with the same message.
+function keepBlockedMessage() {
+  const sonarr = state.services?.find(item => item.service === 'sonarr');
+  return !sonarr || sonarr.stale || ['UP', 'UNKNOWN'].includes(sonarr.status) ? null : sonarr.message;
+}
 async function tick() {
+  if (state.csrf && !document.hidden && Date.now() - state.servicesAt >= 30000) await loadServices();
   if (state.csrf && state.page !== 'settings' && !document.hidden) await loadActivity();
   if (state.csrf) state.timer = setTimeout(tick, 5000);
 }
@@ -1257,6 +1326,7 @@ function queueSearch() {
 }
 async function showWorkspace() {
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
+  await loadServices();
   $('activity-panel').hidden = state.page === 'settings' || state.page === 'recognized';
   $('settings-panel').hidden = state.page !== 'settings';
   $('recognized-panel').hidden = state.page !== 'recognized';
@@ -1392,6 +1462,7 @@ $('series-manual-source').addEventListener('change', () => {
 });
 $('series-manual-dismiss').addEventListener('click', () => {
   $('series-manual-panel').hidden = true;
+  $('series-manual-error').textContent = '';
   state.manualTarget = null;
 });
 $('series-manual-form').addEventListener('submit', async event => {
@@ -1400,9 +1471,16 @@ $('series-manual-form').addEventListener('submit', async event => {
   if (!target || state.seriesBusy) return;
   state.seriesBusy = true;
   const submit = $('series-manual-submit'); submit.disabled = true;
+  // The form is inside the series dialog, so its errors are shown there too;
+  // the page notice is behind the dialog.
+  const problemText = $('series-manual-error'); problemText.textContent = '';
   try {
     const body = {release_name: $('series-manual-title').value.trim()};
-    if ($('series-manual-source').value === 'magnet') {
+    const magnet = $('series-manual-source').value === 'magnet';
+    const problem = manualSubmissionProblem(
+      target, body.release_name, magnet ? $('series-manual-magnet').value.trim() : null);
+    if (problem) throw new Error(problem);
+    if (magnet) {
       body.magnet_uri = $('series-manual-magnet').value.trim();
     } else {
       const file = $('series-manual-file').files?.[0];
@@ -1425,7 +1503,10 @@ $('series-manual-form').addEventListener('submit', async event => {
     state.manualTarget = null;
     $('series-dialog').close();
     await loadActivity();
-  } catch (error) { displayError(error); }
+  } catch (error) {
+    if (error.name !== 'AbortError') problemText.textContent = error.message || COPY['dashboard.request_failed'];
+    displayError(error);
+  }
   finally { state.seriesBusy = false; submit.disabled = false; }
 });
 $('series-close').addEventListener('click', () => $('series-dialog').close());

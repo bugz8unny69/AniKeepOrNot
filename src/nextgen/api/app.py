@@ -29,7 +29,8 @@ from src.nextgen.search import SearchInvalid, match as search_match, words as se
 from src.nextgen.secrets import SecretStore
 from src.nextgen.storage.job_queue import JobQueue, QueueUnavailable
 from src.nextgen.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
-from src.nextgen.storage.management_actions import ManagementActions, ActionUnavailable, ActionNotFound
+from src.nextgen.storage.management_actions import (ManagementActions, ActionUnavailable, ActionNotFound,
+    KeepServiceUnavailable, keep_blocker)
 from src.nextgen.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
     SERIES_STATUSES, keep_targets as series_keep_targets, retry_episode as retry_missing_episode, reject_series as reject_intake_series, IntakeUnavailable)
 from src.nextgen.storage.migrations import LATEST_VERSION
@@ -133,6 +134,10 @@ def failed_detail(details):
     cause=details.get('cause_reason_code')
     blocker=details.get('blocking_job_id')
     op=details.get('operation_id')
+    service=details.get('service_detail')
+    if type(service) is str:
+        # A service outage: say which service and what is wrong.
+        return service + (f' (cause: {cause})' if type(cause) is str else '')
     if blocker is not None:
         msg = f'Waiting for reservation owned by Job #{blocker}' + (f' (operation #{op})' if op is not None else '')
         return msg
@@ -146,6 +151,26 @@ def failed_detail(details):
     if type(path) is str:
         res += f' · file: {path}'
     return res
+
+
+def service_statuses(database, *, now_ms=None):
+    """Every service's last known status as written by the worker (status bar)."""
+    import time
+    from src.nextgen.services import default_registry
+    from src.nextgen.services.status_store import load
+    now=time.time_ns()//1000000 if now_ms is None else now_ms
+    stored=load(database)
+    items=[]
+    for adapter in default_registry():
+        row=stored.get(adapter.name)
+        items.append({'service':adapter.name,'label':adapter.label,'required':adapter.required,
+            'optional':adapter.optional,
+            'status':row.status if row else 'UNKNOWN',
+            'message':row.message() if row else f'The {adapter.label} status is unknown: the worker has not checked it yet.',
+            'checked_at_ms':row.checked_at_ms if row else None,
+            'since_ms':row.since_ms if row else None,
+            'stale':row.stale(now) if row else False})
+    return {'services':items}
 
 
 class Application:
@@ -269,7 +294,9 @@ class Application:
         except asyncio.TimeoutError:
             status=408;result={'api_version':'v1','request_id':request_id,'error':CATALOG.reason('API_REQUEST_INVALID')}
         except ApiError as exc:
-            status=exc.status;result={'api_version':'v1','request_id':request_id,'error':CATALOG.reason(exc.reason_code)}
+            error=CATALOG.reason(exc.reason_code)
+            if exc.detail:error={**error,'message':exc.detail}
+            status=exc.status;result={'api_version':'v1','request_id':request_id,'error':error}
             event(self.logger,logging.WARNING,'API_REQUEST_REJECTED',component='api',reason_code=exc.reason_code)
         except (UnicodeError,ValueError):
             status=400;result={'api_version':'v1','request_id':request_id,'error':CATALOG.reason('API_REQUEST_INVALID')}
@@ -290,6 +317,8 @@ class Application:
         try:return self._route(method,path,headers,query,body,peer)
         except ApiError:raise
         except ActionNotFound as exc:raise ApiError(404,exc.reason_code) from None
+        except KeepServiceUnavailable as exc:
+            raise ApiError(503 if exc.reason_code=='SERVICE_UNAVAILABLE' else 409,exc.reason_code,detail=exc.detail) from None
         except ActionUnavailable as exc:raise ApiError(409,exc.reason_code) from None
         except IntakeUnavailable as exc:raise ApiError(409,exc.reason_code) from None
         except (RetryNotAllowed,RetryStale) as exc:raise ApiError(409,exc.reason_code) from None
@@ -360,6 +389,10 @@ class Application:
         # Authentication and CSRF above apply equally to all explicit actions.
         # HTTP performs local admission only; network/filesystem cleanup is queued.
         with MaintenanceGate(configuration.value('storage.database_path')).operation():
+            if path==PREFIX+'/services':
+                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                return 200,service_statuses(configuration.value('storage.database_path')),[]
             if path==PREFIX+'/jobs/bulk':
                 if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -606,6 +639,10 @@ class Application:
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
                         targets=series_keep_targets(db,aid,body['operation_ids'])
+                        blocked=keep_blocker(db)
+                    # Refuse the whole request with the reason; never report
+                    # every acquisition as "failed" because Sonarr is down.
+                    if blocked is not None:raise KeepServiceUnavailable(blocked)
                     actions=ManagementActions(configuration.value('storage.database_path'))
                     submitted=[];failed=[]
                     # Each existing Keep is durable; report partial submissions.
@@ -643,8 +680,8 @@ class Application:
                         release_name=body['release_name'],
                         magnet_uri=body.get('magnet_uri'),
                         torrent_b64=body.get('torrent_b64'))
-                except ManualSubmissionInvalid:
-                    raise ApiError(400,'API_REQUEST_INVALID') from None
+                except ManualSubmissionInvalid as exc:
+                    raise ApiError(400,exc.reason_code) from None
                 except ManualSubmissionUnavailable:
                     raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
                 return (200 if result['reused'] else 202),{
@@ -666,6 +703,26 @@ class Application:
             if path==PREFIX+'/intake':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]
+            # Series-scoped batch controller diagnostics & views (WI-09)
+            batch_scope_match = re.fullmatch(PREFIX + r'/intake/series/([1-9][0-9]{0,18})/batch/([1-9][0-9]{0,3})', path)
+            if batch_scope_match:
+                if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
+                if query: raise ApiError(400, 'API_REQUEST_INVALID')
+                aid, season = map(int, batch_scope_match.groups())
+                from src.nextgen.storage.batch_candidates import get_batch_scope_operation_view
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    db.execute('BEGIN')
+                    view = get_batch_scope_operation_view(db, aid, season)
+                if view is None: raise ApiError(404, 'API_ROUTE_NOT_FOUND')
+                return 200, view, []
+            if path == PREFIX + '/batch/scopes':
+                if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
+                if set(query) - {'limit'}: raise ApiError(400, 'API_REQUEST_INVALID')
+                limit = page_number(query, 'limit', 50, 1, 100)
+                from src.nextgen.storage.batch_candidates import list_batch_scopes
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    db.execute('BEGIN')
+                    return 200, {'scopes': list_batch_scopes(db, limit=limit)}, []
             if path==PREFIX+'/health' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 with JobQueue(configuration.value('storage.database_path')).connection():pass
@@ -711,7 +768,7 @@ class Application:
                             'reason':None if result.reason_code is None else CATALOG.reason(result.reason_code)},[]
             if method=='GET' and (path==PREFIX+'/jobs' or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/history',path)):
                 return 200,self._jobs(configuration,path,query),[]
-        if path in (PREFIX+'/',PREFIX+'/health',PREFIX+'/credentials',PREFIX+'/jobs') or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/(history|matching)',path):raise ApiError(405,'API_METHOD_INVALID')
+        if path in (PREFIX+'/',PREFIX+'/health',PREFIX+'/credentials',PREFIX+'/jobs',PREFIX+'/batch/scopes') or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/(history|matching)',path):raise ApiError(405,'API_METHOD_INVALID')
         raise ApiError(404,'API_ROUTE_NOT_FOUND')
 
     def _cookie(self,token,*,clear=False,secure=False):

@@ -5,6 +5,7 @@ import re
 import threading
 
 from src.nextgen.acquisition.metadata import Manifest, ObservedInventory, TorrentFile, infohash
+from src.nextgen.acquisition.metadata_service import STOPPED
 from src.nextgen.acquisition.settings import DownloadOptions
 from src.nextgen.history import integer
 
@@ -137,6 +138,6 @@ def classify(intent,observation):
         return 'REVIEW','TORRENT_PROVENANCE_CONFLICT'
     if observation.state in ('checkingDL','checkingUP','checkingResumeData','allocating') or not observation.files:
         return 'UNCERTAIN','TORRENT_SUBMISSION_UNCERTAIN'
-    if observation.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP') or observation.files!=plan.manifest.files:
+    if observation.state not in STOPPED or observation.files!=plan.manifest.files:
         return 'REVIEW','TORRENT_PROVENANCE_CONFLICT'
     return 'OWNED_STOPPED','TORRENT_STOPPED_CONFIRMED'

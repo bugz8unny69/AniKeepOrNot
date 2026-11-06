@@ -245,3 +245,26 @@ to persist all evaluated AniDB candidates for an IDENTIFY_ANIME job attempt,
 capturing similarity scores, rankings, eligibility, and explainable selection
 evidence. Existing data is preserved; fresh SCHEMA and migration runner match v59.
 
+
+
+## v60 → v61: batch candidate stops
+
+061_batch_candidate_stops.sql adds `batch_candidate_stops`: why the active
+batch candidate of an operation stopped, recorded where it is decided. A user
+Cancel records `CANCELED`; a job that failed a definitive check records
+`FAILED` with its own reason code; the first decision wins. When the
+operation's cleanup completes, the controller applies it to the candidate and
+moves on to the next one. A new table rather than a column, because
+`ALTER TABLE ... ADD COLUMN` on `batch_candidates` (which ends in a table
+constraint) cannot match the fresh schema. Existing data is unchanged; fresh
+SCHEMA and the migration runner match v61.
+
+## v61 → v62: service status
+
+062_service_status.sql adds the `service_status` table: one row per external
+service (qBittorrent, Prowlarr, Sonarr, Jellyfin, Shoko, AniDB, Anime-Lists,
+TVDB) with its last known status, a readable detail and when it was checked.
+The worker writes it; the API reads it for the dashboard status bar and to
+refuse a Keep while Sonarr is unavailable. Existing data is unchanged; fresh
+SCHEMA and the migration runner match v62. See
+[services/README.md](../services/README.md).

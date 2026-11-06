@@ -22,6 +22,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/anime-discovery/.venv/bin/python -m src.nextgen worker --config-dir /etc/anime-discovery
 Restart=on-failure
 RestartSec=10
+# Exit 78: a required service (qBittorrent, AniDB, TVDB) is not set up or
+# rejected its login. Restarting cannot fix that; fix Settings, then start it.
+RestartPreventExitStatus=78
 KillMode=mixed
 TimeoutStopSec=infinity
 UMask=0077

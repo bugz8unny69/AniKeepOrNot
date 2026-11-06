@@ -13,6 +13,9 @@ import uuid
 
 from src.nextgen.acquisition.contracts import AcquisitionInput
 from src.nextgen.acquisition.metadata import AcquisitionConflict, infohash
+from src.nextgen.acquisition.metadata_service import (
+    is_metadata_expired, verify_torrent_ownership, METADATA_TIMEOUT_MS,
+)
 from src.nextgen.acquisition.settings import DownloadOptions
 from src.nextgen.acquisition.submission import Observation, SendPermit
 from src.nextgen.history import append_job_history
@@ -20,7 +23,7 @@ from src.nextgen.storage.acquisition import _source
 from src.nextgen.storage.job_queue import JobQueue, Claim
 from src.nextgen.storage.sqlite import transaction
 
-STOPPED=frozenset(('pausedDL','pausedUP','stoppedDL','stoppedUP'))
+from src.nextgen.acquisition.metadata_service import STOPPED  # The one definition of qBittorrent's stopped states.
 
 
 @dataclass(frozen=True)
@@ -167,7 +170,7 @@ class MagnetJournal:
                 raise AcquisitionConflict()
             return prior
 
-    def metadata_expired(self,claim,intent,*,timeout_ms=600000):
+    def metadata_expired(self,claim,intent,*,timeout_ms=METADATA_TIMEOUT_MS):
         """Ten-minute acquisition limit; no repeat magnet send is permitted."""
         if type(timeout_ms) is not int or timeout_ms<60000:raise AcquisitionConflict()
         with self.queue.connection() as db,transaction(db):
@@ -177,7 +180,7 @@ class MagnetJournal:
             row=db.execute('SELECT created_at_ms FROM sonarr_magnet_intents '
                            'WHERE event_id=?',(intent.event_id,)).fetchone()
             if row is None:raise AcquisitionConflict()
-            return now-row[0]>=timeout_ms
+            return is_metadata_expired(row[0],now,timeout_ms=timeout_ms)
 
     def authorize(self,claim,source,options,api_major,present):
         """Commit irreversible uncertainty before issuing a send permit.
@@ -293,12 +296,9 @@ class MagnetJournal:
             if observation is not None:
                 if type(observation) is not Observation:raise AcquisitionConflict()
                 if (observation.info_hash!=intent.info_hash
-                        or observation.save_path.rstrip('/')!=intent.options.download_root
-                        or observation.category!=intent.options.category
-                        or observation.auto_tmm is not False
-                        or 'ad-'+intent.marker not in observation.tags
-                        or any(t.startswith('ad-') and t!='ad-'+intent.marker
-                               for t in observation.tags)):
+                        or not verify_torrent_ownership(observation,intent.marker,
+                                                        intent.options.download_root,
+                                                        intent.options.category)):
                     state='REVIEW'
                 elif observation.files and observation.state in STOPPED:
                     state='OWNED_STOPPED'

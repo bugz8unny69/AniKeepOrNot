@@ -16,6 +16,7 @@ from src.nextgen.jobs.verify_batch_probe_job import KIND as BATCH_PROBE_KIND, re
 from src.nextgen.jobs.unlock_batch_job import KIND as BATCH_UNLOCK_KIND, registration as batch_unlock_registration
 from src.nextgen.jobs.verify_batch_episode_job import KIND as BATCH_EPISODE_KIND, registration as batch_episode_registration
 from src.nextgen.jobs.stage_batch_episode_job import KIND as BATCH_STAGE_KIND, registration as batch_stage_registration
+from src.nextgen.jobs.discover_batch_prowlarr_job import registration as batch_prowlarr_registration
 from src.nextgen.jobs.reserve_episode_job import KIND as RESERVE_KIND, registration as reserve_registration
 from src.nextgen.jobs.prepare_acquisition_job import KIND as PREPARE_KIND, registration as prepare_registration
 from src.nextgen.jobs.submit_torrent_job import KIND as SUBMIT_KIND, registration as submit_registration
@@ -66,7 +67,7 @@ def validate_provider_configuration(configuration, *, secrets=None, require_seri
 async def build_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
                                 policy=Policy(), logger=None, read_metainfo=None, read_batch_metainfo=None,
                                 backfill=False, backfill_select=False, backfill_acquire=False,
-                                require_series_credentials=False, client_factory=None, qb_readiness=None):
+                                require_series_credentials=False, client_factory=None, service_health=None):
     """Validate required local settings, then return an unstarted worker.
 
     Call close() if not serving it. Series identification requires TVDB
@@ -87,8 +88,12 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
     pool=ClientPool()
     resolve = make_resolver(options_from_configuration, partial(series_credentials, secrets), client_pool=pool)
     read_batch_metainfo=make_batch_reader(secrets=secrets) if read_batch_metainfo is None else read_batch_metainfo
+    from src.nextgen.acquisition.existing_metadata import make_existing_observer
+    # Read-only qB file lists rank batch candidates; observed outside any
+    # write transaction and never used to adopt a torrent.
     verify_batch=make_batch_verifier(options_from_configuration, partial(episode_placement_credentials, secrets),
-                                     read_batch_metainfo,client_pool=pool)
+                                     read_batch_metainfo,client_pool=pool,
+                                     observe_existing=make_existing_observer(secrets,client_factory=client_factory))
     verify = make_verifier(options_from_configuration, partial(episode_placement_credentials, secrets), client_pool=pool,
                            batch_verifier=verify_batch)
     # The hash-bound magnet path is the normal webhook acquisition route, not
@@ -111,6 +116,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
         batch_unlock_registration(read_batch_metainfo,secrets,next_kind=BATCH_EPISODE_KIND),
         batch_episode_registration(read_batch_metainfo,staging_kind=BATCH_STAGE_KIND),
         batch_stage_registration(),
+        batch_prowlarr_registration(secrets),
     )
     registry = Registry((registration(resolve,release_kind=RELEASE_KIND if release_kind is None else release_kind),
                          release_registration(verify,trial_kind=TRIAL_KIND,batch_kind=BATCH_KIND),
@@ -124,23 +130,26 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                               acquire_candidates=backfill_acquire),) if backfill else ()),
                          *batch_handlers,*preparation,
                          *management_registrations(secrets),*additional_registrations))
-    if qb_readiness is None:
-        from src.nextgen.acquisition.readiness import QbittorrentReadiness
-        from src.nextgen.acquisition.qbittorrent import Client as DefaultClient
-        qb_readiness = QbittorrentReadiness(client_factory=DefaultClient if client_factory is None else client_factory)
+    if service_health is None:
+        from src.nextgen.services import ServiceHealth, ServiceRegistry
+        from src.nextgen.services.adapters import builtin_adapters
+        from src.nextgen.services.adapters.qbittorrent import QbittorrentAdapter
+        adapters = tuple(QbittorrentAdapter(client_factory=client_factory)
+                         if isinstance(a, QbittorrentAdapter) else a for a in builtin_adapters())
+        service_health = ServiceHealth(ServiceRegistry(adapters))
     return Worker(store,startup,registry,policy=policy,logger=logger,prepare=prepare,
-                  qb_readiness=qb_readiness,secrets=secrets)
+                  service_health=service_health,secrets=secrets)
 
 
 async def run_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
                               policy=Policy(), read_metainfo=None, read_batch_metainfo=None,
                               backfill=False, backfill_select=False, backfill_acquire=False,
-                              require_series_credentials=False, client_factory=None, qb_readiness=None):
+                              require_series_credentials=False, client_factory=None, service_health=None):
     worker = await build_identity_worker(config_directory,additional_registrations=additional_registrations,
                                          release_kind=release_kind,policy=policy,read_metainfo=read_metainfo,
                                          read_batch_metainfo=read_batch_metainfo,
                                          backfill=backfill,backfill_select=backfill_select,
                                          backfill_acquire=backfill_acquire,
                                          require_series_credentials=require_series_credentials,
-                                         client_factory=client_factory, qb_readiness=qb_readiness)
+                                         client_factory=client_factory, service_health=service_health)
     await serve_worker(worker)

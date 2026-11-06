@@ -17,10 +17,16 @@ class Policy:
     max_retries: int = 3
     backoff_ms: int = 1000
     max_backoff_ms: int = 60000
+    # While a needed service is unavailable a job waits (no retry is spent),
+    # checking again after service_wait_ms, and stops for review once it has
+    # kept failing on the outage for service_give_up_ms (72 hours).
+    service_wait_ms: int = 60000
+    service_give_up_ms: int = 72 * 3600 * 1000
 
     def __post_init__(self):
         for name, lower, upper in (("lease_ms",1000,86400000), ("poll_ms",10,60000),
-                ("max_retries",0,100), ("backoff_ms",1,86400000), ("max_backoff_ms",1,86400000)):
+                ("max_retries",0,100), ("backoff_ms",1,86400000), ("max_backoff_ms",1,86400000),
+                ("service_wait_ms",1000,86400000), ("service_give_up_ms",60000,30*86400000)):
             value = getattr(self, name)
             if type(value) is not int or not lower <= value <= upper:
                 raise ValueError("invalid worker policy")
@@ -84,15 +90,21 @@ class Outcome:
     facts: dict | None = field(default=None, repr=False)
     search_snapshots: tuple | list | None = field(default=None, repr=False)
     candidate_evidence: tuple | list | None = field(default=None, repr=False)
+    metadata_evidence: dict | None = field(default=None, repr=False)
 
     def __post_init__(self):
+        if self.metadata_evidence is not None:
+            from src.nextgen.acquisition.metadata_evidence import validated
+            if self.kind != "defer" or self.reason_code != "TORRENT_METADATA_WAITING":
+                raise ValueError("metadata evidence requires a metadata deferral")
+            validated(self.metadata_evidence)
         if self.candidate_evidence is not None and not isinstance(self.candidate_evidence, (list, tuple)):
             raise ValueError("invalid outcome candidate evidence")
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
-        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "cancel", "fail")
-                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code"}
-                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code") else (type(v) is not int or v < 0)
+        if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "defer", "cancel", "fail")
+                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code", "service", "service_detail"}
+                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code", "service", "service_detail") else (type(v) is not int or v < 0)
                        for k, v in self.facts.items())):
             raise ValueError("invalid outcome facts")
         if type(self.kind) is not str or self.kind not in _STATES:
@@ -135,6 +147,10 @@ class Registration:
     successor_kinds: tuple[str, ...] = ()
     route: object = field(default=None, repr=False)
     persist: object = field(default=None, repr=False)
+    # External services this handler needs (names from the service registry,
+    # e.g. "qbittorrent"). The worker does not claim the job while any of
+    # them is unavailable. Local-only handlers declare none.
+    services: tuple[str, ...] = ()
 
     def __post_init__(self):
         if (type(self.kind) is not str or not self.kind.strip() or len(self.kind) > 64
@@ -145,6 +161,9 @@ class Registration:
             raise ValueError("handler execution mode does not match callable")
         if type(self.successor_kinds) is not tuple or any(type(x) is not str for x in self.successor_kinds):
             raise ValueError("invalid allowed successors")
+        if (type(self.services) is not tuple or len(set(self.services)) != len(self.services)
+                or any(type(s) is not str or not s or len(s) > 32 for s in self.services)):
+            raise ValueError("invalid service requirements")
         for callback in (self.route, self.persist):
             if callback is not None and (not callable(callback) or inspect.iscoroutinefunction(callback)):
                 raise ValueError("completion adapters must be synchronous trusted callables")

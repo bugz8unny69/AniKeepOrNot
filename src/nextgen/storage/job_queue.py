@@ -167,8 +167,25 @@ class JobQueue:
                 occurred_at_ms=now,details={"attempt":claim.attempt},handler_code=spec.definition.code,
                 invocation_id=invocation,handlers=registry.labels)
 
+    def _service_wait_start(self, db, job_id, now):
+        """When the current run of service waits began (now, for the first one).
+
+        The run restarts after a manual retry or any outcome that is not a
+        service wait, so earlier, unrelated outages never count.
+        """
+        row = db.execute(
+            "SELECT min(occurred_at_ms) FROM job_history WHERE job_id=? AND event_code='DEFERRED' "
+            "AND reason_code='SERVICE_UNAVAILABLE' AND history_id>COALESCE((SELECT max(history_id) "
+            "FROM job_history WHERE job_id=? AND (event_code='RETRY_REQUESTED' OR (event_code IN "
+            "('DEFERRED','RETRY_SCHEDULED','DONE','NEEDS_REVIEW','ON_HOLD','BLOCKED','FAILED','CANCELED') "
+            "AND COALESCE(reason_code,'')<>'SERVICE_UNAVAILABLE'))),0)",
+            (job_id, job_id)).fetchone()
+        return row[0] if row and row[0] is not None else now
+
     def _transition(self, db, claim, outcome, now):
         details = {"attempt":claim.attempt,**(outcome.facts or {})}
+        if outcome.metadata_evidence is not None:
+            details["metadata_evidence"] = outcome.metadata_evidence
         if outcome.matching is not None:
             if claim.kind != "IDENTIFY_ANIME":
                 raise ValueError("matching evidence only belongs to an identity attempt")
@@ -177,6 +194,15 @@ class JobQueue:
         reason = outcome.reason_code
         if outcome.kind in ("complete", "skip"):
             state, code, available = "DONE", "DONE", now
+        elif outcome.kind == "defer" and reason == "SERVICE_UNAVAILABLE":
+            # Waiting for a service spends no retry. The job stops for review
+            # only after it has kept running into the outage for the give-up time.
+            since = self._service_wait_start(db, claim.job_id, now)
+            details["waiting_since_ms"] = since
+            if now - since >= self.policy.service_give_up_ms:
+                state, code, available, activity = "NEEDS_REVIEW", "NEEDS_REVIEW", now, None
+            else:
+                state, code, available = "RETRY_WAIT", "DEFERRED", now + outcome.delay_ms
         elif outcome.kind in ("retry", "defer"):
             # A manual retry begins a new failure-budget window. Historical
             # attempts and RETRY_SCHEDULED records remain immutable.
@@ -284,8 +310,10 @@ class JobQueue:
                           (claim.job_id,)).fetchone() in (('FAILED',), ('NEEDS_REVIEW',)):
                 from src.nextgen.storage.sonarr_candidates import (
                     auto_cleanup_failed_candidate, auto_cleanup_oversized)
+                from src.nextgen.storage.batch_candidates import auto_cleanup_failed_batch_candidate
                 records.extend(auto_cleanup_failed_candidate(db,claim))
                 records.extend(auto_cleanup_oversized(db,claim))
+                records.extend(auto_cleanup_failed_batch_candidate(db,claim))
             return tuple(records)
 
     def recover_expired(self, limit=100):

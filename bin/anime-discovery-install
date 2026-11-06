@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import uuid
 from urllib.parse import urlsplit
 
@@ -29,6 +30,16 @@ DEFAULTS={'root':'/opt/anime-discovery','state_dir':'/var/lib/anime-discovery',
     'source':'git@github.com:bugz8unny69/anime-discovery.git','ref':'NextGen',
     'destination':'/usr/local/bin/anime-discovery-install','unit_dir':'/etc/systemd/system','python':'python3'}
 SERVICES=('anime-discovery-api.service','anime-discovery-worker.service')
+# Set when an upgrade re-runs the installer it just fetched, so it runs once.
+REEXEC_ENV='ANIME_DISCOVERY_INSTALLER_REEXEC'
+RELEASE_INFO='.anime-discovery-release.json'
+
+
+class Reexec(Exception):
+    """The fetched release brings a different installer: run that one instead."""
+    def __init__(self,checkout,revision):
+        super().__init__('re-run the fetched installer')
+        self.checkout,self.revision=checkout,revision
 
 
 def run(args,*,cwd=None,input=None,check=True):
@@ -111,10 +122,15 @@ def saved_defaults():
 
 
 def parser():
-    p=argparse.ArgumentParser(description=__doc__)
-    modes=p.add_mutually_exclusive_group();modes.add_argument('--install',action='store_true');modes.add_argument('--upgrade',action='store_true')
+    # No abbreviations: "--install" must not silently mean --install-system-deps.
+    p=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
+    # Without a mode the command installs; --upgrade and --rollback act on an existing installation.
+    modes=p.add_mutually_exclusive_group();modes.add_argument('--upgrade',action='store_true')
+    modes.add_argument('--rollback',action='store_true',help='Switch back to the previous installed version, if the database and settings are still compatible with it.')
     for name in DEFAULTS:p.add_argument('--'+name.replace('_','-'))
     p.add_argument('--public-origin',dest='origin',help='Exact HTTPS dashboard origin, or loopback HTTP. Existing installed origin is retained.')
+    p.add_argument('--branch',help='Git branch to install from, for example NextGen or refactor. With --upgrade it '
+                   'switches the installation to that branch, and later upgrades keep using it.')
     p.add_argument('--source-dir',type=Path,help='Use tracked files from an existing local Git checkout instead of fetching.')
     p.add_argument('--revision',help='Exact Git commit to install; defaults to the selected branch head.')
     p.add_argument('--database',type=Path,help='New Anime Discovery database path; existing configuration always wins.')
@@ -132,21 +148,28 @@ def parser():
 def resolve(args):
     saved=saved_defaults()
     options={**DEFAULTS,**saved}
-    if args.upgrade:
+    if args.upgrade or args.rollback:
         if not saved:
-            raise ValueError('Upgrade requires existing installer metadata. Run --install first.')
+            raise ValueError(('Rollback' if args.rollback else 'Upgrade')+' requires an existing installation. '
+                             'Install it first: run anime-discovery-install without --upgrade.')
         for k in (*DEFAULTS,'origin'):
             requested=getattr(args,k,None)
             if requested is not None and requested!=options.get(k):
-                raise ValueError('Upgrade cannot change installation settings: '+k)
+                raise ValueError('Upgrade cannot change installation settings: '+k
+                                 +(' (use --branch to switch branches)' if k=='ref' else ''))
         if any((args.database,args.settings_file,args.webhook_key_file,args.admin_password_file,args.install_system_deps)):
             raise ValueError('Upgrade cannot reconfigure installation or credentials.')
     else:
         for k in (*DEFAULTS,'origin'):
             if getattr(args,k,None) is not None:options[k]=getattr(args,k)
+    # --branch is the one setting an upgrade may change; it is saved for later upgrades.
+    if getattr(args,'branch',None) is not None:
+        if args.rollback:raise ValueError('--branch cannot be combined with --rollback.')
+        if getattr(args,'ref',None) is not None and args.ref!=args.branch:raise ValueError('Use --branch or --ref, not both.')
+        options['ref']=args.branch
     # Upgrades reuse the saved installation configuration. Only a fresh
     # installation asks the operator to choose paths and a public origin.
-    interactive=not(args.yes or args.upgrade)
+    interactive=not(args.yes or args.upgrade or args.rollback)
     if interactive:
         for name,label in [('root','Application folder'),('config_dir','Anime Discovery config folder'),('user','Service account')]:
             if getattr(args,name) is None:options[name]=input(label+' ['+options[name]+']: ').strip() or options[name]
@@ -175,7 +198,7 @@ def resolve(args):
         doc=private_json(existing)
         if 'schema_version' not in doc:raise ValueError('Choose a separate fresh Anime Discovery configuration directory; legacy conversion is unsupported.')
         options['database']=doc.get('settings',{}).get('storage',{}).get('database_path',options['database'])
-    if args.upgrade and not existing.exists():raise ValueError('Upgrade needs an existing native Anime Discovery configuration.')
+    if (args.upgrade or args.rollback) and not existing.exists():raise ValueError('Upgrade needs an existing native Anime Discovery configuration.')
     return options
 
 
@@ -195,6 +218,43 @@ def service_call(release,options,command,payload,execute=run):
     result=execute(['runuser','-u',options['user'],'--',release/'.venv/bin/python','-m','src.nextgen.install_support',command,
         '--config-dir',options['config_dir']],cwd=release,input=json.dumps(payload))
     return json.loads(result.stdout)
+
+
+def release_name(releases,ref,revision,*,today=None):
+    """A readable, unique folder name: <date>-<branch>-<short commit>."""
+    label=re.sub(r'[^A-Za-z0-9_.-]+','-',ref).strip('-.') or 'release'
+    base=f"{today or time.strftime('%Y-%m-%d')}-{label}-{revision[:8]}"
+    name,n=base,2
+    while (releases/name).exists() or (releases/name).is_symlink():
+        name=f'{base}-{n}';n+=1
+    return name
+
+
+def prune_releases(root,state,keep):
+    """Keep only the given releases (the running one and one previous).
+
+    Deletes every other folder in releases/, including old random-named ones
+    and leftovers of interrupted runs, and the unit-file backups that belong
+    to the deleted releases. Symlinks are never followed or deleted.
+    """
+    releases=root/'releases';kept={Path(k).name for k in keep if k}
+    removed=[]
+    for entry in sorted(releases.iterdir()):
+        if entry.name in kept or entry.is_symlink() or not entry.is_dir():continue
+        shutil.rmtree(entry);removed.append(entry.name)
+    backups=state/'installer'/'unit-backups'
+    if backups.is_dir() and not backups.is_symlink():
+        for entry in sorted(backups.iterdir()):
+            if entry.name not in kept and entry.is_dir() and not entry.is_symlink():shutil.rmtree(entry)
+    return removed
+
+
+def should_reexec(args,candidate,running=None):
+    """An upgrade whose fetched installer differs from the running one re-runs it, once."""
+    if not args.upgrade or os.environ.get(REEXEC_ENV)=='1':return False
+    running=Path(running or __file__)
+    try:return running.read_bytes()!=(candidate/'bin/anime-discovery-install').read_bytes()
+    except OSError:return False
 
 
 def apply(options,args,execute=run):
@@ -232,16 +292,26 @@ def apply(options,args,execute=run):
         if state_created:os.chown(state,account.pw_uid,account.pw_gid)
         for path,mode in [(state,0o750),(config.parent,0o750)]:
             if not path.exists():path.mkdir(parents=True,mode=mode);os.chown(path,account.pw_uid,account.pw_gid)
-        release=root/'releases'/uuid.uuid4().hex;release.mkdir(mode=0o755)
+        incoming=root/'releases'/('.incoming-'+uuid.uuid4().hex);incoming.mkdir(mode=0o755)
         print('Preparing candidate source and Python environment...',flush=True)
-        if args.source_dir:revision=extract_checkout(args.source_dir,release,args.revision,execute)
+        if args.source_dir:revision=extract_checkout(args.source_dir,incoming,args.revision,execute)
         else:
-            # Clone into the final release path; virtualenv paths stay stable.
-            release.rmdir();execute(['git','clone','--no-checkout','--',options['source'],str(release)])
-            execute(['git','-C',str(release),'fetch','--depth=1','--no-tags','origin',args.revision or options['ref']])
-            revision=execute(['git','-C',str(release),'rev-parse','FETCH_HEAD']).stdout.strip()
-            execute(['git','-C',str(release),'checkout','--detach',revision])
+            incoming.rmdir();execute(['git','clone','--no-checkout','--',options['source'],str(incoming)])
+            execute(['git','-C',str(incoming),'fetch','--depth=1','--no-tags','origin',args.revision or options['ref']])
+            revision=execute(['git','-C',str(incoming),'rev-parse','FETCH_HEAD']).stdout.strip()
+            execute(['git','-C',str(incoming),'checkout','--detach',revision])
         if not re.fullmatch('[a-f0-9]{40,64}',revision):raise ValueError('Source did not resolve to an exact revision.')
+        if should_reexec(args,incoming):
+            raise Reexec(incoming,revision)       # main() runs the new installer on this checkout.
+        # The final, readable name is given before the virtualenv is created:
+        # a virtualenv records its own path and must not move afterwards.
+        # A --source-dir install is labelled "local", except the re-run of a
+        # fetched installer, whose checkout is the configured branch.
+        label=options['ref'] if not args.source_dir or os.environ.get(REEXEC_ENV)=='1' else 'local'
+        release=root/'releases'/release_name(root/'releases',label,revision)
+        os.rename(incoming,release)
+        atomic_file(release/RELEASE_INFO,(json.dumps({'revision':revision,'ref':options['ref'],
+            'installed_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},sort_keys=True)+'\n').encode(),0o644)
         for required in ('src/nextgen/__main__.py','src/nextgen/install_support.py','bin/anime-discovery-install','bin/adm'):
             if not (release/required).is_file():raise ValueError('Selected source does not contain the Anime Discovery installer.')
         execute([options['python'],'-m','venv',str(release/'.venv')])
@@ -323,6 +393,8 @@ def apply(options,args,execute=run):
             'credentials_file':str(config/'secrets.json'),'command':str(destination)}
         atomic_file(metadata/'installation.json',(json.dumps(result,sort_keys=True)+'\n').encode(),0o600)
         (metadata/'installation.pending.json').unlink()
+        # Keep the running release and one previous; everything older goes.
+        result['removed_releases']=prune_releases(root,state,(release,previous))
         # Remove obsolete JSON only after the new installation succeeds.
         for name in ('installer.json','installation.json','installation.pending.json'):
             (root/name).unlink(missing_ok=True)
@@ -338,13 +410,96 @@ def apply(options,args,execute=run):
         os.close(lock)
 
 
+def rollback(options,args,execute=run):
+    """Switch current back to the previous release, if it can still run.
+
+    The previous release checks the database and settings itself (its own
+    `python -m src.nextgen check`): a database or settings file that was
+    upgraded beyond what it understands refuses the rollback. Nothing is
+    deleted; the newer release becomes the previous one.
+    """
+    if os.geteuid()!=0:raise PermissionError('Run the installer with sudo.')
+    root=Path(options['root']);state=Path(options['state_dir']);metadata=state/'installer'
+    releases=root/'releases'
+    if not (root/'current').is_symlink():raise ValueError('No installed release to roll back from.')
+    current=Path(os.readlink(root/'current'))
+    current=current if current.is_absolute() else root/current
+    recorded=private_json(metadata/'installation.json') if (metadata/'installation.json').is_file() else {}
+    previous=recorded.get('previous_release')
+    if not previous:raise ValueError('No previous release is recorded; there is nothing to roll back to.')
+    previous=Path(previous)
+    previous=previous if previous.is_absolute() else root/previous
+    if (previous.parent!=releases or previous.is_symlink() or not previous.is_dir()
+            or previous.resolve()==current.resolve()):
+        raise ValueError('The recorded previous release is no longer installed: '+str(previous))
+    lock=os.open(metadata/'.installer.lock',os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
+    try:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        check=execute(['runuser','-u',options['user'],'--',previous/'.venv/bin/python','-m','src.nextgen','check',
+                       '--config-dir',options['config_dir']],cwd=previous,check=False)
+        if check.returncode:
+            reason=' '.join((check.stderr or check.stdout or '').split())[:400] or 'status '+str(check.returncode)
+            raise ValueError('Cannot roll back to '+previous.name+': it cannot use the current database or '
+                             'settings (they were upgraded beyond what it understands). '+reason)
+        active=[name for name in SERVICES if execute(['systemctl','is-active','--quiet',name],check=False).returncode==0]
+        if active:execute(['systemctl','stop',*active])
+        # The unit files saved when the current release was installed are the previous release's.
+        backup=metadata/'unit-backups'/current.name
+        if backup.is_dir():
+            for unit in sorted(backup.iterdir()):
+                atomic_file(Path(options['unit_dir'])/unit.name,unit.read_bytes(),0o644)
+        pointer=root/('.current-'+previous.name);pointer.symlink_to(previous)
+        os.replace(pointer,root/'current')
+        execute(['systemctl','daemon-reload'])
+        if active:
+            execute(['systemctl','start',*active])
+            for name in active:
+                if execute(['systemctl','is-active','--quiet',name],check=False).returncode:
+                    raise RuntimeError('Service did not return to active state after rollback: '+name)
+        info=previous/RELEASE_INFO
+        revision=private_json(info).get('revision') if info.is_file() else None
+        result={**recorded,'rolled_back':True,'release':str(previous),'previous_release':str(current),
+                'revision':revision,'started_services':active}
+        atomic_file(metadata/'installation.json',(json.dumps(result,sort_keys=True)+'\n').encode(),0o600)
+        return result
+    finally:
+        os.close(lock)
+
+
+def _reexec(argv,error):
+    """Run the installer the upgrade just fetched, on that same checkout, once."""
+    args=list(argv if argv is not None else sys.argv[1:])
+    for flag in ('--source-dir','--revision'):
+        while flag in args:
+            i=args.index(flag);del args[i:i+2]
+    command=[sys.executable,str(error.checkout/'bin/anime-discovery-install'),*args,
+             '--source-dir',str(error.checkout),'--revision',error.revision]
+    print('This upgrade brings a newer installer; continuing with it...',file=sys.stderr,flush=True)
+    try:
+        return subprocess.run(command,env={**os.environ,REEXEC_ENV:'1'}).returncode
+    finally:
+        shutil.rmtree(error.checkout,ignore_errors=True)
+
+
 def main(argv=None):
     args=parser().parse_args(argv)
     try:
         options=resolve(args)
+        if args.rollback:
+            with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
+                result=rollback(options,args)
+            if args.json:print(json.dumps(result,sort_keys=True))
+            else:
+                print('\nRolled back to '+Path(result['release']).name+'.')
+                print('Newer release kept as the previous one: '+Path(result['previous_release']).name)
+                print('Restarted services: '+(', '.join(result['started_services']) or 'none'))
+            return 0
         if not args.yes and not args.upgrade and input('Install Anime Discovery with these paths? [y/N]: ').strip().lower() not in ('y','yes'):return 0
-        with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
-            result=apply(options,args)
+        try:
+            with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
+                result=apply(options,args)
+        except Reexec as error:
+            return _reexec(argv,error)
         if args.json:
             print(json.dumps(result,sort_keys=True))
         else:
@@ -360,6 +515,8 @@ def main(argv=None):
                 if remaining:
                     print('Remained stopped: '+', '.join(remaining))
                 print('Configuration and credentials preserved.')
+                if result.get('removed_releases'):
+                    print('Removed old releases: '+', '.join(result['removed_releases']))
             else:
                 print('\nAnime Discovery installation completed successfully.')
                 print('Configuration: '+options['config_dir'])
@@ -376,8 +533,8 @@ def main(argv=None):
                 print('Future upgrades: '+shlex.join([options['destination'],'--upgrade']))
         return 0
     except (OSError,ValueError,RuntimeError,KeyError) as exc:
-        print(f'Upgrade failed: {type(exc).__name__}: {exc}' if args.upgrade
-              else f'Installation failed: {type(exc).__name__}: {exc}',file=sys.stderr)
+        label='Rollback' if args.rollback else 'Upgrade' if args.upgrade else 'Installation'
+        print(f'{label} failed: {type(exc).__name__}: {exc}',file=sys.stderr)
         return 1
 
 

@@ -8,6 +8,7 @@ import urllib.request
 import uuid
 
 from src.nextgen.acquisition.metadata import TorrentFile, parse_metainfo
+from src.nextgen.acquisition.metadata_service import STOPPED
 from src.nextgen.acquisition.settings import DownloadOptions, DownloadCredentials
 from src.nextgen.acquisition.submission import (Observation, SendPermit, ClientUnavailable, ClientInvalid,
                                                ClientAuthenticationFailed, ClientUnsupported)
@@ -257,7 +258,7 @@ class Client:
             raise ClientInvalid()
         if not snapshot.files:
             return None
-        if snapshot.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if snapshot.state not in STOPPED:
             return None
         # Read the exact same inventory again, rejecting concurrent changes.
         confirmed=self.inspect(expected_hash)
@@ -292,7 +293,7 @@ class Client:
         self._request('torrents/add',form=fields,limit=4096)
 
     def poll_legacy_metadata(self,intent,cancelled,*,attempts=24,
-                             interval=5,sleep=None):
+                             interval=5,sleep=None,trace=None):
         """Bounded 4.5+ metadata discovery window with unconditional stop.
 
         Never resumes when the file list already exists. A restart may run a
@@ -310,6 +311,12 @@ class Client:
         sleep=time.sleep if sleep is None else sleep
         if not callable(sleep):raise ClientInvalid()
         before=self.inspect(intent.info_hash)
+        if trace is not None:
+            trace.update(initial_state=getattr(before,'state',None),
+                         last_active_state=getattr(before,'state',None),
+                         stopped_state=None,polls=0,
+                         max_files=len(getattr(before,'files',())),
+                         resumed=False)
         def matches(row):
             return (row is not None and row.info_hash==intent.info_hash
                     and row.category==intent.options.category
@@ -320,10 +327,15 @@ class Client:
                                 for t in row.tags))
         if not matches(before):
             raise ClientInvalid()
-        if before.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if before.state not in STOPPED:
             # A previous lease may have died during metadata discovery.
             # Stop before considering another start.
-            return self.stop_legacy_metadata(intent)
+            stopped=self.stop_legacy_metadata(intent)
+            if trace is not None:
+                trace['phase']='recover_stop'
+                trace['stopped_state']=getattr(stopped,'state',None)
+                trace['max_files']=max(trace['max_files'],len(getattr(stopped,'files',())))
+            return stopped
         if before.files:
             return self.inspect_legacy_metadata(intent.info_hash,intent.marker,
                                                 intent.options.download_root)
@@ -331,9 +343,15 @@ class Client:
         try:
             self._request(self.protocol.start_endpoint,
                           form={'hashes':intent.info_hash},limit=4096)
+            if trace is not None:
+                trace['resumed']=True
             for index in range(attempts):
                 if cancelled.is_set():break
                 current=self.inspect(intent.info_hash,include_files=(index%3==0))
+                if trace is not None:
+                    trace['polls']=index+1
+                    trace['last_active_state']=getattr(current,'state',None)
+                    trace['max_files']=max(trace['max_files'],len(getattr(current,'files',())))
                 if not matches(current):raise ClientInvalid()
                 if current.files:break
                 if index+1<attempts:sleep(interval)
@@ -341,6 +359,9 @@ class Client:
             # Do not leave metadata discovery active on cancellation, timeouts
             # or invalid responses. Network failure remains an uncertain state.
             stopped=self.stop_legacy_metadata(intent)
+            if trace is not None:
+                trace['stopped_state']=getattr(stopped,'state',None)
+                trace['max_files']=max(trace['max_files'],len(getattr(stopped,'files',())))
         return stopped
 
     def stop_legacy_metadata(self,intent):
@@ -358,11 +379,11 @@ class Client:
                 or any(tag.startswith('ad-') and tag!='ad-'+intent.marker
                        for tag in before.tags)):
             raise ClientInvalid()
-        if before.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if before.state not in STOPPED:
             self._request(self.protocol.stop_endpoint,
                           form={'hashes':intent.info_hash},limit=4096)
         after=self.inspect(intent.info_hash)
-        if after is None or after.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if after is None or after.state not in STOPPED:
             return None
         if not after.files:
             return None
@@ -445,7 +466,7 @@ class Client:
 
     def apply_selection(self,intent,fingerprint,permit,action):
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, STOPPED, verify_snapshot, selection_fingerprint)
+        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, verify_snapshot, selection_fingerprint)
         if type(permit) is not TransferPermit or self.options!=intent.options:raise ClientInvalid()
         snapshot=self.inspect_transfer(intent.plan.manifest.info_hash)
         if snapshot is None:raise TransferConflict()
@@ -462,7 +483,7 @@ class Client:
 
     def start_selected(self,intent,fingerprint,permit):
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, STOPPED, verify_snapshot, exact_selection, selection_fingerprint)
+        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, verify_snapshot, exact_selection, selection_fingerprint)
         if type(permit) is not TransferPermit or self.options!=intent.options:raise ClientInvalid()
         snapshot=self.inspect_transfer(intent.plan.manifest.info_hash)
         if snapshot is None:raise TransferConflict()
@@ -475,7 +496,6 @@ class Client:
 
     def cleanup_control(self,intent,fingerprint,permit,action):
         from src.nextgen.acquisition.cleanup import CleanupPermit, owned
-        from src.nextgen.acquisition.transfers import STOPPED
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
         if type(permit) is not CleanupPermit or self.options!=intent.options or fingerprint!=intent.fingerprint:raise ClientInvalid()
         current=owned(intent,self.inspect(intent.plan.manifest.info_hash))

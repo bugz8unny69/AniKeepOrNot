@@ -29,6 +29,7 @@ from src.nextgen.storage.sonarr_cached_retry import CachedTorrent, load_cached, 
 from src.nextgen.worker import blocking
 
 KIND = 'DISCOVER_SONARR_BACKFILL'
+SERVICES=('prowlarr',)  # External services this job needs; see services/README.md.
 DEFINITION = HandlerDefinition(KIND, 'Search Prowlarr for backfill and continue episodes')
 
 
@@ -229,5 +230,5 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
         if next_start>value.plan.window_size: return ()
         return (Successor.create(KIND,{'plan_id':value.plan.plan_id,'start':next_start}),)
 
-    return Registration(KIND,DEFINITION,execute,persist=persist,route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=persist,route=route,
                         successor_kinds=(KIND,))

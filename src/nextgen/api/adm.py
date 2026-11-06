@@ -15,9 +15,13 @@ def main():
         # Stopped job diagnostics, classification, and safe recovery.
         from src.nextgen.job_recovery import main as recover
         sys.exit(recover(sys.argv[2:]))
+    if sys.argv[1:2] == ["services"]:
+        # One-off check of every external service; AniDB is read from cache.
+        from src.nextgen.services.check import main as services
+        sys.exit(services(sys.argv[2:]))
     parser = argparse.ArgumentParser(
         description="Anime Discovery local administration",
-        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry)",
+        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover batch-audit) | adm services check (external service health)",
     )
     parser.add_argument("command", choices=("set-password",))
     parser.add_argument("--socket", default="/run/anime-discovery/admin.sock")

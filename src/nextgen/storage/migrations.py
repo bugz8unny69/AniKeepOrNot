@@ -18,7 +18,7 @@ from src.nextgen.diagnostics import event
 from src.nextgen.maintenance import MaintenanceLease, MaintenanceError
 from src.nextgen.storage.sqlite import SCHEMA
 
-LATEST_VERSION = 59
+LATEST_VERSION = 62
 SQL_DIR = Path(__file__).with_name("sql")
 SCRIPTS = (
     "001_foundation.sql", "002_independent_jobs.sql", "003_incoming_events.sql",
@@ -27,6 +27,9 @@ SCRIPTS = (
     "057_anidb_first_staging.sql",
     "058_failed_job_state.sql",
     "059_identity_candidate_evidence.sql",
+    "060_batch_candidate_operations.sql",
+    "061_batch_candidate_stops.sql",
+    "062_service_status.sql",
 )
 
 
@@ -186,6 +189,29 @@ def _apply_step(db, sql, version, scripts):
         db.execute("PRAGMA foreign_keys=ON")
         if db.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise MigrationError()
+
+
+BACKUPS_KEPT = 2
+
+
+def prune_backups(database, keep=BACKUPS_KEPT):
+    """Keep only the newest pre-upgrade copies of this database; delete older ones.
+
+    Only regular files named "<database>.before-v<N>-<id>.sqlite" next to the
+    database are considered. Returns the names that were deleted.
+    """
+    if type(keep) is not int or keep < 1:
+        raise ValueError("keep at least one backup")
+    path = Path(database)
+    pattern = re.compile(re.escape(path.name) + r"\.before-v[0-9]+-[0-9a-f]{32}\.sqlite")
+    found = [entry for entry in path.parent.iterdir()
+             if pattern.fullmatch(entry.name) and entry.is_file() and not entry.is_symlink()]
+    found.sort(key=lambda entry: entry.stat().st_mtime_ns, reverse=True)
+    removed = []
+    for entry in found[keep:]:
+        entry.unlink()
+        removed.append(entry.name)
+    return removed
 
 
 def _backup(db, database, version, scripts):

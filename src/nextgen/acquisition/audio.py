@@ -53,3 +53,18 @@ _DUAL_TAG = re.compile(
 def dual_audio_tagged(title):
     """Candidate hint for both audio tracks; actual languages require ffprobe."""
     return type(title) is str and _DUAL_TAG.search(title) is not None
+
+
+_INCOMPATIBLE_TAG = re.compile(
+    r'(?<![a-z0-9])(?:'
+    r'french|vostfr|\bvf\b|ita(?:liano?)?|ger(?:man|dub)?|espa[nñ]ol|castellano|latino|rus(?:sian)?'
+    r')(?![a-z0-9])', re.I)
+
+
+def is_audio_incompatible(title, mode=JAPANESE_ENGLISH):
+    """True if release title explicitly advertises an incompatible foreign dub without dual/multi audio."""
+    if mode != JAPANESE_ENGLISH or not title or type(title) is not str:
+        return False
+    if dual_audio_tagged(title):
+        return False
+    return _INCOMPATIBLE_TAG.search(title) is not None

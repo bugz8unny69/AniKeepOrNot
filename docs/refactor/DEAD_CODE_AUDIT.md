@@ -104,6 +104,11 @@ These are production definitions referenced **only by tests**. Deleting them wou
 | `providers/parsing.py:22` *(#267)* | `METADATA_ONLY` | Potentially dead | No references. It may be an intended parse-mode constant, so check before removing. |
 | `storage/candidate_evidence.py:102` *(#267)* | `count_candidate_evidence()` | Potentially dead | No references, including tests. |
 | `tools/evaluate_historical_identities.py` *(#267)* | module | **Active** | A standalone offline evaluation tool (`__main__`), documented in `docs/ANIDB_IDENTITY_MATCHING.md`. It is not imported, which is expected for a tool. |
+| `acquisition/legacy_magnet.py:6` *(#275)* | `import asyncio` | Confirmed dead import | Its semaphore moved to `metadata_service.shared_limiter()`. **Removed** in the `1c785beb` audit. |
+| `acquisition/metainfo_source.py` *(#275)* | local `import inspect`, local `STOPPED` import | Confirmed dead imports | Polling moved to `metadata_service.poll_or_stop_metadata()`. **Removed** in the `1c785beb` audit. |
+| `acquisition/metadata_service.py:18` *(#275)* | `METADATA_TIMEOUT_SECONDS` | Potentially dead | No references; `METADATA_TIMEOUT_MS` is the one used. **Removed** in the `1c785beb` audit. |
+| `providers/configuration.py:19` *(#277)* | `KIND as BATCH_PROWLARR_KIND` | Confirmed dead import | Only `batch_prowlarr_registration` from that import is used. **Removed** in the `1c785beb` audit. |
+| `storage/batch_candidates.py` *(#274-#278)* | `field`, `sqlite3`, `delivery_title`, `ReleaseInput` imports | Confirmed dead imports | Left over after the controller moved coordination into `coordinate_release()`. **Removed** in the `1c785beb` audit. |
 
 ---
 

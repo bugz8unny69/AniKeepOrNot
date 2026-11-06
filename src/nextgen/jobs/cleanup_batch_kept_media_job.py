@@ -11,6 +11,7 @@ from src.nextgen.acquisition.media import MediaInvalid
 from src.nextgen.storage.sqlite import enqueue_job
 
 KIND='CLEANUP_BATCH_KEPT_MEDIA'
+SERVICES=('sonarr',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Verify batch Keep and clean staged copies')
 
 
@@ -57,4 +58,4 @@ def registration(secrets,*,service_factory=BatchPostKeepCleanup):
             return Outcome('retry','POST_KEEP_CLEANUP_UNAVAILABLE')
         return (Outcome(value={'keep_job_id':keep}) if complete
                 else Outcome('defer','POST_KEEP_CLEANUP_WAITING',delay_ms=30000))
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

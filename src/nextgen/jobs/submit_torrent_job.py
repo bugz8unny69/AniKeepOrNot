@@ -1,4 +1,5 @@
 """Single authorized stopped add; subsequent attempts are read-only reconciliation."""
+from dataclasses import dataclass
 import inspect
 
 from src.nextgen.acquisition.metadata import AcquisitionConflict, MetadataInvalid, SourceMissing, parse_metainfo
@@ -16,15 +17,25 @@ from src.nextgen.storage.submissions import SubmissionJournal, target_options, _
 from src.nextgen.worker import blocking
 
 KIND='SUBMIT_TORRENT'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Submit stopped torrent and reconcile ownership')
+
+
+@dataclass(frozen=True)
+class Submitted:
+    preparation_job_id: int
+    # False when Prowlarr has no address: automatic search is off, so the
+    # first backfill search is not scheduled (services/README.md).
+    search: bool = True
 
 
 def _persist(db,claim,value,*,discovery_kind=None):
     try:
-        plan=_plan(db,integer(value,positive=True),claim.event_id)
+        if type(value) is not Submitted:raise ValueError()
+        plan=_plan(db,integer(value.preparation_job_id,positive=True),claim.event_id)
         intent=_intent(db,plan)
         if intent is None or intent.state!='OWNED_STOPPED':raise AcquisitionConflict()
-        if discovery_kind is not None:
+        if discovery_kind is not None and value.search:
             from src.nextgen.storage.episode_reservations import _facts
             from src.nextgen.storage.sonarr_backfill import schedule_first
             source=_facts(db,plan.evaluation_job_id,claim.event_id)
@@ -49,13 +60,16 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
             if set(payload)!={'preparation_job_id'} or context.claim.event_id is None:raise ValueError()
             preparation=integer(payload['preparation_job_id'],positive=True)
         except (ValueError,TypeError):return Outcome('review','JOB_PAYLOAD_INVALID')
+        done=Submitted(preparation,bool(context.configuration.value('prowlarr.base_url')))
+        if discovery_kind is not None and not done.search:
+            context.logger.info('Automatic search is off: Prowlarr has no address in Settings.')
         journal=journal_factory(context.configuration.value('storage.database_path'))
         try:
             plan,prior=await blocking(journal.load,context.claim,preparation)
             if prior is not None and prior.state in ('EXTERNAL','REVIEW'):
                 return Outcome('review','TORRENT_ALREADY_PRESENT' if prior.state=='EXTERNAL' else 'TORRENT_PROVENANCE_CONFLICT')
             if prior is not None and prior.state=='OWNED_STOPPED' and await blocking(journal.handed_off,context.claim,prior):
-                return Outcome(value=preparation)
+                return Outcome(value=done)
             options=prior.options if prior is not None else target_options(download_options(context.configuration),plan)
             credentials=await blocking(secrets.qbittorrent_credentials)
             raw=None
@@ -82,7 +96,7 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
             after=await blocking(client.inspect,plan.manifest.info_hash)
             state,reason,records=await blocking(journal.observe,context.claim,intent,after)
             for record in records:log_history(context.logger,record)
-            if state=='OWNED_STOPPED':return Outcome(value=preparation)
+            if state=='OWNED_STOPPED':return Outcome(value=done)
             if state in ('EXTERNAL','REVIEW'):return Outcome('review',reason)
             return Outcome('defer',reason,delay_ms=60000)
         except ClientUnavailable:return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
@@ -96,6 +110,6 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
                 ClientInvalid,ClientAuthenticationFailed,ClientUnsupported) as exc:
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
-        return () if transfer_kind is None else (Successor.create(transfer_kind,{'preparation_job_id':value}),)
-    return Registration(KIND,DEFINITION,execute,persist=lambda db,claim,value:_persist(db,claim,value,discovery_kind=discovery_kind),route=route,
+        return () if transfer_kind is None else (Successor.create(transfer_kind,{'preparation_job_id':value.preparation_job_id}),)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=lambda db,claim,value:_persist(db,claim,value,discovery_kind=discovery_kind),route=route,
                         successor_kinds=() if transfer_kind is None else (transfer_kind,))

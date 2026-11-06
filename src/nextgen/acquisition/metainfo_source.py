@@ -9,6 +9,10 @@ import urllib.parse
 
 from src.nextgen.async_io import blocking
 from src.nextgen.acquisition.metadata import infohash
+from src.nextgen.acquisition.metadata_service import (
+    MetadataSourceTimeout, is_metadata_expired, verify_torrent_ownership,
+    poll_or_stop_metadata, shared_limiter,
+)
 from src.nextgen.acquisition.settings import (
     endpoint, download_options, DownloadConfigurationError,
 )
@@ -44,8 +48,10 @@ class MetadataClientUnsupported(MetadataSourceDenied):
 
 class MetadataSourceWaiting(RuntimeError):
     reason_code = 'TORRENT_METADATA_WAITING'
-    def __init__(self, delay_ms=60000):
+    def __init__(self, delay_ms=60000, *, evidence=None):
+        from src.nextgen.acquisition.metadata_evidence import validated
         self.delay_ms = delay_ms
+        self.evidence = validated(evidence) if evidence is not None else None
         super().__init__('qBittorrent is still retrieving torrent metadata.')
 
 
@@ -92,11 +98,18 @@ def _event_magnet(database,event_id,digest):
 
 
 async def _qb_metadata(source, digest, configuration, cancelled, *,
-                       secrets, client_factory, batch, claim=None, event_id=None):
+                       secrets, client_factory, batch, claim=None, event_id=None, evaluation=False):
     """Version-gated metadata access; legacy batch sends require a durable lease.
 
     Web API fetch returns BEP3 bytes without adding a torrent. Older clients
     use one journaled paused/stopped magnet, which later batch jobs reuse.
+
+    evaluation=True (batch release verification only): a torrent that already
+    exists in qBittorrent with a complete file list, but that no admission
+    journal owns, is read through the shared read-only observer instead of
+    being rediscovered or refused. Nothing is stopped, tagged or adopted, and
+    every later stage that must control or download it still goes through
+    the journals, which treat it as EXTERNAL.
     """
     if cancelled.is_set():
         raise asyncio.CancelledError()
@@ -109,10 +122,28 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         await blocking(qb.login)
         if cancelled.is_set():
             raise asyncio.CancelledError()
+        if batch and evaluation:
+            from src.nextgen.storage.batch_metadata_admission import admitted
+            from src.nextgen.acquisition.existing_metadata import observe_existing_metadata
+            if not await blocking(admitted,configuration.value('storage.database_path'),digest):
+                existing=await blocking(observe_existing_metadata,qb,digest)
+                if existing is not None:
+                    return existing.inventory
         if qb.metadata_strategy=='fetch':
             result=await blocking(qb.fetch_metadata,source,digest,batch=batch)
             if result is None:
-                raise MetadataSourceWaiting()
+                if claim is not None and getattr(claim, 'job_id', None) is not None:
+                    from src.nextgen.storage.migrations import _open
+                    import time
+                    db = _open(configuration.value('storage.database_path'), readonly=True, timeout_ms=5000)
+                    try:
+                        row = db.execute('SELECT created_at_ms FROM jobs WHERE job_id=?', (claim.job_id,)).fetchone()
+                    finally:
+                        db.close()
+                    if row is not None and is_metadata_expired(row[0], int(time.time() * 1000)):
+                        raise MetadataSourceTimeout()
+                from src.nextgen.acquisition.metadata_evidence import fresh
+                raise MetadataSourceWaiting(evidence=fresh('fetch'))
             return result[1]
 
         if not batch:
@@ -125,7 +156,7 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         )
         from src.nextgen.batch.qb_client import BatchClient
         from src.nextgen.acquisition.metadata import hash_magnet
-        from src.nextgen.storage.batch_metadata_admission import STOPPED
+        from src.nextgen.acquisition.metadata_evidence import fresh
 
         database=configuration.value('storage.database_path')
         owned,stored=await blocking(lookup,database,digest)
@@ -154,30 +185,26 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
                     raise MetadataSourceWaiting() from None
             current=await blocking(target.inspect,digest)
             if current is None:
-                raise MetadataSourceWaiting()
-            if (current.save_path.rstrip('/')!=owned.options.download_root
-                    or current.category!=owned.options.category
-                    or current.auto_tmm is not False
-                    or 'ad-'+owned.marker not in current.tags
-                    or any(t.startswith('ad-') and t!='ad-'+owned.marker
-                           for t in current.tags)):
+                if claim is not None and event_id is not None and await blocking(journal.metadata_expired, claim, event_id):
+                    raise MetadataSourceTimeout()
+                raise MetadataSourceWaiting(evidence=fresh('not_found'))
+            evidence=fresh('stopped_inspect',state=current.state,files=len(current.files))
+            if not verify_torrent_ownership(current, owned.marker, owned.options.download_root, owned.options.category):
                 await blocking(journal.observe,claim,owned,current)
                 raise MetadataSourceDenied()
-            if current.state not in STOPPED:
-                observed=await blocking(target.stop_legacy_metadata,owned)
-            elif current.files:
-                observed=await blocking(target.inspect_legacy_metadata,
-                    digest,owned.marker,owned.options.download_root)
-            else:
-                observed=await blocking(target.poll_legacy_metadata,
-                                         owned,cancelled,
-                                         attempts=configuration.value('qbittorrent.metadata_poll_attempts'),
-                                         interval=configuration.value('qbittorrent.metadata_poll_seconds'))
+            observed = await poll_or_stop_metadata(
+                target, owned, current, cancelled, configuration,
+                semaphore=shared_limiter().semaphore, trace=evidence)
+            evidence['stopped_state']=getattr(observed,'state',None)
+            evidence['max_files']=max(evidence['max_files'],
+                                      len(getattr(observed,'files',())))
             updated=await blocking(journal.observe,claim,owned,observed)
             if updated.state in ('REVIEW','EXTERNAL'):
                 raise MetadataSourceDenied()
             if updated.state!='OWNED_STOPPED':
-                raise MetadataSourceWaiting()
+                if claim is not None and event_id is not None and await blocking(journal.metadata_expired, claim, event_id):
+                    raise MetadataSourceTimeout()
+                raise MetadataSourceWaiting(evidence=evidence)
             owned,stored=await blocking(lookup,database,digest)
 
         # Never trust just the marker: recheck the complete journal-owned
@@ -242,9 +269,12 @@ def make_reader(*, client_factory=QbClient, secrets=None):
 
 def make_batch_reader(*, client_factory=QbClient, secrets=None):
     """Only a normalized hash is supplied to the batch verifier."""
-    async def read_batch_metainfo(expected_hash, configuration, cancelled, *, claim=None, event_id=None):
+    async def read_batch_metainfo(expected_hash, configuration, cancelled, *, claim=None, event_id=None,
+                                  evaluation=False):
         digest = infohash(expected_hash)
+        if type(evaluation) is not bool:
+            raise MetadataSourceConfigurationError()
         return await _qb_metadata(digest,digest,configuration,cancelled,
                                   secrets=secrets,client_factory=client_factory,
-                                  batch=True,claim=claim,event_id=event_id)
+                                  batch=True,claim=claim,event_id=event_id,evaluation=evaluation)
     return read_batch_metainfo

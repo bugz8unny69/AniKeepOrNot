@@ -55,9 +55,10 @@ Before each work item, and after significant changes land on `NextGen`:
 1. Run `git fetch origin` and review `git log refactor..origin/NextGen`, noting which subsystems are affected.
 2. Merge `origin/NextGen` into `refactor`. Do not rebase, so that each incorporated upstream SHA stays visible in the history.
 3. Resolve conflicts with `NextGen` as the authority for behavior. Keep refactor's structural changes only where they don't alter behavior. Never pick a side just because it is the refactor side. Document any conflict that can't be resolved with confidence in the merge commit and the PR, rather than guessing.
-4. Run the affected tests, then the complete suite.
+4. Run the affected tests, then the complete suite. `test_refactor_ledger` fails if the merge brought back something the refactor removed or renamed, or left code using a name that no longer exists. Decide each finding as described in [LEDGER.md](LEDGER.md).
 5. Record the incorporated upstream SHA in the table below.
 6. Update `DEAD_CODE_AUDIT.md` and `NAMING_MAP.md` if the new upstream code adds references they cover.
+7. Every later removal or rename adds its entry to `removed.json` in the same PR.
 
 ### Incorporated upstream revisions
 
@@ -68,6 +69,9 @@ Before each work item, and after significant changes land on `NextGen`:
 | 2026-11-04 | `304a76f1` | Merged #261 (worker readiness validation, FAILED candidate lifecycle, migration 058). No conflicts. Audit rescan: 4 new unused imports and 1 unreferenced method in the new `acquisition/readiness.py`, added to `DEAD_CODE_AUDIT.md`. A wrong job-kind list in the new `ACQUISITION_KINDS` was reported for a NextGen fix. |
 | 2026-11-04 | `17c3c8e0` | Merged #265 (explicit-reason `adm recover` retries; `apply` is the sole confirmation). No conflicts and no new Sonarr references. Audit rescan: no new unused imports. `dashboard/assets.address_mismatch` became unreferenced after RF-003 removed its last (unused) import; it is queued for RF-008. |
 | 2026-11-04 | `9071be2e` | Merged #267 (AniDB identity matching, `adm report` identity diagnostics, new `tools/` evaluation harness) and #268 (correct batch kinds in `ACQUISITION_KINDS`). No conflicts and no new reason or event codes. Audit rescan: 4 unused imports, 1 unused constant and 1 unreferenced function from #267, queued for RF-008 in `DEAD_CODE_AUDIT.md`. |
+| 2026-11-05 | `c143bbb9` | Merged #270 (per-attempt torrent metadata evidence). No conflicts and no new unused code. It reworded `TORRENT_METADATA_WAITING`; the code audit (#269) wording is aligned to it. |
+| 2026-11-06 | `1c785beb` | Merged the batch candidate controller stack #274-#278 (migrations 060 `batch_candidate_operations` and 061 `batch_candidate_stops`, `adm recover batch-audit`) and #280 (installer: readable release names, one previous kept, `--rollback`, `--branch`, self re-run). Three conflicts, all where RF-003 had deleted dead code that NextGen later edited or extended: `audio_tagged()` and `prowlarr_search._release()` are still unused and stay deleted (NextGen's new `is_audio_incompatible()` and shared `release_source()` are kept); in `metainfo_source.py` NextGen's metadata-service imports are kept without the two it no longer uses. Every internal import, including function-level ones, resolves. Audit rescan: 8 new unused imports and 1 unreferenced constant, queued for the post-sync audit in `DEAD_CODE_AUDIT.md`. The stack's 060 collides with 060 on `services`; to be renumbered when `services` is merged. Full suite 1,678 tests (35/35 batches). |
+| 2026-11-06 | `29fce109` | Merged #283 (registered reason codes for batch candidate stops and selection conflicts) and #286 (manual release submissions name why they are refused; dashboard pre-checks). No conflicts. The ledger test caught the one break on its first sync: #283's new `test_reasons` imported `batch_candidates.CandidateConflict`, which the 1c785beb audit renamed to `BatchCandidateConflict` (A5); the import now uses the new name. Audit rescan: no new unused imports, definitions or modules. Full suite 1,766 tests (36/36 batches). |
 
 ## Work-item PR flow
 
