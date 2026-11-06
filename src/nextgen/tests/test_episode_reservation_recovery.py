@@ -177,3 +177,58 @@ class DashboardHandlerCatalogTests(unittest.TestCase):
             try:HANDLERS.require(kind)
             except Exception:missing.append(kind)
         self.assertEqual(missing,[])
+
+
+class ResetJobCompletionTests(unittest.IsolatedAsyncioTestCase):
+    """Once the owners' cleanup is complete, the reset finishes and queues the new search."""
+    asyncSetUp = ApiV1Tests.asyncSetUp
+    rows = ApiV1Tests.rows
+    seeded_episode = EpisodeResetTests.seeded_episode
+
+    async def test_a_ready_reset_completes_records_its_event_and_searches_again(self):
+        import asyncio
+        from src.nextgen.jobs.reset_episode_search_job import registration
+        from src.nextgen.job_contracts import Registry
+        from src.nextgen.worker import Policy, Worker
+        aid,season,ep,tid,anidb_ep,anidb_eid=await self.seeded_episode()
+        job=schedule(self.database,aid,anidb_ep)['job_id']
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                # The earlier attempts' cleanup has finished: nothing owns the episode any more.
+                db.execute("UPDATE job_operations SET state='CANCELED',cleanup_state='COMPLETE' "
+                           "WHERE operation_id NOT IN (SELECT operation_id FROM job_operation_members WHERE job_id=?)",(job,))
+                db.execute("UPDATE episode_reservations SET state='RELEASED',ended_at_ms=1,ended_by_job_id=?",(job,))
+        finally:
+            db.close()
+        worker=Worker(self.store,self.startup,Registry([registration()]),policy=Policy(lease_ms=3000))
+        self.addAsyncCleanup(worker.close)
+        self.assertTrue(await asyncio.wait_for(worker.attempt(),10))   # No crash in finish.
+        events=[code for code, in self.rows('SELECT event_code FROM job_history WHERE job_id=? ORDER BY history_id',(job,))]
+        self.assertIn('EPISODE_SEARCH_RESET',events)
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
+                                   "AND created_by_job_id=?",(job,)),[(1,)])
+
+
+class RegisteredCodesTests(unittest.TestCase):
+    def test_every_literal_event_and_reason_written_by_the_code_is_registered(self):
+        # An unregistered event made the reset's finish() raise, which stopped the worker.
+        import ast, pathlib
+        from src.nextgen.messages import EVENTS
+        from src.nextgen.reasons import REGISTRY
+        bad=[]
+        for path in pathlib.Path(__file__).resolve().parents[1].rglob('*.py'):
+            if 'tests' in path.parts: continue
+            for node in ast.walk(ast.parse(path.read_text())):
+                if not isinstance(node,ast.Call): continue
+                for kw in node.keywords:
+                    value=kw.value.value if isinstance(kw.value,ast.Constant) else None
+                    if type(value) is not str: continue
+                    if kw.arg=='event_code' and value not in EVENTS: bad.append((path.name,node.lineno,value))
+                    if kw.arg=='reason_code' and value not in REGISTRY: bad.append((path.name,node.lineno,value))
+                if (getattr(node.func,'id',None)=='Outcome' and len(node.args)>=2
+                        and isinstance(node.args[1],ast.Constant) and type(node.args[1].value) is str
+                        and node.args[1].value not in REGISTRY):
+                    bad.append((path.name,node.lineno,node.args[1].value))
+        self.assertEqual(bad,[])
