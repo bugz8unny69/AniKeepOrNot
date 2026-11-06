@@ -822,3 +822,205 @@ def ingest_batch_prowlarr_results(db, params, result, *, snapshots=None, job_id=
         return tuple(receipts)
     started = _start_candidate(db, params.scope_id, params.anidb_id, top, created_by_job_id=job_id, now_ms=now)
     return tuple(receipts) + (() if started is None else (started,))
+
+
+# --- Read-only views for the dashboard and API (WI-09) -------------------------
+
+def get_batch_scope_operation_view(db, anidb_id, season):
+    """Expose one understandable batch-operation view for anime/season (WI-09)."""
+    integer(anidb_id, positive=True)
+    integer(season, positive=True)
+
+    has_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
+    if not has_table:
+        return None
+
+    scope_row = db.execute(
+        "SELECT scope_id, anidb_id, tvdb_series_id, tvdb_season, operation_id, "
+        "active_candidate_id, controller_job_id, state, created_at_ms, updated_at_ms "
+        "FROM batch_candidate_scopes WHERE anidb_id=? AND tvdb_season=?",
+        (anidb_id, season)).fetchone()
+    if scope_row is None:
+        return None
+
+    (scope_id, anidb_id, tvdb_series_id, tvdb_season, operation_id,
+     active_cid, ctrl_job_id, state, created_at, updated_at) = scope_row
+
+    # Anime title
+    anime_title = None
+    has_anime = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='identified_anime'").fetchone()
+    if has_anime:
+        row = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
+        if row:
+            anime_title = row[0]
+
+    # Candidates
+    candidates = get_candidate_pool(db, scope_id)
+    active_cand_dict = None
+    ranked_candidates = []
+    rejected_candidates = []
+    canceled_candidates = []
+    succeeded_candidates = []
+
+    for c in candidates:
+        c_dict = {
+            'candidate_id': c.candidate_id,
+            'info_hash': c.info_hash,
+            'title': c.title,
+            'rank': c.rank,
+            'state': c.state,
+            'reason_code': c.reason_code,
+            'has_metadata': bool(c.has_metadata),
+            'seeders': c.seeders,
+            'size_bytes': c.size_bytes,
+            'updated_at_ms': c.updated_at_ms,
+        }
+        if c.state == 'ACTIVE':
+            c_dict['disposition'] = 'Actively acquiring metadata and undergoing release verification'
+            active_cand_dict = c_dict
+        elif c.state == 'READY':
+            c_dict['disposition'] = f'Ranked #{c.rank} in pool'
+            ranked_candidates.append(c_dict)
+        elif c.state == 'FAILED':
+            c_dict['disposition'] = f'Rejected: {c.reason_code or "FAILED"}'
+            rejected_candidates.append(c_dict)
+        elif c.state == 'CANCELED':
+            c_dict['disposition'] = f'Canceled by user: {c.reason_code or "JOB_CANCELED"}'
+            canceled_candidates.append(c_dict)
+            rejected_candidates.append(c_dict)
+        elif c.state == 'SUCCEEDED':
+            c_dict['disposition'] = 'Successfully acquired and verified'
+            succeeded_candidates.append(c_dict)
+
+    # Metadata progress for active candidate
+    metadata_progress = None
+    if active_cand_dict is not None:
+        has_adm = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_metadata_admissions'").fetchone()
+        if has_adm:
+            adm_row = db.execute(
+                "SELECT created_at_ms, state, inventory_json IS NOT NULL "
+                "FROM batch_metadata_admissions WHERE info_hash=?",
+                (active_cand_dict['info_hash'],)).fetchone()
+            if adm_row:
+                metadata_progress = {
+                    'created_at_ms': adm_row[0],
+                    'state': adm_row[1],
+                    'has_inventory': bool(adm_row[2]),
+                }
+
+    # Prowlarr search state
+    searching_prowlarr = False
+    last_prowlarr_search = None
+    has_prowlarr = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prowlarr_search_snapshots'").fetchone()
+    if has_prowlarr:
+        snap_row = db.execute(
+            "SELECT captured_at_ms, status, snapshot_json "
+            "FROM prowlarr_search_snapshots "
+            "WHERE tvdb_series_id=? AND season=? AND search_mode='batch_fallback' "
+            "ORDER BY captured_at_ms DESC LIMIT 1",
+            (tvdb_series_id, tvdb_season)).fetchone()
+        if snap_row:
+            last_prowlarr_search = {
+                'captured_at_ms': snap_row[0],
+                'status': snap_row[1],
+            }
+
+    # Check if a DISCOVER_BATCH_PROWLARR job is currently running or queued
+    pending_prowlarr = db.execute(
+        "SELECT 1 FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR' "
+        "AND json_extract(payload_json, '$.scope_id')=? "
+        "AND state IN ('PENDING', 'RUNNING', 'RETRY_WAIT', 'ON_HOLD')",
+        (scope_id,)).fetchone()
+    if pending_prowlarr:
+        searching_prowlarr = True
+
+    # Operation and cleanup status
+    op_status = None
+    if operation_id is not None:
+        has_op = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_operations'").fetchone()
+        if has_op:
+            op_row = db.execute(
+                "SELECT state, cleanup_state, reason_code FROM job_operations WHERE operation_id=?",
+                (operation_id,)).fetchone()
+            if op_row:
+                op_status = {
+                    'operation_id': operation_id,
+                    'operation_state': op_row[0],
+                    'cleanup_state': op_row[1],
+                    'reason_code': op_row[2],
+                }
+
+    return {
+        'scope_id': scope_id,
+        'anidb_id': anidb_id,
+        'tvdb_series_id': tvdb_series_id,
+        'season': tvdb_season,
+        'title': anime_title,
+        'state': state,
+        'active_candidate': active_cand_dict,
+        'ranked_candidates': ranked_candidates,
+        'rejected_candidates': rejected_candidates,
+        'canceled_candidates': canceled_candidates,
+        'succeeded_candidates': succeeded_candidates,
+        'total_candidates': len(candidates),
+        'metadata_progress': metadata_progress,
+        'searching_prowlarr': searching_prowlarr,
+        'last_prowlarr_search': last_prowlarr_search,
+        'operation_status': op_status,
+        'created_at_ms': created_at,
+        'updated_at_ms': updated_at,
+    }
+
+
+def list_batch_scopes(db, limit=50):
+    """List batch candidate scopes for dashboard overview (WI-09)."""
+    integer(limit, positive=True)
+    has_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
+    if not has_table:
+        return ()
+
+    rows = db.execute(
+        "SELECT s.scope_id, s.anidb_id, s.tvdb_series_id, s.tvdb_season, s.state, "
+        "s.active_candidate_id, s.created_at_ms, s.updated_at_ms, "
+        "a.title, "
+        "c.info_hash, c.title AS active_title "
+        "FROM batch_candidate_scopes s "
+        "LEFT JOIN identified_anime a ON a.anidb_id=s.anidb_id "
+        "LEFT JOIN batch_candidates c ON c.candidate_id=s.active_candidate_id "
+        "ORDER BY s.updated_at_ms DESC LIMIT ?",
+        (limit,)).fetchall()
+
+    result = []
+    for r in rows:
+        (sid, aid, tid, season, state, active_cid, created_at, updated_at,
+         anime_title, active_hash, active_title) = r
+        cand_counts = db.execute(
+            "SELECT count(*), sum(case when state in ('FAILED', 'CANCELED') then 1 else 0 end) "
+            "FROM batch_candidates WHERE scope_id=?",
+            (sid,)).fetchone()
+        total_cands = cand_counts[0] or 0
+        failed_cands = cand_counts[1] or 0
+
+        result.append({
+            'scope_id': sid,
+            'anidb_id': aid,
+            'tvdb_series_id': tid,
+            'season': season,
+            'title': anime_title,
+            'state': state,
+            'active_candidate_id': active_cid,
+            'active_info_hash': active_hash,
+            'active_title': active_title,
+            'total_candidates': total_cands,
+            'rejected_candidates': failed_cands,
+            'created_at_ms': created_at,
+            'updated_at_ms': updated_at,
+        })
+    return tuple(result)
+
