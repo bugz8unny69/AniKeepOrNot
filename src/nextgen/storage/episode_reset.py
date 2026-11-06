@@ -143,10 +143,6 @@ def progress(database,plan_id,episode):
         now=queue.now()
         if _pending_discovery(db,plan_id):
             return 'WAIT'
-        # A queued manual VERIFY_RELEASE may not yet have been claimed/assigned
-        # an operation. Cancel it, rather than let it acquire after the reset.
-        for (job_id,) in _pending_unowned_manual(db,aid,season,number):
-            cancel_job(db,job_id,now,'worker')
         owners=_owners(db,plan_id,episode,aid,season,number)
         # Validate every target before starting any cancellation: a batch
         # owning another episode must not be partially torn down.
@@ -159,6 +155,10 @@ def progress(database,plan_id,episode):
             if owner_state is None or owner_state[0]=='STAGED' or (
                     owner_state[0]=='CANCELED' and owner_state[1]=='REVIEW'):
                 return 'REVIEW'
+        # A queued manual VERIFY_RELEASE may not yet have been claimed/assigned
+        # an operation. Cancel it only after the entire reset passes preflight.
+        for (job_id,) in _pending_unowned_manual(db,aid,season,number):
+            cancel_job(db,job_id,now,'worker')
         for op,target in owners:
             row=db.execute(
                 'SELECT operation_id,state,cleanup_state,reason_code FROM job_operations '
