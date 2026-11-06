@@ -39,6 +39,7 @@ class FailedJobStateMigrationTests(unittest.TestCase):
         initialize(fresh)
         upgraded = self.migrate()
         upgraded.executescript((SQL_DIR / '059_identity_candidate_evidence.sql').read_text())
+        upgraded.executescript((SQL_DIR / '060_batch_candidate_operations.sql').read_text())
         self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], LATEST_VERSION)
         self.assertEqual(_structure(fresh), _structure(upgraded))
 

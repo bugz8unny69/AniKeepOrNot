@@ -9,7 +9,7 @@ from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration,
 from src.nextgen.providers.errors import (ProviderDeferred, ProviderUnavailable, ProviderInvalidResponse,
                                           ProviderAuthenticationFailed)
 from src.nextgen.release_contracts import VerifiedRelease, ReleaseNotReady, ReleaseConflict
-from src.nextgen.batch.provider_worker import BatchVerificationCompletion
+from src.nextgen.batch.provider_worker import BatchVerificationCompletion, BatchCandidatePooled
 from src.nextgen.batch.selection import BatchPlanningError
 from src.nextgen.acquisition.metadata import MetadataInvalid, SourceMissing
 from src.nextgen.storage.batch_verifications import persist_batch_verification
@@ -26,7 +26,7 @@ DEFINITION=HandlerDefinition(KIND,"Verify release episode")
 
 @dataclass(frozen=True)
 class ReleaseCompletion:
-    verified: VerifiedRelease | BatchVerificationCompletion
+    verified: VerifiedRelease | BatchVerificationCompletion | BatchCandidatePooled
     verification_job_id: int
 
 
@@ -34,7 +34,9 @@ def _persist(db,claim,value):
     if type(value) is not ReleaseCompletion or value.verification_job_id!=claim.job_id:
         raise ValueError("release completion does not match its job")
     try:
-        if type(value.verified) is BatchVerificationCompletion:
+        if type(value.verified) is BatchCandidatePooled:
+            return ()
+        elif type(value.verified) is BatchVerificationCompletion:
             result=value.verified
             persist_batch_verification(db,claim,result.source,result.inventory,result.verified,
                                        now_ms=time.time_ns()//1000000)
@@ -77,12 +79,14 @@ def registration(verify, *, trial_kind=None, batch_kind=None):
         except (ProviderUnavailable,ProviderInvalidResponse) as exc: return Outcome("retry",exc.reason_code)
         except ProviderAuthenticationFailed as exc: return Outcome("review","PROVIDER_AUTH_FAILED", facts=failure_facts(exc))
         except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
-        if type(result) not in (VerifiedRelease,BatchVerificationCompletion) or result.source!=source:
+        if type(result) not in (VerifiedRelease,BatchVerificationCompletion,BatchCandidatePooled) or result.source!=source:
             return Outcome("review","RELEASE_CONFLICT")
         return Outcome(value=ReleaseCompletion(result,context.claim.job_id))
 
     def route(value):
         if type(value) is not ReleaseCompletion:raise ValueError("typed release completion required")
+        if type(value.verified) is BatchCandidatePooled:
+            return ()
         if type(value.verified) is BatchVerificationCompletion:
             return () if batch_kind is None else (Successor.create(batch_kind,
                 {'verification_job_id':value.verification_job_id}),)

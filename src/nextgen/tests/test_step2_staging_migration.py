@@ -61,6 +61,7 @@ class Step2StagingMigrationTests(unittest.TestCase):
         self.db.executescript(SCRIPT)
         self.db.executescript((SQL_DIR / '058_failed_job_state.sql').read_text())
         self.db.executescript((SQL_DIR / '059_identity_candidate_evidence.sql').read_text())
+        self.db.executescript((SQL_DIR / '060_batch_candidate_operations.sql').read_text())
         return self.db
 
     def test_fresh_schema_matches_upgrade_to_v57(self):

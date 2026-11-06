@@ -17,6 +17,14 @@ from src.nextgen.worker import blocking
 
 
 @dataclass(frozen=True)
+class BatchCandidatePooled:
+    source: ReleaseInput = field(repr=False)
+    candidate_id: int
+    scope_id: int
+    info_hash: str
+
+
+@dataclass(frozen=True)
 class BatchVerificationCompletion:
     source: ReleaseInput = field(repr=False)
     inventory: BatchInventory = field(repr=False)
@@ -61,6 +69,72 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
             digest=infohash(document.get('torrent_infohash'))
         except ValueError:
             raise ReleaseNotReady('RELEASE_UNRESOLVED') from None
+
+        database=configuration.value('storage.database_path')
+        try:
+            from src.nextgen.storage.batch_candidates import (
+                get_or_create_scope, add_candidate, discover_existing_candidates,
+                get_candidate_pool, rank_candidates, reorder_candidates,
+                get_active_candidate, next_candidate, activate_candidate,
+            )
+            import sqlite3
+            from src.nextgen.storage.sqlite import transaction
+
+            def _coordinate_pool():
+                try:
+                    conn = sqlite3.connect(database, timeout=5)
+                    conn.execute("PRAGMA foreign_keys=ON")
+                    conn.execute("PRAGMA busy_timeout=5000")
+                except Exception:
+                    return None
+                try:
+                    has_table = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
+                    if not has_table:
+                        return None
+                    with transaction(conn):
+                        scope = get_or_create_scope(conn, source.anidb_id, source.tvdb_series_id, hint.season_hint)
+                        discover_existing_candidates(conn, scope.scope_id, source.anidb_id, hint.season_hint)
+                        cand = add_candidate(conn, scope.scope_id, digest, delivery_title(source),
+                                             source_event_id=source.event_id,
+                                             seeders=document.get('seeders'),
+                                             size_bytes=document.get('size'))
+                        candidates = get_candidate_pool(conn, scope.scope_id)
+                        req_audio = 'japanese_english'
+                        try:
+                            req_audio = configuration.value('acquisition.audio_check')
+                        except Exception:
+                            pass
+                        ranked = rank_candidates(candidates, audio_check=req_audio)
+                        reorder_candidates(conn, scope.scope_id, ranked)
+                        active = get_active_candidate(conn, scope.scope_id)
+
+                        op_id = None
+                        if claim is not None:
+                            op_row = conn.execute(
+                                "SELECT operation_id FROM job_operation_members WHERE job_id=?",
+                                (claim.job_id,)).fetchone()
+                            if op_row:
+                                op_id = op_row[0]
+
+                        if active is not None and active.info_hash != digest:
+                            return BatchCandidatePooled(source, cand.candidate_id, scope.scope_id, digest)
+
+                        top = next_candidate(conn, scope.scope_id)
+                        if top is not None and top.info_hash != digest:
+                            return BatchCandidatePooled(source, cand.candidate_id, scope.scope_id, digest)
+
+                        if active is None:
+                            activate_candidate(conn, scope.scope_id, digest, operation_id=op_id)
+                        return None
+                finally:
+                    conn.close()
+
+            pooled = await blocking(_coordinate_pool)
+            if pooled is not None:
+                return pooled
+        except Exception:
+            pass
         # The built-in reader needs the leased VERIFY_RELEASE claim before
         # issuing any older-client stopped-magnet admission. Custom injected
         # readers used by tests retain their three-argument contract.
