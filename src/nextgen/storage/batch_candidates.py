@@ -193,18 +193,20 @@ def discover_existing_candidates(db, scope_id, anidb_id, season, *,
 
             # Check qB torrents or client read-only if passed
             if not has_meta:
-                if qb_torrents:
-                    qb_info = qb_torrents.get(digest)
-                    if qb_info is not None:
-                        files = getattr(qb_info, 'files', None)
-                        if files or getattr(qb_info, 'has_metadata', False):
-                            has_meta = 1
+                if qb_torrents and digest in qb_torrents:
+                    qb_info = qb_torrents[digest]
+                    files = getattr(qb_info, 'files', None)
+                    if files:
+                        has_meta = 1
+                        meta_json = json.dumps({'files': [{'index': getattr(f, 'index', i), 'name': getattr(f, 'name', str(f)), 'size': getattr(f, 'size', 0)} for i, f in enumerate(files)]})
+                    elif getattr(qb_info, 'has_metadata', False):
+                        has_meta = 1
                 elif client is not None and hasattr(client, 'inspect'):
                     try:
                         obs = client.inspect(digest, include_files=True)
                         if obs is not None and getattr(obs, 'files', None):
                             has_meta = 1
-                            meta_json = json.dumps({'files': [{'index': f.index, 'name': f.name, 'size': f.size} for f in obs.files]})
+                            meta_json = json.dumps({'files': [{'index': getattr(f, 'index', i), 'name': getattr(f, 'name', None) or getattr(f, 'path', str(f)), 'size': getattr(f, 'size', 0)} for i, f in enumerate(obs.files)]})
                     except Exception:
                         pass
 
@@ -730,6 +732,7 @@ def get_batch_scope_operation_view(db, anidb_id, season):
     active_cand_dict = None
     ranked_candidates = []
     rejected_candidates = []
+    canceled_candidates = []
     succeeded_candidates = []
 
     for c in candidates:
@@ -756,6 +759,7 @@ def get_batch_scope_operation_view(db, anidb_id, season):
             rejected_candidates.append(c_dict)
         elif c.state == 'CANCELED':
             c_dict['disposition'] = f'Canceled by user: {c.reason_code or "JOB_CANCELED"}'
+            canceled_candidates.append(c_dict)
             rejected_candidates.append(c_dict)
         elif c.state == 'SUCCEEDED':
             c_dict['disposition'] = 'Successfully acquired and verified'
@@ -832,6 +836,7 @@ def get_batch_scope_operation_view(db, anidb_id, season):
         'active_candidate': active_cand_dict,
         'ranked_candidates': ranked_candidates,
         'rejected_candidates': rejected_candidates,
+        'canceled_candidates': canceled_candidates,
         'succeeded_candidates': succeeded_candidates,
         'total_candidates': len(candidates),
         'metadata_progress': metadata_progress,

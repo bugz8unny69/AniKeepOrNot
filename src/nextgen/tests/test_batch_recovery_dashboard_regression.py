@@ -10,13 +10,13 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.nextgen.acquisition.metadata import infohash
-from src.nextgen.acquisition.qbittorrent import DownloadCredentials
+from src.nextgen.acquisition.qbittorrent import DownloadCredentials, Observation, TorrentFile
 from src.nextgen.api.app import Application
 from src.nextgen.batch.backlog_audit import apply_batch_consolidation, audit_batch_backlog
 from src.nextgen.configuration import ConfigurationSnapshot
 from src.nextgen.storage.batch_candidates import (
     BatchCandidate, BatchScope, activate_candidate, add_candidate,
-    auto_cleanup_failed_batch_candidate, exhaust_scope, fail_candidate,
+    auto_cleanup_failed_batch_candidate, cancel_candidate, exhaust_scope, fail_candidate,
     get_active_candidate, get_batch_scope_operation_view, get_candidate_pool,
     get_or_create_scope, list_batch_scopes, next_candidate, rank_candidates,
     reorder_candidates, schedule_after_cleanup_batch,
@@ -134,6 +134,94 @@ class BacklogAuditAndReconciliationTests(unittest.TestCase):
             self.assertEqual(len(pool), 1)
             self.assertEqual(pool[0].info_hash, HASH_1)
 
+    def test_audit_examines_qbittorrent_file_inventories_read_only(self):
+        """WI-08 / review item 6: Audit actually examines qB file inventories read-only when available."""
+        now = int(time.time() * 1000)
+        with self.connect() as db, transaction(db):
+            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+            raw_1 = json.dumps({'release_name': '[GroupA] Cyberpunk Edgerunners - S01 [1080p]', 'torrent_infohash': HASH_1}).encode()
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(1, 'autobrr', ?, ?, 'IDENTIFIED')", (raw_1, now))
+            op1 = db.execute("INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)", (now, now)).lastrowid
+            enqueue_job(db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': 16999}, available_at_ms=0, event_id=1, operation_id=op1)
+
+        # Mock qB client with inspect returning Observation with TorrentFile instances
+        mock_client = Mock()
+        files = (
+            TorrentFile(0, "Cyberpunk.S01E01.mkv", 104857600),
+            TorrentFile(1, "Cyberpunk.S01E02.mkv", 104857600),
+        )
+        mock_client.inspect.return_value = Observation(
+            info_hash=HASH_1, state='pausedDL', save_path='/downloads/Cyberpunk',
+            category='anime', tags=(), auto_tmm=False, files=files
+        )
+
+        with self.connect() as db:
+            audit = audit_batch_backlog(db, client=mock_client)
+
+        cand = audit['consolidation_plan'][0]['candidates'][0]
+        self.assertEqual(cand['has_metadata'], 1)
+        self.assertIsNotNone(cand['metadata_json'])
+        parsed = json.loads(cand['metadata_json'])
+        self.assertEqual(len(parsed['files']), 2)
+        self.assertEqual(parsed['files'][0]['name'], 'Cyberpunk.S01E01.mkv')
+
+        with self.connect() as db, transaction(db):
+            result = apply_batch_consolidation(db, audit)
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            pool = get_candidate_pool(db, scope.scope_id)
+            self.assertEqual(pool[0].has_metadata, 1)
+            self.assertIn("Cyberpunk.S01E01.mkv", pool[0].metadata_json)
+
+    def test_consolidation_reconciles_running_jobs_and_drains_duplicate_operations(self):
+        """WI-08 / review item 7: Consolidation reconciles running jobs, links primary operation, and drains duplicate operations."""
+        now = int(time.time() * 1000)
+        with self.connect() as db, transaction(db):
+            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+            raw_1 = json.dumps({'release_name': '[GroupA] Cyberpunk Edgerunners - S01 [1080p]', 'torrent_infohash': HASH_1}).encode()
+            raw_2 = json.dumps({'release_name': '[GroupB] Cyberpunk Edgerunners - S01 [720p]', 'torrent_infohash': HASH_2}).encode()
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(1, 'autobrr', ?, ?, 'IDENTIFIED')", (raw_1, now))
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(2, 'autobrr', ?, ?, 'IDENTIFIED')", (raw_2, now))
+
+            # Primary operation 1 with a RUNNING job
+            op1 = db.execute("INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)", (now, now)).lastrowid
+            j1 = enqueue_job(db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': 16999}, available_at_ms=0, event_id=1, operation_id=op1)
+            db.execute("UPDATE jobs SET state='RUNNING', lease_token='tok1', lease_expires_at_ms=? WHERE job_id=?", (now + 60000, j1))
+
+            # Competing duplicate operation 2 with a PENDING job and a RETRY_WAIT job
+            op2 = db.execute("INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)", (now, now)).lastrowid
+            j2 = enqueue_job(db, component='worker', kind='EVALUATE_BATCH', payload={'anidb_id': 16999, 'season': 1}, available_at_ms=0, event_id=2, operation_id=op2)
+            j3 = enqueue_job(db, component='worker', kind='RESERVE_BATCH', payload={'anidb_id': 16999, 'season': 1}, available_at_ms=0, event_id=2, operation_id=op2)
+            db.execute("UPDATE jobs SET state='RETRY_WAIT' WHERE job_id=?", (j3,))
+
+            audit = audit_batch_backlog(db)
+            result = apply_batch_consolidation(db, audit)
+
+        # Verify reconciliation stats
+        self.assertEqual(result['migrated_scopes'], 1)
+        self.assertEqual(result['migrated_candidates'], 2)
+        self.assertEqual(result['reconciled_jobs'], 3)
+        self.assertEqual(result['reconciled_operations'], 2)
+        self.assertEqual(result['drained_duplicate_operations'], 1)
+
+        with self.connect() as db:
+            # Primary operation is linked to the scope
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            self.assertEqual(scope.operation_id, op1)
+
+            # Competing duplicate operation is marked CANCELED with CANCELLATION_COMPLETE
+            op2_row = db.execute("SELECT state, cleanup_state, reason_code FROM job_operations WHERE operation_id=?", (op2,)).fetchone()
+            self.assertEqual(op2_row, ('CANCELED', 'COMPLETE', 'CANCELLATION_COMPLETE'))
+
+            # Competing jobs j2 and j3 are canceled
+            j2_row = db.execute("SELECT state, last_reason_code FROM jobs WHERE job_id=?", (j2,)).fetchone()
+            self.assertEqual(j2_row, ('CANCELED', 'JOB_CANCELED'))
+            j3_row = db.execute("SELECT state, last_reason_code FROM jobs WHERE job_id=?", (j3,)).fetchone()
+            self.assertEqual(j3_row, ('CANCELED', 'JOB_CANCELED'))
+
+            # History was recorded for canceled jobs
+            h_count = db.execute("SELECT count(*) FROM job_history WHERE event_code='CANCELED' AND reason_code='JOB_CANCELED'").fetchone()[0]
+            self.assertEqual(h_count, 2)
+
 
 class DashboardBatchVisibilityTests(unittest.TestCase):
     def setUp(self):
@@ -199,20 +287,52 @@ class DashboardBatchVisibilityTests(unittest.TestCase):
         self.assertIsNotNone(view['last_prowlarr_search'])
         self.assertEqual(view['last_prowlarr_search']['status'], 'COMPLETE')
 
+    def test_get_batch_scope_operation_view_with_canceled_candidate(self):
+        """WI-09 / review correction: Operation view preserves CANCELED candidate disposition distinct from FAILED."""
+        now = int(time.time() * 1000)
+        with self.connect() as db, transaction(db):
+            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+
+            # Add and cancel candidate 1
+            add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]")
+            activate_candidate(db, scope.scope_id, HASH_1)
+            cancel_candidate(db, scope.scope_id, HASH_1, reason_code="USER_DISLIKES_RELEASE")
+
+            # Add ready candidate 2
+            add_candidate(db, scope.scope_id, HASH_2, "[Group] Cyberpunk S01 [Dual Audio 1080p]")
+
+            view = get_batch_scope_operation_view(db, 16999, 1)
+
+        self.assertIsNotNone(view)
+        self.assertEqual(len(view['canceled_candidates']), 1)
+        canceled = view['canceled_candidates'][0]
+        self.assertEqual(canceled['info_hash'], HASH_1)
+        self.assertEqual(canceled['state'], 'CANCELED')
+        self.assertEqual(canceled['reason_code'], 'USER_DISLIKES_RELEASE')
+        self.assertEqual(canceled['disposition'], 'Canceled by user: USER_DISLIKES_RELEASE')
+
+        # Also appears in rejected_candidates for backward compatibility
+        self.assertEqual(len(view['rejected_candidates']), 1)
+        self.assertEqual(view['rejected_candidates'][0]['info_hash'], HASH_1)
+
     def test_list_batch_scopes(self):
-        """WI-09: list_batch_scopes returns overview of all batch controllers."""
+        """WI-09: list_batch_scopes returns overview of all batch controllers including canceled candidates."""
         with self.connect() as db, transaction(db):
             db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
             scope = get_or_create_scope(db, 16999, 393400, 1)
             add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]")
             activate_candidate(db, scope.scope_id, HASH_1)
+            cancel_candidate(db, scope.scope_id, HASH_1, reason_code="USER_CANCEL")
+            add_candidate(db, scope.scope_id, HASH_2, "[Group] Cyberpunk S01 [Dual Audio 1080p]")
 
             scopes = list_batch_scopes(db)
 
         self.assertEqual(len(scopes), 1)
         self.assertEqual(scopes[0]['anidb_id'], 16999)
         self.assertEqual(scopes[0]['season'], 1)
-        self.assertEqual(scopes[0]['total_candidates'], 1)
+        self.assertEqual(scopes[0]['total_candidates'], 2)
+        self.assertEqual(scopes[0]['rejected_candidates'], 1)
 
 
 class EndToEndBatchRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -294,3 +414,86 @@ class EndToEndBatchRegressionTests(unittest.IsolatedAsyncioTestCase):
             scope_after = get_or_create_scope(db, 16999, 393400, 1)
             self.assertEqual(scope_after.state, 'EXHAUSTED')
             self.assertIsNone(scope_after.active_candidate_id)
+
+
+class ProductionCandidateDiscoveryTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / 'batch_prod_discovery.sqlite'
+        with sqlite3.connect(self.db_path) as conn:
+            initialize(conn)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def connect(self):
+        return sqlite3.connect(self.db_path)
+
+    async def test_production_candidate_discovery_examines_qb_file_inventories(self):
+        """WI-02 / review item 6: Production candidate discovery actually queries qB client inspect read-only."""
+        now = int(time.time() * 1000)
+        raw_new = json.dumps({'release_name': '[GroupB] Cyberpunk Edgerunners - S01 [1080p]', 'torrent_infohash': HASH_2}).encode()
+        with self.connect() as db, transaction(db):
+            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+            # Historical incoming event for HASH_1 already in DB linked to anidb_id 16999
+            raw_1 = json.dumps({'release_name': '[GroupA] Cyberpunk Edgerunners - S01 [1080p]', 'torrent_infohash': HASH_1}).encode()
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(1, 'autobrr', ?, ?, 'IDENTIFIED')", (raw_1, now))
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(2, 'autobrr', ?, ?, 'IDENTIFIED')", (raw_new, now))
+            series_json = json.dumps({'anidb_id': 16999, 'tvdb_series_id': 393400, 'titles': ['Cyberpunk Edgerunners'], 'episodes': []})
+            db.execute("INSERT INTO identity_results(event_id, anidb_id, schema_version, series_json, validated_at_ms) "
+                       "VALUES(1, 16999, 2, ?, ?)", (series_json, now))
+
+        from src.nextgen.batch.provider_worker import make_batch_verifier
+        from src.nextgen.release_contracts import ReleaseInput
+
+        mock_qb_client = Mock()
+        files = (
+            TorrentFile(0, "Cyberpunk.S01E01.mkv", 104857600),
+            TorrentFile(1, "Cyberpunk.S01E02.mkv", 104857600),
+        )
+        obs_1 = Observation(
+            info_hash=HASH_1, state='pausedDL', save_path='/downloads/Cyberpunk',
+            category='anime', tags=(), auto_tmm=False, files=files
+        )
+        mock_qb_client.inspect.side_effect = lambda h, **kw: obs_1 if h == HASH_1 else None
+
+        mock_secrets = Mock()
+        mock_secrets.qbittorrent_credentials.return_value = Mock()
+
+        async def dummy_reader(*args, **kwargs):
+            return b""
+
+        verifier = make_batch_verifier(
+            options=Mock(),
+            credentials=lambda: Mock(),
+            read_batch_metainfo=dummy_reader,
+            qb_client_factory=lambda *a, **kw: mock_qb_client,
+            secrets=mock_secrets,
+        )
+
+        cfg_store = Mock()
+        cfg_store.value.side_effect = lambda k: {
+            'storage.database_path': str(self.db_path),
+            'acquisition.audio_check': 'japanese_english',
+            'qbittorrent.base_url': 'http://localhost:8080',
+            'storage.download_root': '/downloads',
+            'qbittorrent.category': 'anime',
+            'qbittorrent.timeout_seconds': 30,
+        }.get(k, None)
+
+        source = ReleaseInput(2, 1, 16999, 393400, raw_new)
+
+        cancelled = asyncio.Event()
+        # Call verifier. Because HASH_1 (with files in qB) was discovered, it ranks ahead of HASH_2 (without files)
+        # So HASH_2 gets pooled!
+        pooled = await verifier(source, cfg_store, cancelled)
+        self.assertIsNotNone(pooled)
+        self.assertEqual(pooled.info_hash, HASH_2)
+
+        # Check that HASH_1 was discovered with metadata from qB!
+        with self.connect() as db:
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            pool = get_candidate_pool(db, scope.scope_id)
+            c1 = [c for c in pool if c.info_hash == HASH_1][0]
+            self.assertEqual(c1.has_metadata, 1)
+            self.assertIn("Cyberpunk.S01E01.mkv", c1.metadata_json)

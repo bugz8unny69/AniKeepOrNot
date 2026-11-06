@@ -45,7 +45,8 @@ class BatchVerificationCompletion:
 
 
 def make_batch_verifier(options, credentials, read_batch_metainfo, *,
-                        client_pool=None, client_factory=Clients):
+                        client_pool=None, client_factory=Clients,
+                        qb_client_factory=None, secrets=None):
     """Return async batch verifier callable suitable for the release job.
 
     The configured metainfo reader accepts ONLY a 40-character infohash,
@@ -91,9 +92,41 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
                     return None
                 with transaction(conn):
                     scope = get_or_create_scope(conn, source.anidb_id, source.tvdb_series_id, hint.season_hint)
-                    discover_existing_candidates(conn, scope.scope_id, source.anidb_id, hint.season_hint)
+                    # Examine existing qBittorrent file inventories read-only (WI-02, review item 6)
+                    qb_client = None
+                    if secrets is not None:
+                        try:
+                            from src.nextgen.acquisition.qbittorrent import Client as QBClient
+                            from src.nextgen.acquisition.settings import download_options
+                            factory = qb_client_factory or QBClient
+                            opts = download_options(configuration)
+                            creds = secrets.qbittorrent_credentials()
+                            qb_client = factory(opts, creds)
+                            if hasattr(qb_client, 'login'):
+                                qb_client.login()
+                        except Exception:
+                            qb_client = None
+                    elif qb_client_factory is not None:
+                        try:
+                            qb_client = qb_client_factory()
+                        except Exception:
+                            qb_client = None
+
+                    discover_existing_candidates(conn, scope.scope_id, source.anidb_id, hint.season_hint, client=qb_client)
+                    current_has_meta = 0
+                    current_meta_json = None
+                    if qb_client is not None and hasattr(qb_client, 'inspect'):
+                        try:
+                            obs = qb_client.inspect(digest, include_files=True)
+                            if obs is not None and getattr(obs, 'info_hash', None) == digest and getattr(obs, 'files', None):
+                                current_has_meta = 1
+                                current_meta_json = json.dumps({'files': [{'index': getattr(f, 'index', i), 'name': getattr(f, 'name', None) or getattr(f, 'path', str(f)), 'size': getattr(f, 'size', 0)} for i, f in enumerate(obs.files)]})
+                        except Exception:
+                            pass
                     cand = add_candidate(conn, scope.scope_id, digest, delivery_title(source),
                                          source_event_id=source.event_id,
+                                         has_metadata=current_has_meta,
+                                         metadata_json=current_meta_json,
                                          seeders=document.get('seeders'),
                                          size_bytes=document.get('size'))
                     candidates = get_candidate_pool(conn, scope.scope_id)

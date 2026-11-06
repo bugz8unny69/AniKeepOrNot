@@ -48,7 +48,7 @@ def _check_torrent_ownership(db, qb_info, digest: str) -> str:
     return 'FOREIGN'
 
 
-def audit_batch_backlog(db, *, qb_torrents=None, now_ms=None):
+def audit_batch_backlog(db, *, client=None, qb_torrents=None, now_ms=None):
     """Read-only audit of historical batch jobs, duplicate workflows, and torrent ownership (WI-08)."""
     now = now_ms if now_ms is not None else int(__import__('time').time() * 1000)
 
@@ -187,8 +187,8 @@ def audit_batch_backlog(db, *, qb_torrents=None, now_ms=None):
             adm = db.execute(
                 "SELECT inventory_json, state, created_at_ms FROM batch_metadata_admissions WHERE info_hash=?",
                 (digest,)).fetchone()
-            if adm is not None:
-                cand['has_metadata'] = 1 if adm[0] else 0
+            if adm is not None and adm[0]:
+                cand['has_metadata'] = 1
                 cand['metadata_json'] = adm[0]
                 if adm[1] in ('RELEASED', 'EXTERNAL', 'REVIEW'):
                     scope_data['stale_admissions'].append({
@@ -200,9 +200,47 @@ def audit_batch_backlog(db, *, qb_torrents=None, now_ms=None):
                 cand['has_metadata'] = 0
                 cand['metadata_json'] = None
 
-            # Verify torrent ownership if qB torrents map passed
+            # Examine existing qBittorrent file inventories read-only (WI-08, review item 6)
+            if not cand['has_metadata']:
+                if qb_torrents and digest in qb_torrents:
+                    qb_info = qb_torrents[digest]
+                    files = getattr(qb_info, 'files', None)
+                    if files:
+                        cand['has_metadata'] = 1
+                        file_entries = [{'index': getattr(f, 'index', i), 'name': getattr(f, 'name', None) or getattr(f, 'path', str(f)), 'size': getattr(f, 'size', 0)} for i, f in enumerate(files)]
+                        cand['metadata_json'] = json.dumps({'files': file_entries})
+                        cand['files'] = file_entries
+                elif client is not None and hasattr(client, 'inspect'):
+                    try:
+                        obs = client.inspect(digest, include_files=True)
+                        if obs is not None and getattr(obs, 'files', None):
+                            cand['has_metadata'] = 1
+                            file_entries = [{'index': getattr(f, 'index', i), 'name': getattr(f, 'name', None) or getattr(f, 'path', str(f)), 'size': getattr(f, 'size', 0)} for i, f in enumerate(obs.files)]
+                            cand['metadata_json'] = json.dumps({'files': file_entries})
+                            cand['files'] = file_entries
+                    except Exception:
+                        pass
+
+            # Verify torrent ownership if qB torrents or client passed
             if digest in qb_ownership_map:
                 cand['ownership'] = qb_ownership_map[digest]
+            elif client is not None and hasattr(client, 'inspect'):
+                try:
+                    obs = client.inspect(digest, include_files=False)
+                    if obs is not None:
+                        ownership = _check_torrent_ownership(db, obs, digest)
+                        cand['ownership'] = ownership
+                        qb_ownership_map[digest] = ownership
+                        if ownership == 'OWNED':
+                            owned_torrents_count += 1
+                        elif ownership == 'FOREIGN':
+                            foreign_torrents_count += 1
+                        else:
+                            uncertain_torrents_count += 1
+                    else:
+                        cand['ownership'] = 'UNKNOWN'
+                except Exception:
+                    cand['ownership'] = 'UNKNOWN'
             else:
                 cand['ownership'] = 'UNKNOWN'
 
@@ -233,7 +271,10 @@ def audit_batch_backlog(db, *, qb_torrents=None, now_ms=None):
 def apply_batch_consolidation(db, audit_result, *, now_ms=None):
     """Consolidate audited candidate facts into series-scoped controllers (WI-08).
 
-    Never deletes or mutates external or unowned torrents.
+    Accounts for existing running jobs and operations (Item 7):
+    - Identifies primary operation and links to batch_candidate_scopes.operation_id
+    - Drains and cancels non-primary duplicate operations and competing jobs
+    - Never deletes or mutates external or unowned torrents.
     """
     if not db.in_transaction:
         raise ValueError("Active database transaction required for consolidation.")
@@ -241,6 +282,11 @@ def apply_batch_consolidation(db, audit_result, *, now_ms=None):
     now = now_ms if now_ms is not None else int(__import__('time').time() * 1000)
     migrated_scopes = 0
     migrated_candidates = 0
+    reconciled_operations = 0
+    reconciled_jobs = 0
+    drained_duplicate_operations = 0
+
+    from src.nextgen.storage.cancellation import cancel_job, CANCELABLE
 
     for item in audit_result.get('consolidation_plan', ()):
         anidb_id = item['anidb_id']
@@ -271,10 +317,73 @@ def apply_batch_consolidation(db, audit_result, *, now_ms=None):
         ranked = rank_candidates(pool)
         reorder_candidates(db, scope.scope_id, ranked, now_ms=now)
 
+        # 2. Account for existing running jobs and operations (Item 7)
+        scope_jobs = item.get('jobs', ())
+        reconciled_jobs += len(scope_jobs)
+
+        op_ids = []
+        for j in scope_jobs:
+            op_id = j.get('operation_id')
+            if op_id and op_id not in op_ids:
+                op_ids.append(op_id)
+
+        reconciled_operations += len(op_ids)
+
+        primary_op_id = scope.operation_id
+        if not primary_op_id and op_ids:
+            for oid in op_ids:
+                row = db.execute("SELECT state FROM job_operations WHERE operation_id=?", (oid,)).fetchone()
+                if row and row[0] in ('ACTIVE', 'PENDING'):
+                    primary_op_id = oid
+                    break
+            if not primary_op_id:
+                primary_op_id = op_ids[-1]
+
+            db.execute(
+                "UPDATE batch_candidate_scopes SET operation_id=?, updated_at_ms=? WHERE scope_id=?",
+                (primary_op_id, now, scope.scope_id))
+
+        # Drain / cancel non-primary duplicate operations and competing jobs
+        for oid in op_ids:
+            if oid == primary_op_id:
+                continue
+
+            drained_duplicate_operations += 1
+            members = db.execute(
+                "SELECT job_id, state FROM jobs WHERE job_id IN "
+                "(SELECT job_id FROM job_operation_members WHERE operation_id=?)",
+                (oid,)).fetchall()
+            for m_id, m_state in members:
+                if m_state in CANCELABLE:
+                    cancel_job(db, m_id, now, component="worker",
+                               reason_code="JOB_CANCELED")
+
+            db.execute(
+                "UPDATE job_operations SET state='CANCELED', cleanup_state='COMPLETE', "
+                "reason_code='CANCELLATION_COMPLETE', updated_at_ms=? "
+                "WHERE operation_id=? AND state NOT IN ('CANCELED', 'STAGED')",
+                (now, oid))
+
+        # Cancel any orphaned cancelable batch jobs not in the primary operation
+        for j in scope_jobs:
+            j_id = j['job_id']
+            j_op = j.get('operation_id')
+            j_state = j.get('state')
+            if j_op != primary_op_id and j_state in CANCELABLE:
+                cancel_job(db, j_id, now, component="worker",
+                           reason_code="JOB_CANCELED")
+
     return {
         'migrated_scopes': migrated_scopes,
         'migrated_candidates': migrated_candidates,
-        'message': f"Consolidated {migrated_candidates} candidates across {migrated_scopes} batch scopes.",
+        'reconciled_operations': reconciled_operations,
+        'reconciled_jobs': reconciled_jobs,
+        'drained_duplicate_operations': drained_duplicate_operations,
+        'message': (
+            f"Consolidated {migrated_candidates} candidates across {migrated_scopes} batch scopes "
+            f"(reconciled {reconciled_jobs} jobs, {reconciled_operations} operations; "
+            f"drained {drained_duplicate_operations} duplicate operations)."
+        ),
     }
 
 
@@ -290,10 +399,27 @@ def main(argv=None):
     db_path = ConfigurationStore(args.config_dir).read().value('storage.database_path')
     readonly = args.action == 'preview'
     uri = f"file:{db_path}?mode={'ro' if readonly else 'rw'}"
+
+    # Attempt to initialize read-only qB client if credentials and options available
+    client = None
+    try:
+        from src.nextgen.acquisition.qbittorrent import Client as QBClient
+        from src.nextgen.acquisition.settings import download_options
+        from src.nextgen.configuration import SecretStore
+        cfg = ConfigurationStore(args.config_dir).read()
+        secrets = SecretStore(args.config_dir)
+        opts = download_options(cfg)
+        creds = secrets.qbittorrent_credentials()
+        client = QBClient(opts, creds)
+        if hasattr(client, 'login'):
+            client.login()
+    except Exception:
+        client = None
+
     with sqlite3.connect(uri, uri=True, timeout=15) as db:
         if readonly:
             db.execute('PRAGMA query_only=ON')
-            audit = audit_batch_backlog(db)
+            audit = audit_batch_backlog(db, client=client)
             if args.json:
                 print(json.dumps(audit, indent=2))
             else:
@@ -308,7 +434,7 @@ def main(argv=None):
             return 0
         else:
             with transaction(db):
-                audit = audit_batch_backlog(db)
+                audit = audit_batch_backlog(db, client=client)
                 result = apply_batch_consolidation(db, audit)
             if args.json:
                 print(json.dumps(result, indent=2))
