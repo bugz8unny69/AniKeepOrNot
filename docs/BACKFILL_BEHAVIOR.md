@@ -35,6 +35,14 @@ anchor, and later deliveries in any TVDB season reuse it. The window is searched
 pages of four episodes; each page is one `DISCOVER_SONARR_BACKFILL` job (the
 historical job and table names are kept so existing jobs and history stay valid).
 
+For an unstaged failed anchor, exhausted `CANDIDATES`, and manual submissions
+that are no longer making progress, use the episode-scoped recovery workflow:
+[Episode reservation recovery](EPISODE_RESERVATION_RECOVERY.md). Search again
+with **Delete cache** does not delete historical reservation rows. It cancels
+owners, waits for owned cleanup to mark reservations RELEASED, archives manual
+candidate registrations, then re-searches. Explicit **Retry acquisition**
+re-verifies a size-rejected source against current configurable limits.
+
 ## How an episode is searched
 
 1. The episode catalog (`providers/backfill_catalog.py`) lists the AniDB
