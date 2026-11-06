@@ -23,7 +23,7 @@ class DownloadSettingsTests(unittest.TestCase):
             self.assertNotIn('acquisition',doc['settings'])
             self.assertNotIn('download_root',doc['settings']['storage'])
         current=convert_document(doc)
-        self.assertEqual((current.schema_version,current.revision),(14,14))
+        self.assertEqual((current.schema_version,current.revision),(15,15))
         self.assertEqual(current.value('acquisition.max_episode_mb'),600)
         self.assertEqual(current.value('acquisition.max_plan_mb'),3000)
         with self.assertRaises(DownloadConfigurationError):download_options(current)
@@ -36,7 +36,7 @@ class DownloadSettingsTests(unittest.TestCase):
                     'file:///srv/downloads','http://host:0','http://host:','http://bad host','http://host\\evil','https://host?'):
             with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'qbittorrent':{'base_url':url}})
         for folder in ('/srv/trial','/srv/trial/downloads','/srv'):
-            with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'storage':{'trial_root':'/srv/trial','download_root':folder}})
+            with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'storage':{'user_evaluation_root':'/srv/trial','download_root':folder}})
         with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'storage':{'download_root':'/var/lib/anime-discovery'}})
         with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'qbittorrent':{'password':'not-public'}})
         for value in (True,0,-1,1000001):

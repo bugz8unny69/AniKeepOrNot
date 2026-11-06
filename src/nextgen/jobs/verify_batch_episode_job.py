@@ -64,7 +64,7 @@ def registration(read_batch_metainfo,*,source_factory=BatchEpisodeSource,
             intent,record=await blocking(
                 source.load,context.claim,unlock,file_index,inventory)
             protected=(
-                context.configuration.value('storage.trial_root'),
+                context.configuration.value('storage.user_evaluation_root'),
                 context.configuration.value('storage.keep_root'),
                 context.configuration.value('storage.database_path'),
             )

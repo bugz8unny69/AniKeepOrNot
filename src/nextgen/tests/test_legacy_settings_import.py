@@ -14,13 +14,13 @@ class LegacySettingsImportTests(unittest.TestCase):
         self.output=self.root/'native';self.database=self.root/'nextgen.sqlite'
         self.settings={'daemon':{'database_path':str(self.root/'legacy.db'),'concurrency':2},
             'web':{'host':'0.0.0.0','port':8877},
-            'storage':{'download_root':'/media/downloads','trial_root':'/media/staging'},
+            'storage':{'download_root':'/media/downloads','user_evaluation_root':'/media/staging'},
             'sonarr':{'enabled':True,'base_url':'http://sonarr.example','root_folder':'/media/library','quality_profile_id':4},
             'jellyfin':{'enabled':False,'base_url':'http://jellyfin.example'},
             'shoko':{'enabled':True,'base_url':'http://shoko.example'},
             'anidb':{'client':'registeredclient','clientver':2},
             'qbittorrent':{'base_url':'http://qb.example','username':'user'},
-            'trial':{'max_episode_mb':700,'max_six_episode_mb':3500},'ntfy':{'topic':'old-topic'}}
+            'user_evaluation':{'max_episode_mb':700,'max_six_episode_mb':3500},'ntfy':{'topic':'old-topic'}}
         self.secrets={'tvdb_api_key':'private-tvdb','sonarr_api_key':'private-sonarr','qbittorrent_password':'private-pass',
             'web_token':'w'*43,'admin_password':'old-admin','ntfy_token':'private-ntfy'}
         self.write()

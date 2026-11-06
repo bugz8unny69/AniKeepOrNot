@@ -321,6 +321,16 @@
       "pattern": "(?<![A-Za-z0-9_])(TORRENT_METADATA_CONFIGURATION_INVALID|TORRENT_METADATA_CLIENT_UNSUPPORTED|DOWNLOAD_CLIENT_RESPONSE_INVALID|PROWLARR_CONFIGURATION_INVALID|JELLYFIN_CONFIGURATION_INVALID|PROVIDER_CONFIGURATION_INVALID|TORRENT_METADATA_UNAVAILABLE|SHOKO_CONFIGURATION_INVALID|DOWNLOAD_CLIENT_UNAVAILABLE|DOWNLOAD_CLIENT_AUTH_FAILED|DOWNLOAD_CLIENT_UNSUPPORTED|PROVIDER_RESPONSE_INVALID|KEEP_SERVICE_UNAVAILABLE|PROWLARR_SEARCH_REVIEW|PROWLARR_AUTH_FAILED|PROWLARR_UNAVAILABLE|JELLYFIN_UNAVAILABLE|PROVIDER_UNAVAILABLE|PROVIDER_AUTH_FAILED|SHOKO_UNAVAILABLE)(?![A-Za-z0-9_])",
       "files": [],
       "why": "Migration 065 retired these per-service codes into SERVICE_SETUP_INVALID, SERVICE_UNAVAILABLE and SERVICE_RESPONSE_INVALID, with the service in the details. Codes never name a product (owner decision, 2026-11-06)."
+    },
+    {
+      "id": "RF-006d",
+      "rule": "only_in",
+      "pattern": "['\"](trial\\.(backfill_count|following_count)|storage\\.trial_root|trial_root)['\"]",
+      "files": [
+        "src/nextgen/configuration_schema.py",
+        "fixes/migrate_legacy_settings.py"
+      ],
+      "why": "Settings version 15 renamed the \"trial\" settings to user_evaluation.* and storage.user_evaluation_root. Only the upgrade code for published v14 and older, and the legacy-settings import, read the old names."
     }
   ]
 }

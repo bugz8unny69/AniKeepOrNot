@@ -75,7 +75,7 @@ class ConfigurationSchemaTests(unittest.TestCase):
         migrated = convert_document(old)
         self.assertEqual(old, original)
         self.assertEqual(source_version(old), 0)
-        self.assertEqual(migrated.revision, 14)
+        self.assertEqual(migrated.revision, 15)
         self.assertEqual(migrated.value("logging.level"), "DEBUG")
         self.assertEqual(migrated.value("logging.components")["worker"], "TRACE")
         self.assertEqual(convert_document(migrated.to_document()), migrated)
@@ -145,3 +145,44 @@ class ConfigurationSchemaTests(unittest.TestCase):
                 path.write_bytes(raw)
                 self.assertEqual(load_settings(path).logging.level, "DEBUG")
                 self.assertEqual(path.read_bytes(), raw)
+
+
+class UserEvaluationSettingsRenameTests(unittest.TestCase):
+    """v14 -> v15: the "trial" settings become "user evaluation", values kept (refactor RF-006d)."""
+
+    def v14(self, **settings):
+        return {'schema_version': 14, 'revision': 7, 'settings': settings}
+
+    def test_values_move_to_the_new_names_and_the_revision_advances_once(self):
+        from src.nextgen.configuration_schema import convert_document
+        source = self.v14(trial={'backfill_count': 3, 'following_count': 2},
+                          storage={'trial_root': '/media/evaluation', 'keep_root': '/media/keep'})
+        original = copy.deepcopy(source)
+        current = convert_document(source)
+        self.assertEqual(source, original)
+        self.assertEqual((current.schema_version, current.revision), (15, 8))
+        self.assertEqual((current.value('user_evaluation.backfill_count'), current.value('user_evaluation.following_count'),
+                          current.value('storage.user_evaluation_root'), current.value('storage.keep_root')),
+                         (3, 2, '/media/evaluation', '/media/keep'))
+        settings = current.to_document()['settings']
+        self.assertNotIn('trial', settings)
+        self.assertNotIn('trial_root', settings['storage'])
+
+    def test_each_version_accepts_only_its_own_names(self):
+        from src.nextgen.configuration_schema import ConfigurationSnapshot, convert_document
+        with self.assertRaises(ConfigurationError):   # v14 cannot already use the new names
+            convert_document(self.v14(user_evaluation={'backfill_count': 3}))
+        with self.assertRaises(ConfigurationError):
+            convert_document(self.v14(storage={'user_evaluation_root': '/media/evaluation'}))
+        with self.assertRaises(ConfigurationError):   # current settings refuse the old names
+            ConfigurationSnapshot(1, {'trial': {'backfill_count': 3}})
+        with self.assertRaises(ConfigurationError):
+            ConfigurationSnapshot(1, {'storage': {'trial_root': '/media/evaluation'}})
+
+    def test_cross_checks_apply_under_both_names(self):
+        from src.nextgen.configuration_schema import ConfigurationSnapshot, convert_document
+        for make in (lambda: convert_document(self.v14(storage={'trial_root': '/media', 'keep_root': '/media/keep'})),
+                     lambda: ConfigurationSnapshot(1, {'storage': {'user_evaluation_root': '/media',
+                                                                   'keep_root': '/media/keep'}})):
+            with self.assertRaises(ConfigurationError):   # nested media folders are refused either way
+                make()

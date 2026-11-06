@@ -134,7 +134,7 @@ class BatchStagingJournal(Journal):
                         or plan['source_root']!=intent.options.download_root):
                     raise StagingReview()
                 return plan
-            root=configuration.value('storage.trial_root')
+            root=configuration.value('storage.user_evaluation_root')
             disjoint(root,(intent.options.download_root,
                            configuration.value('storage.download_root'),
                            configuration.value('storage.keep_root'),

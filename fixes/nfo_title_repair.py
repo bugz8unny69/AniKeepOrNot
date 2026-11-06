@@ -62,7 +62,7 @@ def _data(db, configuration, overrides):
     publications = {}
     for kind, plan_id, index, aid, manifest, receipts in db.execute(PUBLICATIONS):
         plan, proofs = json.loads(manifest), json.loads(receipts)
-        if plan.get('root') != configuration.value('storage.trial_root'):
+        if plan.get('root') != configuration.value('storage.user_evaluation_root'):
             raise ValueError('Published staging root differs from configured staging root')
         entries = plan['entries']
         if len(entries) != 3 or len(proofs) != 3:

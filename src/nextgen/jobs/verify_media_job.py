@@ -39,7 +39,7 @@ def registration(*,verify=verify_file,load_input=load,staging_kind=None):
             intent,record=await blocking(load_input,context.configuration.value('storage.database_path'),
                                         context.claim,preparation,download)
             work=partial(verify,intent,record,download,context.cancelled,protected_roots=(
-                context.configuration.value('storage.trial_root'),context.configuration.value('storage.keep_root')),
+                context.configuration.value('storage.user_evaluation_root'),context.configuration.value('storage.keep_root')),
                 audio=context.configuration.value('acquisition.audio_check'))
             value=await blocking(work)
             return Outcome(value={'media':value,'verification_job_id':context.claim.job_id})

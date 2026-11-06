@@ -61,7 +61,7 @@ def units(snapshot,root,config_dir,state_dir,user,origin):
     if any('$' in str(p) for p in (root,config_dir,state_dir)):raise ValueError('Use infrastructure paths without dollar signs.')
     api=' '.join(map(quoted,(python,'-m','src.nextgen.api','serve','--config-dir',str(config_dir),'--public-origin',origin)))
     worker=' '.join(map(quoted,(python,'-m','src.nextgen','worker','--config-dir',str(config_dir))))
-    roots=[snapshot.value('storage.'+name) for name in ('download_root','trial_root','keep_root') if snapshot.value('storage.'+name)]
+    roots=[snapshot.value('storage.'+name) for name in ('download_root','user_evaluation_root','keep_root') if snapshot.value('storage.'+name)]
     db_parent=str(Path(snapshot.value('storage.database_path')).parent)
     base=[str(state_dir),str(config_dir),db_parent]
     def service(label,command,media=False):

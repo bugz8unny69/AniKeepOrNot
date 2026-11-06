@@ -62,7 +62,7 @@ def registration(read_batch_metainfo,*,source_factory=BatchProbeSource,
             intent,record=await blocking(
                 source.load,context.claim,transfer,inventory)
             protected=(
-                context.configuration.value('storage.trial_root'),
+                context.configuration.value('storage.user_evaluation_root'),
                 context.configuration.value('storage.keep_root'),
                 context.configuration.value('storage.database_path'),
             )

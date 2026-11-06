@@ -41,8 +41,8 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
     async def test_settings_use_staging_label_without_renaming_storage_key(self):
         status,result,_=await self.request('GET','/api/v1/settings',token=ADMIN)
         self.assertEqual(status,200)
-        self.assertEqual(result['data']['fields']['storage.trial_root']['label'],'Staging folder')
-        self.assertIn('trial_root',result['data']['desired']['settings']['storage'])
+        self.assertEqual(result['data']['fields']['storage.user_evaluation_root']['label'],'Staging folder')
+        self.assertIn('user_evaluation_root',result['data']['desired']['settings']['storage'])
 
     async def running(self):
         _,result,_=await self.request('POST','/api/v1/webhook',self.release(),token=WEB)

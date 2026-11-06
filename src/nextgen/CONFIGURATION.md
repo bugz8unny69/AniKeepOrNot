@@ -302,3 +302,16 @@ setup/maintenance commands and composed worker/systemd examples. See
 [Shoko metadata](SHOKO_METADATA.md) and [Service setup](SERVICE_SETUP.md).
 These supersede earlier remaining-Shoko/supervision/version notes above.
 Tests, migrations and services have not been executed.
+
+## Version 15: "trial" settings renamed
+
+Version 15 renames the settings for the first episodes picked for you to evaluate:
+
+| Version 14 and earlier | Version 15 |
+|---|---|
+| `trial.backfill_count` | `user_evaluation.backfill_count` |
+| `trial.following_count` | `user_evaluation.following_count` |
+| `storage.trial_root` | `storage.user_evaluation_root` |
+
+The upgrade moves each value to its new name unchanged and advances the revision once. Each version accepts only its own names: a version 14 file can't use the new names, and current settings refuse the old ones. The upgrade code for older versions keeps reading the old names. The dashboard shows the section as "Evaluation episodes".
+

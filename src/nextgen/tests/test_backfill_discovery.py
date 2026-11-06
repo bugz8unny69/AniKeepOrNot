@@ -214,7 +214,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[(0,)])
 
     async def test_only_the_delivered_episode_creates_no_discovery_work(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':1}},
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':1}},
                           expected_revision=1)
         self.source(7)
         worker = self.worker(FakeDiscovery())
@@ -222,7 +222,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[(0,)])
 
     async def test_continue_without_backfill_searches_following_episodes(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':3}},
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':3}},
                           expected_revision=1)
         self.source(7)
         fake = FakeDiscovery()
@@ -234,7 +234,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_backfill_and_continue_overlap_counts_once(self):
         # backfill=6, incoming=5, following=3 selects episodes 1-7 once;
         # the incoming episode 5 is acquired by its own delivery.
-        self.store.update({'trial':{'backfill_count':6,'following_count':3}},
+        self.store.update({'user_evaluation':{'backfill_count':6,'following_count':3}},
                           expected_revision=1)
         self.source(5)
         fake = FakeDiscovery()

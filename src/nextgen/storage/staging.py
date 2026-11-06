@@ -77,7 +77,7 @@ class Journal:
                 # Pinned transfer mode and destinations survive later changes.
                 if plan['source']!=evidence or plan['source_root']!=intent.options.download_root:raise StagingReview()
                 return plan
-            root=configuration.value('storage.trial_root')
+            root=configuration.value('storage.user_evaluation_root')
             disjoint(root,(intent.options.download_root,configuration.value('storage.download_root'),
                 configuration.value('storage.keep_root'),configuration.value('storage.database_path')))
             shown=title_for(db,identity[0],identity[6],configuration.value('anime.title_language'))

@@ -33,7 +33,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
     async def staged_ready(self,worker):
         event,preparation,path=await self.ready(worker)
         target=self.root/'staging';target.mkdir()
-        self.store.update({'storage':{'trial_root':str(target)}},expected_revision=3)
+        self.store.update({'storage':{'user_evaluation_root':str(target)}},expected_revision=3)
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'"),[('PENDING',)])
         return target,path
@@ -227,7 +227,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
         worker=self.worker(partial(LoseConfirmation,allow_root=True));first,source=await self.staged_ready(worker)
         await worker.attempt()
         second=self.root/'second';second.mkdir()
-        self.store.update({'storage':{'trial_root':str(second)}},expected_revision=4)
+        self.store.update({'storage':{'user_evaluation_root':str(second)}},expected_revision=4)
         db=connect(self.database)
         try:
             with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='STAGE_USER_EVALUATION_MEDIA' AND state='RETRY_WAIT'")

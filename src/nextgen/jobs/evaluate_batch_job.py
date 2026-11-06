@@ -49,8 +49,8 @@ def registration(*, reservation_kind=None):
         try:
             source=await blocking(load_batch_user_evaluation_source,
                 context.configuration.value('storage.database_path'),job,context.claim.event_id)
-            window=Window(context.configuration.value('trial.backfill_count'),
-                          context.configuration.value('trial.following_count'))
+            window=Window(context.configuration.value('user_evaluation.backfill_count'),
+                          context.configuration.value('user_evaluation.following_count'))
             proposal=propose_batch_user_evaluation(source,window,size_limits(context.configuration),
                                           context.configuration.desired_revision)
         except (UserEvaluationConflict,SizeLimitExceeded,SizeEvidenceMissing) as exc:

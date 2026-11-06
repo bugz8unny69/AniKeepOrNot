@@ -14,7 +14,7 @@ import re
 
 from src.nextgen.settings import COMPONENTS, Settings, parse_settings
 
-CONFIGURATION_VERSION = 14
+CONFIGURATION_VERSION = 15
 MAX_REVISION = (1 << 63) - 1
 MAX_BYTES = 65536
 
@@ -105,9 +105,9 @@ FIELDS = MappingProxyType({
         label="Maximum selection-plan size (MB)", help_text="Combined hard limit for prepared selected videos, counting each episode once. Decimal MB. New budgets only."),
     "storage.download_root": FieldDefinition("", "directory", "next_operation",
         label="Download working folder", help_text="Absolute client working folder, separate from published video folders. Required before submission."),
-    "trial.backfill_count": FieldDefinition(6, "integer", "next_operation", minimum=0, maximum=1000,
+    "user_evaluation.backfill_count": FieldDefinition(6, "integer", "next_operation", minimum=0, maximum=1000,
         label="Backfill first episodes", help_text="First X episodes of the verified season. Zero disables backfill; the other count must then be at least 1. New selection plans only."),
-    "trial.following_count": FieldDefinition(1, "integer", "next_operation", minimum=0, maximum=1000,
+    "user_evaluation.following_count": FieldDefinition(1, "integer", "next_operation", minimum=0, maximum=1000,
         label="Episodes starting with the received episode", help_text="Includes the triggering episode: 1 keeps only that episode; 2 includes the next. Zero disables this window; backfill must then be at least 1. New selection plans only."),
     "anidb.client_name": FieldDefinition("", "client_name", "next_operation",
         label="AniDB client name", help_text="Registered AniDB HTTP client name. Required before identity work can start."),
@@ -120,7 +120,7 @@ FIELDS = MappingProxyType({
     "api.host": FieldDefinition("127.0.0.1", "host", "restart", ("api",)),
     "api.port": FieldDefinition(8765, "integer", "restart", ("api",), 1, 65535),
     "worker.concurrency": FieldDefinition(4, "integer", "restart", ("worker",), 1, 32),
-    "storage.trial_root": FieldDefinition("", "directory", "next_operation",
+    "storage.user_evaluation_root": FieldDefinition("", "directory", "next_operation",
         label="Staging folder", help_text="Absolute destination for verified videos staged for viewing before Keep or Reject. Leave blank until configured. Existing files are not moved."),
     "storage.keep_root": FieldDefinition("", "directory", "next_operation",
         label="Keep video folder", help_text="Absolute permanent destination for approved Keep videos. Must agree with the library import target when Sonarr is used."),
@@ -128,9 +128,15 @@ FIELDS = MappingProxyType({
         "/var/lib/anime-discovery/nextgen.sqlite", "path", "restart", tuple(sorted(COMPONENTS))),
 })
 
+# Published v14 and earlier name the evaluation settings "trial" (refactor
+# RF-006d renamed them). Older versions validate with these names.
+_V14_NAMES = {"user_evaluation.backfill_count": "trial.backfill_count",
+              "user_evaluation.following_count": "trial.following_count",
+              "storage.user_evaluation_root": "storage.trial_root"}
+V14_FIELDS = MappingProxyType({_V14_NAMES.get(key, key): spec for key, spec in FIELDS.items()})
 # The obsolete HTTP metadata-source fields exist only to validate published
 # v7-v11 documents during *explicit* migrations, never in live settings.
-V13_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items()
+V13_FIELDS = MappingProxyType({key: spec for key, spec in V14_FIELDS.items()
     if key != "identity.match_threshold_pct"})
 V12_FIELDS = MappingProxyType({key: spec for key, spec in V13_FIELDS.items()
     if key != "anime.title_language"})
@@ -259,14 +265,17 @@ def validate_values(value, *, fields=FIELDS):
         parse_settings({"logging": result["logging"]})
     except (ValueError, TypeError):
         raise ConfigurationError() from None
-    roots = [PurePosixPath(result["storage"][key]) for key in ("trial_root", "keep_root", "download_root")
+    # Published v14 and earlier call these "trial"; later versions "user evaluation".
+    selection = "user_evaluation" if "user_evaluation" in result else "trial"
+    staging = "user_evaluation_root" if "user_evaluation_root" in result["storage"] else "trial_root"
+    roots = [PurePosixPath(result["storage"][key]) for key in (staging, "keep_root", "download_root")
              if result["storage"][key]]
     if any(a.is_relative_to(b) or b.is_relative_to(a) for i,a in enumerate(roots) for b in roots[i+1:]):
         raise ConfigurationError()
     database = PurePosixPath(result["storage"]["database_path"])
     if any(database.is_relative_to(root) for root in roots):
         raise ConfigurationError()
-    if result["trial"]["backfill_count"] == 0 and result["trial"]["following_count"] == 0:
+    if result[selection]["backfill_count"] == 0 and result[selection]["following_count"] == 0:
         raise ConfigurationEpisodeSelectionError()
     return result
 
@@ -595,11 +604,25 @@ def _v13_to_v14(document):
     if current == MAX_REVISION:
         raise ConfigurationError()
     previous = validate_values(document['settings'], fields=V13_FIELDS)
-    return {'schema_version': 14, 'revision': current+1, 'settings': validate_values(previous)}
+    return {'schema_version': 14, 'revision': current+1, 'settings': validate_values(previous, fields=V14_FIELDS)}
+
+
+def _v14_to_v15(document):
+    """Rename the "trial" settings to "user evaluation" (refactor RF-006d), keeping their values."""
+    if (type(document) is not dict or set(document) != {'schema_version', 'revision', 'settings'}
+            or document['schema_version'] != 14):
+        raise ConfigurationError()
+    current = revision(document['revision'])
+    if current == MAX_REVISION:
+        raise ConfigurationError()
+    values = validate_values(document['settings'], fields=V14_FIELDS)
+    values['user_evaluation'] = values.pop('trial')
+    values['storage']['user_evaluation_root'] = values['storage'].pop('trial_root')
+    return {'schema_version': 15, 'revision': current+1, 'settings': validate_values(values)}
 
 
 # Preserve published version shapes and validate before dropping obsolete keys.
-CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14})
+CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14, 14: _v14_to_v15})
 
 
 def convert_document(document):
