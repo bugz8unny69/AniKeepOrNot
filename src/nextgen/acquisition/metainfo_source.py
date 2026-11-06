@@ -9,6 +9,10 @@ import urllib.parse
 
 from src.nextgen.async_io import blocking
 from src.nextgen.acquisition.metadata import infohash, MetadataInvalid
+from src.nextgen.acquisition.metadata_service import (
+    MetadataSourceTimeout, is_metadata_expired, verify_torrent_ownership,
+    poll_or_stop_metadata, shared_limiter, METADATA_TIMEOUT_MS,
+)
 from src.nextgen.acquisition.settings import (
     endpoint, download_options, DownloadConfigurationError,
 )
@@ -114,6 +118,16 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         if qb.metadata_strategy=='fetch':
             result=await blocking(qb.fetch_metadata,source,digest,batch=batch)
             if result is None:
+                if claim is not None and getattr(claim, 'job_id', None) is not None:
+                    from src.nextgen.storage.migrations import _open
+                    import time
+                    db = _open(configuration.value('storage.database_path'), readonly=True, timeout_ms=5000)
+                    try:
+                        row = db.execute('SELECT created_at_ms FROM jobs WHERE job_id=?', (claim.job_id,)).fetchone()
+                    finally:
+                        db.close()
+                    if row is not None and is_metadata_expired(row[0], int(time.time() * 1000)):
+                        raise MetadataSourceTimeout()
                 from src.nextgen.acquisition.metadata_evidence import fresh
                 raise MetadataSourceWaiting(evidence=fresh('fetch'))
             return result[1]
@@ -159,34 +173,16 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
                     raise MetadataSourceWaiting() from None
             current=await blocking(target.inspect,digest)
             if current is None:
+                if claim is not None and event_id is not None and await blocking(journal.metadata_expired, claim, event_id):
+                    raise MetadataSourceTimeout()
                 raise MetadataSourceWaiting(evidence=fresh('not_found'))
             evidence=fresh('stopped_inspect',state=current.state,files=len(current.files))
-            if (current.save_path.rstrip('/')!=owned.options.download_root
-                    or current.category!=owned.options.category
-                    or current.auto_tmm is not False
-                    or 'ad-'+owned.marker not in current.tags
-                    or any(t.startswith('ad-') and t!='ad-'+owned.marker
-                           for t in current.tags)):
+            if not verify_torrent_ownership(current, owned.marker, owned.options.download_root, owned.options.category):
                 await blocking(journal.observe,claim,owned,current)
                 raise MetadataSourceDenied()
-            if current.state not in STOPPED:
-                evidence['phase']='recover_stop'
-                observed=await blocking(target.stop_legacy_metadata,owned)
-            elif current.files:
-                observed=await blocking(target.inspect_legacy_metadata,
-                    digest,owned.marker,owned.options.download_root)
-            else:
-                evidence['phase']='poll'
-                kwargs={
-                    'attempts':configuration.value('qbittorrent.metadata_poll_attempts'),
-                    'interval':configuration.value('qbittorrent.metadata_poll_seconds'),
-                }
-                # Existing injected test clients may not accept the optional
-                # diagnostics argument. It never changes the polling contract.
-                if 'trace' in inspect.signature(target.poll_legacy_metadata).parameters:
-                    kwargs['trace']=evidence
-                observed=await blocking(target.poll_legacy_metadata,
-                                        owned,cancelled,**kwargs)
+            observed = await poll_or_stop_metadata(
+                target, owned, current, cancelled, configuration,
+                semaphore=shared_limiter().semaphore, trace=evidence)
             evidence['stopped_state']=getattr(observed,'state',None)
             evidence['max_files']=max(evidence['max_files'],
                                       len(getattr(observed,'files',())))
@@ -194,6 +190,8 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
             if updated.state in ('REVIEW','EXTERNAL'):
                 raise MetadataSourceDenied()
             if updated.state!='OWNED_STOPPED':
+                if claim is not None and event_id is not None and await blocking(journal.metadata_expired, claim, event_id):
+                    raise MetadataSourceTimeout()
                 raise MetadataSourceWaiting(evidence=evidence)
             owned,stored=await blocking(lookup,database,digest)
 

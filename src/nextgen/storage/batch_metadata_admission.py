@@ -13,6 +13,9 @@ import threading
 from src.nextgen.acquisition.metadata import (
     AcquisitionConflict, MetadataInvalid, ObservedBatchInventory, TorrentFile, infohash,
 )
+from src.nextgen.acquisition.metadata_service import (
+    is_metadata_expired, verify_torrent_ownership, METADATA_TIMEOUT_MS,
+)
 from src.nextgen.acquisition.settings import DownloadOptions
 from src.nextgen.storage.job_queue import JobQueue, Claim
 from src.nextgen.storage.migrations import _open, LATEST_VERSION
@@ -164,6 +167,22 @@ class BatchMetadataJournal:
             if current!=intent or current.state!='UNCERTAIN':
                 raise AcquisitionConflict()
 
+    def metadata_expired(self, claim, event_id, *, timeout_ms=METADATA_TIMEOUT_MS):
+        """Ten-minute acquisition limit; no repeat magnet send is permitted."""
+        if type(timeout_ms) is not int or timeout_ms < 60000:
+            raise AcquisitionConflict()
+        with self.queue.connection() as db, transaction(db):
+            now = self.queue.now()
+            self._owns(db, claim, event_id)
+            current = _select(db, event_id=event_id)
+            if current is None:
+                raise AcquisitionConflict()
+            row = db.execute('SELECT created_at_ms FROM batch_metadata_admissions WHERE event_id=?',
+                             (event_id,)).fetchone()
+            if row is None:
+                raise AcquisitionConflict()
+            return is_metadata_expired(row[0], now, timeout_ms=timeout_ms)
+
     def observe(self,claim,intent,observed):
         """Only stable and strictly owned, stopped inventory may become durable."""
         with self.queue.connection() as db,transaction(db):
@@ -178,11 +197,9 @@ class BatchMetadataJournal:
             if observed is None:
                 return current
             if (observed.info_hash!=intent.info_hash
-                    or observed.save_path.rstrip('/')!=intent.options.download_root
-                    or observed.category!=intent.options.category
-                    or observed.auto_tmm is not False
-                    or 'ad-'+intent.marker not in observed.tags
-                    or any(t.startswith('ad-') and t!='ad-'+intent.marker for t in observed.tags)):
+                    or not verify_torrent_ownership(observed, intent.marker,
+                                                    intent.options.download_root,
+                                                    intent.options.category)):
                 state,raw='REVIEW',None
             elif observed.state not in STOPPED or not observed.files:
                 return current
