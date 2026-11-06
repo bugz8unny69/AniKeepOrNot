@@ -65,7 +65,8 @@ def upgrade_database(directory,expected_token):
         if migrations.preview(database).from_version!=migrations.LATEST_VERSION:raise ValueError('Database is not current; maintenance remains active.')
         ConfigurationStore(directory).read()
         lease.complete()
-    return asdict(result)
+    # The upgrade succeeded: keep the two newest pre-upgrade copies only.
+    return {**asdict(result),'removed_backups':migrations.prune_backups(database)}
 
 
 def check_local(directory,*,worker=False):
