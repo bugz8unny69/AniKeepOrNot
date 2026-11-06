@@ -129,6 +129,11 @@ def add_candidate(db, scope_id, info_hash, title, *, source_event_id=None,
         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (scope_id, digest, clean_title, next_rank, 'READY', int(bool(has_metadata)),
          metadata_json, seeders, size_bytes, source_event_id, now, now))
+    # A new release reopens a season that had run out of candidates.
+    db.execute(
+        "UPDATE batch_candidate_scopes SET state='ACTIVE', updated_at_ms=? "
+        "WHERE scope_id=? AND state='EXHAUSTED'",
+        (now, scope_id))
     cid = db.execute(
         "SELECT candidate_id FROM batch_candidates WHERE scope_id=? AND info_hash=?",
         (scope_id, digest)).fetchone()[0]
@@ -642,8 +647,8 @@ def schedule_after_cleanup_batch(db, operation_id):
         return ()   # Rejecting the series stops the season; it does not try the next release.
     nxt = next_candidate(db, scope_id)
     if nxt is None:
-        exhaust_scope(db, scope_id, now_ms=now)
-        return ()
+        # Known candidates are exhausted: one controlled Prowlarr search.
+        return request_prowlarr_fallback(db, scope_id, event_id=active.source_event_id, now_ms=now)
     receipt = _start_candidate(db, scope_id, anidb_id, nxt, now_ms=now)
     return () if receipt is None else (receipt,)
 
@@ -653,3 +658,167 @@ def succeed_operation_candidate(db, operation_id, *, now_ms=None):
     found = _active_for_operation(db, operation_id)
     if found is not None:
         succeed_candidate(db, found[0], found[1].info_hash, now_ms=now_ms)
+
+
+# --- Prowlarr fallback (WI-05, WI-14, WI-15) ----------------------------------
+
+DISCOVERY_KIND = 'DISCOVER_BATCH_PROWLARR'
+# Minimum time between two batch searches for the same season.
+FALLBACK_COOLDOWN_MS = 5 * 60 * 1000
+
+
+def _open_discovery(db, scope_id):
+    marks = ','.join('?' * len(_OPEN_JOB_STATES))
+    return db.execute(
+        f"SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.scope_id')=? "
+        f"AND state IN ({marks}) LIMIT 1", (DISCOVERY_KIND, scope_id, *_OPEN_JOB_STATES)).fetchone()
+
+
+def request_prowlarr_fallback(db, scope_id, *, event_id, created_by_job_id=None, now_ms=None):
+    """Known candidates are exhausted: schedule one Prowlarr batch search.
+
+    The scope stays ACTIVE (not EXHAUSTED) until a search completes and finds
+    nothing. An open search job is never duplicated, also after restarts;
+    a search within the cooldown is delayed, not skipped.
+    """
+    if not db.in_transaction:
+        raise CandidateConflict()
+    integer(scope_id, positive=True)
+    now = now_ms if now_ms is not None else _now()
+    if _open_discovery(db, scope_id) is not None:
+        return ()
+    anidb_id, tvdb_series_id, season = db.execute(
+        "SELECT anidb_id,tvdb_series_id,tvdb_season FROM batch_candidate_scopes WHERE scope_id=?",
+        (scope_id,)).fetchone()
+    last = db.execute(
+        "SELECT max(captured_at_ms) FROM prowlarr_search_snapshots "
+        "WHERE tvdb_series_id=? AND season=? AND search_mode='batch_fallback'",
+        (tvdb_series_id, season)).fetchone()[0]
+    available = now if last is None else max(now, last + FALLBACK_COOLDOWN_MS)
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    _, receipt = enqueue_job_with_receipt(
+        db, component='worker', kind=DISCOVERY_KIND,
+        payload={'scope_id': scope_id, 'anidb_id': anidb_id, 'tvdb_series_id': tvdb_series_id,
+                 'tvdb_season': season},
+        event_id=event_id, created_by_job_id=created_by_job_id, available_at_ms=available)
+    return (receipt,)
+
+
+@dataclass(frozen=True)
+class SearchParameters:
+    scope_id: int
+    anidb_id: int
+    tvdb_series_id: int
+    season: int
+    titles: tuple
+    tried: frozenset
+
+
+def prepare_batch_prowlarr_search(db, scope_id):
+    """Read-only: what to search for, or None when the scope no longer needs a search."""
+    integer(scope_id, positive=True)
+    scope = db.execute(
+        "SELECT anidb_id,tvdb_series_id,tvdb_season,state,active_candidate_id "
+        "FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()
+    if scope is None or scope[3] != 'ACTIVE' or scope[4] is not None:
+        return None
+    anidb_id, tvdb_series_id, season = scope[:3]
+    if next_candidate(db, scope_id) is not None:
+        return None          # A release arrived meanwhile; no search is needed.
+    tried = frozenset(r[0] for r in db.execute(
+        "SELECT info_hash FROM batch_candidates WHERE scope_id=?", (scope_id,)))
+    main = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
+    meta = db.execute("SELECT english_title,romaji_title FROM anime_title_metadata WHERE anidb_id=?",
+                      (anidb_id,)).fetchone() or (None, None)
+    titles = tuple(dict.fromkeys(t for t in (main[0] if main else None, *meta) if t))
+    if not titles:
+        raise CandidateConflict()
+    return SearchParameters(scope_id, anidb_id, tvdb_series_id, season, titles, tried)
+
+
+def _verified_series(db, anidb_id, tvdb_series_id):
+    """The anime identity already verified for this scope; never fabricated."""
+    from src.nextgen.job_contracts import parse_payload
+    row = db.execute(
+        "SELECT r.series_json FROM batch_candidates c "
+        "JOIN batch_candidate_scopes s ON s.scope_id=c.scope_id "
+        "JOIN identity_results r ON r.event_id=c.source_event_id "
+        "WHERE s.anidb_id=? AND r.anidb_id=? ORDER BY r.validated_at_ms DESC LIMIT 1",
+        (anidb_id, anidb_id)).fetchone()
+    if row is None:
+        raise CandidateConflict()
+    series = parse_payload(row[0])
+    anime = series.get('anime', {})
+    if anime.get('anidb_id') != anidb_id or anime.get('tvdb_series_id') != tvdb_series_id:
+        raise CandidateConflict()
+    return series
+
+
+def _deliver(db, release, series, now):
+    """One Prowlarr release as an internal delivery, in the established event contract.
+
+    Same body as single-episode backfill (sonarr_dispatch): the canonical
+    magnet_uri field holds the hash-bound, tracker-sanitized magnet, which
+    the batch metadata reader uses when it admits the torrent.
+    """
+    from src.nextgen.acquisition.metadata import hash_magnet
+    from src.nextgen.history import append_event_history
+    from src.nextgen.storage.sqlite import persist_identity
+    digest = infohash(release.info_hash)
+    magnet = hash_magnet(digest, release.magnet_url)
+    if magnet is None:
+        raise CandidateConflict()      # The magnet names a different torrent.
+    body = json.dumps({'release_name': release.title, 'torrent_infohash': digest, 'magnet_uri': magnet,
+                       'seeders': release.seeders, 'size': release.size or None, 'indexer': release.indexer},
+                      sort_keys=True, separators=(',', ':')).encode('utf-8')
+    event_id = db.execute("INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)",
+                          ('prowlarr-batch', body, now)).lastrowid
+    receipts = [append_event_history(db, event_id=event_id, event_code='ACCEPTED', component='worker',
+                                     occurred_at_ms=now)]
+    _, audit = persist_identity(db, event_id, series, validated_at_ms=now)
+    if audit is not None:
+        receipts.append(audit)
+    return event_id, receipts
+
+
+def ingest_batch_prowlarr_results(db, params, result, *, snapshots=None, job_id=None, attempt=0,
+                                  audio_check='japanese_english', now_ms=None):
+    """After a completed search, inside one write transaction: record and decide.
+
+    Re-reads the controller first: a release that arrived during the search
+    may already be active, in which case the new candidates only join the
+    pool. EXHAUSTED only follows a search in which every query succeeded and
+    nothing eligible was found.
+    """
+    if not db.in_transaction or type(params) is not SearchParameters:
+        raise CandidateConflict()
+    now = now_ms if now_ms is not None else _now()
+    if job_id is not None and snapshots:
+        from src.nextgen.storage.prowlarr_snapshots import save_snapshots
+        save_snapshots(db, job_id, attempt, snapshots, now_ms=now)
+    state = db.execute("SELECT state FROM batch_candidate_scopes WHERE scope_id=?", (params.scope_id,)).fetchone()
+    if state is None or state[0] == 'SUCCEEDED':
+        return ()
+    receipts = []
+    known = {c.info_hash for c in get_candidate_pool(db, params.scope_id)}
+    fresh = [r for r in result.releases if infohash(r.info_hash) not in known]
+    if fresh:
+        series = _verified_series(db, params.anidb_id, params.tvdb_series_id)
+        for release in fresh:
+            event_id, delivered = _deliver(db, release, series, now)
+            receipts.extend(delivered)
+            add_candidate(db, params.scope_id, release.info_hash, release.title, source_event_id=event_id,
+                          seeders=_count(release.seeders), size_bytes=_count(release.size, positive=True),
+                          now_ms=now)
+        reorder_candidates(db, params.scope_id,
+                           rank_candidates(get_candidate_pool(db, params.scope_id), audio_check=audio_check),
+                           now_ms=now)
+    if get_active_candidate(db, params.scope_id) is not None:
+        return tuple(receipts)
+    top = next_candidate(db, params.scope_id)
+    if top is None:
+        if result.complete:
+            exhaust_scope(db, params.scope_id, now_ms=now)
+        return tuple(receipts)
+    started = _start_candidate(db, params.scope_id, params.anidb_id, top, created_by_job_id=job_id, now_ms=now)
+    return tuple(receipts) + (() if started is None else (started,))

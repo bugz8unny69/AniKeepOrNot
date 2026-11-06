@@ -154,14 +154,16 @@ class CandidateTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.verify_jobs(2)), 2)
         self.assertEqual(self.sql("SELECT count(*) FROM batch_candidates WHERE state='ACTIVE'"), [(1,)])
 
-    async def test_without_more_candidates_the_scope_is_exhausted(self):
+    async def test_without_more_candidates_the_prowlarr_fallback_starts(self):
         a = self.arrive(1)
         claim, _ = JobQueue(self.database).claim()
         await self.request('POST', f'/api/v1/jobs/{a}/cancel', {}, token=v1.ADMIN)
         CancellationStore(self.database).acknowledge(claim)
         CancellationService(self.store.read(), Secrets()).cleanup(a)
         self.assertEqual(self.candidates(), {digest(1): 'CANCELED'})
-        self.assertEqual(self.sql("SELECT state FROM batch_candidate_scopes"), [('EXHAUSTED',)])
+        # Known candidates ran out: one controlled Prowlarr search, season still open.
+        self.assertEqual(self.sql("SELECT state FROM batch_candidate_scopes"), [('ACTIVE',)])
+        self.assertEqual(self.sql("SELECT count(*) FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR'"), [(1,)])
 
     async def test_rejecting_the_series_does_not_start_the_next_release(self):
         a, b, claim = self.setup_two()

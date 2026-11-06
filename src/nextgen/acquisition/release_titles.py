@@ -329,3 +329,56 @@ def season_bases(catalog_titles):
         base, number = season_marker(title)
         if number is not None and base: found.append((base, number))
     return found
+
+
+def batch_search_queries(catalog_titles, season, *, english_title=None, prefer_audio=False):
+    """Bounded search queries for season packs (WI-05)."""
+    from src.nextgen.acquisition.prowlarr_search import search_aliases
+    aliases = tuple(re.sub(r'\s+', ' ', YEAR.sub(' ', alias)).strip()
+                    for alias in search_aliases(catalog_titles, english_title=english_title))
+    if not aliases:
+        return ()
+
+    current_season = season if season is not None and season > 0 else 1
+    queries = []
+    main = aliases[0]
+    main_base, main_marker = season_marker(main)
+    effective_base = main_base if main_marker is not None else main
+
+    eng = None
+    if type(english_title) is str and english_title.strip():
+        wanted = norm(YEAR.sub(' ', english_title))
+        eng = next((alias for alias in aliases[1:] if norm(alias) == wanted), None)
+    has_english = eng is not None
+    eng_base = None
+    if has_english:
+        eb, em = season_marker(eng)
+        eng_base = eb if em is not None else eng
+
+    if prefer_audio:
+        if has_english:
+            queries.append(f"{eng_base} S{current_season:02d} Dual Audio")
+            queries.append(f"{eng_base} Season {current_season} Dual Audio")
+        queries.append(f"{effective_base} S{current_season:02d} Dual Audio")
+        queries.append(f"{effective_base} Season {current_season} Dual Audio")
+        queries.append(f"{effective_base} S{current_season:02d}")
+        queries.append(f"{effective_base} Batch")
+    else:
+        queries.append(f"{effective_base} S{current_season:02d}")
+        queries.append(f"{effective_base} Season {current_season}")
+        queries.append(f"{effective_base} Batch")
+        if has_english:
+            queries.append(f"{eng_base} S{current_season:02d}")
+            queries.append(f"{eng_base} Season {current_season}")
+
+    # Deduplicate while preserving order and bound at 6 queries
+    seen = set()
+    result = []
+    for q in queries:
+        cleaned = re.sub(r'\s+', ' ', q).strip()
+        if cleaned and cleaned not in seen and 1 <= len(cleaned) <= 256:
+            seen.add(cleaned)
+            result.append(cleaned)
+            if len(result) >= 6:
+                break
+    return tuple(result)
