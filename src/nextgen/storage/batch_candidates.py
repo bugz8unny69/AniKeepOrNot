@@ -313,12 +313,7 @@ def schedule_winner(db, scope_id, candidate_id, *, created_by_job_id=None, now_m
     if open_job is not None:
         activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, open_job[0]), now_ms=now)
         return ()
-    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
-    job_id, receipt = enqueue_job_with_receipt(
-        db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': anidb_id},
-        event_id=top.source_event_id, created_by_job_id=created_by_job_id, available_at_ms=now)
-    activate_candidate(db, scope_id, top.info_hash, operation_id=_job_operation(db, job_id), now_ms=now)
-    return (receipt,)
+    return (_start_candidate(db, scope_id, anidb_id, top, created_by_job_id=created_by_job_id, now_ms=now),)
 
 
 def rank_candidates(candidates, *, audio_check='japanese_english', rank_by='resolution'):
@@ -516,109 +511,131 @@ def exhaust_scope(db, scope_id, *, now_ms=None):
         (now, scope_id))
 
 
+STOP_DISPOSITIONS = ('FAILED', 'CANCELED')
+
+
+def _active_for_operation(db, operation_id):
+    """(scope_id, active candidate) for the scope this operation is running, or None."""
+    row = db.execute("SELECT scope_id FROM batch_candidate_scopes WHERE operation_id=? "
+                     "AND active_candidate_id IS NOT NULL", (operation_id,)).fetchone()
+    if row is None:
+        return None
+    active = get_active_candidate(db, row[0])
+    return None if active is None else (row[0], active)
+
+
+def record_candidate_stop(db, operation_id, disposition, reason_code, *, now_ms=None):
+    """Remember why the active candidate of this operation is stopping (WI-13).
+
+    Called where the decision is made: a user Cancel (CANCELED) or a job that
+    failed verification, metadata, size or audio checks (FAILED). The first
+    decision wins; cleanup applies it later. Returns True when recorded.
+    """
+    if not db.in_transaction or disposition not in STOP_DISPOSITIONS:
+        raise CandidateConflict()
+    if type(reason_code) is not str or not 1 <= len(reason_code.strip()) <= 64:
+        raise CandidateConflict()
+    found = _active_for_operation(db, operation_id)
+    if found is None:
+        return False
+    now = now_ms if now_ms is not None else _now()
+    return db.execute(
+        "INSERT OR IGNORE INTO batch_candidate_stops(candidate_id,operation_id,disposition,reason_code,recorded_at_ms) "
+        "VALUES(?,?,?,?,?)", (found[1].candidate_id, operation_id, disposition, reason_code.strip(), now)).rowcount == 1
+
+
 def auto_cleanup_failed_batch_candidate(db, claim):
-    """Enqueue the existing cancellation worker for a failed batch candidate."""
+    """A definitive failure of the active candidate's job: record FAILED, then clean up.
+
+    Uses the same cancellation transition and cleanup control job as a user
+    Cancel (sonarr_candidates.request_automatic_cleanup); only the recorded
+    disposition differs.
+    """
     if not db.in_transaction or claim.event_id is None:
         return ()
-    has_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
-    if not has_table:
+    from src.nextgen.storage.cancellation import operation
+    op = operation(db, claim.job_id)
+    if op[1] != 'ACTIVE' or _active_for_operation(db, op[0]) is None:
         return ()
-    row = db.execute(
-        "SELECT s.scope_id, s.operation_id FROM job_operation_members m "
-        "JOIN batch_candidate_scopes s ON s.operation_id=m.operation_id "
-        "WHERE m.job_id=? AND s.active_candidate_id IS NOT NULL",
-        (claim.job_id,)).fetchone()
-    if row is None:
+    if db.execute("SELECT 1 FROM management_actions WHERE operation_id=? AND action='CLEANUP'", (op[0],)).fetchone():
         return ()
+    reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()[0]
+    record_candidate_stop(db, op[0], 'FAILED', reason or 'JOB_FAILED')
     from src.nextgen.storage.sonarr_candidates import request_automatic_cleanup
     return request_automatic_cleanup(db, claim)
 
 
+def _legacy_disposition(db, operation_id):
+    """Stops recorded before batch_candidate_stops existed.
+
+    Same rule as single episodes (sonarr_candidates.schedule_after_cleanup):
+    only a cleanup control created BY a job of this operation is an automatic
+    failure; any other cleanup was requested by a person.
+    """
+    row = db.execute(
+        "SELECT target.last_reason_code FROM management_actions a "
+        "JOIN jobs control ON control.job_id=a.job_id AND control.kind='CLEANUP_CANCELED_OPERATION' "
+        "JOIN job_operation_members source ON source.job_id=control.created_by_job_id "
+        "AND source.operation_id=a.operation_id "
+        "JOIN jobs target ON target.job_id=a.target_job_id "
+        "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1", (operation_id,)).fetchone()
+    if row is None:
+        return 'CANCELED', 'JOB_CANCELED'
+    return 'FAILED', row[0] or 'JOB_FAILED'
+
+
+def _anime_rejected(db, anidb_id):
+    return db.execute("SELECT 1 FROM anime_review_decisions WHERE anidb_id=? AND decision='REJECT'",
+                      (anidb_id,)).fetchone() is not None
+
+
+def _start_candidate(db, scope_id, anidb_id, candidate, *, created_by_job_id=None, now_ms=None):
+    """Activate a READY candidate and enqueue the VERIFY_RELEASE job that runs it."""
+    if candidate.source_event_id is None:
+        raise CandidateConflict()
+    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
+    job_id, receipt = enqueue_job_with_receipt(
+        db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': anidb_id},
+        event_id=candidate.source_event_id, created_by_job_id=created_by_job_id,
+        available_at_ms=now_ms if now_ms is not None else _now())
+    activate_candidate(db, scope_id, candidate.info_hash, operation_id=_job_operation(db, job_id), now_ms=now_ms)
+    return receipt
+
+
 def schedule_after_cleanup_batch(db, operation_id):
-    """After cleanup of a failed batch candidate completes, advance to the next candidate (WI-04)."""
+    """Cleanup of the active candidate is COMPLETE: apply its stop, then advance (WI-04, WI-13).
+
+    Runs in the cleanup's completion transaction, after its torrents, files
+    and reservations were released, so the next candidate never starts
+    early. Idempotent: once applied, the operation no longer belongs to an
+    active candidate and a repeat does nothing.
+    """
     if not db.in_transaction:
         raise CandidateConflict()
-    has_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
-    if not has_table:
+    found = _active_for_operation(db, operation_id)
+    if found is None:
         return ()
-    scope_row = db.execute(
-        "SELECT scope_id, anidb_id, tvdb_series_id, tvdb_season, active_candidate_id "
-        "FROM batch_candidate_scopes WHERE operation_id=?",
-        (operation_id,)).fetchone()
-    if scope_row is None:
-        return ()
-    scope_id, anidb_id, tvdb_series_id, season, active_cid = scope_row
-
-    automated = db.execute(
-        "SELECT a.target_job_id, control.payload_json FROM management_actions a "
-        "JOIN jobs control ON control.job_id=a.job_id "
-        "AND control.kind='CLEANUP_CANCELED_OPERATION' "
-        "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1",
-        (operation_id,)).fetchone()
-    is_manual = automated is None
-    issue = None
-    if not is_manual:
-        target_job_id, payload_str = automated
-        if payload_str:
-            try:
-                issue = json.loads(payload_str).get('failure_reason')
-            except Exception:
-                pass
-        if not issue:
-            try:
-                t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
-                if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
-                    issue = t_row[0]
-            except sqlite3.OperationalError:
-                pass
-        if not issue:
-            try:
-                h_row = db.execute(
-                    "SELECT reason_code FROM job_history WHERE job_id=? AND event_code IN ('FAILED','NEEDS_REVIEW') "
-                    "ORDER BY history_id DESC LIMIT 1", (target_job_id,)).fetchone()
-                if h_row and h_row[0]:
-                    issue = h_row[0]
-            except sqlite3.OperationalError:
-                pass
-        if not issue:
-            issue = 'OPERATION_FAILED'
-    else:
-        # Manual candidate cancellation: preserve cancellation reason from operation
-        try:
-            op_row = db.execute("SELECT reason_code FROM job_operations WHERE operation_id=?", (operation_id,)).fetchone()
-            if op_row and op_row[0]:
-                issue = op_row[0]
-        except sqlite3.OperationalError:
-            pass
-        if not issue or issue in ('CANCELLATION_COMPLETE', 'CANCELLATION_DRAINING'):
-            issue = 'JOB_CANCELED'
-
-    # Mark active candidate as FAILED or CANCELED
-    active_cand = get_active_candidate(db, scope_id)
-    if active_cand is not None:
-        if is_manual:
-            cancel_candidate(db, scope_id, active_cand.info_hash, issue)
-        else:
-            fail_candidate(db, scope_id, active_cand.info_hash, issue)
-
-    # Pick next candidate in ranked pool
-    next_cand = next_candidate(db, scope_id)
-    if next_cand is None:
-        exhaust_scope(db, scope_id)
-        return ()
-
+    scope_id, active = found
     now = _now()
-    new_op_id = db.execute(
-        "INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(?,?)",
-        (now, now)).lastrowid
-    activate_candidate(db, scope_id, next_cand.info_hash, operation_id=new_op_id)
-    from src.nextgen.storage.sqlite import enqueue_job_with_receipt
-    _, receipt = enqueue_job_with_receipt(db, component='worker', kind='VERIFY_RELEASE',
-                                          payload={'anidb_id': anidb_id},
-                                          available_at_ms=0,
-                                          event_id=next_cand.source_event_id,
-                                          operation_id=new_op_id)
-    return (receipt,)
+    stop = db.execute("SELECT disposition,reason_code FROM batch_candidate_stops WHERE candidate_id=?",
+                      (active.candidate_id,)).fetchone()
+    disposition, reason = stop if stop is not None else _legacy_disposition(db, operation_id)
+    if disposition == 'CANCELED':
+        cancel_candidate(db, scope_id, active.info_hash, reason, now_ms=now)
+    else:
+        fail_candidate(db, scope_id, active.info_hash, reason, now_ms=now)
+    anidb_id = db.execute("SELECT anidb_id FROM batch_candidate_scopes WHERE scope_id=?", (scope_id,)).fetchone()[0]
+    if _anime_rejected(db, anidb_id):
+        return ()   # Rejecting the series stops the season; it does not try the next release.
+    nxt = next_candidate(db, scope_id)
+    if nxt is None:
+        exhaust_scope(db, scope_id, now_ms=now)
+        return ()
+    return (_start_candidate(db, scope_id, anidb_id, nxt, now_ms=now),)
 
+
+def succeed_operation_candidate(db, operation_id, *, now_ms=None):
+    """The operation reached STAGED: its active candidate and scope SUCCEEDED."""
+    found = _active_for_operation(db, operation_id)
+    if found is not None:
+        succeed_candidate(db, found[0], found[1].info_hash, now_ms=now_ms)

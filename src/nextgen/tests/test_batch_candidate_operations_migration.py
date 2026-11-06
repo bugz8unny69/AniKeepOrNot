@@ -72,6 +72,8 @@ class BatchCandidateOperationsMigrationTests(unittest.TestCase):
         try:
             initialize(fresh)
             migrated = self.migrate()
+            for name in SCRIPTS[60:]:  # Later versions build on v60.
+                migrated.executescript((SQL_DIR / name).read_text())
             self.assertEqual(_structure(fresh), _structure(migrated))
         finally:
             fresh.close()
