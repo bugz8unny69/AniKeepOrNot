@@ -151,6 +151,16 @@ def detail(db, anidb_id, language='english'):
     ).fetchall():
         key = (season, episode)
         reservation_counts[key] = reservation_counts.get(key, 0) + count
+    active_reservation_counts = {}
+    for season, episode, count in db.execute(
+        "SELECT tvdb_season,tvdb_episode,count(*) FROM episode_reservations "
+        "WHERE anidb_id=? AND state='ACTIVE' GROUP BY tvdb_season,tvdb_episode "
+        "UNION ALL SELECT tvdb_season,tvdb_episode,count(*) FROM batch_episode_reservations "
+        "WHERE anidb_id=? AND state='ACTIVE' GROUP BY tvdb_season,tvdb_episode",
+        (anidb_id,anidb_id)
+    ).fetchall():
+        key=(season,episode)
+        active_reservation_counts[key]=active_reservation_counts.get(key,0)+count
     have_manual = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_release_submissions'"
     ).fetchone()
@@ -202,6 +212,7 @@ def detail(db, anidb_id, language='english'):
             'operation_id': op, 'status': status,
             'anidb_episode': anidb_num,
             'reservation_count': reservation_counts.get((season, episode), 0),
+            'active_reservation_count': active_reservation_counts.get((season, episode), 0),
             'manual_submission_count': manual_counts.get((season, episode), 0)
         })
         if season is not None and episode is not None:
@@ -269,6 +280,7 @@ def detail(db, anidb_id, language='english'):
                 # Verified TVDB placement is a label only; None when not yet known.
                 'season': season, 'episode': episode, 'status': status,
                 'reservation_count': reservation_counts.get(place, 0),
+                'active_reservation_count': active_reservation_counts.get(place, 0),
                 'manual_submission_count': manual_counts.get(place, 0),
                 'can_retry': rejected is None and work is None
                              and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED',
