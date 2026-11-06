@@ -188,6 +188,29 @@ def _apply_step(db, sql, version, scripts):
             raise MigrationError()
 
 
+BACKUPS_KEPT = 2
+
+
+def prune_backups(database, keep=BACKUPS_KEPT):
+    """Keep only the newest pre-upgrade copies of this database; delete older ones.
+
+    Only regular files named "<database>.before-v<N>-<id>.sqlite" next to the
+    database are considered. Returns the names that were deleted.
+    """
+    if type(keep) is not int or keep < 1:
+        raise ValueError("keep at least one backup")
+    path = Path(database)
+    pattern = re.compile(re.escape(path.name) + r"\.before-v[0-9]+-[0-9a-f]{32}\.sqlite")
+    found = [entry for entry in path.parent.iterdir()
+             if pattern.fullmatch(entry.name) and entry.is_file() and not entry.is_symlink()]
+    found.sort(key=lambda entry: entry.stat().st_mtime_ns, reverse=True)
+    removed = []
+    for entry in found[keep:]:
+        entry.unlink()
+        removed.append(entry.name)
+    return removed
+
+
 def _backup(db, database, version, scripts):
     path = Path(database)
     name = path.name + ".before-v" + str(version) + "-" + uuid.uuid4().hex + ".sqlite"

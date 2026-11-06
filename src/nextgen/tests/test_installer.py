@@ -296,7 +296,8 @@ class InstallerOrchestrationTests(unittest.TestCase):
              patch.object(installer.grp,'getgrnam',return_value=self.namespace(gr_gid=1001)), \
              patch.object(installer.shutil,'which',return_value='/tool'), \
              patch.object(installer,'extract_checkout',side_effect=self.candidate), \
-             patch.object(installer,'service_call',side_effect=service or self.service):yield
+             patch.object(installer,'service_call',side_effect=service or self.service), \
+             patch.object(installer,'should_reexec',return_value=False):yield
 
     def test_fresh_install_handles_absent_units_and_installs_stable_command(self):
         with self.patches():result=installer.apply(self.options,self.args,self.execute)
