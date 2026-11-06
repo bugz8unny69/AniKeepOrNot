@@ -270,9 +270,13 @@ def coordinate_release(db, *, anidb_id, tvdb_series_id, season, info_hash, title
     state = db.execute("SELECT state FROM batch_candidate_scopes WHERE scope_id=?", (scope.scope_id,)).fetchone()[0]
     active = get_active_candidate(db, scope.scope_id)
     if active is not None:
-        # A restarted job of the active candidate continues; anything else waits.
-        action = 'PROCEED' if active.info_hash == digest else 'POOLED'
-        return CoordinationDecision(action, scope.scope_id, cand.candidate_id)
+        # Only the active candidate's own operation continues (also after a
+        # restart). Another job for the same release, such as an older
+        # pooled delivery of the same hash, waits: never two downloads.
+        operation = db.execute("SELECT operation_id FROM batch_candidate_scopes WHERE scope_id=?",
+                               (scope.scope_id,)).fetchone()[0]
+        mine = active.info_hash == digest and _job_operation(db, job_id) == operation
+        return CoordinationDecision('PROCEED' if mine else 'POOLED', scope.scope_id, cand.candidate_id)
     if state == 'SUCCEEDED':
         return CoordinationDecision('POOLED', scope.scope_id, cand.candidate_id)
     top = next_candidate(db, scope.scope_id)
