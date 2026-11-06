@@ -28,7 +28,7 @@ class Clock:
 
 class Qb(ServiceAdapter):
     name, label = 'qbittorrent', 'qBittorrent'
-    reasons = {'DOWNLOAD_CLIENT_UNAVAILABLE': DOWN}
+    reasons = {'SERVICE_UNAVAILABLE': DOWN}
 
     def __init__(self):
         self.status = UP
@@ -87,8 +87,12 @@ class WorkerWaitingTests(Base):
     def worker(self):
         async def handler(context):
             if self.behaviour == 'outage':
-                return Outcome('retry', 'DOWNLOAD_CLIENT_UNAVAILABLE',
-                               facts={'failed_check': 'src/nextgen/acquisition/qbittorrent.py:122 login CLIENTUNAVAILABLE'})
+                return Outcome('retry', 'SERVICE_UNAVAILABLE',
+                               facts={'service': 'qbittorrent',
+                                      'failed_check': 'src/nextgen/acquisition/qbittorrent.py:122 login CLIENTUNAVAILABLE'})
+            if self.behaviour == 'unnamed':
+                # For example an AniDB or TVDB outage inside a job that declares another service.
+                return Outcome('retry', 'SERVICE_UNAVAILABLE')
             if self.behaviour == 'raise':
                 raise ClientUnavailable()
             if self.behaviour == 'other':
@@ -116,11 +120,20 @@ class WorkerWaitingTests(Base):
         code, reason, details = events[-1]
         self.assertEqual((code, reason), ('DEFERRED', 'SERVICE_UNAVAILABLE'))
         self.assertEqual(details['service'], 'qbittorrent')
-        self.assertEqual(details['cause_reason_code'], 'DOWNLOAD_CLIENT_UNAVAILABLE')
+        self.assertNotIn('cause_reason_code', details)  # The handler already reported the generic code.
         self.assertTrue(details['service_detail'].startswith('qBittorrent is unavailable'))
         self.assertIn('failed_check', details)
         self.assertIn('waiting_since_ms', details)
         self.assertEqual(self.health.state('qbittorrent').status, DOWN)
+
+    async def test_an_outage_that_names_no_service_is_an_ordinary_retry(self):
+        self.behaviour = 'unnamed'
+        job = self.enqueue('QB_JOB')
+        await self.worker().attempt()
+        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?', (job,)),
+                         [('RETRY_WAIT', 'SERVICE_UNAVAILABLE')])
+        self.assertIn('RETRY_SCHEDULED', [code for code, _, _ in self.history(job)])
+        self.assertNotEqual(self.health.state('qbittorrent').status, DOWN)  # qBittorrent is not blamed.
 
     async def test_an_uncaught_client_error_also_waits(self):
         self.behaviour = 'raise'
@@ -224,8 +237,8 @@ class PresentationTests(unittest.TestCase):
         from src.nextgen.api.app import failed_detail
         self.assertEqual(failed_detail({'service': 'prowlarr',
                                         'service_detail': 'Prowlarr is unavailable: HTTP 503 at http://p:9696',
-                                        'cause_reason_code': 'PROWLARR_UNAVAILABLE'}),
-                         'Prowlarr is unavailable: HTTP 503 at http://p:9696 (cause: PROWLARR_UNAVAILABLE)')
+                                        'cause_reason_code': 'SERVICE_UNAVAILABLE'}),
+                         'Prowlarr is unavailable: HTTP 503 at http://p:9696 (cause: SERVICE_UNAVAILABLE)')
 
     def test_policy_bounds_and_default_is_72_hours(self):
         self.assertEqual(Policy().service_give_up_ms, 72 * HOUR)

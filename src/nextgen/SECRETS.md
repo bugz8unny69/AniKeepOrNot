@@ -3,7 +3,7 @@
 AniDB and TVDB are required by the identity worker. There are no provider enable
 flags. TVDB authentication uses only an API key; the previous optional PIN model
 has been removed from Credentials, configuration and login request construction.
-A provider may still reject a key at runtime; that produces PROVIDER_AUTH_FAILED.
+A provider may still reject a key at runtime; that produces SERVICE_SETUP_INVALID.
 
 ## Public configuration
 

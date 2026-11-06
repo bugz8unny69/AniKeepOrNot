@@ -307,3 +307,16 @@ The code knows only the new names. `ALTER TABLE ... RENAME` updates the foreign 
 
 The per-service codes that are being retired keep their names until v65. Fresh SCHEMA and the migration runner match v64.
 
+## v64 → v65: retired per-service reason codes
+
+065_retired_service_codes.sql retires the 20 per-service reason codes (refactor RF-006c; `docs/refactor/REASON_CODE_AUDIT.md` §1a). Codes name the situation, not the product, so a service can be replaced without renaming codes.
+
+- **Codes:** each retired code becomes `SERVICE_SETUP_INVALID`, `SERVICE_UNAVAILABLE` or `SERVICE_RESPONSE_INVALID`. Examples:
+  - `PROWLARR_UNAVAILABLE`, `SHOKO_UNAVAILABLE` and `DOWNLOAD_CLIENT_UNAVAILABLE` → `SERVICE_UNAVAILABLE`;
+  - `PROWLARR_AUTH_FAILED` and `DOWNLOAD_CLIENT_UNSUPPORTED` → `SERVICE_SETUP_INVALID`.
+- **History keeps the service.** Before a code is rewritten, the service it named is added to the row's details as `service`, unless one was already recorded. This applies when the code is the row's reason or its `cause_reason_code`. Setup codes also add `service_status` (`AUTH_FAILED`, `UNSUPPORTED` or `NOT_CONFIGURED`). The old `PROVIDER_*` codes did not say which of AniDB, TVDB or Anime-Lists was meant, so no service is added for them.
+- **Where:** the same columns as v64: every `reason_code` and `last_reason_code` column, and codes that are whole JSON string values in every `*_json` column.
+- **Tidying:** a service wait no longer repeats `SERVICE_UNAVAILABLE` as its own `cause_reason_code`.
+
+Fresh SCHEMA and the migration runner match v65.
+

@@ -128,6 +128,17 @@ def intake_status(query):
     return value[0]
 
 
+def service_line(name,status=None):
+    """'Prowlarr rejected the login or API key.' for a service named in job details."""
+    from src.nextgen.services import default_registry
+    from src.nextgen.services.base import SETUP_STATUSES, _SUMMARY, valid_name
+    if not valid_name(name):return None
+    try:label=default_registry().get(name).label
+    except (KeyError,LookupError,ValueError):label=name
+    if status in SETUP_STATUSES:return _SUMMARY[status].format(label=label)
+    return f'Service: {label}.'
+
+
 def failed_detail(details):
     """Which check stopped the work and the file it was looking at."""
     check,path=details.get('failed_check'),details.get('failed_path')
@@ -138,6 +149,10 @@ def failed_detail(details):
     if type(service) is str:
         # A service outage: say which service and what is wrong.
         return service + (f' (cause: {cause})' if type(cause) is str else '')
+    named=service_line(details.get('service'),details.get('service_status'))
+    if named is not None:
+        # A generic SERVICE_* code: its message does not name the service, so say it here.
+        return named + (f' · stopped at {check}' if type(check) is str else '')
     if blocker is not None:
         msg = f'Waiting for reservation owned by Job #{blocker}' + (f' (operation #{op})' if op is not None else '')
         return msg

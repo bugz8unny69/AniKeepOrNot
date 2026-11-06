@@ -138,8 +138,7 @@ class WorkerServiceGatingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_failing_job_marks_its_service_down_without_a_probe(self):
         self.qb.status = UP
-        self.qb.reasons = {'DOWNLOAD_CLIENT_UNAVAILABLE': DOWN}   # As the real adapter declares.
-        self.results['QB_FIRST'] = Outcome('retry', 'DOWNLOAD_CLIENT_UNAVAILABLE')
+        self.results['QB_FIRST'] = Outcome('retry', 'SERVICE_UNAVAILABLE', facts={'service': 'qbittorrent'})
         worker = self.worker({'QB_FIRST': ('qbittorrent',), 'QB_SECOND': ('qbittorrent',)})
         self.enqueue('QB_FIRST')
         await self.drain(worker)

@@ -66,6 +66,7 @@ class Step2StagingMigrationTests(unittest.TestCase):
         self.db.executescript((SQL_DIR / '062_service_status.sql').read_text())
         self.db.executescript((SQL_DIR / '063_renamed_stored_names.sql').read_text())
         self.db.executescript((SQL_DIR / '064_renamed_codes.sql').read_text())
+        self.db.executescript((SQL_DIR / '065_retired_service_codes.sql').read_text())
         return self.db
 
     def test_fresh_schema_matches_upgrade_to_v57(self):

@@ -9,6 +9,7 @@ from src.nextgen.messages import DEFAULT_CATALOG
 from src.nextgen.secrets import SecretStorageError
 from src.nextgen.shoko import lookup, ShokoConfiguration, ShokoUnavailable, ShokoReview
 from src.nextgen.storage.sqlite import connect, enqueue_job
+from src.nextgen.services.base import service_facts
 
 KIND='ENRICH_SHOKO_METADATA'
 SERVICES=('shoko',)  # External services this job needs; see services/README.md.
@@ -77,8 +78,8 @@ def registration(secrets,*,read=lookup):
             selected=data['selection']
             return read(context.configuration,secrets,selected['anidb_id'],selected['anidb_episode_id'])
         try:metadata=await blocking(run)
-        except ShokoConfiguration:return Outcome('review','SHOKO_CONFIGURATION_INVALID')
-        except (ShokoUnavailable,SecretStorageError):return Outcome('retry','SHOKO_UNAVAILABLE')
+        except ShokoConfiguration:return Outcome('review','SERVICE_SETUP_INVALID',facts=service_facts('shoko','NOT_CONFIGURED'))
+        except (ShokoUnavailable,SecretStorageError):return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('shoko'))
         except (ValueError,TypeError,KeyError):return Outcome('review','METADATA_ENRICHMENT_REVIEW')
         return Outcome(value={'keep_job_id':keep,'metadata':metadata})
     return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

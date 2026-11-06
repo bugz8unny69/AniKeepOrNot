@@ -110,7 +110,7 @@ class CancellationService:
                 # Handlers are still stopping; try again shortly.
                 return self.store.status(job_id)
             except (ClientUnavailable,ClientInvalid):
-                self._state(job_id,'PENDING','CANCELLATION_PENDING',cause='DOWNLOAD_CLIENT_UNAVAILABLE')
+                self._state(job_id,'PENDING','CANCELLATION_PENDING',cause='SERVICE_UNAVAILABLE')
             except (ClientAuthenticationFailed,ClientUnsupported,OSError,CancellationError,ValueError) as exc:
                 from src.nextgen.reasons import get_reason
                 from src.nextgen.cancellation import failure_location

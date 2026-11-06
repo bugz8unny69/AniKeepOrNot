@@ -193,9 +193,9 @@ class ServiceHealth:
                     changes.append(change)
         return tuple(changes)
 
-    def mark_reason(self, service, reason_code, *, detail=''):
+    def mark_reason(self, service, reason_code, *, detail='', facts=None):
         """A job reported a reason code that its service's adapter recognises."""
-        status = self.registry.get(service).status_for_reason(reason_code)
+        status = self.registry.get(service).status_for_reason(reason_code, facts)
         if status is None or status in USABLE:
             return None
         with self._lock:

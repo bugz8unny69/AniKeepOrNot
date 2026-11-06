@@ -11,12 +11,8 @@ class ProwlarrAdapter(KeyedServiceAdapter):
     key_header = 'X-Api-Key'
     version_keys = ('version',)
     off_detail = 'no address is set, so automatic search is off'
-    reasons = {
-        'PROWLARR_UNAVAILABLE': DOWN,
-        'RELEASE_SEARCH_TIMEOUT': DOWN,
-        'PROWLARR_AUTH_FAILED': AUTH_FAILED,
-        'PROWLARR_CONFIGURATION_INVALID': NOT_CONFIGURED,
-    }
+    # SERVICE_* codes naming 'prowlarr' are handled by the base class.
+    reasons = {'RELEASE_SEARCH_TIMEOUT': DOWN}
 
     def classify(self, exc):
         from src.nextgen.acquisition.prowlarr_search import (
@@ -40,10 +36,8 @@ class SonarrAdapter(KeyedServiceAdapter):
     version_keys = ('version',)
     off_detail = 'no address is set, so Keep is off'
     supported_major = '4'
-    reasons = {
-        'KEEP_SERVICE_UNAVAILABLE': DOWN,
-        'KEEP_CONFIGURATION_INVALID': NOT_CONFIGURED,
-    }
+    # SERVICE_* codes naming 'sonarr' are handled by the base class.
+    reasons = {'KEEP_CONFIGURATION_INVALID': NOT_CONFIGURED}
 
     def classify(self, exc):
         from src.nextgen.sonarr import KeepConfiguration, KeepUnavailable

@@ -2,7 +2,7 @@
 from src.nextgen.configuration_schema import ConfigurationError
 
 class ProviderUnavailable(RuntimeError):
-    reason_code = "PROVIDER_UNAVAILABLE"
+    reason_code = "SERVICE_UNAVAILABLE"
     def __init__(self):
         super().__init__("An information provider is temporarily unavailable.")
 
@@ -17,19 +17,21 @@ class ProviderDeferred(RuntimeError):
 
 
 class ProviderInvalidResponse(RuntimeError):
-    reason_code = "PROVIDER_RESPONSE_INVALID"
+    reason_code = "SERVICE_RESPONSE_INVALID"
     def __init__(self):
         super().__init__("An information provider returned an unusable response.")
 
 
 class ProviderAuthenticationFailed(RuntimeError):
-    reason_code = "PROVIDER_AUTH_FAILED"
+    reason_code = "SERVICE_SETUP_INVALID"
+    service_status = "AUTH_FAILED"
     def __init__(self):
         super().__init__("An information provider could not authorize access.")
 
 
 
 class ProviderConfigurationError(ConfigurationError):
-    reason_code = "PROVIDER_CONFIGURATION_INVALID"
+    reason_code = "SERVICE_SETUP_INVALID"
+    service_status = "NOT_CONFIGURED"
     def __init__(self):
         ValueError.__init__(self,"Provider configuration is incomplete or invalid.")

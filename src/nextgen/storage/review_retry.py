@@ -47,7 +47,7 @@ def _retryable_state(kind, state, reason):
         kind == 'DISCOVER_EPISODE_RELEASES' and state == 'ON_HOLD'
         and reason == 'WAITING_FOR_DUB') or (
         kind == 'DISCOVER_EPISODE_RELEASES' and state == 'BLOCKED'
-        and reason in ('RELEASE_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE',
+        and reason in ('RELEASE_SEARCH_TIMEOUT', 'SERVICE_UNAVAILABLE',
                        # Jobs stopped under the old Sonarr-based discovery (migration 064).
                        'EPISODE_DISCOVERY_OUTDATED'))
 

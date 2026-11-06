@@ -1,6 +1,6 @@
 # Reason and event code audit
 
-> **Applied** by RF-006b (migration `064`): the catalog in `reasons.py` and `messages.py` is the new wording below, and stored codes were rewritten. The retired per-service codes in §1a follow in RF-006c (migration `065`). This page stays as the reviewed record; `test_reason_code_audit` keeps the catalog and `reason_code_proposals.py` in step.
+> **Applied** by RF-006b (migration `064`): the catalog in `reasons.py` and `messages.py` is the new wording below, and stored codes were rewritten. The retired per-service codes in §1a were retired by RF-006c (migration `065`), with the behavior changes in §6. This page stays as the reviewed record; `test_reason_code_audit` keeps the catalog and `reason_code_proposals.py` in step.
 
 **Base:** `refactor` at `8c1d25a0` (NextGen `29fce109`, with `services` merged). First written against `9fdb64eb` (NextGen `9071be2e`); §0 lists the codes added since. This is a review document: it changes no code.
 **Kept current by** `src/nextgen/tests/test_reason_code_audit.py`: it fails when a registered code has no proposal here, so a NextGen sync that adds a code cannot slip past the audit.

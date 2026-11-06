@@ -114,7 +114,7 @@ def registration(resolve, *, release_kind=None):
             return Outcome("retry", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except ProviderAuthenticationFailed:
             trace.check("tvdb_series", "failed", "provider_auth_failed")
-            return Outcome("review", "PROVIDER_AUTH_FAILED", matching=evidence(), candidate_evidence=trace.candidate_evidence)
+            return Outcome("review", "SERVICE_SETUP_INVALID", facts={"service_status": "AUTH_FAILED"}, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except (IdentityNotReady, IdentityConflict) as exc:
             return Outcome("review", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         try:

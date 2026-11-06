@@ -80,7 +80,7 @@ class MessageTests(unittest.TestCase):
             ("NEW_EVENT", None, "job"), ("ACCEPTED", None, "job"),
             ("CREATED", "IDENTITY_INVALID", "job"),
             ("RETRY_SCHEDULED", None, "job"),
-            ("LEASE_EXPIRED", "PROVIDER_UNAVAILABLE", "job"),
+            ("LEASE_EXPIRED", "SERVICE_UNAVAILABLE", "job"),
             ("OPERATION_FAILED", "JOB_HANDLER_FAILED", "job"),
         ):
             with self.subTest(code=code), self.assertRaises(ValueError):

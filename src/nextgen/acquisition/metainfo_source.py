@@ -23,13 +23,16 @@ from src.nextgen.acquisition.qbittorrent import Client as QbClient
 
 
 class MetadataSourceConfigurationError(ValueError):
-    reason_code = 'TORRENT_METADATA_CONFIGURATION_INVALID'
+    reason_code = 'SERVICE_SETUP_INVALID'
+    service = 'qbittorrent'
+    service_status = 'NOT_CONFIGURED'
     def __init__(self):
         super().__init__('Configure qBittorrent credentials and download folder.')
 
 
 class MetadataSourceUnavailable(RuntimeError):
-    reason_code = 'TORRENT_METADATA_UNAVAILABLE'
+    reason_code = 'SERVICE_UNAVAILABLE'
+    service = 'qbittorrent'
     def __init__(self):
         super().__init__('qBittorrent could not provide torrent metadata.')
 
@@ -41,7 +44,9 @@ class MetadataSourceDenied(ValueError):
 
 
 class MetadataClientUnsupported(MetadataSourceDenied):
-    reason_code = 'TORRENT_METADATA_CLIENT_UNSUPPORTED'
+    reason_code = 'SERVICE_SETUP_INVALID'
+    service = 'qbittorrent'
+    service_status = 'UNSUPPORTED'
     def __init__(self):
         ValueError.__init__(self, 'The batch requires a safely owned stopped torrent before older qBittorrent can export metadata.')
 

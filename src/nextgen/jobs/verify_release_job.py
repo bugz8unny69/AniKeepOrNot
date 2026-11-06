@@ -83,12 +83,12 @@ def registration(verify, *, user_evaluation_kind=None, batch_kind=None):
         except MetadataSourceWaiting as exc: return Outcome("defer",exc.reason_code,delay_ms=exc.delay_ms,
                                                    metadata_evidence=exc.evidence)
         except MetadataSourceTimeout as exc: return Outcome("fail", exc.reason_code, facts=failure_facts(exc))
-        except MetadataSourceUnavailable as exc: return Outcome("retry",exc.reason_code)
+        except MetadataSourceUnavailable as exc: return Outcome("retry",exc.reason_code,facts=failure_facts(exc))
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         except ProviderDeferred as exc: return Outcome("defer","JOB_WAITING",delay_ms=exc.delay_ms)
         except (ProviderUnavailable,ProviderInvalidResponse) as exc: return Outcome("retry",exc.reason_code)
-        except ProviderAuthenticationFailed as exc: return Outcome("review","PROVIDER_AUTH_FAILED", facts=failure_facts(exc))
+        except ProviderAuthenticationFailed as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         except SizeLimitExceeded as exc: return Outcome("fail", exc.reason_code, facts=exc.facts)
         except MediaInvalid as exc: return Outcome("fail" if exc.reason_code == 'MEDIA_AUDIO_REQUIRED' else "review", exc.reason_code, facts=failure_facts(exc))
         except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))

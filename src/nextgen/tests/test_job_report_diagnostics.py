@@ -134,7 +134,7 @@ class JobReportDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             with transaction(db):
                 for _ in range(3):
                     db.execute("INSERT INTO job_history(job_id,occurred_at_ms,event_code,reason_code,details_json,component) "
-                               "VALUES(?,1,'RETRY_SCHEDULED','PROWLARR_UNAVAILABLE','{\"attempt\":1}','worker')", (job,))
+                               "VALUES(?,1,'RETRY_SCHEDULED','SERVICE_UNAVAILABLE','{\"attempt\":1}','worker')", (job,))
         finally: db.close()
         d = self.diag(job)
         self.assertEqual(d['recovery']['retries_in_window'], 3)

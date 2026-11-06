@@ -96,8 +96,8 @@ class AniDBFirstResolverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProviderAuthenticationFailed): await resolver(self.request,self.configuration,self.cancelled)
 
     async def test_job_adapter_maps_auth_and_invalid_response_to_registered_reasons(self):
-        for error,kind,reason in ((ProviderAuthenticationFailed(),"review","PROVIDER_AUTH_FAILED"),
-                                  (ProviderInvalidResponse(),"retry","PROVIDER_RESPONSE_INVALID")):
+        for error,kind,reason in ((ProviderAuthenticationFailed(),"review","SERVICE_SETUP_INVALID"),
+                                  (ProviderInvalidResponse(),"retry","SERVICE_RESPONSE_INVALID")):
             async def resolve(*args): raise error
             spec = registration(resolve)
             context = SimpleNamespace(data=lambda:{},claim=SimpleNamespace(event_id=1),configuration=self.configuration,cancelled=self.cancelled)

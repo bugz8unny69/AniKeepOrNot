@@ -54,7 +54,7 @@ def registration(read_metainfo,*,submission_kind=None,legacy_bootstrap=None):
             manifest=await blocking(parse_metainfo,raw,source.info_hash)
             validate_declaration(source,manifest)
         except MetadataSourceWaiting as exc:return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms)
-        except MetadataSourceUnavailable as exc:return Outcome('retry',exc.reason_code)
+        except MetadataSourceUnavailable as exc:return Outcome('retry',exc.reason_code,facts=failure_facts(exc))
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except ProviderDeferred as exc:return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)

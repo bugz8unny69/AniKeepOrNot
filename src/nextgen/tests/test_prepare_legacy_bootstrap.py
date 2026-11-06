@@ -49,7 +49,7 @@ class LegacyWorkerRoutingTests(unittest.IsolatedAsyncioTestCase):
                    return_value=SimpleNamespace(info_hash=HASH)):
             outcome=await spec.execute(context)
         self.assertEqual((outcome.kind,outcome.reason_code),
-                         ('review','TORRENT_METADATA_CONFIGURATION_INVALID'))
+                         ('review','SERVICE_SETUP_INVALID'))
 
 
 class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
@@ -110,8 +110,8 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_qbittorrent_failures_report_the_failed_check(self):
         from src.nextgen.acquisition.submission import ClientInvalid, ClientAuthenticationFailed
-        for error,reason in ((ClientInvalid,'DOWNLOAD_CLIENT_RESPONSE_INVALID'),
-                             (ClientAuthenticationFailed,'DOWNLOAD_CLIENT_AUTH_FAILED')):
+        for error,reason in ((ClientInvalid,'SERVICE_RESPONSE_INVALID'),
+                             (ClientAuthenticationFailed,'SERVICE_SETUP_INVALID')):
             probe=Mock(major=4,metadata_strategy='guarded_export')
             probe.inspect.side_effect=error()
             journal=Mock()

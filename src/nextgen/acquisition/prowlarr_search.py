@@ -27,22 +27,28 @@ MAX_RETRY_AFTER_SECONDS = 120
 
 
 class SearchReview(ValueError):
-    reason_code = 'PROWLARR_SEARCH_REVIEW'
+    reason_code = 'SERVICE_RESPONSE_INVALID'
+    service = 'prowlarr'
     def __init__(self): super().__init__('Prowlarr returned data that needs review.')
 
 
 class SearchConfiguration(SearchReview):
-    reason_code = 'PROWLARR_CONFIGURATION_INVALID'
+    reason_code = 'SERVICE_SETUP_INVALID'
+    service = 'prowlarr'
+    service_status = 'NOT_CONFIGURED'
     def __init__(self): ValueError.__init__(self, 'Configure Prowlarr before backfill search.')
 
 
 class SearchUnauthorized(SearchConfiguration):
-    reason_code = 'PROWLARR_AUTH_FAILED'
+    reason_code = 'SERVICE_SETUP_INVALID'
+    service = 'prowlarr'
+    service_status = 'AUTH_FAILED'
     def __init__(self): ValueError.__init__(self, 'Prowlarr rejected the API key.')
 
 
 class SearchUnavailable(RuntimeError):
-    reason_code = 'PROWLARR_UNAVAILABLE'
+    reason_code = 'SERVICE_UNAVAILABLE'
+    service = 'prowlarr'
     retry_after = None      # seconds Prowlarr asked us to wait (429), if any
     def __init__(self): super().__init__('Prowlarr search is unavailable.')
 

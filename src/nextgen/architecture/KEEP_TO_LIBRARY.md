@@ -8,7 +8,7 @@ The worker records series-add/import intent before writes, selects only the appr
 
 Jellyfin refresh failures do not undo Keep. Refresh acceptance is not proof of indexing. Torrent/download cleanup, canceled-work reservation release and optional Shoko remain follow-up work. No fallback filesystem promotion, automatic missing-episode search or second staging pipeline is introduced.
 
-Failures use the central readable reason catalog, including KEEP_CONFIGURATION_INVALID, KEEP_IMPORT_WAITING, KEEP_SERVICE_UNAVAILABLE and KEEP_IMPORT_REVIEW. UI copy must not substitute raw exceptions or provider payloads for those explanations.
+Failures use the central readable reason catalog, including KEEP_CONFIGURATION_INVALID, KEEP_IMPORT_WAITING, SERVICE_UNAVAILABLE and KEEP_IMPORT_REVIEW. UI copy must not substitute raw exceptions or provider payloads for those explanations.
 
 The later [download cleanup](../DECISION_DOWNLOAD_CLEANUP.md) draft adds owned
 torrent/download cleanup after completed Keep/Reject source cleanup. Canceled

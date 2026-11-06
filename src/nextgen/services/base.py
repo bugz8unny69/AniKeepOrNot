@@ -24,6 +24,26 @@ NOT_A_FAILURE = 'NOT_A_FAILURE'
 # then decides, and a failure marks the service down at once.
 USABLE = frozenset({UP, DISABLED, UNKNOWN})
 
+# Generic reason codes for a service problem. A job reports one of these with
+# the service and, for a setup problem, its status in the outcome details, so
+# codes never name a product (refactor RF-006c).
+SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE'
+SERVICE_SETUP_INVALID = 'SERVICE_SETUP_INVALID'
+SERVICE_RESPONSE_INVALID = 'SERVICE_RESPONSE_INVALID'
+SERVICE_CODES = frozenset({SERVICE_UNAVAILABLE, SERVICE_SETUP_INVALID, SERVICE_RESPONSE_INVALID})
+SETUP_STATUSES = frozenset({NOT_CONFIGURED, AUTH_FAILED, UNSUPPORTED})
+
+
+def service_facts(service, status=None, facts=None):
+    """Outcome details that name the service a generic service code is about."""
+    if not valid_name(service) or (status is not None and status not in SETUP_STATUSES):
+        raise ValueError('invalid service facts')
+    result = dict(facts or {})
+    result['service'] = service
+    if status is not None:
+        result['service_status'] = status
+    return result
+
 _NAME = re.compile(r'[a-z][a-z0-9_]{0,31}')
 _SUMMARY = {
     UP: '{label} is available.',
@@ -85,12 +105,20 @@ class ServiceAdapter:
     # records written by real requests, such as the provider cache and pacing
     # table. Required for AniDB, which bans clients that send too many requests.
     network_probe = True
-    # Job outcome reason codes that mean this service failed, mapped to the
-    # status they imply. The worker uses them to mark the service at once
-    # when a job reports one, with no extra request.
+    # Role-specific job reason codes that mean this service failed, mapped to
+    # the status they imply (for example RELEASE_SEARCH_TIMEOUT for Prowlarr).
+    # The generic SERVICE_* codes are handled for every adapter below. The
+    # worker uses the status to mark the service at once, with no extra request.
     reasons = {}
 
-    def status_for_reason(self, reason_code):
+    def status_for_reason(self, reason_code, facts=None):
+        if reason_code == SERVICE_UNAVAILABLE:
+            return DOWN
+        if reason_code == SERVICE_SETUP_INVALID:
+            status = (facts or {}).get('service_status')
+            return status if status in SETUP_STATUSES else NOT_CONFIGURED
+        if reason_code == SERVICE_RESPONSE_INVALID:
+            return None
         return self.reasons.get(reason_code)
 
     def probe(self, configuration, secrets, *, now_ms=0):

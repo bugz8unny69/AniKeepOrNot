@@ -52,8 +52,8 @@ class HandlerHistoryTests(unittest.TestCase):
     def test_failures_have_registered_reasons_and_do_not_decide_retry_policy(self):
         with transaction(self.db):
             self.append("HANDLER_STARTED")
-            failed = self.append("HANDLER_FAILED", when=12, reason="PROVIDER_UNAVAILABLE")
-        self.assertEqual(failed.reason_code, "PROVIDER_UNAVAILABLE")
+            failed = self.append("HANDLER_FAILED", when=12, reason="SERVICE_UNAVAILABLE")
+        self.assertEqual(failed.reason_code, "SERVICE_UNAVAILABLE")
         self.assertEqual(self.db.execute("SELECT state,attempt_count FROM jobs WHERE job_id=?", (self.job,)).fetchone(), ("RUNNING",1))
         with self.assertRaises(ValueError), transaction(self.db):
             self.append("HANDLER_FAILED", invocation="b"*32, reason=None)

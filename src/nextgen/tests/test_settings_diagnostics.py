@@ -70,7 +70,7 @@ class FoundationTests(unittest.TestCase):
         logger.setLevel(logging.INFO)
         logger.handlers[0].setFormatter(SafeFormatter("%(message)s"))
         event(logger, logging.INFO, "RETRY_SCHEDULED", job_id=42, attempt=2,
-              reason_code="PROVIDER_UNAVAILABLE",
+              reason_code="SERVICE_UNAVAILABLE",
               retryable=True, raw_body="never log this")
         self.assertIn("job_id=42", stream.getvalue())
         self.assertNotIn("never log this", stream.getvalue())

@@ -23,6 +23,7 @@ from src.nextgen.job_contracts import Outcome, failure_facts
 from src.nextgen.storage.magnet_intake import MagnetJournal
 from src.nextgen.storage.release_selection import acquisition_identity, SelectionConflict
 from src.nextgen.storage.acquisition import source_magnet
+from src.nextgen.services.base import service_facts
 
 PENDING=Outcome('defer','TORRENT_METADATA_WAITING',delay_ms=60000)
 
@@ -120,7 +121,7 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
                 return Outcome('fail','TORRENT_METADATA_TIMEOUT')
             return PENDING
         except ClientUnavailable:
-            return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
+            return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('qbittorrent'))
         except (SizeLimitExceeded, MetadataInvalid) as exc:
             exception(context.logger,'OPERATION_FAILED',exc,level=logging.WARNING,
                       reason_code=exc.reason_code,component='worker',

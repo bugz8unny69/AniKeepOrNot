@@ -255,7 +255,7 @@ class JobRecoveryTests(unittest.TestCase):
 
 
     def test_explicit_reason_can_retry_manual_classification_with_safety_gate(self):
-        reason = 'TORRENT_METADATA_CONFIGURATION_INVALID'
+        reason = 'SERVICE_SETUP_INVALID'
         retryable = self._create_stopped_job('PREPARE_ACQUISITION', reason, attempt=2)
         held = self._create_stopped_job('PREPARE_ACQUISITION', reason, state='ON_HOLD')
         automatic = self._create_stopped_job('PREPARE_ACQUISITION', 'TORRENT_METADATA_TIMEOUT')

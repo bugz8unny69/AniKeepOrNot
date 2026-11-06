@@ -123,7 +123,7 @@ class DiagnosticHistoryTests(unittest.TestCase):
             self.db.execute("UPDATE jobs SET state='RETRY_WAIT',attempt_count=2 WHERE job_id=?", (job,))
             receipt = append_job_history(
                 self.db, job_id=job, component="worker", occurred_at_ms=10,
-                event_code="RETRY_SCHEDULED", reason_code="PROVIDER_UNAVAILABLE",
+                event_code="RETRY_SCHEDULED", reason_code="SERVICE_UNAVAILABLE",
                 details={"attempt": 2, "retry_at_ms": 20})
         self.assertEqual((receipt.event_id, receipt.job_id, receipt.created_by_job_id),
                          (event, job, original))

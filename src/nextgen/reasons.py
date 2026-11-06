@@ -17,18 +17,12 @@ class Reason:
     retryable: bool | None
 
 _ENTRIES = (
-    Reason('PROWLARR_CONFIGURATION_INVALID','The Prowlarr address or API key is missing or invalid.','Configure Prowlarr before backfill search.','Set the Prowlarr address and API key in Settings, then retry; no download occurred.','WARNING',False),
-    Reason('PROWLARR_AUTH_FAILED','Prowlarr rejected the configured API key.','Prowlarr search authentication failed.','Check the Prowlarr API key in Settings, then retry.','WARNING',False),
-    Reason('PROWLARR_SEARCH_REVIEW','Prowlarr returned a response that could not be read safely.','Prowlarr search needs review.','Check Prowlarr and its indexers, then retry.','WARNING',False),
     Reason('RELEASE_SEARCH_TIMEOUT','The release search took longer than the allowed time, three times in a row. The details name the search service.','The release search timed out.','Nothing to do yet: the search runs once more in 30 minutes. If it times out again, check the search service and its indexers or raise the search timeout, then press Retry.','ERROR',True),
-    Reason('PROWLARR_UNAVAILABLE','Prowlarr could not be reached, was busy, or failed the search three times in a row.','Prowlarr search failed.','The search runs again once after 30 minutes. If it still fails, check that Prowlarr and its indexers are running, then retry.','ERROR',True),
     Reason('RELEASE_WITHDRAWN','The next release in the ranked list is no longer offered by the search service.','Moving on to the next release.','Nothing to do. The next release in the list is tried.','WARNING',True),
     Reason('EPISODE_DISCOVERY_PLAN_CONFLICT','The saved list of episodes to search no longer matches what this search job expected.','The episode search plan changed and needs review.','Open the job report (adm report job --id followed by the job number) to compare the saved episode list, then press Retry. Nothing was downloaded.','WARNING',False),
     Reason('EPISODE_DISCOVERY_OUTDATED','This episode search stopped under the old Sonarr-based discovery, which Prowlarr search has replaced.','This search ran under the old episode discovery.','Press Search again to search with the current release search.','WARNING',False),
     Reason('WAITING_FOR_DUB','English audio is required, but no release advertises both Japanese and English audio, or every release tried was missing one of them.','Waiting for a release with Japanese and English audio.','Nothing to do. A new Dual Audio release from autobrr starts automatically, or press Search again to check Prowlarr now.','INFO',True),
     Reason('RELEASE_CANDIDATES_EXHAUSTED','Every release found for this episode was tried, and each one failed or could not be downloaded.','All releases for this episode failed.','Check whether a better release exists on your indexers, then press Search again.','WARNING',False),
-    Reason('SHOKO_CONFIGURATION_INVALID','Optional Shoko address or API key is missing or rejected.','Configure optional Shoko metadata.','Update Shoko settings/credentials, then retry Shoko metadata. The episode remains kept.','WARNING',False),
-    Reason('SHOKO_UNAVAILABLE','Optional Shoko metadata could not be read.','Optional Shoko metadata will retry.','Check Shoko availability. Keep and cleanup remain independent.','WARNING',True),
     Reason('METADATA_ENRICHMENT_REVIEW','The anime library service did not return the expected anime and episode for the saved AniDB IDs. The details name the service.','Extra episode details need review.','Check that the anime library service has this anime and episode, then retry that step.','WARNING',False),
     Reason('DECISION_DOWNLOAD_CLEANUP_COMPLETE','The torrent is gone from qBittorrent and its downloaded files were deleted.','Download cleanup finished.','Nothing to do. Staged files, the library copy and the episode history are kept.','INFO',False),
     Reason('DECISION_DOWNLOAD_CLEANUP_WAITING','Cleanup is waiting for other work on this download to finish, or for qBittorrent to confirm an earlier stop or remove request.','Download cleanup is waiting.','Nothing to do. Files are deleted only after qBittorrent confirms the torrent is gone.','INFO',None),
@@ -39,12 +33,9 @@ _ENTRIES = (
     Reason('POST_KEEP_CLEANUP_WAITING','Another attempt is still cleaning up the staged files for this kept episode.','Waiting to finish cleaning up staged files.','Nothing to do. The episode is already kept.','INFO',None),
     Reason('POST_KEEP_CLEANUP_UNAVAILABLE','Sonarr, the staging folder or the library folder could not be reached.','The episode is kept; staged-file cleanup will try again.','Check that Sonarr is running and the folders are mounted.','WARNING',True),
     Reason('POST_KEEP_CLEANUP_REVIEW','The saved Keep result or the staged files to delete could not be confirmed.','The episode is kept, but staged-file cleanup needs review.','Check the library file and the staged files, then press Keep again. Only the cleanup runs again.','WARNING',False),
-    Reason('JELLYFIN_CONFIGURATION_INVALID','The Jellyfin endpoint or API key is missing or rejected.','Configure Jellyfin refresh settings and credentials.','Review the address and private API key. Completed staging and Keep remain valid.','WARNING',False),
-    Reason('JELLYFIN_UNAVAILABLE','Jellyfin did not accept the library scan request.','Jellyfin refresh is temporarily unavailable.','The refresh job will retry; completed media operations remain valid.','WARNING',True),
     Reason('MEDIA_SERVER_REFRESH_REVIEW','The media server answered the library scan request in an unexpected way. The details name the server.','The media server library scan needs review.','Check the media server address and that its version is supported.','WARNING',False),
     Reason('KEEP_CONFIGURATION_INVALID','The library manager (address and API key) or the permanent library folder is not set up.','Keep is not set up.','Fix the library manager and library folder settings, then press Keep again.','WARNING',False),
     Reason('KEEP_IMPORT_WAITING','The import into Sonarr is in progress and its result is being checked.','Keeping this episode is in progress.','Nothing to do. Sonarr is checked again shortly.','INFO',None),
-    Reason('KEEP_SERVICE_UNAVAILABLE','The configured Sonarr service could not be reached.','Sonarr is temporarily unavailable.','The job will retry; check the Sonarr connection if this continues.','WARNING',True),
     Reason('KEEP_IMPORT_REVIEW','The staged file, its TVDB episode, or the Sonarr import result could not be confirmed.','Keeping this episode needs review.','Check the staged file and the episode in Sonarr, then press Keep again.','WARNING',False),
     Reason('KEEP_COMPLETE','Sonarr imported the file and the library copy was confirmed.','This episode is kept.','Nothing to do. The episode is in the library.','INFO',False),
     Reason('ANIME_REJECTED','Someone rejected this anime, so no more episodes are downloaded for it.','This anime was rejected; downloads are stopped.','Nothing to do. To download it again, review the Reject decision first.','INFO',False),
@@ -57,12 +48,6 @@ _ENTRIES = (
     Reason('MEDIA_VERIFICATION_UNAVAILABLE','The video could not be read, or checking it took too long.','The downloaded video could not be checked yet.','Check that the download folder is mounted and the file is readable.','ERROR',None),
     Reason('MEDIA_PROBE_UNAVAILABLE','ffprobe could not be started to inspect the video.','The video checker (ffprobe) is not available.','Install ffprobe at /usr/bin/ffprobe and make sure the worker can run it.','WARNING',False),
     Reason('MEDIA_AUDIO_REQUIRED','The video does not have the audio languages required by the Audio check setting (commentary tracks do not count).','The video is missing a required audio language.','Check the audio tracks, or change the Audio check setting. File names and subtitles do not count.','WARNING',False),
-    Reason('TORRENT_METADATA_CONFIGURATION_INVALID', 'qBittorrent metadata inspection needs valid client configuration and credentials.',
-           'Configure qBittorrent before inspecting torrent metadata.', 'Check the qBittorrent server, download directory and stored credentials.', 'WARNING', False),
-    Reason('TORRENT_METADATA_CLIENT_UNSUPPORTED', 'The connected Web API cannot retrieve portable hash-verified torrent metadata.',
-           'This qBittorrent version cannot export the batch torrent metadata.', 'The older-client batch path needs an owned, stopped magnet admission and verified inventory; do not submit or adopt an unrelated torrent.', 'WARNING', False),
-    Reason('TORRENT_METADATA_UNAVAILABLE', 'A qBittorrent metadata-only request failed or timed out.',
-           'qBittorrent metadata retrieval is temporarily unavailable.', 'Check the qBittorrent connection if retries continue failing.', 'WARNING', True),
     Reason('TORRENT_METADATA_WAITING','qBittorrent is still fetching the torrent file list from peers.','Waiting for the torrent file list.','Nothing to do. It is checked again without adding the torrent twice.','INFO',None),
     Reason('TORRENT_METADATA_TIMEOUT','qBittorrent could not get the torrent file list within ten minutes, usually because the torrent has no peers.','The torrent file list timed out.','Nothing to do. This release is cleaned up and the next one is tried.','WARNING',False),
     Reason('TORRENT_METADATA_DENIED','qBittorrent refused the request for the torrent file list.','qBittorrent refused to provide the torrent file list.','Check the qBittorrent login and version, and the torrent hash.','WARNING',False),
@@ -109,14 +94,6 @@ _ENTRIES = (
     Reason('IDENTITY_INCOMPLETE','Some details needed to identify the anime are missing.','Anime identification is incomplete.','Check the missing details in the job report, or match the anime by hand.','WARNING',None),
     Reason('IDENTITY_INVALID','The anime that was found failed validation.','The anime could not be verified.','Check the identification results, or match the anime by hand.','WARNING',False),
     Reason('IDENTITY_CONFLICT','The anime IDs that were found disagree with the ones already saved.','Conflicting anime information needs review.','Compare the AniDB and TVDB IDs in the job report, then match the anime by hand.','WARNING',False),
-    Reason("DOWNLOAD_CLIENT_UNAVAILABLE", "A bounded client request failed; submission outcome may require reconciliation.",
-           "The download client could not be reached safely.", "Check client availability; preserve any pending submission intent.", "WARNING", None),
-    Reason("DOWNLOAD_CLIENT_RESPONSE_INVALID", "Client response shape or provenance observation failed validation.",
-           "The download client returned information that needs review.", "Review client compatibility and recorded source evidence.", "WARNING", False),
-    Reason("DOWNLOAD_CLIENT_AUTH_FAILED", "The configured client did not accept session authentication.",
-           "The download client rejected authentication.", "Review private client credentials and access settings.", "WARNING", False),
-    Reason("DOWNLOAD_CLIENT_UNSUPPORTED", "qBittorrent must be 4.5+ with Web API 2.8.14+.",
-           "This qBittorrent version is not supported.", "Upgrade to qBittorrent 4.5 or newer (Web API 2.8.14+) before retrying.", "WARNING", False),
     Reason('TORRENT_SUBMISSION_UNCERTAIN','The torrent was sent to qBittorrent, but it has not been confirmed yet. It is never sent twice.','Waiting to confirm the torrent was added.','Nothing to do. Check qBittorrent if this continues; do not add the torrent by hand.','INFO',None),
     Reason('TORRENT_ALREADY_PRESENT','qBittorrent already had this torrent before this work tried to add it.','This torrent is already in qBittorrent; nothing new was added.','Check who added the existing torrent before pressing Retry.','WARNING',False),
     Reason('TORRENT_OWNERSHIP_CONFLICT','The torrent in qBittorrent does not match what this work added: its owner tag, folder, category, state or files differ.','The torrent no longer matches what was added and needs review.','Compare the torrent in qBittorrent with the job report, then press Retry.','WARNING',False),
@@ -151,20 +128,12 @@ _ENTRIES = (
     Reason('RELEASE_SELECTION_CONFLICT','The saved list of releases for this episode no longer matches what this job expected, for example because another job changed it.','The release choice for this episode needs review.','Open the job report (adm report job --id followed by the job number) to compare the saved releases, then press Retry.','WARNING',False),
     Reason('SEASON_PACK_SELECTION_CONFLICT','The saved list of season packs for this season no longer matches what this job expected, for example because another job changed it.','The season pack choice for this season needs review.','Open the job report (adm report job --id followed by the job number) to compare the saved season packs, then press Retry.','WARNING',False),
     Reason('RELEASE_CONFLICT','The episode mapping or the saved release details disagree.','The release episode details disagree.','Check the episode IDs and mapping in the job report.','WARNING',False),
-    Reason("PROVIDER_UNAVAILABLE", "A provider request could not complete due to availability.",
-           "An information provider is temporarily unavailable.", "The operation can be retried.",
-           "WARNING", True),
-    Reason("PROVIDER_CONFIGURATION_INVALID", "Required AniDB client or TVDB API-key configuration is missing or invalid.",
-           "Provider configuration is incomplete or invalid.", "Configure the registered AniDB client and TVDB API key before starting identity work.", "ERROR", False),
     Reason('SECRET_STORAGE_UNAVAILABLE','The private credentials file could not be read or saved safely.','Saved credentials could not be read.','Check secrets.json: its owner, its permissions (0600) and its format.','ERROR',None),
-    Reason("PROVIDER_RESPONSE_INVALID", "A provider response failed bounded decoding or structural checks.",
-           "An information provider returned an unusable response.", "Retry later or review provider availability.", "WARNING", None),
-    Reason("PROVIDER_AUTH_FAILED", "Provider authentication or authorization failed.",
-           "An information provider could not authorize access.", "Review the provider access settings.", "WARNING", False),
     Reason('JOB_LEASE_EXPIRED','The worker stopped or lost contact while this job was running.','Processing was interrupted.','Nothing to do; the job is tried again. If it keeps happening, check the worker log.','WARNING',True),
     Reason('JOB_HANDLER_FAILED','The job failed with an unexpected error.','An unexpected error occurred.','Check the failed check and the worker log, then press Retry.','ERROR',None),
     Reason('JOB_RETRY_EXHAUSTED','The job failed as many times as allowed, so automatic retries stopped.','Automatic retries stopped.','Check the earlier failure reason in History, fix it, then press Retry.','ERROR',False),
     Reason('SERVICE_UNAVAILABLE','A service this job needs could not be reached, was too busy, or kept failing. The details name the service. The job waits and tries again by itself, without using up its retries.','Waiting for a service to come back.','Nothing to do for a short outage: waiting jobs continue on their own. If it lasts, check the service named in the details. After 72 hours the job stops for review.','WARNING',True),
+    Reason('SERVICE_RESPONSE_INVALID','A service sent back a response that could not be read or did not make sense. The details name the service.','A service sent a response that could not be used.','Check that the service named in the details is working and up to date, then press Retry.','WARNING',None),
     Reason('SERVICE_SETUP_INVALID','A service is not set up correctly: its address, login, client name or API key is missing or was rejected, or its version does not support what this needs. The details name the service and what is wrong. Waiting would not fix this.','A service is not set up correctly.','Fix the service named in the details in Settings (adm services check tests every service), then press Retry. For a required service, start the worker again.','ERROR',False),
     Reason('STORAGE_UNAVAILABLE','The database could not be read or written. Whether the last change was saved is unknown.','The database is unavailable.','Check the database file, its disk and its permissions.','ERROR',None),
     Reason('STORAGE_STATEMENT_INVALID','A database query in the program is wrong, for example it has the wrong number of values. This is a bug, not a database problem. Nothing was saved.','A program error stopped processing.','Report the failed check from the log. Retrying will fail the same way until the program is fixed.','ERROR',False),
@@ -232,7 +201,7 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
                  blocking_job_id=None, operation_id=None,
-                 service=None, service_detail=None, waiting_since_ms=None) -> dict:
+                 service=None, service_detail=None, service_status=None, waiting_since_ms=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -297,6 +266,11 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                 or any(ord(c) < 32 or ord(c) == 127 for c in service_detail)):
             raise ValueError("invalid service detail")
         details["service_detail"] = service_detail
+    # For SERVICE_SETUP_INVALID: which setup problem it is.
+    if service_status is not None:
+        if service_status not in ("NOT_CONFIGURED", "AUTH_FAILED", "UNSUPPORTED"):
+            raise ValueError("invalid service status")
+        details["service_status"] = service_status
     if cause_reason_code is not None:
         cause = get_reason(cause_reason_code)
         if cause is None:

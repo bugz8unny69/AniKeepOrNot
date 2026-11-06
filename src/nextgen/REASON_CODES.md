@@ -38,7 +38,6 @@ not a port of a complete legacy catalog. No runtime dependency on legacy exists.
 | `IDENTITY_INCOMPLETE` | Anime identification is incomplete. | Context required |
 | `IDENTITY_INVALID` | The anime could not be verified. | Changed input/evidence needed |
 | `IDENTITY_CONFLICT` | Conflicting anime information needs review. | Review needed |
-| `PROVIDER_UNAVAILABLE` | An information provider is temporarily unavailable. | Potentially transient |
 | `JOB_LEASE_EXPIRED` | Processing was interrupted. | Potentially transient |
 | `JOB_HANDLER_FAILED` | An unexpected error occurred. | Context required |
 | `JOB_RETRY_EXHAUSTED` | Automatic retries stopped. | Review needed |
@@ -109,10 +108,10 @@ These fields explain a condition; canonical scheduling still lives in the
 job row. The helper does not enforce worker transition policy.
 
 Example: a policy-authorized retry may record
-`event_code=RETRY_SCHEDULED`, `reason_code=PROVIDER_UNAVAILABLE`,
+`event_code=RETRY_SCHEDULED`, `reason_code=SERVICE_UNAVAILABLE`,
 `details_json={"attempt":2,"max_attempts":3,"retry_at_ms":1234}`.
 Whether a retry is actually scheduled comes from persisted state, not the
-message text. Exhaustion can retain PROVIDER_UNAVAILABLE as cause_reason_code.
+message text. Exhaustion can retain SERVICE_UNAVAILABLE as cause_reason_code.
 
 ## Delivery and validation status
 
@@ -182,18 +181,19 @@ an action to review history. Expired RUNNING jobs with zero recorded attempts ar
 quarantined for review without fabricating a historical claim or handler call.
 
 
-Provider library reasons: PROVIDER_RESPONSE_INVALID has the static message
-"An information provider returned an unusable response." and requests a later
-retry or provider review. PROVIDER_AUTH_FAILED says "An information provider
-could not authorize access." and asks for provider access settings to be reviewed.
-Both use existing translation keys/catalog resolution. Normal cache misses under
-shared pacing use JOB_WAITING/DEFERRED; provider outages reuse PROVIDER_UNAVAILABLE.
+Provider errors (AniDB, TVDB, Anime-Lists) use the generic service codes:
+SERVICE_RESPONSE_INVALID ("A service sent a response that could not be used."),
+SERVICE_SETUP_INVALID ("A service is not set up correctly.", with
+service_status AUTH_FAILED for a rejected key) and SERVICE_UNAVAILABLE for
+outages. A provider error does not say which provider failed, so it names no
+service and never marks one. Normal cache misses under shared pacing use
+JOB_WAITING/DEFERRED.
 Raw HTTP errors, URLs, bodies, credentials and tokens are never diagnostic details.
 
 
-PROVIDER_CONFIGURATION_INVALID reports missing/invalid required AniDB client or
-TVDB API-key configuration with "Provider configuration is incomplete or invalid."
-Its action names the required setup without echoing supplied values.
+A missing or invalid AniDB client or TVDB API key is SERVICE_SETUP_INVALID
+(service_status NOT_CONFIGURED); its action names the setup to fix without
+echoing supplied values.
 SECRET_STORAGE_UNAVAILABLE says "Provider credentials could not be accessed
 safely." and requests storage/permissions/format review. Both resolve through the
 shared translation-ready catalog. Credential publication results expose only
@@ -250,7 +250,7 @@ or aggregate plan; ACQUISITION_SIZE_EVIDENCE_MISSING reviews unknown historical
 selected-byte evidence. All have bounded static readable messages/actions and
 translation keys, without values or paths in exceptions/history.
 
-DOWNLOAD_CLIENT_UNAVAILABLE/AUTH_FAILED/RESPONSE_INVALID/UNSUPPORTED describe
+SERVICE_UNAVAILABLE, SERVICE_SETUP_INVALID (with service_status AUTH_FAILED or UNSUPPORTED) and SERVICE_RESPONSE_INVALID, each naming qbittorrent in the details, describe
 bounded transport failures without response bodies or credential values.
 TORRENT_SUBMISSION_UNCERTAIN defers read-only reconciliation; TORRENT_ALREADY_PRESENT
 protects externally present torrents; TORRENT_OWNERSHIP_CONFLICT reviews changed
@@ -334,3 +334,12 @@ title) and MANUAL_RELEASE_SOURCE_INVALID (the magnet link or torrent file is
 not valid). A malformed request is still API_REQUEST_INVALID. The dashboard
 catches a mismatched SxxEyy and an invalid magnet before sending, and shows
 both its own and the server's errors inside the submit form.
+
+Service problems use three generic codes that never name a product, so a
+service can be replaced without renaming codes: SERVICE_UNAVAILABLE (cannot be
+reached; the job waits), SERVICE_SETUP_INVALID (not set up, login or API key
+rejected, or unsupported version; details carry service_status) and
+SERVICE_RESPONSE_INVALID (an answer that could not be read). The details name
+the service, and History shows it, for example "Prowlarr rejected the login or
+API key." The per-service codes they replace were retired in migration 065.
+

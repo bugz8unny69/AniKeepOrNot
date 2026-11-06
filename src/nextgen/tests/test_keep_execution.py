@@ -89,8 +89,8 @@ class KeepExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_transient_and_permanent_errors_are_consistent(self):
         cases = (
-            (KeepUnavailable(), 'retry', 'KEEP_SERVICE_UNAVAILABLE'),
-            (OSError('storage offline'), 'retry', 'KEEP_SERVICE_UNAVAILABLE'),
+            (KeepUnavailable(), 'retry', 'SERVICE_UNAVAILABLE'),
+            (OSError('storage offline'), 'retry', 'SERVICE_UNAVAILABLE'),
             (KeepReview(), 'review', 'KEEP_IMPORT_REVIEW'),
             (KeepConfiguration(), 'review', 'KEEP_CONFIGURATION_INVALID'),
             (PermissionError('unsafe source'), 'review', 'KEEP_IMPORT_REVIEW'),

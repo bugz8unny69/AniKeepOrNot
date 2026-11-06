@@ -11,16 +11,10 @@ class QbittorrentAdapter(ServiceAdapter):
     name = 'qbittorrent'
     label = 'qBittorrent'
     required = True
-    reasons = {
-        'DOWNLOAD_CLIENT_UNAVAILABLE': DOWN,
-        'TORRENT_METADATA_UNAVAILABLE': DOWN,
-        # Not DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE: it also covers filesystem
-        # failures, which must not be reported as "qBittorrent is unavailable".
-        'DOWNLOAD_CLIENT_AUTH_FAILED': AUTH_FAILED,
-        'DOWNLOAD_CLIENT_UNSUPPORTED': UNSUPPORTED,
-        'DOWNLOAD_CONFIGURATION_INVALID': NOT_CONFIGURED,
-        'TORRENT_METADATA_CONFIGURATION_INVALID': NOT_CONFIGURED,
-    }
+    # SERVICE_* codes naming 'qbittorrent' are handled by the base class. Not
+    # DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE: it also covers filesystem failures,
+    # which must not be reported as "qBittorrent is unavailable".
+    reasons = {'DOWNLOAD_CONFIGURATION_INVALID': NOT_CONFIGURED}
 
     def __init__(self, *, client_factory=None):
         self.client_factory = client_factory
