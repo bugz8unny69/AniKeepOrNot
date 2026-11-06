@@ -46,3 +46,20 @@ def release_cancelled(db,operation_id,job_id,now,*,component):
     if not rows and not batch_rows:return woken
     return (append_job_history(db,job_id=job_id,event_code='EPISODE_RESERVATIONS_RELEASED',
         reason_code='CANCELED_RESERVATIONS_RELEASED',component=component,occurred_at_ms=now,details={'attempt':job_attempt(db,job_id)}),*woken)
+
+
+def cleanup_completed(db,operation_id,job_id,now,*,component,previous_cleanup_state):
+    """Everything that follows a cancelled operation's cleanup reaching COMPLETE.
+
+    The one place for it, used by the cleanup service and by the immediate
+    Cancel of already drained work with nothing to delete: free the episode
+    slots, then (only on the first completion) let the single-episode and
+    batch candidate controllers move on to their next candidate.
+    """
+    records=tuple(release_cancelled(db,operation_id,job_id,now,component=component))
+    if previous_cleanup_state!='COMPLETE':
+        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.batch_candidates import schedule_after_cleanup_batch
+        records+=tuple(schedule_after_cleanup(db,operation_id))
+        records+=tuple(schedule_after_cleanup_batch(db,operation_id))
+    return records

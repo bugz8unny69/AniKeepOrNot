@@ -107,6 +107,21 @@ class CandidateTransitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinate(1, a).action, 'POOLED')
         self.assertEqual(self.candidates()[digest(1)], 'CANCELED')
 
+    async def test_an_immediate_cancel_with_nothing_to_delete_also_moves_on(self):
+        # A is active but not running and owns no torrent or files: the API
+        # completes the cancellation at once, without a cleanup job.
+        a = self.arrive(1)
+        b = self.arrive(2)
+        self.sql("UPDATE jobs SET state='DONE' WHERE job_id=?", (b,))
+        status, result, _ = await self.request('POST', f'/api/v1/jobs/{a}/cancel', {}, token=v1.ADMIN)
+        self.assertEqual((status, result['data']['completed']), (200, True))
+        self.assertEqual(self.sql("SELECT count(*) FROM jobs WHERE kind='CLEANUP_CANCELED_OPERATION'"), [(0,)])
+        self.assertEqual(self.candidates(), {digest(1): 'CANCELED', digest(2): 'ACTIVE'})
+        self.assertEqual([state for _, state in self.verify_jobs(2)], ['DONE', 'PENDING'])
+        # Cancelling again changes nothing.
+        await self.request('POST', f'/api/v1/jobs/{a}/cancel', {}, token=v1.ADMIN)
+        self.assertEqual(len(self.verify_jobs(2)), 2)
+
     async def test_a_definitive_failure_is_failed_with_its_reason_and_also_moves_on(self):
         a, b, claim = self.setup_two()
         db = connect(self.database)
