@@ -271,7 +271,6 @@ def detail(db, anidb_id, language='english'):
             from src.nextgen.storage.episode_reset import can_replay
             can_retry_size = (
                 rejected is None and work is None and place is not None
-                and status == 'CANDIDATES'
                 and can_replay(db,plan_id,number,anidb_id,season,episode)
             )
             reset = db.execute(
