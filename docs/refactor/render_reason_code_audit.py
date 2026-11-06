@@ -17,6 +17,7 @@ import src.nextgen.messages as messages  # noqa: E402
 
 data = runpy.run_path(str(ROOT / 'docs/refactor/reason_code_proposals.py'))
 R, E, X, U = data['REASONS'], data['EVENTS'], data['REMOVED'], data['UNREGISTERED']
+T, N = data['RETIRED'], data['NEW']
 
 src = ROOT / 'src/nextgen'
 pool = [p for p in src.rglob('*.py') if 'tests' not in p.parts and p.name not in ('reasons.py', 'messages.py')]
@@ -39,6 +40,10 @@ WHY = {
     'TORRENT_INTENT_RECORDED': '"Intent" is jargon. The event records that the torrent is about to be added.',
     'SONARR_BACKFILL_OBSERVED': 'Episode discovery searches Prowlarr. The old text said "Read-only Sonarr backfill results recorded."',
     'SONARR_SELECTION_CONFLICT': 'Releases come from Prowlarr, not Sonarr. Registered by NextGen #283; it appears only in the worker log, because the job itself ends with `JOB_HANDLER_FAILED`.',
+    'PROWLARR_SEARCH_TIMEOUT': 'No product names in codes (owner decision, 2026-11-06). The search service is named in the details.',
+    'PROWLARR_RELEASE_WITHDRAWN': 'No product names in codes. It describes the release, not the search service.',
+    'SHOKO_METADATA_REVIEW': 'No product names in codes. Shoko is the anime library service that adds episode details.',
+    'JELLYFIN_REFRESH_REVIEW': 'No product names in codes. Jellyfin is the media server.',
     'BATCH_SELECTION_CONFLICT': 'Matches `RELEASE_SELECTION_CONFLICT`, and says "season pack", the word the dashboard uses, instead of the internal "batch". Same log-only use.',
 }
 # Codes registered after the first version of this audit (base 9fdb64eb), and where they came from.
@@ -63,7 +68,7 @@ REMOVED_NOTE = {
     'SONARR_DISCOVERY_TIMEOUT': ('Before `db41b589`; still listed in `review_retry`', ''),
     'SONARR_DISCOVERY_UNAVAILABLE': ('Before `db41b589`; still listed in `review_retry`', ''),
     'SONARR_DISCOVERY_NO_RESULTS': ('Before `db41b589`', 'Same meaning: the ranked fallback is no longer offered.'),
-    'SONARR_DISCOVERY_EPISODE_NOT_FOUND': ('Before `db41b589`; still listed in `review_retry`', '**Decision point (§5.1).** Sonarr\'s catalog is no longer consulted. The target keeps these BLOCKED jobs retry-eligible, which they are today.'),
+    'SONARR_DISCOVERY_EPISODE_NOT_FOUND': ('Before `db41b589`; still listed in `review_retry`', 'Sonarr\'s catalog is no longer consulted. `review_retry` keeps these BLOCKED jobs retry-eligible under the new code, as they are today.'),
     'SONARR_EPISODES_NOT_LISTED': ('Before `db41b589`; still listed in `review_retry`', 'Same as above.'),
     'KEEP_NOT_READY': ('Only on 2026-10-23 (`bf89c34b` to `e1a8bd3b`), before Keep existed', 'The person reviews the job and presses Keep again.'),
     'ACTIVITY_CHANGED': ('Registered in `df9655aa` but never emitted', 'No rows are expected. The target is only a safe fallback.'),
@@ -82,7 +87,9 @@ P('')
 P('- Persisted identifiers are **renamed**. One versioned SQL migration rewrites the stored values, including `job_history`. The code recognizes **only the new values**, and old names are removed.')
 P('- **"Trial" becomes "user evaluation"** (`USER_EVALUATION_*`) everywhere it can. The other places the term is used are mapped in [NAMING_MAP.md](NAMING_MAP.md) §8.')
 P('- Every code\'s wording is rewritten to be human-readable: plain words, the service named, and a concrete next step.')
-P('- **Severity and retryable flags are unchanged.** This audit changes wording and names only, not behavior.')
+P('- **Codes name the situation or the role, never the product** (owner decision, 2026-11-06), so a service can be replaced without renaming codes. Service-health conditions use four generic codes, `SERVICE_SETUP_INVALID`, `SERVICE_UNAVAILABLE`, `SERVICE_RESPONSE_INVALID` and the role code `RELEASE_SEARCH_TIMEOUT`, and the service goes in the details. Exception: `RELEASE_ANIDB_EPISODE_MISSING` and `RELEASE_TVDB_EPISODE_MISSING` name the episode numbering the whole data model is keyed on (`anidb_id`, `tvdb_season`), not a replaceable service.')
+P('- **Jobs that stopped under the old Sonarr-based discovery** migrate to one historical code, `EPISODE_DISCOVERY_OUTDATED`, so History stays true (owner decision, 2026-11-06).')
+P('- **Behavior changes are allowed** where they improve things (owner decision, 2026-11-06). They are made on `refactor` only, never on NextGen, and listed in §6. Elsewhere, severity and retryable flags are unchanged.')
 P('')
 P('## Summary')
 P('')
@@ -96,8 +103,9 @@ P(f'| Current catalog | {len(REGISTRY)} | {len(messages.EVENTS)} |')
 P(f'| Kept, wording rewritten | {len(R) - nr} | {len(E) - ne} |')
 P(f'| Kept, **renamed** | {nr} | {ne} |')
 P(f'| **Removed** (no longer emitted; stored rows migrate) | {xr} | {xe} |')
-P(f'| Unregistered label fixed | {len(U)} | 0 |')
-P(f'| New catalog | {len(R)} | {len(E)} |')
+P(f'| **Retired** into a generic service code (still emitted today; see §6) | {len(T)} | 0 |')
+P(f'| **Added** by this refactor | {len(N)} | 0 |')
+P(f'| New catalog | {len(R) + len(N)} | {len(E)} |')
 P('')
 P('## 0. Codes added since the first audit')
 P('')
@@ -117,6 +125,27 @@ for kind, table in (('reason', R), ('event', E)):
             P(f'| `{k}` | `{v[0]}` | {kind} | {WHY.get(k, TRIAL_WHY if k.startswith("TRIAL_") else "")} |')
 for k, v in U.items():
     P(f'| `{k}` | `{v}` | internal label | It is set on two exception classes but was never registered and is never stored, because those exceptions are converted to other codes before anything is saved. The new name is registered so the contract holds. |')
+P('')
+P('## 1a. Retired product-named codes')
+P('')
+P('Each is replaced by a generic code. The migration rewrites stored rows to it and, where the old code named the service, adds `\"service\"` to the row\'s details, so History still says which service it was.')
+P('')
+P('| Retired | Replaced by | `service` in details | Old severity / retryable | New |')
+P('|---|---|---|---|---|')
+def flags(code):
+    if code in REGISTRY:
+        r = REGISTRY[code]; return f'{r.severity} / {r.retryable}'
+    return f'{N[code][0]} / {N[code][1]}'
+for k, (target, service) in T.items():
+    old, new = flags(k), flags(target)
+    P(f'| `{k}` | `{target}` | {service or "from the details, if recorded"} | {old} | ' + (new if new == old else f'**{new}**') + ' |')
+P('')
+P('## 1b. Codes added by this refactor')
+P('')
+P('| Code | Severity / retryable | Description | Message | Action |')
+P('|---|---|---|---|---|')
+for k, (severity, retryable, d, m, a) in N.items():
+    P(f'| `{k}` | {severity} / {retryable} | {esc(d)} | {esc(m)} | {esc(a)} |')
 P('')
 P('## 2. Removed codes and where their stored rows migrate')
 P('')
@@ -148,6 +177,8 @@ P('- `reasons.py` and `messages.py`;')
 P('- `review_retry.py` (its historical `SONARR_DISCOVERY_*` list goes away, because migrated rows carry `PROWLARR_*`);')
 P('- `job_recovery.py`, `job_report.py`, `dashboard.js`, `fixes/` and the tests.')
 P('')
+P('For a **retired** code (§1a) the migration also sets `\"service\"` in `details_json` from the old code when the old code named one, and keeps any service already recorded.')
+P('')
 P('Log files already on disk keep the old names. A migration cannot change them.')
 P('')
 P('## 4. Full catalog: old and new wording')
@@ -176,7 +207,14 @@ for k, v in E.items():
     head = f'`{k}`' if k == v[0] else f'`{k}` → **`{v[0]}`**'
     P(f'| {head} | {esc(messages.EVENTS[k].message)} | {esc(v[1])} |')
 P('')
-P('### 4.3 Removed reason codes (old wording, for reference)')
+P('### 4.3 Retired reason codes (old wording, for reference)')
+P('')
+P('| Code | Old description | Replaced by |')
+P('|---|---|---|')
+for k, (target, _) in T.items():
+    P(f'| `{k}` | {esc(REGISTRY[k].description)} | `{target}` |')
+P('')
+P('### 4.4 Removed reason codes (old wording, for reference)')
 P('')
 P('| Code | Old description |')
 P('|---|---|')
@@ -186,17 +224,37 @@ for k in X:
 P('')
 P('## 5. Open decisions')
 P('')
-P('1. **`SONARR_DISCOVERY_EPISODE_NOT_FOUND` and `SONARR_EPISODES_NOT_LISTED`.** These meant "Sonarr has no record of this series or its episodes", but Sonarr is no longer part of discovery. The proposal migrates them to `PROWLARR_UNAVAILABLE`, which keeps the affected jobs retry-eligible with no new code. The alternative is a dedicated historical code such as `DISCOVERY_STOPPED_BEFORE_PROWLARR` ("This search stopped under the old Sonarr-based discovery; press Search again to search Prowlarr"). That is clearer in History, but it adds a code that nothing emits.')
-P('2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit. The new codes in §0 need the same review, in particular the proposed name `SEASON_PACK_SELECTION_CONFLICT`.')
-P('3. **The per-service "unavailable" codes** (see §6). `services` now makes a job wait with `SERVICE_UNAVAILABLE` when a service is down, but the handlers still report their own code, kept as the `cause_reason_code`. `services/README.md` leaves retiring them to RF-006. Choose one:')
-P('   - **Keep them as causes** (proposed). `SERVICE_UNAVAILABLE` is the state and the per-service code says which kind of failure it was. Only their wording changes.')
-P('   - **Retire them.** The handlers report `SERVICE_UNAVAILABLE` naming the service, and stored rows migrate. This changes what `adm recover`, `review_retry` and the reports match on, so it is a behaviour change for NextGen first, not a refactor rename.')
+P('1. **Wording review.** Please read §4, §1a and §1b and mark anything that is unclear or wrong, including the names `SEASON_PACK_SELECTION_CONFLICT`, `METADATA_ENRICHMENT_REVIEW` and `MEDIA_SERVER_REFRESH_REVIEW`.')
+P('2. **How fine-grained the generic codes are.** A wrong API key and a missing address are both `SERVICE_SETUP_INVALID`; the details say which. A separate `SERVICE_AUTH_FAILED` is possible if you want to filter on it.')
+P('3. **Severity of `SERVICE_SETUP_INVALID`.** It is ERROR, because it was created for the worker refusing to start. The optional-service setup codes it replaces were WARNING. Proposed: keep ERROR, since a service that is set up wrong always needs you to act.')
 P('')
-P('Decided: "trial" is replaced by "user evaluation" (`USER_EVALUATION`), owner decision on 2026-11-04.')
+P('Decided (owner):')
 P('')
-P('## 6. Per-service "unavailable" codes and the service-health foundation')
+P('- 2026-11-04: "trial" is replaced by "user evaluation" (`USER_EVALUATION`).')
+P('- 2026-11-06: no product names in codes; the per-service codes are retired into generic service codes.')
+P('- 2026-11-06: jobs stopped under the old Sonarr-based discovery migrate to `EPISODE_DISCOVERY_OUTDATED`.')
+P('- 2026-11-06: behavior changes are allowed on `refactor` where they improve things; NextGen is not changed.')
 P('')
-P('`DOWNLOAD_CLIENT_UNAVAILABLE`, `KEEP_SERVICE_UNAVAILABLE`, `SHOKO_UNAVAILABLE`, `JELLYFIN_UNAVAILABLE`, `PROWLARR_UNAVAILABLE` and `PROVIDER_UNAVAILABLE` describe the same situation (a service cannot be reached). Their wording is aligned here.')
+P('## 6. Behavior changes RF-006 must make')
 P('')
-P('The service-health foundation (`services`, merged into `refactor` in #284) added `SERVICE_UNAVAILABLE`: a job that hits an outage now waits with that reason, and the handler\'s own code above is kept as its `cause_reason_code`. Whether to retire the per-service codes is open decision 3 in §5. This audit keeps them.')
+P('These go beyond renaming, and are allowed on `refactor` (owner decision, 2026-11-06):')
+P('')
+P('1. **Handlers report the generic code.** Every place that raises a retired code reports its replacement instead, with `service` (the adapter name) and a readable detail, such as `qBittorrent 4.3 is not supported; 4.5 or newer is required`. Facts that were in the old wording move into that detail. The service adapters (`services/adapters/`) already classify errors per service; their code-to-status maps change to the generic codes.')
+P('2. **Severity and retryable** change where §1a shows them in bold.')
+P('3. **Rules that match on codes** use the new ones:')
+P('   - `review_retry` (its discovery BLOCKED list becomes `RELEASE_SEARCH_TIMEOUT`, `SERVICE_UNAVAILABLE` and `EPISODE_DISCOVERY_OUTDATED`);')
+P('   - `job_recovery`, `job_report`, the dashboard filters and `fixes/`.')
+P('4. **Dashboard and History show the service** for `SERVICE_*` codes, from the details, because the message no longer names it.')
+P('5. **The service-wait path** (`worker._service_wait`) no longer needs the per-service code as a `cause_reason_code`, because the handler reports `SERVICE_UNAVAILABLE` with the service directly. Waiting, the 72-hour give-up and `adm recover` stay as they are.')
+P('')
+P('Proposed follow-up, not part of this audit: **services behind role adapters**. Each role has a small interface the rest of the code calls, and the adapter for the current service implements it:')
+P('')
+P('- download client (qBittorrent);')
+P('- release search (Prowlarr);')
+P('- library manager for Keep (Sonarr);')
+P('- media server (Jellyfin);')
+P('- anime library service (Shoko);')
+P('- metadata (AniDB, TVDB, Anime-Lists).')
+P('')
+P('Replacing a service then means writing an adapter, with no code renames. The adapters stay in the repository (no third-party plugin loading), and each interface starts with what the code calls today.')
 print('\n'.join(out))

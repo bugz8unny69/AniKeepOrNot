@@ -9,18 +9,21 @@
 - Persisted identifiers are **renamed**. One versioned SQL migration rewrites the stored values, including `job_history`. The code recognizes **only the new values**, and old names are removed.
 - **"Trial" becomes "user evaluation"** (`USER_EVALUATION_*`) everywhere it can. The other places the term is used are mapped in [NAMING_MAP.md](NAMING_MAP.md) §8.
 - Every code's wording is rewritten to be human-readable: plain words, the service named, and a concrete next step.
-- **Severity and retryable flags are unchanged.** This audit changes wording and names only, not behavior.
+- **Codes name the situation or the role, never the product** (owner decision, 2026-11-06), so a service can be replaced without renaming codes. Service-health conditions use four generic codes, `SERVICE_SETUP_INVALID`, `SERVICE_UNAVAILABLE`, `SERVICE_RESPONSE_INVALID` and the role code `RELEASE_SEARCH_TIMEOUT`, and the service goes in the details. Exception: `RELEASE_ANIDB_EPISODE_MISSING` and `RELEASE_TVDB_EPISODE_MISSING` name the episode numbering the whole data model is keyed on (`anidb_id`, `tvdb_season`), not a replaceable service.
+- **Jobs that stopped under the old Sonarr-based discovery** migrate to one historical code, `EPISODE_DISCOVERY_OUTDATED`, so History stays true (owner decision, 2026-11-06).
+- **Behavior changes are allowed** where they improve things (owner decision, 2026-11-06). They are made on `refactor` only, never on NextGen, and listed in §6. Elsewhere, severity and retryable flags are unchanged.
 
 ## Summary
 
 | | Reason codes | Event codes |
 |---|---|---|
 | Current catalog | 166 | 52 |
-| Kept, wording rewritten | 146 | 47 |
-| Kept, **renamed** | 10 | 4 |
+| Kept, wording rewritten | 122 | 47 |
+| Kept, **renamed** | 14 | 4 |
 | **Removed** (no longer emitted; stored rows migrate) | 10 | 1 |
-| Unregistered label fixed | 0 | 0 |
-| New catalog | 156 | 51 |
+| **Retired** into a generic service code (still emitted today; see §6) | 20 | 0 |
+| **Added** by this refactor | 2 | 0 |
+| New catalog | 138 | 51 |
 
 ## 0. Codes added since the first audit
 
@@ -41,8 +44,12 @@
 
 | Old | New | Kind | Why |
 |---|---|---|---|
+| `PROWLARR_SEARCH_TIMEOUT` | `RELEASE_SEARCH_TIMEOUT` | reason | No product names in codes (owner decision, 2026-11-06). The search service is named in the details. |
+| `PROWLARR_RELEASE_WITHDRAWN` | `RELEASE_WITHDRAWN` | reason | No product names in codes. It describes the release, not the search service. |
 | `SONARR_BACKFILL_PLAN_CONFLICT` | `EPISODE_DISCOVERY_PLAN_CONFLICT` | reason | Episode discovery searches Prowlarr, not Sonarr. |
 | `SONARR_CANDIDATES_EXHAUSTED` | `RELEASE_CANDIDATES_EXHAUSTED` | reason | Release candidates come from Prowlarr, not Sonarr. |
+| `SHOKO_METADATA_REVIEW` | `METADATA_ENRICHMENT_REVIEW` | reason | No product names in codes. Shoko is the anime library service that adds episode details. |
+| `JELLYFIN_REFRESH_REVIEW` | `MEDIA_SERVER_REFRESH_REVIEW` | reason | No product names in codes. Jellyfin is the media server. |
 | `TORRENT_PROVENANCE_CONFLICT` | `TORRENT_OWNERSHIP_CONFLICT` | reason | "Provenance" is jargon. The check is whether the torrent still matches what this work added. |
 | `TRIAL_SELECTED` | `USER_EVALUATION_SELECTED` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `TRIAL_OUTSIDE_WINDOW` | `USER_EVALUATION_OUTSIDE_WINDOW` | reason | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
@@ -56,19 +63,53 @@
 | `TRIAL_AUDIO_SEARCH` | `USER_EVALUATION_AUDIO_SEARCH` | event | "Trial" is replaced by "user evaluation" everywhere (owner decision). |
 | `SONARR_BACKFILL_OBSERVED` | `EPISODE_DISCOVERY_RECORDED` | event | Episode discovery searches Prowlarr. The old text said "Read-only Sonarr backfill results recorded." |
 
+## 1a. Retired product-named codes
+
+Each is replaced by a generic code. The migration rewrites stored rows to it and, where the old code named the service, adds `"service"` to the row's details, so History still says which service it was.
+
+| Retired | Replaced by | `service` in details | Old severity / retryable | New |
+|---|---|---|---|---|
+| `PROWLARR_CONFIGURATION_INVALID` | `SERVICE_SETUP_INVALID` | prowlarr | WARNING / False | **ERROR / False** |
+| `PROWLARR_AUTH_FAILED` | `SERVICE_SETUP_INVALID` | prowlarr | WARNING / False | **ERROR / False** |
+| `PROWLARR_SEARCH_REVIEW` | `SERVICE_RESPONSE_INVALID` | prowlarr | WARNING / False | **WARNING / None** |
+| `PROWLARR_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | prowlarr | ERROR / True | **WARNING / True** |
+| `SHOKO_CONFIGURATION_INVALID` | `SERVICE_SETUP_INVALID` | shoko | WARNING / False | **ERROR / False** |
+| `SHOKO_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | shoko | WARNING / True | WARNING / True |
+| `JELLYFIN_CONFIGURATION_INVALID` | `SERVICE_SETUP_INVALID` | jellyfin | WARNING / False | **ERROR / False** |
+| `JELLYFIN_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | jellyfin | WARNING / True | WARNING / True |
+| `KEEP_SERVICE_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | sonarr | WARNING / True | WARNING / True |
+| `TORRENT_METADATA_CONFIGURATION_INVALID` | `SERVICE_SETUP_INVALID` | qbittorrent | WARNING / False | **ERROR / False** |
+| `TORRENT_METADATA_CLIENT_UNSUPPORTED` | `SERVICE_SETUP_INVALID` | qbittorrent | WARNING / False | **ERROR / False** |
+| `TORRENT_METADATA_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | qbittorrent | WARNING / True | WARNING / True |
+| `DOWNLOAD_CLIENT_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | qbittorrent | WARNING / None | **WARNING / True** |
+| `DOWNLOAD_CLIENT_RESPONSE_INVALID` | `SERVICE_RESPONSE_INVALID` | qbittorrent | WARNING / False | **WARNING / None** |
+| `DOWNLOAD_CLIENT_AUTH_FAILED` | `SERVICE_SETUP_INVALID` | qbittorrent | WARNING / False | **ERROR / False** |
+| `DOWNLOAD_CLIENT_UNSUPPORTED` | `SERVICE_SETUP_INVALID` | qbittorrent | WARNING / False | **ERROR / False** |
+| `PROVIDER_UNAVAILABLE` | `SERVICE_UNAVAILABLE` | from the details, if recorded | WARNING / True | WARNING / True |
+| `PROVIDER_CONFIGURATION_INVALID` | `SERVICE_SETUP_INVALID` | from the details, if recorded | ERROR / False | ERROR / False |
+| `PROVIDER_RESPONSE_INVALID` | `SERVICE_RESPONSE_INVALID` | from the details, if recorded | WARNING / None | WARNING / None |
+| `PROVIDER_AUTH_FAILED` | `SERVICE_SETUP_INVALID` | from the details, if recorded | WARNING / False | **ERROR / False** |
+
+## 1b. Codes added by this refactor
+
+| Code | Severity / retryable | Description | Message | Action |
+|---|---|---|---|---|
+| `SERVICE_RESPONSE_INVALID` | WARNING / None | A service sent back a response that could not be read or did not make sense. The details name the service. | A service sent a response that could not be used. | Check that the service named in the details is working and up to date, then press Retry. |
+| `EPISODE_DISCOVERY_OUTDATED` | WARNING / False | This episode search stopped under the old Sonarr-based discovery, which Prowlarr search has replaced. | This search ran under the old episode discovery. | Press Search again to search with the current release search. |
+
 ## 2. Removed codes and where their stored rows migrate
 
 | Removed | Migrates to | Last emitted / evidence | Note |
 |---|---|---|---|
-| `SONARR_DISCOVERY_AUTH_FAILED` | `PROWLARR_AUTH_FAILED` | Before `db41b589` (Sonarr-based discovery) | A retry now searches Prowlarr. |
-| `SONARR_DISCOVERY_CONFIGURATION_INVALID` | `PROWLARR_CONFIGURATION_INVALID` | Before `db41b589` | Same as above. |
-| `SONARR_DISCOVERY_UNSUPPORTED` | `PROWLARR_CONFIGURATION_INVALID` | Before `db41b589` | The wrong server version was a setup problem. |
-| `SONARR_DISCOVERY_REVIEW` | `PROWLARR_SEARCH_REVIEW` | Before `db41b589` |  |
-| `SONARR_DISCOVERY_TIMEOUT` | `PROWLARR_SEARCH_TIMEOUT` | Before `db41b589`; still listed in `review_retry` |  |
-| `SONARR_DISCOVERY_UNAVAILABLE` | `PROWLARR_UNAVAILABLE` | Before `db41b589`; still listed in `review_retry` |  |
-| `SONARR_DISCOVERY_NO_RESULTS` | `PROWLARR_RELEASE_WITHDRAWN` | Before `db41b589` | Same meaning: the ranked fallback is no longer offered. |
-| `SONARR_DISCOVERY_EPISODE_NOT_FOUND` | `PROWLARR_UNAVAILABLE` | Before `db41b589`; still listed in `review_retry` | **Decision point (§5.1).** Sonarr's catalog is no longer consulted. The target keeps these BLOCKED jobs retry-eligible, which they are today. |
-| `SONARR_EPISODES_NOT_LISTED` | `PROWLARR_UNAVAILABLE` | Before `db41b589`; still listed in `review_retry` | Same as above. |
+| `SONARR_DISCOVERY_AUTH_FAILED` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589` (Sonarr-based discovery) | A retry now searches Prowlarr. |
+| `SONARR_DISCOVERY_CONFIGURATION_INVALID` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589` | Same as above. |
+| `SONARR_DISCOVERY_UNSUPPORTED` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589` | The wrong server version was a setup problem. |
+| `SONARR_DISCOVERY_REVIEW` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589` |  |
+| `SONARR_DISCOVERY_TIMEOUT` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589`; still listed in `review_retry` |  |
+| `SONARR_DISCOVERY_UNAVAILABLE` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589`; still listed in `review_retry` |  |
+| `SONARR_DISCOVERY_NO_RESULTS` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589` | Same meaning: the ranked fallback is no longer offered. |
+| `SONARR_DISCOVERY_EPISODE_NOT_FOUND` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589`; still listed in `review_retry` | Sonarr's catalog is no longer consulted. `review_retry` keeps these BLOCKED jobs retry-eligible under the new code, as they are today. |
+| `SONARR_EPISODES_NOT_LISTED` | `EPISODE_DISCOVERY_OUTDATED` | Before `db41b589`; still listed in `review_retry` | Same as above. |
 | `KEEP_NOT_READY` | `KEEP_IMPORT_REVIEW` | Only on 2026-10-23 (`bf89c34b` to `e1a8bd3b`), before Keep existed | The person reviews the job and presses Keep again. |
 | `ACTIVITY_CHANGED` | `DEFERRED` | Registered in `df9655aa` but never emitted | No rows are expected. The target is only a safe fallback. |
 
@@ -94,6 +135,8 @@ The same release removes the old names from the code:
 - `review_retry.py` (its historical `SONARR_DISCOVERY_*` list goes away, because migrated rows carry `PROWLARR_*`);
 - `job_recovery.py`, `job_report.py`, `dashboard.js`, `fixes/` and the tests.
 
+For a **retired** code (§1a) the migration also sets `"service"` in `details_json` from the old code when the old code named one, and keeps any service already recorded.
+
 Log files already on disk keep the old names. A migration cannot change them.
 
 ## 4. Full catalog: old and new wording
@@ -102,57 +145,21 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 
 ### 4.1 Reason codes
 
-#### `PROWLARR_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 4*
-
-| | Old | New |
-|---|---|---|
-| D | The Prowlarr address or API key is missing or invalid. | The Prowlarr address or API key is missing or not valid. |
-| M | Configure Prowlarr before backfill search. | Prowlarr is not set up. |
-| A | Set the Prowlarr address and API key in Settings, then retry; no download occurred. | Enter the Prowlarr address and API key in Settings, then press Retry. Nothing was downloaded. |
-
-#### `PROWLARR_AUTH_FAILED`
-*WARNING, retryable: False, uses: 4*
-
-| | Old | New |
-|---|---|---|
-| D | Prowlarr rejected the configured API key. | Prowlarr rejected the API key. |
-| M | Prowlarr search authentication failed. | Prowlarr did not accept the API key. |
-| A | Check the Prowlarr API key in Settings, then retry. | Check the Prowlarr API key in Settings, then press Retry. |
-
-#### `PROWLARR_SEARCH_REVIEW`
-*WARNING, retryable: False, uses: 4*
-
-| | Old | New |
-|---|---|---|
-| D | Prowlarr returned a response that could not be read safely. | Prowlarr sent back a search response that could not be read. |
-| M | Prowlarr search needs review. | The Prowlarr search result could not be read. |
-| A | Check Prowlarr and its indexers, then retry. | Check that Prowlarr and its indexers are working, then press Retry. |
-
-#### `PROWLARR_SEARCH_TIMEOUT`
+#### `PROWLARR_SEARCH_TIMEOUT` → **`RELEASE_SEARCH_TIMEOUT`**
 *ERROR, retryable: True, uses: 4*
 
 | | Old | New |
 |---|---|---|
-| D | A Prowlarr search exceeded the configured timeout three times in a row. | The Prowlarr search took longer than the allowed time, three times in a row. |
-| M | Prowlarr search timed out. | The Prowlarr search timed out. |
-| A | The search runs again once after 30 minutes. If it still times out, check Prowlarr and indexer response times or raise the timeout, then retry. | Nothing to do yet: the search runs once more in 30 minutes. If it times out again, check Prowlarr and its indexers or raise the search timeout, then press Retry. |
+| D | A Prowlarr search exceeded the configured timeout three times in a row. | The release search took longer than the allowed time, three times in a row. The details name the search service. |
+| M | Prowlarr search timed out. | The release search timed out. |
+| A | The search runs again once after 30 minutes. If it still times out, check Prowlarr and indexer response times or raise the timeout, then retry. | Nothing to do yet: the search runs once more in 30 minutes. If it times out again, check the search service and its indexers or raise the search timeout, then press Retry. |
 
-#### `PROWLARR_UNAVAILABLE`
-*ERROR, retryable: True, uses: 4*
-
-| | Old | New |
-|---|---|---|
-| D | Prowlarr could not be reached, was busy, or failed the search three times in a row. | Prowlarr could not be reached, was busy, or failed the search three times in a row. |
-| M | Prowlarr search failed. | Prowlarr could not be searched. |
-| A | The search runs again once after 30 minutes. If it still fails, check that Prowlarr and its indexers are running, then retry. | Nothing to do yet: the search runs once more in 30 minutes. If it fails again, make sure Prowlarr and its indexers are running, then press Retry. |
-
-#### `PROWLARR_RELEASE_WITHDRAWN`
+#### `PROWLARR_RELEASE_WITHDRAWN` → **`RELEASE_WITHDRAWN`**
 *WARNING, retryable: True, uses: 1*
 
 | | Old | New |
 |---|---|---|
-| D | The next ranked torrent is no longer returned by Prowlarr. | The next release in the ranked list is no longer offered by Prowlarr. |
+| D | The next ranked torrent is no longer returned by Prowlarr. | The next release in the ranked list is no longer offered by the search service. |
 | M | Trying the next ranked release. | Moving on to the next release. |
 | A | No action needed; the next ranked release is tried without a new torrent being sent. | Nothing to do. The next release in the list is tried. |
 
@@ -183,32 +190,14 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | Waiting for a dub; no verified Japanese and English audio release is available. | Waiting for a release with Japanese and English audio. |
 | A | New Dual/Multi Audio autobrr releases can still start Intake. Use Search again to check Prowlarr for an eligible release. | Nothing to do. A new Dual Audio release from autobrr starts automatically, or press Search again to check Prowlarr now. |
 
-#### `SHOKO_CONFIGURATION_INVALID`
+#### `SHOKO_METADATA_REVIEW` → **`METADATA_ENRICHMENT_REVIEW`**
 *WARNING, retryable: False, uses: 2*
 
 | | Old | New |
 |---|---|---|
-| D | Optional Shoko address or API key is missing or rejected. | The Shoko address or API key is missing or was rejected. |
-| M | Configure optional Shoko metadata. | Shoko is not set up. |
-| A | Update Shoko settings/credentials, then retry Shoko metadata. The episode remains kept. | Fix the Shoko settings, then retry the Shoko step. The episode is still kept. |
-
-#### `SHOKO_UNAVAILABLE`
-*WARNING, retryable: True, uses: 2*
-
-| | Old | New |
-|---|---|---|
-| D | Optional Shoko metadata could not be read. | Shoko could not be reached to read episode details. |
-| M | Optional Shoko metadata will retry. | Shoko is unavailable; it will be tried again. |
-| A | Check Shoko availability. Keep and cleanup remain independent. | Nothing to do unless this continues; then check that Shoko is running. Keeping and cleanup are not affected. |
-
-#### `SHOKO_METADATA_REVIEW`
-*WARNING, retryable: False, uses: 2*
-
-| | Old | New |
-|---|---|---|
-| D | Shoko did not return the expected AniDB anime and episode records. | Shoko did not return the expected anime and episode for the saved AniDB IDs. |
-| M | Optional Shoko metadata needs review. | Shoko episode details need review. |
-| A | Check the Shoko catalog and saved AniDB IDs, then retry Shoko metadata. The Sonarr mapping is unchanged. | Check that Shoko has this anime and episode, then retry the Shoko step. |
+| D | Shoko did not return the expected AniDB anime and episode records. | The anime library service did not return the expected anime and episode for the saved AniDB IDs. The details name the service. |
+| M | Optional Shoko metadata needs review. | Extra episode details need review. |
+| A | Check the Shoko catalog and saved AniDB IDs, then retry Shoko metadata. The Sonarr mapping is unchanged. | Check that the anime library service has this anime and episode, then retry that step. |
 
 #### `DECISION_DOWNLOAD_CLEANUP_COMPLETE`
 *INFO, retryable: False, uses: 4*
@@ -291,41 +280,23 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | The episode is kept, but staged-file cleanup needs review. | The episode is kept, but staged-file cleanup needs review. |
 | A | Check the permanent file and selected staged artifacts, then submit Keep again to resume only cleanup. | Check the library file and the staged files, then press Keep again. Only the cleanup runs again. |
 
-#### `JELLYFIN_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 3*
-
-| | Old | New |
-|---|---|---|
-| D | The Jellyfin endpoint or API key is missing or rejected. | The Jellyfin address or API key is missing or was rejected. |
-| M | Configure Jellyfin refresh settings and credentials. | Jellyfin is not set up. |
-| A | Review the address and private API key. Completed staging and Keep remain valid. | Fix the Jellyfin address and API key in Settings. Staging and Keep are not affected. |
-
-#### `JELLYFIN_UNAVAILABLE`
-*WARNING, retryable: True, uses: 3*
-
-| | Old | New |
-|---|---|---|
-| D | Jellyfin did not accept the library scan request. | Jellyfin did not accept the library scan request. |
-| M | Jellyfin refresh is temporarily unavailable. | Jellyfin is unavailable; the scan will be requested again. |
-| A | The refresh job will retry; completed media operations remain valid. | Nothing to do unless this continues; then check that Jellyfin is running. |
-
-#### `JELLYFIN_REFRESH_REVIEW`
+#### `JELLYFIN_REFRESH_REVIEW` → **`MEDIA_SERVER_REFRESH_REVIEW`**
 *WARNING, retryable: False, uses: 2*
 
 | | Old | New |
 |---|---|---|
-| D | The server returned an unexpected scan response. | Jellyfin answered the library scan request in an unexpected way. |
-| M | Jellyfin refresh needs review. | The Jellyfin library scan needs review. |
-| A | Check the address and server API compatibility. | Check the Jellyfin address and that your Jellyfin version is supported. |
+| D | The server returned an unexpected scan response. | The media server answered the library scan request in an unexpected way. The details name the server. |
+| M | Jellyfin refresh needs review. | The media server library scan needs review. |
+| A | Check the address and server API compatibility. | Check the media server address and that its version is supported. |
 
 #### `KEEP_CONFIGURATION_INVALID`
 *WARNING, retryable: False, uses: 3*
 
 | | Old | New |
 |---|---|---|
-| D | Sonarr endpoint, credentials, profile or library root is unconfigured. | The Sonarr address, API key or library folder is not set. |
-| M | Configure Sonarr before keeping this episode. | Sonarr is not set up for Keep. |
-| A | Review Sonarr settings and credentials, then submit Keep again. | Fix the Sonarr settings, then press Keep again. |
+| D | Sonarr endpoint, credentials, profile or library root is unconfigured. | The library manager (address and API key) or the permanent library folder is not set up. |
+| M | Configure Sonarr before keeping this episode. | Keep is not set up. |
+| A | Review Sonarr settings and credentials, then submit Keep again. | Fix the library manager and library folder settings, then press Keep again. |
 
 #### `KEEP_IMPORT_WAITING`
 *INFO, retryable: None, uses: 2*
@@ -335,15 +306,6 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | D | The saved series or import request is being reconciled. | The import into Sonarr is in progress and its result is being checked. |
 | M | The Keep job is in progress. | Keeping this episode is in progress. |
 | A | The job will check Sonarr again shortly. | Nothing to do. Sonarr is checked again shortly. |
-
-#### `KEEP_SERVICE_UNAVAILABLE`
-*WARNING, retryable: True, uses: 4*
-
-| | Old | New |
-|---|---|---|
-| D | The configured Sonarr service could not be reached. | Sonarr could not be reached. |
-| M | Sonarr is temporarily unavailable. | Sonarr is unavailable; Keep will try again. |
-| A | The job will retry; check the Sonarr connection if this continues. | Nothing to do unless this continues; then check that Sonarr is running. |
 
 #### `KEEP_IMPORT_REVIEW`
 *WARNING, retryable: False, uses: 9*
@@ -452,33 +414,6 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | D | The non-commentary audio language tags required by the audio check setting were not established. | The video does not have the audio languages required by the Audio check setting (commentary tracks do not count). |
 | M | The video is missing a required audio track. | The video is missing a required audio language. |
 | A | Review the audio streams or the Audio check setting; filenames and subtitles do not satisfy this requirement. | Check the audio tracks, or change the Audio check setting. File names and subtitles do not count. |
-
-#### `TORRENT_METADATA_CONFIGURATION_INVALID`
-*WARNING, retryable: False, uses: 3*
-
-| | Old | New |
-|---|---|---|
-| D | qBittorrent metadata inspection needs valid client configuration and credentials. | qBittorrent is not set up, so the torrent file list cannot be read. |
-| M | Configure qBittorrent before inspecting torrent metadata. | qBittorrent is not set up. |
-| A | Check the qBittorrent server, download directory and stored credentials. | Check the qBittorrent address, download folder and login in Settings, then press Retry. |
-
-#### `TORRENT_METADATA_CLIENT_UNSUPPORTED`
-*WARNING, retryable: False, uses: 1*
-
-| | Old | New |
-|---|---|---|
-| D | The connected Web API cannot retrieve portable hash-verified torrent metadata. | This qBittorrent version cannot export a batch torrent file list. |
-| M | This qBittorrent version cannot export the batch torrent metadata. | This qBittorrent version cannot read batch torrent files. |
-| A | The older-client batch path needs an owned, stopped magnet admission and verified inventory; do not submit or adopt an unrelated torrent. | Upgrade qBittorrent. Do not add the torrent by hand. |
-
-#### `TORRENT_METADATA_UNAVAILABLE`
-*WARNING, retryable: True, uses: 2*
-
-| | Old | New |
-|---|---|---|
-| D | A qBittorrent metadata-only request failed or timed out. | Asking qBittorrent for the torrent file list failed or took too long. |
-| M | qBittorrent metadata retrieval is temporarily unavailable. | qBittorrent could not provide the torrent file list yet. |
-| A | Check the qBittorrent connection if retries continue failing. | Nothing to do unless this continues; then check that qBittorrent is running. |
 
 #### `TORRENT_METADATA_WAITING`
 *INFO, retryable: None, uses: 3*
@@ -867,42 +802,6 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | Conflicting anime information needs review. | Conflicting anime information needs review. |
 | A | Review the conflicting identifiers. | Compare the AniDB and TVDB IDs in the job report, then match the anime by hand. |
 
-#### `DOWNLOAD_CLIENT_UNAVAILABLE`
-*WARNING, retryable: None, uses: 9*
-
-| | Old | New |
-|---|---|---|
-| D | A bounded client request failed; submission outcome may require reconciliation. | qBittorrent could not be reached. If a torrent was being added, it is checked later instead of being added again. |
-| M | The download client could not be reached safely. | qBittorrent could not be reached. |
-| A | Check client availability; preserve any pending submission intent. | Check that qBittorrent is running and reachable from the worker. |
-
-#### `DOWNLOAD_CLIENT_RESPONSE_INVALID`
-*WARNING, retryable: False, uses: 1*
-
-| | Old | New |
-|---|---|---|
-| D | Client response shape or provenance observation failed validation. | qBittorrent sent back information that could not be read or did not match. |
-| M | The download client returned information that needs review. | qBittorrent returned unexpected information. |
-| A | Review client compatibility and recorded source evidence. | Check your qBittorrent version and the torrent, then press Retry. |
-
-#### `DOWNLOAD_CLIENT_AUTH_FAILED`
-*WARNING, retryable: False, uses: 2*
-
-| | Old | New |
-|---|---|---|
-| D | The configured client did not accept session authentication. | qBittorrent rejected the username or password. |
-| M | The download client rejected authentication. | qBittorrent did not accept the login. |
-| A | Review private client credentials and access settings. | Check the qBittorrent username and password in Settings. |
-
-#### `DOWNLOAD_CLIENT_UNSUPPORTED`
-*WARNING, retryable: False, uses: 2*
-
-| | Old | New |
-|---|---|---|
-| D | qBittorrent must be 4.5+ with Web API 2.8.14+. | qBittorrent must be version 4.5 or newer (Web API 2.8.14 or newer). |
-| M | This qBittorrent version is not supported. | This qBittorrent version is not supported. |
-| A | Upgrade to qBittorrent 4.5 or newer (Web API 2.8.14+) before retrying. | Upgrade qBittorrent to 4.5 or newer, then press Retry. |
-
 #### `TORRENT_SUBMISSION_UNCERTAIN`
 *INFO, retryable: None, uses: 17*
 
@@ -1191,24 +1090,6 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | M | Release episode information conflicts. | The release episode details disagree. |
 | A | Review the episode identifiers and mapping evidence. | Check the episode IDs and mapping in the job report. |
 
-#### `PROVIDER_UNAVAILABLE`
-*WARNING, retryable: True, uses: 1*
-
-| | Old | New |
-|---|---|---|
-| D | A provider request could not complete due to availability. | AniDB, TVDB or Anime-Lists could not be reached. |
-| M | An information provider is temporarily unavailable. | An anime information service is unavailable. |
-| A | The operation can be retried. | Nothing to do; it is tried again. If it continues, check the network and the service status. |
-
-#### `PROVIDER_CONFIGURATION_INVALID`
-*ERROR, retryable: False, uses: 1*
-
-| | Old | New |
-|---|---|---|
-| D | Required AniDB client or TVDB API-key configuration is missing or invalid. | The AniDB client or the TVDB API key is missing or not valid. |
-| M | Provider configuration is incomplete or invalid. | AniDB or TVDB is not set up. |
-| A | Configure the registered AniDB client and TVDB API key before starting identity work. | Set the registered AniDB client and the TVDB API key in Settings. |
-
 #### `SECRET_STORAGE_UNAVAILABLE`
 *ERROR, retryable: None, uses: 1*
 
@@ -1217,24 +1098,6 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | D | The private credential file could not be read or published safely. | The private credentials file could not be read or saved safely. |
 | M | Credentials could not be accessed safely. | Saved credentials could not be read. |
 | A | Review credential storage, permissions and file format. | Check secrets.json: its owner, its permissions (0600) and its format. |
-
-#### `PROVIDER_RESPONSE_INVALID`
-*WARNING, retryable: None, uses: 1*
-
-| | Old | New |
-|---|---|---|
-| D | A provider response failed bounded decoding or structural checks. | AniDB, TVDB or Anime-Lists sent back data that could not be read. |
-| M | An information provider returned an unusable response. | An anime information service returned unusable data. |
-| A | Retry later or review provider availability. | Press Retry later. If it continues, check the service status. |
-
-#### `PROVIDER_AUTH_FAILED`
-*WARNING, retryable: False, uses: 5*
-
-| | Old | New |
-|---|---|---|
-| D | Provider authentication or authorization failed. | AniDB or TVDB rejected the configured access details. |
-| M | An information provider could not authorize access. | An anime information service rejected access. |
-| A | Review the provider access settings. | Check the AniDB client and TVDB API key in Settings. |
 
 #### `JOB_LEASE_EXPIRED`
 *WARNING, retryable: True, uses: 3*
@@ -1493,16 +1356,16 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 
 | | Old | New |
 |---|---|---|
-| D | A required service (qBittorrent, AniDB or TVDB) is not set up, rejected the login, client name or API key, or is an unsupported version. The worker did not start; waiting would not fix this. | qBittorrent, AniDB or TVDB is not set up, rejected the login, client name or API key, or runs a version that is not supported. The worker did not start, because waiting would not fix this. |
-| M | A required service is not set up correctly. | A required service is not set up correctly. |
-| A | Fix the service named in the details in Settings, or run adm services check, then start the worker again. | Fix the service named in the log in Settings, or run adm services check, then start the worker again. |
+| D | A required service (qBittorrent, AniDB or TVDB) is not set up, rejected the login, client name or API key, or is an unsupported version. The worker did not start; waiting would not fix this. | A service is not set up correctly: its address, login, client name or API key is missing or was rejected, or its version does not support what this needs. The details name the service and what is wrong. Waiting would not fix this. |
+| M | A required service is not set up correctly. | A service is not set up correctly. |
+| A | Fix the service named in the details in Settings, or run adm services check, then start the worker again. | Fix the service named in the details in Settings (adm services check tests every service), then press Retry. For a required service, start the worker again. |
 
 #### `SERVICE_UNAVAILABLE`
 *WARNING, retryable: True, uses: 8*
 
 | | Old | New |
 |---|---|---|
-| D | A service this job needs could not be reached. The job waits and tries again by itself; it does not use up its retries. | A service this job needs could not be reached. The job waits and tries again by itself, without using up its retries. |
+| D | A service this job needs could not be reached. The job waits and tries again by itself; it does not use up its retries. | A service this job needs could not be reached, was too busy, or kept failing. The details name the service. The job waits and tries again by itself, without using up its retries. |
 | M | Waiting for a service that is unavailable. | Waiting for a service to come back. |
 | A | Check the service named in the details. Waiting jobs continue on their own once it is back; after 72 hours of failed attempts the job stops for review. | Nothing to do for a short outage: waiting jobs continue on their own. If it lasts, check the service named in the details. After 72 hours the job stops for review. |
 
@@ -1562,7 +1425,32 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 | `SERVICE_RESTORED` | An external service is available again; waiting jobs continue. | A service is working again; waiting jobs continue. |
 | `SERVICE_STARTUP_REFUSED` | The worker did not start: a required service is not set up correctly. | The worker did not start: a required service is not set up correctly. |
 
-### 4.3 Removed reason codes (old wording, for reference)
+### 4.3 Retired reason codes (old wording, for reference)
+
+| Code | Old description | Replaced by |
+|---|---|---|
+| `PROWLARR_CONFIGURATION_INVALID` | The Prowlarr address or API key is missing or invalid. | `SERVICE_SETUP_INVALID` |
+| `PROWLARR_AUTH_FAILED` | Prowlarr rejected the configured API key. | `SERVICE_SETUP_INVALID` |
+| `PROWLARR_SEARCH_REVIEW` | Prowlarr returned a response that could not be read safely. | `SERVICE_RESPONSE_INVALID` |
+| `PROWLARR_UNAVAILABLE` | Prowlarr could not be reached, was busy, or failed the search three times in a row. | `SERVICE_UNAVAILABLE` |
+| `SHOKO_CONFIGURATION_INVALID` | Optional Shoko address or API key is missing or rejected. | `SERVICE_SETUP_INVALID` |
+| `SHOKO_UNAVAILABLE` | Optional Shoko metadata could not be read. | `SERVICE_UNAVAILABLE` |
+| `JELLYFIN_CONFIGURATION_INVALID` | The Jellyfin endpoint or API key is missing or rejected. | `SERVICE_SETUP_INVALID` |
+| `JELLYFIN_UNAVAILABLE` | Jellyfin did not accept the library scan request. | `SERVICE_UNAVAILABLE` |
+| `KEEP_SERVICE_UNAVAILABLE` | The configured Sonarr service could not be reached. | `SERVICE_UNAVAILABLE` |
+| `TORRENT_METADATA_CONFIGURATION_INVALID` | qBittorrent metadata inspection needs valid client configuration and credentials. | `SERVICE_SETUP_INVALID` |
+| `TORRENT_METADATA_CLIENT_UNSUPPORTED` | The connected Web API cannot retrieve portable hash-verified torrent metadata. | `SERVICE_SETUP_INVALID` |
+| `TORRENT_METADATA_UNAVAILABLE` | A qBittorrent metadata-only request failed or timed out. | `SERVICE_UNAVAILABLE` |
+| `DOWNLOAD_CLIENT_UNAVAILABLE` | A bounded client request failed; submission outcome may require reconciliation. | `SERVICE_UNAVAILABLE` |
+| `DOWNLOAD_CLIENT_RESPONSE_INVALID` | Client response shape or provenance observation failed validation. | `SERVICE_RESPONSE_INVALID` |
+| `DOWNLOAD_CLIENT_AUTH_FAILED` | The configured client did not accept session authentication. | `SERVICE_SETUP_INVALID` |
+| `DOWNLOAD_CLIENT_UNSUPPORTED` | qBittorrent must be 4.5+ with Web API 2.8.14+. | `SERVICE_SETUP_INVALID` |
+| `PROVIDER_UNAVAILABLE` | A provider request could not complete due to availability. | `SERVICE_UNAVAILABLE` |
+| `PROVIDER_CONFIGURATION_INVALID` | Required AniDB client or TVDB API-key configuration is missing or invalid. | `SERVICE_SETUP_INVALID` |
+| `PROVIDER_RESPONSE_INVALID` | A provider response failed bounded decoding or structural checks. | `SERVICE_RESPONSE_INVALID` |
+| `PROVIDER_AUTH_FAILED` | Provider authentication or authorization failed. | `SERVICE_SETUP_INVALID` |
+
+### 4.4 Removed reason codes (old wording, for reference)
 
 | Code | Old description |
 |---|---|
@@ -1579,16 +1467,36 @@ Each entry shows the **old** text first and the **new** text after it. D = descr
 
 ## 5. Open decisions
 
-1. **`SONARR_DISCOVERY_EPISODE_NOT_FOUND` and `SONARR_EPISODES_NOT_LISTED`.** These meant "Sonarr has no record of this series or its episodes", but Sonarr is no longer part of discovery. The proposal migrates them to `PROWLARR_UNAVAILABLE`, which keeps the affected jobs retry-eligible with no new code. The alternative is a dedicated historical code such as `DISCOVERY_STOPPED_BEFORE_PROWLARR` ("This search stopped under the old Sonarr-based discovery; press Search again to search Prowlarr"). That is clearer in History, but it adds a code that nothing emits.
-2. **Wording review.** Please read §4 and mark anything that is unclear or wrong. The wording is the point of this audit. The new codes in §0 need the same review, in particular the proposed name `SEASON_PACK_SELECTION_CONFLICT`.
-3. **The per-service "unavailable" codes** (see §6). `services` now makes a job wait with `SERVICE_UNAVAILABLE` when a service is down, but the handlers still report their own code, kept as the `cause_reason_code`. `services/README.md` leaves retiring them to RF-006. Choose one:
-   - **Keep them as causes** (proposed). `SERVICE_UNAVAILABLE` is the state and the per-service code says which kind of failure it was. Only their wording changes.
-   - **Retire them.** The handlers report `SERVICE_UNAVAILABLE` naming the service, and stored rows migrate. This changes what `adm recover`, `review_retry` and the reports match on, so it is a behaviour change for NextGen first, not a refactor rename.
+1. **Wording review.** Please read §4, §1a and §1b and mark anything that is unclear or wrong, including the names `SEASON_PACK_SELECTION_CONFLICT`, `METADATA_ENRICHMENT_REVIEW` and `MEDIA_SERVER_REFRESH_REVIEW`.
+2. **How fine-grained the generic codes are.** A wrong API key and a missing address are both `SERVICE_SETUP_INVALID`; the details say which. A separate `SERVICE_AUTH_FAILED` is possible if you want to filter on it.
+3. **Severity of `SERVICE_SETUP_INVALID`.** It is ERROR, because it was created for the worker refusing to start. The optional-service setup codes it replaces were WARNING. Proposed: keep ERROR, since a service that is set up wrong always needs you to act.
 
-Decided: "trial" is replaced by "user evaluation" (`USER_EVALUATION`), owner decision on 2026-11-04.
+Decided (owner):
 
-## 6. Per-service "unavailable" codes and the service-health foundation
+- 2026-11-04: "trial" is replaced by "user evaluation" (`USER_EVALUATION`).
+- 2026-11-06: no product names in codes; the per-service codes are retired into generic service codes.
+- 2026-11-06: jobs stopped under the old Sonarr-based discovery migrate to `EPISODE_DISCOVERY_OUTDATED`.
+- 2026-11-06: behavior changes are allowed on `refactor` where they improve things; NextGen is not changed.
 
-`DOWNLOAD_CLIENT_UNAVAILABLE`, `KEEP_SERVICE_UNAVAILABLE`, `SHOKO_UNAVAILABLE`, `JELLYFIN_UNAVAILABLE`, `PROWLARR_UNAVAILABLE` and `PROVIDER_UNAVAILABLE` describe the same situation (a service cannot be reached). Their wording is aligned here.
+## 6. Behavior changes RF-006 must make
 
-The service-health foundation (`services`, merged into `refactor` in #284) added `SERVICE_UNAVAILABLE`: a job that hits an outage now waits with that reason, and the handler's own code above is kept as its `cause_reason_code`. Whether to retire the per-service codes is open decision 3 in §5. This audit keeps them.
+These go beyond renaming, and are allowed on `refactor` (owner decision, 2026-11-06):
+
+1. **Handlers report the generic code.** Every place that raises a retired code reports its replacement instead, with `service` (the adapter name) and a readable detail, such as `qBittorrent 4.3 is not supported; 4.5 or newer is required`. Facts that were in the old wording move into that detail. The service adapters (`services/adapters/`) already classify errors per service; their code-to-status maps change to the generic codes.
+2. **Severity and retryable** change where §1a shows them in bold.
+3. **Rules that match on codes** use the new ones:
+   - `review_retry` (its discovery BLOCKED list becomes `RELEASE_SEARCH_TIMEOUT`, `SERVICE_UNAVAILABLE` and `EPISODE_DISCOVERY_OUTDATED`);
+   - `job_recovery`, `job_report`, the dashboard filters and `fixes/`.
+4. **Dashboard and History show the service** for `SERVICE_*` codes, from the details, because the message no longer names it.
+5. **The service-wait path** (`worker._service_wait`) no longer needs the per-service code as a `cause_reason_code`, because the handler reports `SERVICE_UNAVAILABLE` with the service directly. Waiting, the 72-hour give-up and `adm recover` stay as they are.
+
+Proposed follow-up, not part of this audit: **services behind role adapters**. Each role has a small interface the rest of the code calls, and the adapter for the current service implements it:
+
+- download client (qBittorrent);
+- release search (Prowlarr);
+- library manager for Keep (Sonarr);
+- media server (Jellyfin);
+- anime library service (Shoko);
+- metadata (AniDB, TVDB, Anime-Lists).
+
+Replacing a service then means writing an adapter, with no code renames. The adapters stay in the repository (no third-party plugin loading), and each interface starts with what the code calls today.

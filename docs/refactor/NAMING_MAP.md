@@ -130,7 +130,8 @@ Historical intermediate names (`*_v43`, `*_v48`, `*_v53`, `*_v56`, `*_v57`, `son
 **Decided (2026-11-04): rename and migrate; old names removed.** The full audit of every reason and event code is in [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md), with the data in [reason_code_proposals.py](reason_code_proposals.py). It covers the renamed codes, the removed codes and the code each one migrates to, and new human-readable wording for every code.
 
 - Renamed: `SONARR_BACKFILL_PLAN_CONFLICT` → `EPISODE_DISCOVERY_PLAN_CONFLICT`, `SONARR_CANDIDATES_EXHAUSTED` → `RELEASE_CANDIDATES_EXHAUSTED`, and event `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`. `SONARR_SELECTION_CONFLICT` becomes `RELEASE_SELECTION_CONFLICT` (NextGen #283 has since registered it) and its season counterpart `BATCH_SELECTION_CONFLICT` becomes `SEASON_PACK_SELECTION_CONFLICT`.
-- Removed (historical Sonarr-based discovery): every `SONARR_DISCOVERY_*` code and `SONARR_EPISODES_NOT_LISTED`. Their stored rows migrate to the matching `PROWLARR_*` codes, so `review_retry.py` drops its list of historical codes.
+- Removed (historical Sonarr-based discovery): every `SONARR_DISCOVERY_*` code and `SONARR_EPISODES_NOT_LISTED`. Their stored rows migrate to one historical code, `EPISODE_DISCOVERY_OUTDATED`, which `review_retry.py` keeps retry-eligible (owner decision, 2026-11-06).
+- Retired (no product names in codes, owner decision 2026-11-06): the per-service codes (`PROWLARR_*`, `SHOKO_*`, `JELLYFIN_*`, `DOWNLOAD_CLIENT_*`, `PROVIDER_*` and others) become the generic `SERVICE_SETUP_INVALID`, `SERVICE_UNAVAILABLE` and `SERVICE_RESPONSE_INVALID`, with the service in the details. Domain outcomes get role names, for example `RELEASE_WITHDRAWN`. This is a behavior change made on `refactor` only; see REASON_CODE_AUDIT §1a and §6.
 
 ### 4.7 Configuration and secrets
 
