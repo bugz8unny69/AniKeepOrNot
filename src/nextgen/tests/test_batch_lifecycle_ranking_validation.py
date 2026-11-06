@@ -221,6 +221,10 @@ class BatchSizeValidationTests(unittest.IsolatedAsyncioTestCase):
         self.db_path = Path(self.tmp.name) / 'batch_size.sqlite'
         with sqlite3.connect(self.db_path) as conn:
             initialize(conn)
+            conn.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk')")
+            conn.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(1, 'autobrr', X'61', 1000, 'IDENTIFIED')")
+            conn.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(2, 'autobrr', X'62', 1000, 'IDENTIFIED')")
+            conn.commit()
         self.config = ConfigurationSnapshot(1, {
             'storage': {'database_path': str(self.db_path), 'download_root': '/downloads'},
             'acquisition': {
@@ -233,6 +237,9 @@ class BatchSizeValidationTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def connect(self):
+        return sqlite3.connect(self.db_path)
 
     async def test_per_episode_size_limit_rejection_without_downloading_probe(self):
         """WI-07: A season pack with an oversized episode (>1000MB) is rejected before downloading video probe."""
@@ -312,3 +319,58 @@ class BatchSizeValidationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.source, source)
             self.assertEqual(result.inventory, inv)
             self.assertEqual(result.verified, verified)
+
+    def test_manual_cancellation_advances_to_next_candidate(self):
+        """Manual cancellation of active batch candidate marks CANCELED and activates next candidate."""
+        from src.nextgen.storage.batch_candidates import (
+            cancel_candidate, get_candidate, schedule_after_cleanup_batch,
+        )
+        with self.connect() as db, transaction(db):
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            c1 = add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]", source_event_id=1)
+            c2 = add_candidate(db, scope.scope_id, HASH_2, "[Group] Cyberpunk S01 [Dual Audio 1080p]", source_event_id=2)
+
+            op1 = db.execute("INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(1000, 1000)").lastrowid
+            activate_candidate(db, scope.scope_id, HASH_1, operation_id=op1)
+            active = get_active_candidate(db, scope.scope_id)
+            self.assertEqual(active.info_hash, HASH_1)
+
+            # Mark operation as canceled by user
+            db.execute("UPDATE job_operations SET state='CANCELED', cleanup_state='COMPLETE', reason_code='CANCELLATION_COMPLETE' WHERE operation_id=?", (op1,))
+
+            # schedule_after_cleanup_batch runs after manual cancellation cleanup
+            receipts = schedule_after_cleanup_batch(db, op1)
+            self.assertEqual(len(receipts), 1)
+
+            # Candidate 1 is marked CANCELED, not FAILED
+            c1_cand = get_candidate(db, scope.scope_id, HASH_1)
+            self.assertEqual(c1_cand.state, "CANCELED")
+            self.assertEqual(c1_cand.reason_code, "JOB_CANCELED")
+
+            # Candidate 2 is now ACTIVE
+            active_after = get_active_candidate(db, scope.scope_id)
+            self.assertIsNotNone(active_after)
+            self.assertEqual(active_after.info_hash, HASH_2)
+
+            # Candidate 1 cannot be reactivated
+            add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]")
+            c1_still = get_candidate(db, scope.scope_id, HASH_1)
+            self.assertEqual(c1_still.state, "CANCELED")
+
+    def test_batch_staging_success_transitions_candidate_and_scope_to_succeeded(self):
+        """Successful batch staging transitions active candidate to SUCCEEDED and scope to SUCCEEDED."""
+        from src.nextgen.storage.batch_candidates import succeed_candidate, get_candidate
+        with self.connect() as db, transaction(db):
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            c1 = add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]", source_event_id=1)
+            op1 = db.execute("INSERT INTO job_operations(created_at_ms, updated_at_ms) VALUES(1000, 1000)").lastrowid
+            activate_candidate(db, scope.scope_id, HASH_1, operation_id=op1)
+
+            # Direct success transition (as called by mark_staged)
+            succeed_candidate(db, scope.scope_id, HASH_1)
+
+            c1_cand = get_candidate(db, scope.scope_id, HASH_1)
+            self.assertEqual(c1_cand.state, "SUCCEEDED")
+
+            scope_after = get_or_create_scope(db, 16999, 393400, 1)
+            self.assertEqual(scope_after.state, "SUCCEEDED")

@@ -448,38 +448,51 @@ def schedule_after_cleanup_batch(db, operation_id):
         "AND control.kind='CLEANUP_CANCELED_OPERATION' "
         "WHERE a.operation_id=? AND a.action='CLEANUP' LIMIT 1",
         (operation_id,)).fetchone()
-    if automated is None:
-        return ()
-    target_job_id, payload_str = automated
+    is_manual = automated is None
     issue = None
-    if payload_str:
+    if not is_manual:
+        target_job_id, payload_str = automated
+        if payload_str:
+            try:
+                issue = json.loads(payload_str).get('failure_reason')
+            except Exception:
+                pass
+        if not issue:
+            try:
+                t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
+                if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
+                    issue = t_row[0]
+            except sqlite3.OperationalError:
+                pass
+        if not issue:
+            try:
+                h_row = db.execute(
+                    "SELECT reason_code FROM job_history WHERE job_id=? AND event_code IN ('FAILED','NEEDS_REVIEW') "
+                    "ORDER BY history_id DESC LIMIT 1", (target_job_id,)).fetchone()
+                if h_row and h_row[0]:
+                    issue = h_row[0]
+            except sqlite3.OperationalError:
+                pass
+        if not issue:
+            issue = 'OPERATION_FAILED'
+    else:
+        # Manual candidate cancellation: preserve cancellation reason from operation
         try:
-            issue = json.loads(payload_str).get('failure_reason')
-        except Exception:
-            pass
-    if not issue:
-        try:
-            t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
-            if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
-                issue = t_row[0]
+            op_row = db.execute("SELECT reason_code FROM job_operations WHERE operation_id=?", (operation_id,)).fetchone()
+            if op_row and op_row[0]:
+                issue = op_row[0]
         except sqlite3.OperationalError:
             pass
-    if not issue:
-        try:
-            h_row = db.execute(
-                "SELECT reason_code FROM job_history WHERE job_id=? AND event_code IN ('FAILED','NEEDS_REVIEW') "
-                "ORDER BY history_id DESC LIMIT 1", (target_job_id,)).fetchone()
-            if h_row and h_row[0]:
-                issue = h_row[0]
-        except sqlite3.OperationalError:
-            pass
-    if not issue:
-        issue = 'OPERATION_FAILED'
+        if not issue or issue in ('CANCELLATION_COMPLETE', 'CANCELLATION_DRAINING'):
+            issue = 'JOB_CANCELED'
 
-    # Mark active candidate as FAILED
+    # Mark active candidate as FAILED or CANCELED
     active_cand = get_active_candidate(db, scope_id)
     if active_cand is not None:
-        fail_candidate(db, scope_id, active_cand.info_hash, issue)
+        if is_manual:
+            cancel_candidate(db, scope_id, active_cand.info_hash, issue)
+        else:
+            fail_candidate(db, scope_id, active_cand.info_hash, issue)
 
     # Pick next candidate in ranked pool
     next_cand = next_candidate(db, scope_id)

@@ -87,6 +87,20 @@ def mark_staged(db,claim):
     if db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) WHERE m.operation_id=? AND j.job_id<>? AND j.state<>'DONE' LIMIT 1",
                   (op[0],claim.job_id)).fetchone():raise CancellationError('JOB_NOT_DONE')
     db.execute("UPDATE job_operations SET state='STAGED',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
+    has_scopes = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
+    if has_scopes:
+        scope_row = db.execute(
+            "SELECT scope_id, active_candidate_id FROM batch_candidate_scopes WHERE operation_id=?",
+            (op[0],)).fetchone()
+        if scope_row and scope_row[1] is not None:
+            scope_id, active_cid = scope_row
+            cand_row = db.execute(
+                "SELECT info_hash FROM batch_candidates WHERE candidate_id=? AND state='ACTIVE'",
+                (active_cid,)).fetchone()
+            if cand_row:
+                from src.nextgen.storage.batch_candidates import succeed_candidate
+                succeed_candidate(db, scope_id, cand_row[0], now_ms=now)
 
 
 def request_cancellation(db,job_id,now,*,component='api',reason_code='JOB_CANCELED'):
