@@ -843,6 +843,14 @@ CREATE TABLE IF NOT EXISTS batch_candidate_events (
  PRIMARY KEY(scope_id, info_hash, event_id)
 );
 CREATE INDEX IF NOT EXISTS idx_batch_candidate_events_event ON batch_candidate_events(event_id);
+CREATE TABLE IF NOT EXISTS batch_candidate_stops (
+ candidate_id INTEGER PRIMARY KEY REFERENCES batch_candidates(candidate_id),
+ operation_id INTEGER NOT NULL REFERENCES job_operations(operation_id),
+ disposition TEXT NOT NULL CHECK(disposition IN ('FAILED','CANCELED')),
+ reason_code TEXT NOT NULL CHECK(length(reason_code) BETWEEN 1 AND 64),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_batch_candidate_stops_operation ON batch_candidate_stops(operation_id);
 
 """
 
