@@ -69,7 +69,10 @@ class RegistryTests(unittest.TestCase):
         # AniDB, Anime-Lists and TVDB are never contacted just to check health.
         self.assertEqual({a.name for a in registry if not a.network_probe},
                          {'anidb', 'anime_lists', 'tvdb'})
-        self.assertEqual({a.name for a in registry if a.optional}, {'jellyfin', 'shoko'})
+        self.assertEqual({a.name for a in registry if a.optional},
+                         {'prowlarr', 'sonarr', 'jellyfin', 'shoko'})
+        # Only these stop the worker at startup when misconfigured.
+        self.assertEqual({a.name for a in registry if a.required}, {'qbittorrent', 'anidb', 'tvdb'})
 
     def test_plugins_register_and_duplicates_are_rejected(self):
         registry = ServiceRegistry()

@@ -28,7 +28,7 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
     rows=fixture.AcquisitionPreparationTests.rows
     source=fixture.AcquisitionPreparationTests.source
 
-    def worker(self,*,mode='normal',journal_factory=SubmissionJournal,backfill=False):
+    def worker(self,*,mode='normal',journal_factory=SubmissionJournal,backfill=False,prowlarr='https://prowlarr.example'):
         test=self
         self.adds=0
         self.metainfo_reads=0
@@ -57,7 +57,8 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
                    discovery_kind='DISCOVER_SONARR_BACKFILL' if backfill else None),
             *((discover(None,catalog_factory=lambda configuration:None),) if backfill else ()))),policy=Policy(lease_ms=30000))
         self.addAsyncCleanup(worker.close)
-        self.store.update({'qbittorrent':{'base_url':'https://qb.example'},'storage':{'download_root':'/srv/downloads'}},expected_revision=1)
+        self.store.update({'qbittorrent':{'base_url':'https://qb.example'},'storage':{'download_root':'/srv/downloads'},
+                           'prowlarr':{'base_url':prowlarr}},expected_revision=1)
         return worker
 
     async def queued(self,worker):
@@ -95,6 +96,16 @@ class TorrentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         # while backfill is still searching (and backfill is not frozen by it).
         self.assertEqual(self.rows("SELECT count(DISTINCT m.operation_id) FROM jobs j JOIN job_operation_members m USING(job_id) "
                                    "WHERE j.kind IN ('DISCOVER_SONARR_BACKFILL','SUBMIT_TORRENT')"),[(2,)])
+
+    async def test_no_prowlarr_address_means_automatic_search_is_off(self):
+        # A blank Prowlarr address turns automatic search off: the torrent is
+        # still submitted and downloaded, but no backfill search is scheduled.
+        worker=self.worker(backfill=True,prowlarr='')
+        await self.queued(worker)
+        await worker.attempt()
+        self.assertEqual(self.adds,1)
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='SUBMIT_TORRENT'"),[('DONE',)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL'"),[(0,)])
 
     async def test_review_submission_never_starts_backfill(self):
         worker=self.worker(backfill=True)

@@ -21,6 +21,7 @@ never returned by management reads.
 | --- | --- | --- |
 | GET /api/v1/ | Management | Version and available resources |
 | GET /api/v1/health | Management | Local readiness/schema check; no provider requests |
+| GET /api/v1/services | Management | Last known status of each external service, as saved by the worker (dashboard status bar); no service requests |
 | POST /api/v1/webhook | Separate webhook token | Durable normalized event and initial IDENTIFY_ANIME job; 202 only after commit |
 | POST /api/v1/auth/session | Management key in JSON plus exact Origin | Browser session cookie and CSRF token |
 | GET /api/v1/auth/session | Management Bearer or browser session | Authentication status; cookie sessions may retrieve their CSRF token |
@@ -37,7 +38,7 @@ never returned by management reads.
 | GET /api/v1/jobs/{id}/cancellation | Management | Cancellation and cleanup state/capabilities |
 | POST /api/v1/jobs/{id}/cancel | Management | Cancel idle work immediately, or atomically request cancellation and enqueue cleanup |
 | POST /api/v1/jobs/{id}/cleanup | Management | Submit/reuse cleanup control job; explicitly resume that job after review |
-| POST /api/v1/jobs/{id}/keep | Management | Record one Keep control job for a staged operation; media execution is not available yet |
+| POST /api/v1/jobs/{id}/keep | Management | Record one Keep control job for a staged operation. Refused with the reason (503 `SERVICE_UNAVAILABLE`, or 409 `KEEP_CONFIGURATION_INVALID`) while Sonarr's saved status says it cannot work; see services/README.md |
 
 Job/history reads accept after_id (default 0) and limit (1–100, default 50), and
 return next_after_id. The list is ordered by increasing durable IDs. A callback

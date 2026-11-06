@@ -77,6 +77,10 @@ class ServiceAdapter:
     label = ''
     # Optional services report DISABLED instead of NOT_CONFIGURED when blank.
     optional = False
+    # Required services stop the worker at startup when they are not set up,
+    # reject the login or are unsupported (see startup.py). Being merely
+    # unavailable never stops startup: the jobs that need it wait instead.
+    required = False
     # False when probe() never contacts the service and only reads local
     # records written by real requests, such as the provider cache and pacing
     # table. Required for AniDB, which bans clients that send too many requests.
@@ -91,6 +95,15 @@ class ServiceAdapter:
 
     def probe(self, configuration, secrets, *, now_ms=0):
         raise NotImplementedError
+
+    def startup_probe(self, configuration, secrets, *, now_ms=0, previous=None):
+        """The check run once when the worker starts; by default the normal probe.
+
+        Adapters whose normal probe never contacts the service may override
+        this to confirm the setup really works. previous is the status saved
+        by the last worker (status_store.StoredStatus) or None.
+        """
+        return self.probe(configuration, secrets, now_ms=now_ms)
 
     def classify(self, exc):
         """Status for an exception raised by this service's client.

@@ -77,6 +77,8 @@ _EVENTS = (
     EventDefinition("OPERATION_FAILED", "runtime", "A processing operation failed.", True),
     EventDefinition("SERVICE_DOWN", "runtime", "An external service is not usable; jobs that need it are waiting."),
     EventDefinition("SERVICE_RESTORED", "runtime", "An external service is available again; waiting jobs continue."),
+    EventDefinition("SERVICE_STARTUP_REFUSED", "runtime", "The worker did not start: a required service is not set up correctly.",
+                    True, "SERVICE_SETUP_INVALID"),
 )
 EVENTS = MappingProxyType({item.code: item for item in _EVENTS})
 JOB_ACTIVITIES = MappingProxyType({

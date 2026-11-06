@@ -51,7 +51,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'trial_plans_v56',  # v56 keys trial selection by AniDB episode
             'release_verifications_v57',  # v57 allows acquiring and staging without TVDB placement
             None,  # v58 adds FAILED job state
-            'identity_candidate_evidence')  # v59 adds durable candidate evidence
+            'identity_candidate_evidence',  # v59 adds durable candidate evidence
+            'service_status')  # v60 adds the last known status of each external service
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

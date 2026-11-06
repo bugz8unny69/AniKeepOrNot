@@ -10,6 +10,7 @@ from src.nextgen.services.base import AUTH_FAILED, DOWN, NOT_CONFIGURED, UNSUPPO
 class QbittorrentAdapter(ServiceAdapter):
     name = 'qbittorrent'
     label = 'qBittorrent'
+    required = True
     reasons = {
         'DOWNLOAD_CLIENT_UNAVAILABLE': DOWN,
         'TORRENT_METADATA_UNAVAILABLE': DOWN,
