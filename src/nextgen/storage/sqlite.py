@@ -821,7 +821,7 @@ CREATE TABLE IF NOT EXISTS batch_candidates (
  info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
  title TEXT NOT NULL CHECK(length(trim(title)) > 0),
  rank INTEGER NOT NULL CHECK(rank > 0),
- state TEXT NOT NULL DEFAULT 'READY' CHECK(state IN ('READY','ACTIVE','FAILED','SUCCEEDED')),
+ state TEXT NOT NULL DEFAULT 'READY' CHECK(state IN ('READY','ACTIVE','FAILED','SUCCEEDED','CANCELED')),
  reason_code TEXT,
  has_metadata INTEGER NOT NULL DEFAULT 0 CHECK(has_metadata IN (0, 1)),
  metadata_json TEXT CHECK(metadata_json IS NULL OR json_valid(metadata_json)),

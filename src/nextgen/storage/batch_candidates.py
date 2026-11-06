@@ -138,7 +138,7 @@ def add_candidate(db, scope_id, info_hash, title, *, source_event_id=None,
 
 
 def discover_existing_candidates(db, scope_id, anidb_id, season, *,
-                                 qb_torrents=None, now_ms=None):
+                                 client=None, qb_torrents=None, now_ms=None):
     """WI-02: Discover and register existing candidate releases from incoming_events and qBittorrent observations."""
     integer(scope_id, positive=True)
     integer(anidb_id, positive=True)
@@ -187,13 +187,22 @@ def discover_existing_candidates(db, scope_id, anidb_id, season, *,
                 if v_row is not None:
                     has_meta = 1
 
-            # Check qB torrents read-only if passed
-            if not has_meta and qb_torrents:
-                qb_info = qb_torrents.get(digest)
-                if qb_info is not None:
-                    files = getattr(qb_info, 'files', None)
-                    if files or getattr(qb_info, 'has_metadata', False):
-                        has_meta = 1
+            # Check qB torrents or client read-only if passed
+            if not has_meta:
+                if qb_torrents:
+                    qb_info = qb_torrents.get(digest)
+                    if qb_info is not None:
+                        files = getattr(qb_info, 'files', None)
+                        if files or getattr(qb_info, 'has_metadata', False):
+                            has_meta = 1
+                elif client is not None and hasattr(client, 'inspect'):
+                    try:
+                        obs = client.inspect(digest, include_files=True)
+                        if obs is not None and getattr(obs, 'files', None):
+                            has_meta = 1
+                            meta_json = json.dumps({'files': [{'index': f.index, 'name': f.name, 'size': f.size} for f in obs.files]})
+                    except Exception:
+                        pass
 
             cand = add_candidate(db, scope_id, digest, title, source_event_id=event_id,
                                  seeders=seeders, size_bytes=size_bytes, has_metadata=has_meta,
@@ -289,6 +298,20 @@ def activate_candidate(db, scope_id, info_hash, *, operation_id=None, now_ms=Non
     return True
 
 
+def get_candidate(db, scope_id, info_hash):
+    """Retrieve candidate by scope_id and info_hash."""
+    integer(scope_id, positive=True)
+    digest = infohash(info_hash)
+    row = db.execute(
+        "SELECT candidate_id, scope_id, info_hash, title, rank, state, reason_code, "
+        "has_metadata, metadata_json, seeders, size_bytes, source_event_id, "
+        "created_at_ms, updated_at_ms FROM batch_candidates WHERE scope_id=? AND info_hash=?",
+        (scope_id, digest)).fetchone()
+    if row is None:
+        return None
+    return BatchCandidate(*row)
+
+
 def get_active_candidate(db, scope_id):
     """Return the currently ACTIVE candidate for the scope, or None."""
     integer(scope_id, positive=True)
@@ -321,6 +344,27 @@ def fail_candidate(db, scope_id, info_hash, reason_code, *, now_ms=None):
 
     updated = db.execute(
         "UPDATE batch_candidates SET state='FAILED', reason_code=?, updated_at_ms=? "
+        "WHERE scope_id=? AND info_hash=? AND state='ACTIVE'",
+        (reason_code.strip(), now, scope_id, digest))
+    if updated.rowcount != 1:
+        raise CandidateConflict()
+
+    db.execute(
+        "UPDATE batch_candidate_scopes SET active_candidate_id=NULL, updated_at_ms=? "
+        "WHERE scope_id=?",
+        (now, scope_id))
+
+
+def cancel_candidate(db, scope_id, info_hash, reason_code='JOB_CANCELED', *, now_ms=None):
+    """Mark an active candidate CANCELED and clear active slot."""
+    integer(scope_id, positive=True)
+    digest = infohash(info_hash)
+    if not isinstance(reason_code, str) or not reason_code.strip():
+        raise CandidateConflict()
+    now = now_ms if now_ms is not None else _now()
+
+    updated = db.execute(
+        "UPDATE batch_candidates SET state='CANCELED', reason_code=?, updated_at_ms=? "
         "WHERE scope_id=? AND info_hash=? AND state='ACTIVE'",
         (reason_code.strip(), now, scope_id, digest))
     if updated.rowcount != 1:

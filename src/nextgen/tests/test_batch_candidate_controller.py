@@ -359,3 +359,54 @@ class BatchCandidateControllerTests(unittest.IsolatedAsyncioTestCase):
         with self.connect() as db:
             scopes = db.execute("SELECT count(*) FROM batch_candidate_scopes").fetchone()[0]
             self.assertEqual(scopes, 0)
+
+    def test_cancel_candidate_and_distinct_disposition(self):
+        """Candidate-level cancellation marks state CANCELED and clears active slot."""
+        from src.nextgen.storage.batch_candidates import cancel_candidate, get_candidate
+        with self.connect() as db, transaction(db):
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            c1 = add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]")
+            activate_candidate(db, scope.scope_id, HASH_1)
+            active = get_active_candidate(db, scope.scope_id)
+            self.assertEqual(active.info_hash, HASH_1)
+
+            cancel_candidate(db, scope.scope_id, HASH_1, "USER_CANCELED")
+            active_after = get_active_candidate(db, scope.scope_id)
+            self.assertIsNone(active_after)
+
+            c1_after = get_candidate(db, scope.scope_id, HASH_1)
+            self.assertEqual(c1_after.state, "CANCELED")
+            self.assertEqual(c1_after.reason_code, "USER_CANCELED")
+
+            # Never reactivate the manually canceled candidate during the current cycle
+            add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]")
+            c1_readded = get_candidate(db, scope.scope_id, HASH_1)
+            self.assertEqual(c1_readded.state, "CANCELED")
+
+    async def test_pooling_failure_does_not_silently_enable_independent_path(self):
+        """Coordination error must raise and never silently fall through to independent paths."""
+        from src.nextgen.batch.provider_worker import make_batch_verifier
+        from src.nextgen.providers.http import Credentials, Options
+        from src.nextgen.release_contracts import ReleaseInput
+
+        source = ReleaseInput(
+            1, 1, 16999, 393400,
+            json.dumps({"release_name": "[SubsPlease] Cyberpunk - S01 [1080p]", "torrent_infohash": HASH_1}).encode()
+        )
+        # Invalid database path causing sqlite error during coordination
+        bad_config = ConfigurationSnapshot(1, {
+            'storage': {'database_path': '/nonexistent/dir/bad.sqlite'},
+            'acquisition': {'audio_check': 'japanese_english'},
+        })
+        called_independent = False
+        async def mock_read_metainfo(*args, **kwargs):
+            nonlocal called_independent
+            called_independent = True
+            return b"dummy_metainfo"
+
+        verifier = make_batch_verifier(Options('registeredclient', 1), lambda: Credentials('private'),
+                                       mock_read_metainfo, client_factory=lambda *a: None)
+        with self.assertRaises(sqlite3.Error):
+            await verifier(source, bad_config, threading.Event())
+        self.assertFalse(called_independent)
+
