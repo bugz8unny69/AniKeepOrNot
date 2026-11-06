@@ -14,6 +14,9 @@ from src.nextgen.acquisition.settings import (download_options, size_limits, Dow
     SizeLimitExceeded, SizeEvidenceMissing)
 from src.nextgen.acquisition.metadata import (ObservedInventory, MetadataInvalid,
     AcquisitionConflict, SourceMissing)
+from src.nextgen.acquisition.metadata_service import (
+    verify_torrent_ownership, poll_or_stop_metadata, shared_limiter,
+)
 from src.nextgen.acquisition.submission import (
     ClientInvalid, ClientUnavailable, ClientAuthenticationFailed, ClientUnsupported,
 )
@@ -27,8 +30,8 @@ PENDING=Outcome('defer','TORRENT_METADATA_WAITING',delay_ms=60000)
 
 def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJournal):
     """Only trusted worker composition supplies this callback; no webhook input."""
-    # Limit simultaneous single-episode metadata discovery in this worker.
-    metadata_slots=asyncio.Semaphore(2)
+    # Limit simultaneous metadata discovery in this worker.
+    metadata_slots=shared_limiter().semaphore
 
     async def bootstrap(source,context):
         configuration=context.configuration
@@ -89,24 +92,18 @@ def make_bootstrap(secrets,*,client_factory=QBClient,journal_factory=MagnetJourn
                     return Outcome('fail','TORRENT_METADATA_TIMEOUT')
                 return PENDING
             # Do not stop/restart any torrent without the exact journal tag.
-            if (current.save_path.rstrip('/')!=intent.options.download_root
-                    or current.category!=intent.options.category
-                    or 'ad-'+intent.marker not in current.tags
-                    or current.auto_tmm is not False):
+            if not verify_torrent_ownership(current, intent.marker,
+                                            intent.options.download_root,
+                                            intent.options.category):
                 state=await blocking(journal.reconcile,context.claim,intent,current)
                 if state=='REVIEW':
                     return Outcome('review','TORRENT_PROVENANCE_CONFLICT')
                 return PENDING
-            if (current.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP')
-                    or intent.state=='OWNED_STOPPED'):
-                snapshot=await blocking(owned.stop_legacy_metadata,intent)
-            else:
-                async with metadata_slots:
-                    if context.cancelled.is_set():return PENDING
-                    snapshot=await blocking(owned.poll_legacy_metadata,
-                                            intent,context.cancelled,
-                                            attempts=configuration.value('qbittorrent.metadata_poll_attempts'),
-                                            interval=configuration.value('qbittorrent.metadata_poll_seconds'))
+            snapshot = await poll_or_stop_metadata(
+                owned, intent, current, context.cancelled, configuration,
+                semaphore=metadata_slots)
+            if snapshot is None and context.cancelled.is_set():
+                return PENDING
             # Only the double-checked stopped snapshot can transition to
             # OWNED_STOPPED. A single opportunistic files read cannot.
             state=await blocking(journal.reconcile,context.claim,intent,snapshot)

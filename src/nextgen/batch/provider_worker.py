@@ -17,6 +17,46 @@ from src.nextgen.worker import blocking
 
 
 @dataclass(frozen=True)
+class BatchCandidatePooled:
+    """This delivery waits in its scope's candidate pool instead of proceeding.
+
+    winner_candidate_id: a higher-ranked READY candidate that nothing is
+    running; the job's completion activates and schedules it (WI-11).
+    """
+    source: ReleaseInput = field(repr=False)
+    candidate_id: int
+    scope_id: int
+    info_hash: str
+    winner_candidate_id: int | None = None
+
+
+async def _observe(observe_existing,configuration,digests):
+    """Read-only qBittorrent observations, mapped to the reader's typed errors.
+
+    qBittorrent problems are not ignored: the job waits or stops exactly as
+    the metadata reader would for the same failure.
+    """
+    from src.nextgen.acquisition.metainfo_source import (
+        MetadataClientUnsupported, MetadataSourceConfigurationError, MetadataSourceDenied,
+        MetadataSourceUnavailable,
+    )
+    from src.nextgen.acquisition.settings import DownloadConfigurationError
+    from src.nextgen.acquisition.submission import (
+        ClientAuthenticationFailed, ClientInvalid, ClientUnavailable, ClientUnsupported,
+    )
+    try:
+        return await blocking(observe_existing,configuration,digests)
+    except DownloadConfigurationError:
+        raise MetadataSourceConfigurationError() from None
+    except ClientUnsupported:
+        raise MetadataClientUnsupported() from None
+    except ClientUnavailable:
+        raise MetadataSourceUnavailable() from None
+    except (ClientAuthenticationFailed,ClientInvalid):
+        raise MetadataSourceDenied() from None
+
+
+@dataclass(frozen=True)
 class BatchVerificationCompletion:
     source: ReleaseInput = field(repr=False)
     inventory: BatchInventory = field(repr=False)
@@ -36,7 +76,7 @@ class BatchVerificationCompletion:
 
 
 def make_batch_verifier(options, credentials, read_batch_metainfo, *,
-                        client_pool=None, client_factory=Clients):
+                        client_pool=None, client_factory=Clients, observe_existing=None):
     """Return async batch verifier callable suitable for the release job.
 
     The configured metainfo reader accepts ONLY a 40-character infohash,
@@ -47,6 +87,37 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
             or not inspect.iscoroutinefunction(read_batch_metainfo)):
         raise ValueError('Incomplete trusted batch provider composition')
     pool=client_pool or ClientPool(client_factory)
+    if observe_existing is not None and not callable(observe_existing):
+        raise ValueError('Existing-metadata observer must be callable')
+
+    async def _coordinate(source,digest,document,season,configuration,claim):
+        """Series-scoped controller step (WI-01/WI-02).
+
+        Network reads (qBittorrent file lists) happen first, outside any
+        transaction; the decision is then made and committed in one short
+        write transaction that re-reads the controller state.
+        """
+        from src.nextgen.storage.batch_candidates import coordinate_release, scope_releases
+        from src.nextgen.storage.job_queue import JobQueue
+        from src.nextgen.storage.sqlite import transaction
+        queue=JobQueue(configuration.value('storage.database_path'))
+
+        def releases():
+            with queue.connection() as db:
+                return scope_releases(db,source.anidb_id,season)
+        observations={}
+        if observe_existing is not None:
+            digests=(digest,*(r.info_hash for r in await blocking(releases)))
+            observations=await _observe(observe_existing,configuration,digests)
+
+        def decide():
+            with queue.connection() as db,transaction(db):
+                return coordinate_release(
+                    db,anidb_id=source.anidb_id,tvdb_series_id=source.tvdb_series_id,season=season,
+                    info_hash=digest,title=delivery_title(source),event_id=source.event_id,
+                    job_id=claim.job_id,seeders=document.get('seeders'),size_bytes=document.get('size'),
+                    observations=observations,audio_check=configuration.value('acquisition.audio_check'))
+        return await blocking(decide)
 
     async def call(source,configuration,cancelled,*,claim=None):
         if type(source) is not ReleaseInput:
@@ -61,12 +132,26 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
             digest=infohash(document.get('torrent_infohash'))
         except ValueError:
             raise ReleaseNotReady('RELEASE_UNRESOLVED') from None
+
+        if claim is not None:
+            decision=await _coordinate(source,digest,document,hint.season_hint,configuration,claim)
+            if decision.action=='POOLED':
+                return BatchCandidatePooled(source,decision.candidate_id,decision.scope_id,digest,
+                                            decision.winner_candidate_id)
+
+        # Reject known incompatible audio releases before metadata or probe download (WI-06)
+        from src.nextgen.acquisition.audio import is_audio_incompatible
+        if is_audio_incompatible(delivery_title(source), configuration.value('acquisition.audio_check')):
+            from src.nextgen.acquisition.media import AudioMissing
+            raise AudioMissing(('eng', 'jpn'), (), ('eng', 'jpn'))
         # The built-in reader needs the leased VERIFY_RELEASE claim before
         # issuing any older-client stopped-magnet admission. Custom injected
         # readers used by tests retain their three-argument contract.
         if claim is not None and 'claim' in inspect.signature(read_batch_metainfo).parameters:
+            # Evaluation may read an existing torrent's file list read-only (WI-12).
+            extra={'evaluation':True} if 'evaluation' in inspect.signature(read_batch_metainfo).parameters else {}
             raw=await read_batch_metainfo(digest,configuration,cancelled,
-                                          claim=claim,event_id=source.event_id)
+                                          claim=claim,event_id=source.event_id,**extra)
         else:
             raw=await read_batch_metainfo(digest,configuration,cancelled)
         inventory=await blocking(read_batch_inventory,raw,digest)
@@ -79,6 +164,16 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
             verify_batch_files,inventory,client=client,credentials=secret,
             anidb_id=source.anidb_id,tvdb_series_id=source.tvdb_series_id,
             season=hint.season_hint,cancelled=cancelled)
+
+        # Validate per-episode file size limits before downloading video probe (WI-07)
+        from src.nextgen.acquisition.settings import size_limits
+        limits = size_limits(configuration)
+        by_index = {f.index: f for f in inventory.files}
+        for fact in verified.files:
+            file = by_index.get(fact.index)
+            if file is not None:
+                limits.admit(file.size)
+
         if cancelled.is_set():
             raise ReleaseNotReady()
         return BatchVerificationCompletion(source,inventory,verified)

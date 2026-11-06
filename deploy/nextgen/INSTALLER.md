@@ -16,7 +16,37 @@ Install unattended from a local reviewed Git checkout:
 sudo python3 bin/anime-discovery-install --yes --source-dir /path/to/checkout --public-origin https://anime.example.com --settings-file /path/to/native-settings.json --start api --enable
 ```
 
-`--source-dir` installs committed tracked files at HEAD, not working-tree edits. Otherwise the installer fetches the private repository's configured branch using root's existing Git access. `--revision FULL_COMMIT_SHA` pins a release. It creates a virtual environment per release and retains the previous source.
+`--source-dir` installs committed tracked files at HEAD, not working-tree edits. Otherwise the installer fetches the private repository's configured branch using root's existing Git access. `--revision FULL_COMMIT_SHA` pins a release. It creates a virtual environment per release.
+
+## Installed versions
+
+Each install or upgrade is a folder named after its date, branch and commit, and `current` points at the running one:
+
+```
+/opt/anime-discovery/
+  current -> releases/2026-11-06-NextGen-c143bbb9
+  releases/
+    2026-11-06-NextGen-c143bbb9/   running
+    2026-11-02-NextGen-9071be2e/   the previous version, kept for rollback
+```
+
+A `--source-dir` install is labelled `local`. Installing the same commit twice adds `-2`, `-3`. The new version is built completely (source and virtual environment) before the services stop, then `current` is switched in one step; a virtual environment cannot be moved, which is why each version keeps its own folder.
+
+After a successful install or upgrade, only the running version and the one before it are kept. Older versions, leftovers of interrupted runs and their unit backups are deleted. A failed upgrade deletes nothing.
+
+Each database upgrade first saves a copy beside the database (`anime-discovery.sqlite.before-vN-<id>.sqlite`). After a successful database upgrade only the two newest copies are kept.
+
+## Rollback
+
+```sh
+sudo anime-discovery-install --rollback
+```
+
+Switches `current` back to the previous version, restores its unit files and restarts the services that were running. First the previous version checks the database and settings itself (`python -m src.nextgen check`). If an upgrade moved them beyond what that version understands, the rollback refuses and says why; nothing is changed. Nothing is deleted: the newer version becomes the previous one, and the next upgrade replaces it.
+
+## The installer updates itself
+
+An upgrade installs the new release's own installer as `/usr/local/bin/anime-discovery-install`. When the fetched release brings a different installer, the upgrade continues with that new installer on the same checkout, once, so installer changes apply on the upgrade that delivers them.
 
 The installer writes `/usr/local/bin/anime-discovery-install`. Its root-owned private metadata directory is `/var/lib/anime-discovery/installer`: `installer.json` stores installation settings, `installation.json` records the last successful installation, and `installation.pending.json` records interrupted setup. The lock and new unit backups also live there. A successful upgrade migrates older JSON metadata from the application folder; failed upgrades retain it for recovery. Custom paths use a small locator beside the installed command. The working directory does not select the installation.
 
@@ -25,6 +55,18 @@ Upgrade with:
 ```sh
 sudo anime-discovery-install --upgrade --yes
 ```
+
+Running the command without `--upgrade` or `--rollback` installs. There is no `--install` switch, and switches must be spelled out in full (no abbreviations).
+
+To switch the installation to another branch:
+
+```sh
+sudo anime-discovery-install --upgrade --branch refactor
+```
+
+The branch is fetched and installed, its release folder is named after it (`…-refactor-<commit>`), and later upgrades keep using it until you pass `--branch` again. It is the only installation setting an upgrade may change. Every upgrade, with or without `--branch`, rewrites the systemd unit files from the new release (backing up the old ones) and reloads systemd.
+
+Branches can carry different database migrations. The installer upgrades the database to the branch's schema and refuses one it does not recognise, so moving back to a branch that lacks those migrations stops at the database step (and `--rollback` refuses for the same reason). Only switch between branches whose schemas are compatible.
 
 Existing native settings, credentials, administrator password, and configured database path are preserved. Native configuration and database upgrades run explicitly with the services stopped, using the maintenance preview/backup contracts. Legacy configuration and databases are not imported. Use a separate fresh Anime Discovery directory.
 
@@ -47,7 +89,7 @@ sudo systemctl enable --now anime-discovery-worker.service
 
 `--start preserve` is the default and retains running/stopped choices on upgrade. `--start none`, `api`, or `all` overrides it. Starting all requires worker readiness. `--enable` enables the selected component services for boot; existing enablement is retained.
 
-If setup or activation fails, Anime Discovery remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; database/source rollback is not automatic.
+If setup or activation fails, Anime Discovery remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; rollback is never automatic (see Rollback).
 
 No live installation has been performed by the implementation tests. Follow `src/nextgen/SERVICE_SETUP.md` for host validation: password setup/login, verified webhook intake appearing in Recognized Names, worker crash isolation, API recovery followed by worker restart, mount access, and provider connectivity.
 
