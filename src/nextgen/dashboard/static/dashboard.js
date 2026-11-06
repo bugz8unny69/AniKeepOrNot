@@ -461,8 +461,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       tr.dataset.episode = tvdbLabel(item);
       tr.appendChild(node('td', tvdbLabel(item)));
       const status = node('td', item.status);
-      if (item.reservation_count) status.appendChild(node('small',
-        item.reservation_count + ' reservation(s)', 'muted job-note'));
+      if (item.active_reservation_count) status.appendChild(node('small',
+        item.active_reservation_count + ' active reservation(s)', 'muted job-note'));
+      if (item.reservation_count > (item.active_reservation_count || 0)) status.appendChild(node('small',
+        (item.reservation_count - (item.active_reservation_count || 0)) +
+        ' previous reservation(s)', 'muted job-note'));
       if (item.manual_submission_count) status.appendChild(node('small',
         item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       tr.appendChild(status);
@@ -484,8 +487,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         item.status === 'WAITING_FOR_DUB' ? 'Waiting for dub' :
         item.status.replaceAll('_', ' ').toLowerCase();
       const result = node('td', statusLabel);
-      if (item.reservation_count) result.appendChild(node('small',
-        item.reservation_count + ' reservation(s)', 'muted job-note'));
+      if (item.active_reservation_count) result.appendChild(node('small',
+        item.active_reservation_count + ' active reservation(s)', 'muted job-note'));
+      if (item.reservation_count > (item.active_reservation_count || 0)) result.appendChild(node('small',
+        (item.reservation_count - (item.active_reservation_count || 0)) +
+        ' previous reservation(s)', 'muted job-note'));
       if (item.manual_submission_count) result.appendChild(node('small',
         item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       if (item.reason_code) {
