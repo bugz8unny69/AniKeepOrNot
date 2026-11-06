@@ -521,6 +521,8 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_persisted_conflict_worker_review_with_identity_facts(self):
         self.setUpFixture()
+        self.store.update({'acquisition': {'audio_check': 'japanese_english'}},
+                          expected_revision=1)
         db=connect(self.database)
         try:
             event,_,anchor=seed_plan(db,19,self.aid,self.tid,anchor_ep=1,title=self.titles[0])
@@ -574,6 +576,8 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run_prowlarr_retry_diagnostic(self, error_type):
         self.setUpFixture()
+        self.store.update({'acquisition': {'audio_check': 'japanese_english'}},
+                          expected_revision=1)
         failed_hash="aa"*20
         db=connect(self.database)
         try:
