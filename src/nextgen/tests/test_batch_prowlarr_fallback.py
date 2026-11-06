@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from src.nextgen.acquisition.audio import dual_audio_tagged, is_audio_incompatible
 from src.nextgen.acquisition.prowlarr_search import (
-    Client, DiscoveryPolicy, Options, Release,
+    BatchSearchResult, Client, DiscoveryPolicy, Options, Release, SearchUnavailable,
 )
 from src.nextgen.acquisition.release_titles import batch_search_queries
 from src.nextgen.configuration import ConfigurationSnapshot
@@ -21,7 +21,7 @@ from src.nextgen.jobs.discover_batch_prowlarr_job import (
 )
 from src.nextgen.storage.batch_candidates import (
     BatchCandidate, BatchScope, activate_candidate, add_candidate,
-    auto_cleanup_failed_batch_candidate, execute_batch_prowlarr_fallback,
+    auto_cleanup_failed_batch_candidate, ingest_batch_prowlarr_results, prepare_batch_prowlarr_search,
     exhaust_scope, fail_candidate, get_active_candidate, get_candidate_pool,
     get_or_create_scope, next_candidate, rank_candidates, reorder_candidates,
     schedule_after_cleanup_batch,
@@ -82,8 +82,9 @@ class ProwlarrBatchSearchMethodTests(unittest.TestCase):
             # Tried contains HASH_2
             found = client.search_batch(["Cyberpunk Edgerunners"], 1, tried=[HASH_2])
 
-        self.assertEqual(len(found), 2)
-        hashes = [f.info_hash for f in found]
+        self.assertTrue(found.complete)
+        self.assertEqual(len(found.releases), 2)
+        hashes = [f.info_hash for f in found.releases]
         self.assertIn(HASH_4, hashes)
         self.assertIn(HASH_5, hashes)
         self.assertNotIn(HASH_1, hashes)  # single episode
@@ -169,61 +170,57 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload['scope_id'], scope.scope_id)
             self.assertEqual(payload['anidb_id'], 16999)
 
-    async def test_execute_batch_prowlarr_fallback_adds_candidates_and_activates_top(self):
-        """WI-05: Fallback search populates candidate pool and activates best candidate."""
+    def seed_identity(self, db):
+        """One identified delivery for the scope, whose verified identity Prowlarr finds reuse."""
+        db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+        db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(1, 'autobrr', X'61', 1000, 'IDENTIFIED')")
+        db.execute("INSERT INTO identity_results(result_id, event_id, anidb_id, schema_version, series_json, validated_at_ms) "
+                   "VALUES(1, 1, 16999, 2, ?, 1000)", (json.dumps({'schema_version': 2, 'anime': {
+                       'anidb_id': 16999, 'tvdb_series_id': 393400, 'title': 'Cyberpunk Edgerunners'}, 'episodes': []}),))
+
+    def exhausted_scope(self):
         with self.connect() as db, transaction(db):
+            self.seed_identity(db)
             scope = get_or_create_scope(db, 16999, 393400, 1)
-            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
-            # Mark HASH_1 as already failed
-            c1 = add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]")
+            add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]", source_event_id=1)
             activate_candidate(db, scope.scope_id, HASH_1)
-            fail_candidate(db, scope.scope_id, HASH_1, "METADATA_TIMEOUT")
+            fail_candidate(db, scope.scope_id, HASH_1, "TORRENT_METADATA_TIMEOUT")
+        return scope
 
-        mock_client = Mock()
-        mock_client.snapshots = []
-        mock_release_pass = Release(
-            title="[Group] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]",
-            indexer="Nyaa",
-            resolution=1080,
-            seeders=20,
-            size=8000000,
-            tvdb_episode_id=None,
-            info_hash=HASH_4,
-            magnet_url=f"magnet:?xt=urn:btih:{HASH_4}",
-            eligible_for_handoff=True,
-        )
-        mock_client.search_batch.return_value = (mock_release_pass,)
-
+    def ingest(self, scope, result):
+        with self.connect() as db:
+            params = prepare_batch_prowlarr_search(db, scope.scope_id)
+        self.assertEqual(params.tried, frozenset({HASH_1}))
         with self.connect() as db, transaction(db):
-            receipts = execute_batch_prowlarr_fallback(db, scope.scope_id, mock_client, audio_check='japanese_english')
-            self.assertEqual(len(receipts), 1)
+            return ingest_batch_prowlarr_results(db, params, result, audio_check='japanese_english')
 
-            # New candidate was added and activated
+    async def test_found_releases_join_the_pool_and_the_best_one_starts(self):
+        """WI-05: a search's releases become candidates and the best one is scheduled."""
+        scope = self.exhausted_scope()
+        release = Release(title="[Group] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]", indexer="Nyaa",
+                          resolution=1080, seeders=20, size=8000000, tvdb_episode_id=None, info_hash=HASH_4,
+                          magnet_url=f"magnet:?xt=urn:btih:{HASH_4}", eligible_for_handoff=True)
+        receipts = self.ingest(scope, BatchSearchResult((release,)))
+        self.assertTrue(receipts)
+        with self.connect() as db:
             active = get_active_candidate(db, scope.scope_id)
-            self.assertIsNotNone(active)
-            self.assertEqual(active.info_hash, HASH_4)
-            self.assertEqual(active.state, 'ACTIVE')
-
-            # Pool contains both failed candidate and new active candidate
-            pool = get_candidate_pool(db, scope.scope_id)
-            self.assertEqual(len(pool), 2)
+            self.assertEqual((active.info_hash, active.state), (HASH_4, 'ACTIVE'))
+            self.assertEqual(len(get_candidate_pool(db, scope.scope_id)), 2)
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE kind='VERIFY_RELEASE'").fetchone(), (1,))
 
     async def test_prowlarr_zero_results_exhausts_scope_cleanly(self):
-        """WI-05: When Prowlarr returns 0 matching candidates, scope is marked EXHAUSTED."""
-        with self.connect() as db, transaction(db):
-            scope = get_or_create_scope(db, 16999, 393400, 1)
-            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+        """WI-15: a successful search with nothing eligible marks the season EXHAUSTED."""
+        scope = self.exhausted_scope()
+        self.assertEqual(self.ingest(scope, BatchSearchResult(())), ())
+        with self.connect() as db:
+            self.assertEqual(get_or_create_scope(db, 16999, 393400, 1).state, 'EXHAUSTED')
 
-        mock_client = Mock()
-        mock_client.snapshots = []
-        mock_client.search_batch.return_value = ()
-
-        with self.connect() as db, transaction(db):
-            receipts = execute_batch_prowlarr_fallback(db, scope.scope_id, mock_client)
-            self.assertEqual(receipts, ())
-
-            scope_after = get_or_create_scope(db, 16999, 393400, 1)
-            self.assertEqual(scope_after.state, 'EXHAUSTED')
+    async def test_an_incomplete_search_never_exhausts(self):
+        """WI-15: some queries failed and nothing was found: the season stays open."""
+        scope = self.exhausted_scope()
+        self.ingest(scope, BatchSearchResult((), complete=False, failed=(('q', 'PROWLARR_UNAVAILABLE'),)))
+        with self.connect() as db:
+            self.assertEqual(get_or_create_scope(db, 16999, 393400, 1).state, 'ACTIVE')
 
     async def test_new_candidate_arrival_reactivates_exhausted_scope(self):
         """WI-04 / WI-05: Newly arriving candidate reactivates an EXHAUSTED scope."""
@@ -239,7 +236,7 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(c_new.state, 'READY')
 
     async def test_rate_limiting_avoids_infinite_repeated_searches(self):
-        """WI-05: If Prowlarr was searched recently for this scope, repeated search is rate-limited."""
+        """WI-05/WI-15: a recent search delays the next one; one search job at a time."""
         now_ms = int(time.time() * 1000)
         with self.connect() as db, transaction(db):
             scope = get_or_create_scope(db, 16999, 393400, 1)
@@ -262,8 +259,14 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
         with self.connect() as db, transaction(db):
             auto_cleanup_failed_batch_candidate(db, claim)
             receipts = schedule_after_cleanup_batch(db, op_id)
-            self.assertEqual(receipts, ())
-            self.assertEqual(get_or_create_scope(db, 16999, 393400, 1).state, 'EXHAUSTED')
+            # Rate limiting delays the search; it never claims the season is exhausted.
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(get_or_create_scope(db, 16999, 393400, 1).state, 'ACTIVE')
+            available = db.execute("SELECT available_at_ms FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR'").fetchone()[0]
+            self.assertGreaterEqual(available, now_ms - 60_000 + 5 * 60_000)
+            # A second exhaustion (a restart) does not add another search job.
+            self.assertEqual(schedule_after_cleanup_batch(db, op_id), ())
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR'").fetchone(), (1,))
 
     async def test_discover_batch_prowlarr_real_claim_contracts_and_identity_handoff(self):
         """WI-05: Real worker execution of DISCOVER_BATCH_PROWLARR, Claim contracts, and identity handoff to VERIFY_RELEASE."""
@@ -280,6 +283,9 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "VALUES(1, 1, 16999, 2, '{\"schema_version\":2,\"anime\":{\"anidb_id\":16999,\"tvdb_series_id\":393400,\"title\":\"Cyberpunk Edgerunners\"},\"episodes\":[]}', 1000)")
 
             scope = get_or_create_scope(db, 16999, 393400, 1)
+            add_candidate(db, scope.scope_id, HASH_1, "[Group] Cyberpunk S01 [1080p]", source_event_id=1)
+            activate_candidate(db, scope.scope_id, HASH_1)
+            fail_candidate(db, scope.scope_id, HASH_1, "TORRENT_METADATA_TIMEOUT")
             # Enqueue real DISCOVER_BATCH_PROWLARR job
             enqueue_job(
                 db, component='worker', kind=BATCH_PROWLARR_KIND,
@@ -305,11 +311,12 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         mock_client = Mock()
         mock_client.snapshots = []
-        mock_client.search_batch.return_value = (mock_rel,)
+        mock_client.search_batch.return_value = BatchSearchResult((mock_rel,))
 
         config = ConfigurationSnapshot(1, {
             'storage': {'database_path': str(self.db_path)},
             'acquisition': {'audio_check': 'japanese_english'},
+            'prowlarr': {'base_url': 'http://localhost:9696'},
         })
         mock_secrets = Mock()
 

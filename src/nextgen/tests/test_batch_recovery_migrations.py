@@ -52,7 +52,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'release_verifications_v57',  # v57 allows acquiring and staging without TVDB placement
             None,  # v58 adds FAILED job state
             'identity_candidate_evidence',  # v59 adds durable candidate evidence
-            'batch_candidate_scopes')  # v60 adds batch candidate operations
+            'batch_candidate_scopes',  # v60 adds batch candidate operations
+            'batch_candidate_stops')  # v61 records why each candidate stopped
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

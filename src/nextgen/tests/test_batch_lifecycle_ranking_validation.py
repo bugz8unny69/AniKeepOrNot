@@ -187,7 +187,7 @@ class BatchLifecycleAndFallbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(active.state, 'ACTIVE')
 
     async def test_exhaustion_when_no_eligible_candidate_remains(self):
-        """WI-04: When all candidates fail, scope becomes EXHAUSTED."""
+        """WI-04/WI-13: when every known candidate failed, the Prowlarr fallback starts."""
         with self.connect() as db, transaction(db):
             scope = get_or_create_scope(db, 16999, 393400, 1)
             c1 = add_candidate(db, scope.scope_id, HASH_1, "[Group] Show S01 [1080p]", source_event_id=1)
@@ -207,11 +207,15 @@ class BatchLifecycleAndFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         with self.connect() as db, transaction(db):
             auto_cleanup_failed_batch_candidate(db, claim)
-            receipts = schedule_after_cleanup_batch(db, op_id, prowlarr_fallback=False)
-            self.assertEqual(receipts, ())
+            receipts = schedule_after_cleanup_batch(db, op_id)
+            # Known candidates are exhausted: one controlled Prowlarr search is
+            # scheduled and the season is NOT marked EXHAUSTED before it ran.
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR'").fetchone(), (1,))
 
             scope_after = get_or_create_scope(db, 16999, 393400, 1)
-            self.assertEqual(scope_after.state, 'EXHAUSTED')
+            self.assertEqual(scope_after.state, 'ACTIVE')
             self.assertIsNone(scope_after.active_candidate_id)
 
 

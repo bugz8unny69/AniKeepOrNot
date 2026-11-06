@@ -87,20 +87,10 @@ def mark_staged(db,claim):
     if db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) WHERE m.operation_id=? AND j.job_id<>? AND j.state<>'DONE' LIMIT 1",
                   (op[0],claim.job_id)).fetchone():raise CancellationError('JOB_NOT_DONE')
     db.execute("UPDATE job_operations SET state='STAGED',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
-    has_scopes = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_candidate_scopes'").fetchone()
-    if has_scopes:
-        scope_row = db.execute(
-            "SELECT scope_id, active_candidate_id FROM batch_candidate_scopes WHERE operation_id=?",
-            (op[0],)).fetchone()
-        if scope_row and scope_row[1] is not None:
-            scope_id, active_cid = scope_row
-            cand_row = db.execute(
-                "SELECT info_hash FROM batch_candidates WHERE candidate_id=? AND state='ACTIVE'",
-                (active_cid,)).fetchone()
-            if cand_row:
-                from src.nextgen.storage.batch_candidates import succeed_candidate
-                succeed_candidate(db, scope_id, cand_row[0], now_ms=now)
+    # Every selected episode is published: the active batch candidate and
+    # its season succeeded (WI-13). Nothing else counts as success.
+    from src.nextgen.storage.batch_candidates import succeed_operation_candidate
+    succeed_operation_candidate(db,op[0],now_ms=now)
 
 
 def request_cancellation(db,job_id,now,*,component='api',reason_code='JOB_CANCELED'):
@@ -114,6 +104,10 @@ def request_cancellation(db,job_id,now,*,component='api',reason_code='JOB_CANCEL
     if not can_cancel_operation(db,op):raise CancellationError('OPERATION_NOT_CANCELABLE')
     db.execute("UPDATE job_operations SET state='CANCEL_REQUESTED',cleanup_state='PENDING',reason_code='CANCELLATION_DRAINING',"
                'updated_at_ms=? WHERE operation_id=?',(now,op[0]))
+    # A batch candidate stopped by a person is CANCELED, not FAILED. An
+    # automatic failure records FAILED before it reaches here; first wins.
+    from src.nextgen.storage.batch_candidates import record_candidate_stop
+    record_candidate_stop(db,op[0],'CANCELED',reason_code,now_ms=now)
     receipts=[]
     for member,state,attempt in members:
         if state not in CANCELABLE:continue

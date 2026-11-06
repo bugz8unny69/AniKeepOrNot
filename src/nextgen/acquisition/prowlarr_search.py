@@ -201,6 +201,30 @@ def resolution(title):
     return found.pop() if len(found) == 1 else 0
 
 
+def release_source(row):
+    """(info_hash, magnet, conflict) from one Prowlarr result row.
+
+    Shared by every search. A magnet or GUID naming a different hash than
+    infoHash is a conflict: the row is rejected, never reconciled by falling
+    back to a bare hash. A hash without a magnet becomes a bare hash magnet,
+    which qBittorrent resolves through DHT/PEX like a bare webhook hash.
+    """
+    raw_hash = row.get('infoHash')
+    info_hash = (raw_hash.lower() if type(raw_hash) is str
+                 and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
+    magnet = None
+    for source in (row.get('magnetUrl'), row.get('guid')):
+        source_hash = _magnet_hash(source)
+        if source_hash is None: continue
+        if info_hash is not None and source_hash != info_hash:
+            return None, None, True
+        info_hash, magnet = source_hash, source
+        break
+    if info_hash is not None and magnet is None:
+        magnet = 'magnet:?xt=urn:btih:' + info_hash
+    return info_hash, magnet, False
+
+
 def _magnet_hash(uri):
     if not uri: return None
     if type(uri) is not str or len(uri) > 8192 or not uri.startswith('magnet:?'):
@@ -294,21 +318,9 @@ def _release(row, titles, target, season, prepared=None):
     seeders = row.get('seeders')
     seeders = seeders if type(seeders) is int and seeders >= 0 else None
     size = row.get('size') if type(row.get('size')) is int and row['size'] >= 0 else 0
-    raw_hash = row.get('infoHash')
-    info_hash = (raw_hash.lower() if type(raw_hash) is str
-                 and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
-    magnet = None
-    for source in (row.get('magnetUrl'), row.get('guid')):
-        source_hash = _magnet_hash(source)
-        if source_hash is None: continue
-        if info_hash is not None and source_hash != info_hash:
-            # Conflicting identities are never silently reconciled.
-            return None
-        info_hash, magnet = source_hash, source
-        break
-    if info_hash is not None and magnet is None:
-        # Hash only: qBittorrent resolves it through DHT/PEX like a bare webhook hash.
-        magnet = 'magnet:?xt=urn:btih:' + info_hash
+    info_hash, magnet, conflict = release_source(row)
+    if conflict:
+        return None          # Conflicting identities are never silently reconciled.
     return Release(title[:2048], indexer[:256], resolution(title), seeders, size,
                    target.tvdb_episode_id, info_hash, magnet, info_hash is not None,
                    declared_title(titles, target.anidb_episode))
@@ -321,6 +333,18 @@ def _unavailable(headers):
     if type(value) is str and re.fullmatch(r'[0-9]{1,6}', value.strip()):
         error.retry_after = max(1, int(value.strip()))
     return error
+
+
+@dataclass(frozen=True)
+class BatchSearchResult:
+    """Eligible season packs from one batch search.
+
+    complete is False when some queries failed (their reason codes are in
+    failed); such a search can never prove that no release exists.
+    """
+    releases: tuple
+    complete: bool = True
+    failed: tuple = ()
 
 
 class Client:
@@ -596,21 +620,7 @@ class Client:
                 if has_dual:
                     matched_dual_audio_count += 1
 
-                raw_hash = row.get('infoHash')
-                info_hash = (raw_hash.lower() if type(raw_hash) is str
-                             and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
-                magnet = None
-                magnet_conflict = False
-                for source in (row.get('magnetUrl'), row.get('guid')):
-                    source_hash = _magnet_hash(source)
-                    if source_hash is None: continue
-                    if info_hash is not None and source_hash != info_hash:
-                        magnet_conflict = True
-                        break
-                    info_hash, magnet = source_hash, source
-                    break
-                if info_hash is not None and magnet is None:
-                    magnet = 'magnet:?xt=urn:btih:' + info_hash
+                info_hash, magnet, magnet_conflict = release_source(row)
 
                 dedup_key = info_hash or title_clean
                 is_duplicate = dedup_key in seen_keys
@@ -833,6 +843,8 @@ class Client:
             titles_tuple, season, english_title=english_title,
             prefer_audio=self.policy.prefer_audio_tag,
         )
+        if not queries:
+            raise SearchReview()          # Nothing usable to search for is not "no releases".
 
         found = []
         seen_keys = {}
@@ -843,6 +855,7 @@ class Client:
         counts_dispositions = {
             'UNMATCHED_SCOPE': 0,
             'MISSING_INFO_HASH': 0,
+            'CONFLICTING_INFO_HASH': 0,
             'PREVIOUSLY_TRIED': 0,
             'RESOLUTION_OUT_OF_POLICY': 0,
             'INSUFFICIENT_SEEDERS': 0,
@@ -880,20 +893,25 @@ class Client:
         self.snapshots.append(snapshot)
 
         row_number = 0
+        failed = []
+        last_error = None
         for query_idx, query in enumerate(queries, 1):
             q_start = time.monotonic()
             try:
+                # _get already retries timeouts, 429 and 5xx with backoff.
                 rows = self._get(query)
                 q_elapsed = time.monotonic() - q_start
-            except Exception as exc:
-                q_elapsed = time.monotonic() - q_start
-                status_code = getattr(exc, 'reason_code', exc.__class__.__name__)
+            except SearchUnavailable as exc:      # includes SearchTimeout
+                # Unauthorized, configuration and unreadable responses are not
+                # caught: they stop the whole search with their own reason.
+                last_error = exc
+                failed.append((query, exc.reason_code))
                 captured_queries.append({
                     'index': query_idx,
                     'query_text': query,
                     'result_count': 0,
-                    'elapsed_seconds': round(q_elapsed, 3),
-                    'status': status_code,
+                    'elapsed_seconds': round(time.monotonic() - q_start, 3),
+                    'status': exc.reason_code,
                 })
                 continue
 
@@ -935,21 +953,18 @@ class Client:
                     })
                     continue
 
-                # 2. Extract info_hash
-                raw_hash = row.get('infoHash')
-                info_hash = (raw_hash.lower() if type(raw_hash) is str
-                             and re.fullmatch('[a-fA-F0-9]{40}', raw_hash) else None)
-                magnet = None
-                for source in (row.get('magnetUrl'), row.get('guid')):
-                    source_hash = _magnet_hash(source)
-                    if source_hash is None:
-                        continue
-                    if info_hash is not None and source_hash != info_hash:
-                        continue
-                    info_hash, magnet = source_hash, source
-                    break
-                if info_hash is not None and magnet is None:
-                    magnet = 'magnet:?xt=urn:btih:' + info_hash
+                # 2. Hash and magnet, through the parser every search uses.
+                info_hash, magnet, conflict = release_source(row)
+                if conflict:
+                    counts_dispositions['CONFLICTING_INFO_HASH'] += 1
+                    captured_results.append({
+                        'row_number': row_number, 'query_index': query_idx, 'title': title,
+                        'indexer': indexer, 'protocol': protocol or 'torrent', 'seeders': seeders,
+                        'size_bytes': size, 'resolution': res, 'info_hash': None,
+                        'primary_disposition': 'CONFLICTING_INFO_HASH',
+                        'reason': 'the magnet names a different torrent than the info hash',
+                    })
+                    continue
 
                 if not info_hash:
                     counts_dispositions['MISSING_INFO_HASH'] += 1
@@ -1074,4 +1089,12 @@ class Client:
                 )
                 found.append(rel)
 
-        return tuple(found)
+        if failed and len(failed) == len(queries):
+            # Every query failed: Prowlarr is unavailable, nothing was searched.
+            snapshot['status'] = 'FAILED'
+            snapshot['error'] = last_error.reason_code
+            raise last_error
+        if failed:
+            snapshot['status'] = 'PARTIAL'
+            snapshot['error'] = f'{len(failed)} of {len(queries)} queries failed'
+        return BatchSearchResult(tuple(found), complete=not failed, failed=tuple(failed))
