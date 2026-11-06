@@ -284,6 +284,7 @@ if len(REGISTRY) != len(_ENTRIES):
 
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}", re.ASCII)
 _MAX_INTEGER = (1 << 63) - 1
+_CONTEXT_IDENTITY = re.compile(r'(selection|recognized|verification):(INVALID|S(?:0|[1-9][0-9]{0,3})E[1-9][0-9]{0,4}#[1-9][0-9]{0,11})', re.ASCII)
 _CHECK = re.compile(r"src/nextgen/[a-z0-9_/]{1,120}\.py:[1-9][0-9]{0,5} [A-Za-z_][A-Za-z0-9_]{0,63}( [A-Z0-9_]{1,32})?")
 _FIELDS = frozenset({
     "schema_version", "anime.anidb_id", "anime.tvdb_series_id", "anime.title",
@@ -318,6 +319,7 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  attempt=None, max_attempts=None, cause_reason_code=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
                  failed_check=None, failed_path=None,
+                 context_left=None, context_right=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
                  blocking_job_id=None, operation_id=None) -> dict:
@@ -365,6 +367,11 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                 or any(ord(c) < 32 or ord(c) == 127 for c in failed_path)):
             raise ValueError("invalid failed path")
         details["failed_path"] = failed_path
+    for key, value in (('context_left', context_left), ('context_right', context_right)):
+        if value is not None:
+            if type(value) is not str or not _CONTEXT_IDENTITY.fullmatch(value):
+                raise ValueError('invalid persisted identity diagnostic')
+            details[key] = value
     if observed_audio is not None:
         if type(observed_audio) is not str or len(observed_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in observed_audio):
             raise ValueError("invalid observed audio tags")

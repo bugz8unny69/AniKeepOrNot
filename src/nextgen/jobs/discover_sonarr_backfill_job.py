@@ -175,8 +175,11 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
         except EpisodeContextConflict as exc:
             log.warning('Persisted episode identity conflict: %s != %s',
                         exc.context_left, exc.context_right)
-            return Outcome('review', exc.reason_code,
-                           facts={'failed_check': exc.failed_check})
+            return Outcome('review', exc.reason_code, facts={
+                'failed_check': exc.failed_check,
+                'context_left': exc.context_left,
+                'context_right': exc.context_right,
+            })
         except BackfillConflict:
             return Outcome('review', 'SONARR_BACKFILL_PLAN_CONFLICT',
                            facts={'failed_check': 'src/nextgen/jobs/discover_sonarr_backfill_job.py:175 execute BACKFILL_CONFLICT'})

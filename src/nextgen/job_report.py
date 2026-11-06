@@ -171,6 +171,8 @@ def report(db, job_id, out=print):
         if details.get('failed_path'):
             out(f'    file: {details["failed_path"]}')
             failed_paths.append(details['failed_path'])
+        if details.get('context_left') and details.get('context_right'):
+            out(f'    saved identity conflict: {details["context_left"]} != {details["context_right"]}')
         observation=details.get('metadata_evidence')
         if observation:
             out('    metadata observation (this attempt): '
