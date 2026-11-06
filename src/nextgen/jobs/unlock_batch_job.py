@@ -30,6 +30,7 @@ from src.nextgen.worker import blocking
 
 
 KIND='UNLOCK_BATCH'
+SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Unlock JP+EN-approved trial episodes')
 
 
@@ -195,5 +196,5 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
             Successor.create(next_kind,{
                 'unlock_job_id':value['unlock_job_id'],'file_index':index})
             for index in value['file_indices'])
-    return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist,route=route,
                         successor_kinds=() if next_kind is None else (next_kind,))

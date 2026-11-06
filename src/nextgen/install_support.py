@@ -67,10 +67,13 @@ def units(snapshot,root,config_dir,state_dir,user,origin):
     def service(label,command,media=False):
         mounts=('RequiresMountsFor='+' '.join(quoted(p) for p in roots)+'\n') if media and roots else ''
         dependencies='Requires=anime-discovery-api.service\nBindsTo=anime-discovery-api.service\nAfter=anime-discovery-api.service\n' if media else ''
+        # Worker exit 78 (services/startup.py): a required service is not set
+        # up or rejected its login; restarting cannot fix it, so do not loop.
+        no_restart='RestartPreventExitStatus=78\n' if media else ''
         runtime='' if media else 'Environment=ANIME_DISCOVERY_ADMIN_SOCKET=/run/anime-discovery/admin.sock\nRuntimeDirectory=anime-discovery\nRuntimeDirectoryMode=0700\n'
         return ('[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=5\nDescription=Anime Discovery '+label+'\nPartOf=anime-discovery.target\nWants=network-online.target\nAfter=network-online.target remote-fs.target\n'+dependencies+mounts+
             '\n[Service]\nType=notify\nNotifyAccess=main\nWatchdogSec=60s\n'+runtime+'User='+user+'\nGroup='+user+'\nWorkingDirectory='+current.replace('%','%%')+
-            '\nEnvironment=PYTHONUNBUFFERED=1\nExecStart='+command+'\nRestart=on-failure\nRestartSec=10\nKillMode=mixed\nTimeoutStopSec=infinity\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths='+
+            '\nEnvironment=PYTHONUNBUFFERED=1\nExecStart='+command+'\nRestart=on-failure\nRestartSec=10\n'+no_restart+'KillMode=mixed\nTimeoutStopSec=infinity\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths='+
             ' '.join(quoted(p) for p in dict.fromkeys(base+(roots if media else [])))+'\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n')
     return {'anime-discovery-api.service':service('API',api),
         'anime-discovery-worker.service':service('worker',worker,True),

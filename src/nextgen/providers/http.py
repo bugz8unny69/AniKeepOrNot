@@ -234,21 +234,7 @@ class Clients:
         cached = self.memory.get(key)
         if cached is not None: return cached
         token_key = ("token",fingerprint)
-        bearer = self.memory.get(token_key)
-        if bearer is None:
-            _,reservation = self.store.reserve("tvdb",1000)
-            body = {"apikey":credentials.api_key}
-            raw = self._fetch("tvdb",reservation,TVDB_URL+"/login",body=json.dumps(body).encode())
-            try:
-                document = json_object(raw)
-                bearer = document.get("data",{}).get("token") if type(document.get("data")) is dict else None
-                if type(bearer) is not str or not bearer or len(bearer)>8192 or any(ord(c)<=32 or ord(c)==127 for c in bearer):
-                    raise ProviderInvalidResponse()
-            except ProviderInvalidResponse:
-                self.store.failure("tvdb")
-                raise
-            self.memory.put(token_key,bearer,1800)
-            self.store.success("tvdb",reservation)
+        bearer = self.memory.get(token_key) or self.tvdb_login(credentials)
         # The shared login reservation can defer this GET. Next attempt reuses
         # the in-memory token instead of repeatedly authenticating.
         _,reservation = self.store.reserve("tvdb",1000)
@@ -266,6 +252,59 @@ class Clients:
         self.store.success("tvdb",reservation)
         return value
 
+
+    def tvdb_login(self, credentials):
+        """Log in to TVDB and return the bearer token, kept in memory for 30 minutes.
+
+        Raises ProviderAuthenticationFailed when TVDB rejects the API key.
+        """
+        if type(credentials) is not Credentials: raise ProviderAuthenticationFailed()
+        _,reservation = self.store.reserve("tvdb",1000)
+        body = {"apikey":credentials.api_key}
+        raw = self._fetch("tvdb",reservation,TVDB_URL+"/login",body=json.dumps(body).encode())
+        try:
+            document = json_object(raw)
+            bearer = document.get("data",{}).get("token") if type(document.get("data")) is dict else None
+            if type(bearer) is not str or not bearer or len(bearer)>8192 or any(ord(c)<=32 or ord(c)==127 for c in bearer):
+                raise ProviderInvalidResponse()
+        except ProviderInvalidResponse:
+            self.store.failure("tvdb")
+            raise
+        self.memory.put(("token",credentials.fingerprint()),bearer,1800)
+        self.store.success("tvdb",reservation)
+        return bearer
+
+    def anidb_check(self, aid=1):
+        """One paced AniDB request that proves the client name is accepted.
+
+        Returns None on success, or AniDB's own error text (for example
+        "client version missing or invalid" or "Banned"). AniDB reports these
+        with HTTP 200 and an <error> document. The answer is cached like any
+        other anime record, so it is never requested twice in 24 hours.
+        Raises ProviderDeferred during a cooldown and ProviderUnavailable when
+        AniDB cannot be reached; both are recorded by the shared pacing.
+        """
+        key = "anime:"+str(aid)
+        cached,token = self.store.reserve("anidb",10000,cache_key=key)
+        if cached is not None: return None
+        query = urllib.parse.urlencode({"request":"anime","aid":aid,"protover":1,
+                                      "client":self.options.client_name,"clientver":self.options.client_version})
+        payload = self._fetch("anidb",token,ANIDB_URL+"?"+query)
+        try:
+            error = parsing.xml(payload,"error")
+        except ProviderInvalidResponse:
+            error = None
+        if error is not None:
+            self.store.failure("anidb",minimum_ms=600000)
+            text = " ".join((error.text or "").split())[:200]
+            return text or "unexplained error"
+        try:
+            parsing.anime_record(payload,aid)
+        except ProviderInvalidResponse:
+            self.store.failure("anidb",minimum_ms=600000)
+            raise
+        self.store.public_put("anidb",key,payload,86400000,token)
+        return None
 
     def series(self, tid, credentials):
         return self._tvdb(tid,credentials,("series",),"/series/"+str(tid)+"/extended?meta=translations",

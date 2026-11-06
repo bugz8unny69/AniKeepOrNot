@@ -82,7 +82,7 @@ FIELDS = MappingProxyType({
     "prowlarr.max_resolution": FieldDefinition(1080, "resolution", "next_operation", label="Maximum resolution", help_text="Upper limit for backfill torrents, read from the release title. 1080 keeps 720p and 1080p; 2160 also permits 4K. Titles without a resolution are skipped."),
     "prowlarr.min_seeders": FieldDefinition(5, "integer", "next_operation", minimum=0, maximum=1000000, label="Minimum seeders", help_text="Releases with fewer seeders, or no seeder count, are skipped."),
     "prowlarr.rank_by": FieldDefinition("resolution", "ranking", "next_operation", label="Ranking", help_text="Pick the best release by resolution then seeders, or seeders then resolution."),
-    "sonarr.base_url": FieldDefinition("", "download_endpoint", "next_operation", label="Sonarr address", help_text="HTTP(S) server address for Sonarr v4."),
+    "sonarr.base_url": FieldDefinition("", "download_endpoint", "next_operation", label="Sonarr address", help_text="HTTP(S) server address for Sonarr v4. Blank turns Keep off."),
     "sonarr.timeout_seconds": FieldDefinition(30, "integer", "next_operation", minimum=1, maximum=60, label="Sonarr timeout"),
     "sonarr.quality_profile_id": FieldDefinition(0, "integer", "next_operation", minimum=0, maximum=2147483647, label="Sonarr quality profile ID", help_text="Required for new series. Zero means unconfigured."),
     "sonarr.staging_root": FieldDefinition("", "directory", "next_operation", label="Staging folder as seen by Sonarr", help_text="Blank uses the recorded local staging root."),

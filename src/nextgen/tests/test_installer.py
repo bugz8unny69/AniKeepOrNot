@@ -81,6 +81,9 @@ class InstallerSupportTests(unittest.TestCase):
             self.assertIn('Type=notify',rendered[name])
             self.assertIn('WatchdogSec=60s',rendered[name])
         self.assertIn('BindsTo=anime-discovery-api.service',rendered['anime-discovery-worker.service'])
+        # A misconfigured required service exits 78; systemd must not loop.
+        self.assertIn('RestartPreventExitStatus=78\n',rendered['anime-discovery-worker.service'])
+        self.assertNotIn('RestartPreventExitStatus',rendered['anime-discovery-api.service'])
         self.assertIn('RuntimeDirectoryMode=0700',rendered['anime-discovery-api.service'])
         self.assertIn('ANIME_DISCOVERY_ADMIN_SOCKET=',rendered['anime-discovery-api.service'])
 

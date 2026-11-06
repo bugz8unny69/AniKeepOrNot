@@ -157,6 +157,29 @@ test('release text is rendered as text and Keep never submits while execution is
   h.ctx.fetch = async () => { throw new Error('Keep must not send a request'); };
   await h.run("submitAction(fixture,'keep')");
 });
+test('status bar names each service and Keep is disabled with the Sonarr reason', async () => {
+  const h = await harness();
+  const services = [
+    {service: 'qbittorrent', label: 'qBittorrent', status: 'UP', message: 'qBittorrent is available.', checked_at_ms: 1, stale: false},
+    {service: 'sonarr', label: 'Sonarr', status: 'DOWN', message: 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989', checked_at_ms: 1, stale: false},
+    {service: 'prowlarr', label: 'Prowlarr', status: 'DISABLED', message: 'Prowlarr is turned off (optional).', checked_at_ms: 1, stale: false},
+  ];
+  h.ctx.fetch = async url => { assert.equal(url, '/api/v1/services'); return response({services}); };
+  await h.run('loadServices()');
+  const bar = h.elements.get('service-bar');
+  assert.equal(bar.hidden, false);
+  const text = element => [element.textContent || '', ...element.children.map(text)].join('');
+  assert.deepEqual(bar.children.map(text), ['qBittorrent Available', 'Sonarr Unavailable', 'Prowlarr Off']);
+  assert.ok(bar.children[1].title.startsWith('Sonarr is unavailable: HTTP 503 at http://sonarr:8989'));
+  assert.equal(h.run('keepBlockedMessage()'), 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989');
+  services[1] = {...services[1], stale: true};
+  await h.run('loadServices()');
+  assert.equal(h.run('keepBlockedMessage()'), null);        // A stopped worker's old status never blocks.
+  assert.equal(text(bar.children[1]), 'Sonarr Not checked recently');
+  h.run('clearPrivate()');
+  assert.equal(bar.hidden, true);
+  assert.equal(bar.children.length, 0);
+});
 test('session expiry clears private rows and in-memory session state', async () => {
   const h = await harness(); h.ctx.fixture = target();
   h.run("state.page='jobs'; state.jobs=[fixture]; renderJobs();");

@@ -258,3 +258,13 @@ moves on to the next one. A new table rather than a column, because
 `ALTER TABLE ... ADD COLUMN` on `batch_candidates` (which ends in a table
 constraint) cannot match the fresh schema. Existing data is unchanged; fresh
 SCHEMA and the migration runner match v61.
+
+## v61 → v62: service status
+
+062_service_status.sql adds the `service_status` table: one row per external
+service (qBittorrent, Prowlarr, Sonarr, Jellyfin, Shoko, AniDB, Anime-Lists,
+TVDB) with its last known status, a readable detail and when it was checked.
+The worker writes it; the API reads it for the dashboard status bar and to
+refuse a Keep while Sonarr is unavailable. Existing data is unchanged; fresh
+SCHEMA and the migration runner match v62. See
+[services/README.md](../services/README.md).

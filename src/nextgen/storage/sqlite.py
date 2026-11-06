@@ -798,6 +798,15 @@ CREATE TABLE IF NOT EXISTS identity_candidate_evidence (
 );
 CREATE INDEX IF NOT EXISTS idx_candidate_evidence_job ON identity_candidate_evidence(job_id, attempt, rank);
 CREATE INDEX IF NOT EXISTS idx_candidate_evidence_anidb ON identity_candidate_evidence(anidb_id);
+CREATE TABLE IF NOT EXISTS service_status (
+ service TEXT PRIMARY KEY CHECK(length(service) BETWEEN 1 AND 64),
+ label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 64),
+ status TEXT NOT NULL CHECK(status IN ('UP','DOWN','NOT_CONFIGURED','AUTH_FAILED','UNSUPPORTED','DISABLED','UNKNOWN')),
+ detail TEXT NOT NULL DEFAULT '' CHECK(length(detail) <= 500),
+ since_ms INTEGER NOT NULL CHECK(since_ms >= 0),
+ checked_at_ms INTEGER NOT NULL CHECK(checked_at_ms >= 0),
+ updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0)
+);
 
 CREATE TABLE IF NOT EXISTS batch_candidate_scopes (
  scope_id INTEGER PRIMARY KEY,
@@ -891,7 +900,7 @@ def admitted_connection(gate):
 
 
 def initialize(db):
-    """Initialize a *new* NextGen database at schema v60; never implicitly upgrade.
+    """Initialize a *new* NextGen database at schema LATEST_VERSION; never implicitly upgrade.
 
     Existing v1/v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18/v19/v20/v21/v22 databases require explicit versioned SQL migrations
     before accessing v50 storage.

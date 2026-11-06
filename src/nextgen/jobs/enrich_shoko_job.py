@@ -11,6 +11,7 @@ from src.nextgen.shoko import lookup, ShokoConfiguration, ShokoUnavailable, Shok
 from src.nextgen.storage.sqlite import connect, enqueue_job
 
 KIND='ENRICH_SHOKO_METADATA'
+SERVICES=('shoko',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Read optional Shoko AniDB metadata')
 
 
@@ -80,4 +81,4 @@ def registration(secrets,*,read=lookup):
         except (ShokoUnavailable,SecretStorageError):return Outcome('retry','SHOKO_UNAVAILABLE')
         except (ValueError,TypeError,KeyError):return Outcome('review','SHOKO_METADATA_REVIEW')
         return Outcome(value={'keep_job_id':keep,'metadata':metadata})
-    return Registration(KIND,DEFINITION,execute,persist=_persist)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

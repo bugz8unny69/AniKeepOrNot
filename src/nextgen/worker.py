@@ -17,9 +17,10 @@ from src.nextgen.cancellation import OperationGate, CancellationRequested
 from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError
-from src.nextgen.diagnostics import configure_logging, exception, log_history
+from src.nextgen.diagnostics import configure_logging, event, exception, log_history
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json, failure_facts
 from src.nextgen.reasons import get_reason
+from src.nextgen.services.startup import StartupRefused
 from src.nextgen.maintenance import MaintenanceGate, MaintenanceBusy, MaintenancePending
 from src.nextgen.storage.job_queue import JobQueue, LeaseLost, QueueUnavailable
 
@@ -59,14 +60,23 @@ class Context:
 
 class Worker:
     def __init__(self, configuration_store, startup, registry, *, policy=Policy(), logger=None, prepare=None,
-                 qb_readiness=None, secrets=None):
+                 service_health=None, secrets=None):
         if type(registry) is not Registry or not registry.entries:
             raise WorkerNotReady()
         if prepare is not None and (not callable(prepare) or inspect.iscoroutinefunction(prepare)):
             raise ValueError("worker readiness callback must be synchronous")
         self._prepare = prepare
-        self._qb_readiness = qb_readiness
         self._secrets = secrets
+        # Services needed by at least one registered job kind. Unknown names
+        # are a wiring error and must fail before any job is claimed.
+        self._required = tuple(sorted({s for spec in registry.entries.values() for s in spec.services}))
+        self._service_health = service_health
+        self._service_settings = None
+        self._services_dirty = True     # Saved for the API on the next attempt.
+        self._services_saved_ms = None
+        if service_health is not None:
+            for name in self._required:
+                service_health.registry.get(name)
         self.config, self.startup, self.registry, self.policy = configuration_store, startup, registry, policy
         self.gate = MaintenanceGate(startup.value("storage.database_path"))
         self.queue = JobQueue(self.gate.database, policy=policy)
@@ -122,11 +132,131 @@ class Worker:
         while self._attempts:
             await settle(tuple(self._attempts))
 
-    def _log_readiness_error(self, exc):
-        from src.nextgen.acquisition.readiness import error_reason
-        reason = error_reason(exc)
-        exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
-                  reason_code=reason, component="worker")
+    def _log_service_changes(self, changes):
+        """Log each service status change once: down, or available again.
+
+        A first success (UNKNOWN to UP) is not a recovery and is not logged.
+        """
+        from src.nextgen.services import USABLE
+        for change in changes:
+            if not change.state.usable:
+                name, level = "SERVICE_DOWN", logging.WARNING
+            elif change.old not in USABLE:
+                name, level = "SERVICE_RESTORED", logging.INFO
+            else:
+                continue
+            event(self.logger, level, name, component="worker", service=change.service,
+                  service_status=change.new, service_detail=change.state.message())
+        if changes:
+            self._services_dirty = True
+
+    async def _save_services(self):
+        """Write service status for the API (dashboard status bar, Keep check).
+
+        Written on every change, and at least once a minute so the API can tell
+        a running worker from one that stopped checking. A failed write is
+        logged and never stops processing.
+        """
+        health = self._service_health
+        if health is None:
+            return
+        now = health.now()
+        if not self._services_dirty and self._services_saved_ms is not None \
+                and now - self._services_saved_ms < 60000:
+            return
+        from src.nextgen.services import status_store
+        try:
+            await self._io(status_store.save, self.startup.value("storage.database_path"),
+                           health.snapshot(), now_ms=now)
+        except Exception as exc:
+            exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
+                      reason_code="STORAGE_UNAVAILABLE", component="worker")
+        self._services_dirty = False
+        self._services_saved_ms = now
+
+    async def _check_services_at_startup(self):
+        """Check every service once; refuse to start if a required one is misconfigured."""
+        from src.nextgen.services import status_store
+        from src.nextgen.services.startup import StartupRefused, refusals
+        config = await self._io(self.config.operation, self.startup, component="worker")
+        previous = await self._io(status_store.load, self.startup.value("storage.database_path"))
+        changes = await self._io(self._service_health.startup, config, self._secrets, previous)
+        self._log_service_changes(changes)
+        await self._save_services()
+        refused = refusals(self._service_health)
+        if refused:
+            for state in refused:
+                event(self.logger, logging.ERROR, "SERVICE_STARTUP_REFUSED", component="worker",
+                      reason_code="SERVICE_SETUP_INVALID", service=state.service,
+                      service_status=state.status, service_detail=state.message())
+            raise StartupRefused(refused)
+
+    def _settings_key(self, configuration):
+        """Settings and credentials revisions; a change makes every service due for a recheck."""
+        try:
+            credentials = self._secrets.status().revision
+        except Exception:
+            credentials = None
+        return getattr(configuration, 'desired_revision', None), credentials
+
+    def _waiting_kinds(self):
+        """Job kinds that must not be claimed because a service they need is unavailable."""
+        health = self._service_health
+        if health is None:
+            return None
+        kinds = tuple(kind for kind, spec in self.registry.entries.items()
+                      if spec.services and health.unavailable(spec.services))
+        return kinds or None
+
+    def _waiting_outcome(self, service, cause=None, facts=None):
+        """Wait for an unavailable service: no retry is spent, and the details name it."""
+        details = {k: v for k, v in (facts or {}).items() if k in ("failed_check", "failed_path")}
+        details["service"] = service
+        details["service_detail"] = self._service_health.state(service).message()[:300]
+        if cause is not None:
+            details["cause_reason_code"] = cause
+        return Outcome("defer", "SERVICE_UNAVAILABLE", delay_ms=self.policy.service_wait_ms, facts=details)
+
+    def _service_wait(self, spec, outcome):
+        """A retry caused by an unavailable service becomes a wait instead."""
+        health = self._service_health
+        if (health is None or spec is None or not spec.services or outcome.kind != "retry"
+                or outcome.reason_code is None):
+            return outcome
+        from src.nextgen.services import DOWN
+        for service in spec.services:
+            if health.registry.get(service).status_for_reason(outcome.reason_code) == DOWN:
+                return self._waiting_outcome(service, outcome.reason_code, outcome.facts)
+        return outcome
+
+    def _exception_wait(self, spec, exc):
+        """An uncaught client error that means a needed service is down: wait, not fail."""
+        health = self._service_health
+        if health is None or spec is None or not spec.services:
+            return None
+        from src.nextgen.services import DOWN
+        for service in spec.services:
+            if health.registry.get(service).classify(exc) == DOWN:
+                self._log_service_changes(tuple(c for c in (health.mark_failed(service, exc),) if c))
+                return self._waiting_outcome(service, None, failure_facts(exc))
+        return None
+
+    def _observe_services(self, spec, outcome):
+        """Passive health: a job's own result marks its services without another request."""
+        health = self._service_health
+        if health is None or spec is None or not spec.services:
+            return
+        changes = []
+        for service in spec.services:
+            change = None
+            if outcome.reason_code is not None:
+                change = health.mark_reason(service, outcome.reason_code,
+                                            detail=f'a {spec.kind} job reported {outcome.reason_code}')
+            elif outcome.kind == "complete":
+                change = health.mark_succeeded(service)
+            if change is not None:
+                changes.append(change)
+        self._log_service_changes(changes)
 
     def _log_error(self, exc, claim=None):
         reason = getattr(exc, "reason_code", "JOB_HANDLER_FAILED")
@@ -173,6 +303,9 @@ class Worker:
                 # Storage/configuration failure is not a provider retry decision.
                 raise
             except Exception as exc:
+                waiting = self._exception_wait(spec, exc)
+                if waiting is not None:
+                    return waiting
                 # Catch-boundary diagnostic with exact redacted error
                 exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
@@ -219,12 +352,18 @@ class Worker:
                 result = await self._io(self._prepare,configuration)
                 if result is not None:
                     raise ValueError("readiness callback must not return values")
-            exclude_kinds = None
-            if self._qb_readiness is not None and self._secrets is not None:
-                is_ready = await self._io(self._qb_readiness.is_ready, configuration, self._secrets)
-                if not is_ready:
-                    from src.nextgen.acquisition.readiness import ACQUISITION_KINDS
-                    exclude_kinds = ACQUISITION_KINDS
+            if self._service_health is not None and self._secrets is not None and self._required:
+                key = await self._io(self._settings_key, configuration)
+                if key != self._service_settings:
+                    # A fixed address, key or password is checked at once,
+                    # not after the down-service backoff.
+                    if self._service_settings is not None:
+                        self._service_health.recheck_all()
+                    self._service_settings = key
+                changes = await self._io(self._service_health.probe_due, configuration, self._secrets)
+                self._log_service_changes(changes)
+                await self._save_services()
+            exclude_kinds = self._waiting_kinds()
             claim, audits = await self._io(self.queue.claim,halted=self._halt_claims.is_set,exclude_kinds=exclude_kinds)
             if claim is None:
                 return False
@@ -259,6 +398,9 @@ class Worker:
                         self.logger.warning("Audit logging failed for job %s: %s", claim.job_id, log_exc)
                     context = Context(claim,configuration,logger,threading.Event())
                     outcome = await self._invoke(claim,spec,context)
+            self._observe_services(spec, outcome)
+            outcome = self._service_wait(spec, outcome)
+            await self._save_services()
             try:
                 records = await self._io(self.queue.finish,claim,outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
@@ -337,12 +479,8 @@ class Worker:
                 if not self._paused:
                     await self._recover()
                     if not ready:
-                        if self._qb_readiness is not None and self._secrets is not None:
-                            try:
-                                config = await self._io(self.config.operation, self.startup, component="worker")
-                                await self._io(self._qb_readiness.check, config, self._secrets)
-                            except Exception as exc:
-                                self._log_readiness_error(exc)
+                        if self._service_health is not None and self._secrets is not None:
+                            await self._check_services_at_startup()
                         ready = True
                         if on_ready is not None:
                             on_ready()
@@ -360,6 +498,8 @@ class Worker:
                         await asyncio.wait_for(self._stop.wait(),timeout=self.policy.poll_ms/1000)
                     except asyncio.TimeoutError:
                         pass
+        except StartupRefused:
+            raise                     # Already logged, one line per service.
         except Exception as exc:
             self._log_error(exc)
             self.stop()

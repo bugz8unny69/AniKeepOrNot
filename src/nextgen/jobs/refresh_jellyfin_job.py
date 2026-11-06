@@ -8,6 +8,7 @@ from src.nextgen.secrets import SecretStorageError
 from src.nextgen.storage.sqlite import connect, enqueue_job
 
 KIND='REFRESH_JELLYFIN'
+SERVICES=('jellyfin',)  # External services this job needs; see services/README.md.
 DEFINITION=HandlerDefinition(KIND,'Request Jellyfin library scan')
 
 
@@ -41,4 +42,4 @@ def registration(secrets,*,refresh=request_refresh):
         except RefreshReview:return Outcome('review','JELLYFIN_REFRESH_REVIEW')
         except (ValueError,TypeError):return Outcome('review','JOB_PAYLOAD_INVALID')
         return Outcome()
-    return Registration(KIND,DEFINITION,execute)
+    return Registration(KIND,DEFINITION,execute,services=SERVICES)
