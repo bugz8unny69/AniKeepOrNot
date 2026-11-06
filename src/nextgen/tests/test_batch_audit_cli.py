@@ -1,4 +1,4 @@
-"""WI-16: adm batch-audit previews read-only and applies only the previewed plan."""
+"""WI-16: adm recover batch-audit previews read-only and applies only the previewed plan."""
 import contextlib
 import io
 import json
@@ -7,7 +7,15 @@ import sqlite3
 import tempfile
 import unittest
 
-from src.nextgen.batch.backlog_audit import main
+from src.nextgen.job_recovery import main as recover
+
+
+def main(argv, **kwargs):
+    """Through adm recover, as an operator runs it."""
+    if kwargs:
+        from src.nextgen.batch.backlog_audit import main as audit
+        return audit(argv, **kwargs)
+    return recover(['batch-audit', *argv])
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.storage.sqlite import enqueue_job, initialize, transaction
 
@@ -59,7 +67,7 @@ class BatchAuditCliTests(unittest.TestCase):
 
     def test_preview_then_apply_exactly_that_plan(self):
         before = self.snapshot()
-        code, out, _ = self.run_cli('preview')
+        code, out, _ = self.run_cli()
         self.assertEqual(code, 0)
         self.assertIn('dry run: nothing is changed', out)
         self.assertIn('qBittorrent was not checked', out)          # Reported, not silently skipped.
@@ -67,14 +75,14 @@ class BatchAuditCliTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         token = out.split('--plan-token ')[1].split()[0]
 
-        code, _, err = self.run_cli('apply')
+        code, _, err = self.run_cli('--apply')
         self.assertEqual(code, 2)                                   # A token is required.
-        code, _, err = self.run_cli('apply', '--plan-token', 'stale')
+        code, _, err = self.run_cli('--apply', '--plan-token', 'stale')
         self.assertEqual(code, 1)
         self.assertIn('plan changed', err)
         self.assertEqual(self.snapshot(), before)
 
-        code, out, _ = self.run_cli('apply', '--plan-token', token)
+        code, out, _ = self.run_cli('--apply', '--plan-token', token)
         self.assertEqual(code, 0)
         self.assertIn('requested cleanup of 1 duplicate operations', out)
         with self.connect() as db:
@@ -105,6 +113,22 @@ class ReadOnlyQb:
 
     def __getattr__(self, name):
         raise AssertionError(f'the audit must not call qBittorrent {name}')
+
+
+class AdmRoutingTests(unittest.TestCase):
+    def test_the_audit_lives_under_adm_recover_only(self):
+        from unittest import mock
+        from src.nextgen.api import adm
+        with mock.patch('src.nextgen.job_recovery.main', return_value=0) as recover, \
+                mock.patch('sys.argv', ['adm', 'recover', 'batch-audit', '--apply', '--plan-token', 't']), \
+                self.assertRaises(SystemExit) as done:
+            adm.main()
+        self.assertEqual(done.exception.code, 0)
+        recover.assert_called_once_with(['batch-audit', '--apply', '--plan-token', 't'])
+        with mock.patch('sys.argv', ['adm', 'batch-audit']), contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit) as old:
+            adm.main()
+        self.assertEqual(old.exception.code, 2)                 # The old top-level command is gone.
 
 
 class TenReleaseAuditTests(unittest.TestCase):
@@ -162,7 +186,7 @@ class TenReleaseAuditTests(unittest.TestCase):
         before = self.database.read_bytes()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = main(['preview', '--json', '--config-dir', str(self.root)], qb_client_factory=self.qb)
+            code = main(['--json', '--config-dir', str(self.root)], qb_client_factory=self.qb)
         self.assertEqual(code, 0)
         report = json.loads(out.getvalue())
         self.assertIsNone(report['qbittorrent_note'])                 # It really logged in and read.
@@ -194,7 +218,7 @@ class TenReleaseAuditTests(unittest.TestCase):
                 raise ClientUnavailable()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            main(['preview', '--config-dir', str(self.root)], qb_client_factory=Down({}))
+            main(['--config-dir', str(self.root)], qb_client_factory=Down({}))
         self.assertIn('qBittorrent was not checked (ClientUnavailable', out.getvalue())
         self.assertIn('10 known candidate(s), 0 with a file list', out.getvalue())
 

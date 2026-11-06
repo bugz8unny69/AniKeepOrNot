@@ -1,11 +1,11 @@
 """Batch backlog audit, dry run and safe consolidation (WI-08, WI-16).
 
-`adm batch-audit preview` lists, read-only, what consolidation would change:
+`adm recover batch-audit` (a preview) lists, read-only, what consolidation would change:
 for each anime season, the operations and jobs found, the one operation that
 stays (the primary), the duplicate operations that would be cancelled and
 the candidates that would be registered with the series-scoped controller.
 
-`adm batch-audit apply --plan-token TOKEN` applies exactly that plan. It
+`adm recover batch-audit --apply --plan-token TOKEN` applies exactly that plan. It
 refuses if anything changed since the preview. Duplicates are never marked
 cleaned directly: their cancellation is requested through the established
 lifecycle and the existing cleanup job does the rest. Running jobs drain
@@ -287,7 +287,7 @@ def apply_batch_consolidation(db, audit, *, now_ms=None):
         f"seasons and linked {result['primaries_linked']} primary operations.\n"
         f"Cleanup: requested cleanup of {result['cleanups_requested']} duplicate operations. This is NOT "
         f"completed cleanup: the worker's cleanup jobs drain them, remove only owned torrents and release "
-        f"reservations. Run 'adm batch-audit preview' to see cleanup still in progress."
+        f"reservations. Run 'adm recover batch-audit' to see cleanup still in progress."
         + (f"\nNeeds review: {len(result['needs_review'])}." if result['needs_review'] else ''))
     return result
 
@@ -334,19 +334,21 @@ def _print_plan(audit, qb_note):
         print(f"\nOperation {o['operation_id']} ({o['state']}) has no verified anime/season; left unchanged.")
     print(f"\nTorrents: owned {audit['owned_torrents']}, foreign {audit['foreign_torrents']}, "
           f"uncertain {audit['uncertain_torrents']} (foreign and uncertain torrents are never touched).")
-    print(f"\nTo apply exactly this plan: adm batch-audit apply --plan-token {audit['plan_token']}\n")
+    print(f"\nTo apply exactly this plan: adm recover batch-audit --apply --plan-token {audit['plan_token']}\n")
 
 
 def main(argv=None, *, qb_client_factory=None):
-    p = argparse.ArgumentParser(prog='adm batch-audit',
-                                description='Batch backlog audit and consolidation (WI-08, WI-16)')
-    p.add_argument('action', choices=('preview', 'apply'), nargs='?', default='preview')
+    p = argparse.ArgumentParser(prog='adm recover batch-audit',
+                                description='Batch backlog audit and consolidation. Without --apply this is '
+                                            'a read-only preview (WI-08, WI-16).')
+    p.add_argument('--apply', action='store_true', help='Apply the previewed plan (requires --plan-token)')
     p.add_argument('--config-dir', default=os.environ.get('NEXTGEN_CONFIG_DIR', '/etc/anime-discovery'))
     p.add_argument('--plan-token', help='Token printed by preview; apply refuses a changed plan')
     p.add_argument('--json', action='store_true', help='Print JSON')
     args = p.parse_args(argv)
-    if args.action == 'apply' and not args.plan_token:
-        p.error('apply requires --plan-token from a preview')
+    args.action = 'apply' if args.apply else 'preview'
+    if args.apply and not args.plan_token:
+        p.error('--apply requires --plan-token from a preview')
 
     import logging
     from src.nextgen.configuration import ConfigurationStore
@@ -380,7 +382,7 @@ def main(argv=None, *, qb_client_factory=None):
     with queue.connection() as db, transaction(db):
         audit = audit_batch_backlog(db, observations=observations)
         if audit['plan_token'] != args.plan_token:
-            print('The plan changed since the preview. Run "adm batch-audit preview" again.', file=sys.stderr)
+            print('The plan changed since the preview. Run "adm recover batch-audit" again.', file=sys.stderr)
             return 1
         result = apply_batch_consolidation(db, audit)
     logger = logging.getLogger('anime-discovery.batch-audit')
