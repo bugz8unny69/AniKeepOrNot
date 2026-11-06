@@ -675,3 +675,121 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_prowlarr_unavailable_defers_then_blocks_with_diagnostics(self):
         await self._run_prowlarr_retry_diagnostic(SearchUnavailable)
+
+    def test_job_7264_spaced_titles_survive_recognition_keys(self):
+        """Reproduce the literal collapsed Prowlarr query from Job #7264."""
+        from src.nextgen.providers.parsing import norm
+        from src.nextgen.acquisition.prowlarr_search import search_aliases
+
+        self.setUpFixture()
+        japanese = '目覚めたら最強装備と宇宙船持ちだったので'
+        english = 'Reborn as a Space Mercenary I Woke Up Piloting the Strongest Starship'
+        romaji = 'Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de'
+        compact = norm(english)
+        self.assertEqual(
+            compact, 'rebornasaspacemercenaryiwokeuppilotingthestrongeststarship'
+        )
+
+        db = connect(self.database)
+        try:
+            _, _, verification = seed_plan(
+                db, 19, self.aid, self.tid, anchor_ep=1, title=japanese
+            )
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO recognized_seasons(tvdb_series_id,tvdb_season,anidb_id,"
+                    "display_title,evidence_verification_id,recognized_at_ms) "
+                    "VALUES(?,1,?,?,?,1000)",
+                    (self.tid, self.aid, japanese, verification),
+                )
+                db.execute(
+                    "INSERT INTO recognized_aliases(alias_key,tvdb_season,tvdb_series_id,anidb_id) "
+                    "VALUES(?,1,?,?)", (compact, self.tid, self.aid)
+                )
+                db.execute(
+                    "INSERT INTO anime_title_metadata(anidb_id,english_title,romaji_title) "
+                    "VALUES(?,?,?)", (self.aid, english, romaji)
+                )
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,"
+                    "tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) "
+                    "VALUES(19,2,1,2,?,?,1000)",
+                    (self.tvdb_ep_id, 'aa' * 20)
+                )
+            context = load_authoritative_episode_context(db, 19, 2)
+        finally:
+            db.close()
+
+        self.assertEqual(context.titles[0], japanese)
+        self.assertIn(english, context.titles)
+        self.assertIn(romaji, context.titles)
+        self.assertNotIn(compact, context.titles)
+        self.assertEqual(context.english_title, english)
+
+        # No catalogue or live provider request should rebuild known identity.
+        requests = []
+        def unavailable_catalog(*args):
+            raise AssertionError('Saved identity must not reload provider catalogue')
+        client = Client(
+            Options('http://127.0.0.1:9696', 60), 'key',
+            catalog=unavailable_catalog,
+            policy=DiscoveryPolicy(prefer_audio_tag=True),
+        )
+        client._get = lambda query: requests.append(query) or []
+        result = client.search(self.aid, self.ep, context)
+        self.assertEqual(result.tvdb_episode_id, self.tvdb_ep_id)
+        self.assertIn(f'{english} S01E02', requests)
+        self.assertTrue(any('Dual-Audio' in query for query in requests))
+        self.assertTrue(all(compact not in query for query in requests))
+        self.assertLessEqual(len(requests), 6)
+
+        # A legacy compact value must also lose deduplication precedence to
+        # the exact same alias when a human-readable spelling is available.
+        self.assertEqual(
+            search_aliases((compact, english), english_title=english),
+            (english,)
+        )
+
+    def test_recognition_key_alone_is_not_a_searchable_alias(self):
+        """Do not silently send an unspaced key when no readable Latin title exists."""
+        from src.nextgen.providers.parsing import norm
+
+        self.setUpFixture()
+        japanese = '目覚めたら最強装備と宇宙船持ちだったので'
+        english = 'Reborn as a Space Mercenary I Woke Up Piloting the Strongest Starship'
+        compact = norm(english)
+        db = connect(self.database)
+        try:
+            _, _, verification = seed_plan(
+                db, 19, self.aid, self.tid, anchor_ep=1, title=japanese
+            )
+            with transaction(db):
+                db.execute(
+                    "INSERT INTO recognized_seasons(tvdb_series_id,tvdb_season,anidb_id,"
+                    "display_title,evidence_verification_id,recognized_at_ms) "
+                    "VALUES(?,1,?,?,?,1000)",
+                    (self.tid, self.aid, japanese, verification),
+                )
+                db.execute(
+                    "INSERT INTO recognized_aliases(alias_key,tvdb_season,tvdb_series_id,anidb_id) "
+                    "VALUES(?,1,?,?)", (compact, self.tid, self.aid)
+                )
+                db.execute(
+                    "INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,"
+                    "tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) "
+                    "VALUES(19,2,1,2,?,?,1000)",
+                    (self.tvdb_ep_id, 'aa' * 20),
+                )
+            context = load_authoritative_episode_context(db, 19, self.ep)
+        finally:
+            db.close()
+
+        self.assertNotIn(compact, context.titles)
+        requested = []
+        client = Client(Options('http://127.0.0.1:9696', 60), 'key',
+                        policy=DiscoveryPolicy(prefer_audio_tag=True))
+        client._get = lambda query: requested.append(query) or []
+        with self.assertRaises(SearchReview) as error:
+            client.search(self.aid, self.ep, context)
+        self.assertIn('SEARCH_QUERIES_EMPTY', error.exception.failed_check)
+        self.assertEqual(requested, [])

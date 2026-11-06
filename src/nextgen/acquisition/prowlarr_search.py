@@ -254,7 +254,7 @@ def _magnet_hash(uri):
 
 def search_aliases(titles, *, english_title=None):
     """Up to three distinct Latin-script titles; AniDB main title first, then AniDB English title when known, then synonyms."""
-    picked, seen = [], set()
+    picked, indices = [], {}
     from src.nextgen.providers.parsing import norm
     candidates = []
     for title in titles:
@@ -262,9 +262,20 @@ def search_aliases(titles, *, english_title=None):
                 or any(ord(c) < 32 for c in title)):
             continue
         key = norm(title)
-        if key and key not in seen:
-            seen.add(key)
+        if not key:
+            continue
+        if key not in indices:
+            indices[key] = len(candidates)
             candidates.append(title)
+        else:
+            # An old saved title may itself be a normalized lookup key.
+            # For the SAME identity, prefer the readable spelling (spaces,
+            # punctuation) over an unbroken token before composing queries.
+            index = indices[key]
+            existing = candidates[index]
+            if (all(ch.isalnum() for ch in existing)
+                    and any(not ch.isalnum() for ch in title)):
+                candidates[index] = title
 
     if not candidates:
         return ()
