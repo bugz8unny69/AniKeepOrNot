@@ -6,7 +6,7 @@ import unittest
 from src.nextgen.acquisition.submission import Observation, ClientUnavailable
 from src.nextgen.acquisition.transfers import TransferSnapshot, verify_snapshot, exact_selection
 from src.nextgen.job_contracts import Policy, Registry
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.jobs.prepare_acquisition_job import registration as prepare
 from src.nextgen.jobs.submit_torrent_job import registration as submit

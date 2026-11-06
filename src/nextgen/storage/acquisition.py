@@ -110,7 +110,7 @@ def persist_acquisition(db,claim,value):
     validate_declaration(source,manifest)
     admission=None
     if type(manifest) is ObservedInventory:
-        from src.nextgen.storage.sonarr_magnet_intake import _prior, _verified_candidate
+        from src.nextgen.storage.magnet_intake import _prior, _verified_candidate
         _verified_candidate(db,source)
         admission=_prior(db,source.event_id)
         inventory=db.execute('SELECT inventory_json FROM sonarr_magnet_intents WHERE event_id=?',

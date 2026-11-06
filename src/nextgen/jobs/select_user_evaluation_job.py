@@ -8,8 +8,8 @@ from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
 from src.nextgen.history import append_job_history
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor
-from src.nextgen.storage.trials import load_trial_source, persist_trial
-from src.nextgen.trial_policy import Window, TrialProposal, TrialConflict
+from src.nextgen.storage.user_evaluations import load_user_evaluation_source, persist_user_evaluation
+from src.nextgen.user_evaluation_policy import Window, UserEvaluationProposal, UserEvaluationConflict
 from src.nextgen.worker import blocking
 
 KIND='EVALUATE_TRIAL'
@@ -18,7 +18,7 @@ DEFINITION=HandlerDefinition(KIND,'Evaluate Intake episode selection')
 
 @dataclass(frozen=True)
 class EvaluationCompletion:
-    proposal: TrialProposal
+    proposal: UserEvaluationProposal
     evaluation_job_id: int
     # English audio required and the autobrr title has no audio tag: do not
     # download this delivery; its episode is searched in Prowlarr instead.
@@ -31,21 +31,21 @@ def _persist(db,claim,value,*,discovery_kind=None):
     from src.nextgen.storage.review_decisions import require_allowed, AnimeRejected
     try:
         require_allowed(db,value.proposal.source.anidb_id)
-        receipts=(persist_trial(db,claim,value.proposal),)
+        receipts=(persist_user_evaluation(db,claim,value.proposal),)
         if value.audio_search:
             # Written before the first search is scheduled: the search window
             # reads this event to include the anchor episode.
-            from src.nextgen.storage.sonarr_backfill import AUDIO_SEARCH_EVENT
+            from src.nextgen.storage.episode_discovery import AUDIO_SEARCH_EVENT
             receipts+=(append_job_history(db,job_id=claim.job_id,event_code=AUDIO_SEARCH_EVENT,
                 reason_code='RELEASE_AUDIO_UNTAGGED',component='worker',
                 occurred_at_ms=time.time_ns()//1000000,details={'attempt':claim.attempt}),)
         if discovery_kind is not None:
-            from src.nextgen.storage.sonarr_backfill import schedule_first, BackfillConflict
+            from src.nextgen.storage.episode_discovery import schedule_first, BackfillConflict
             try: receipts+=schedule_first(db,claim,value.proposal.source,kind=discovery_kind)
             except BackfillConflict:raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
         return receipts
     except AnimeRejected as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
-    except TrialConflict as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
+    except UserEvaluationConflict as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
 
 
 def registration(*, reservation_kind=None, discovery_kind=None):
@@ -62,12 +62,12 @@ def registration(*, reservation_kind=None, discovery_kind=None):
             job=integer(payload['verification_job_id'],positive=True)
         except (ValueError,TypeError):return Outcome('review','JOB_PAYLOAD_INVALID')
         try:
-            source,(origin,title)=await blocking(load_trial_source,context.configuration.value('storage.database_path'),
+            source,(origin,title)=await blocking(load_user_evaluation_source,context.configuration.value('storage.database_path'),
                                                  job,context.claim.event_id,with_delivery=True)
-            value=TrialProposal(source,Window(context.configuration.value('trial.backfill_count'),
+            value=UserEvaluationProposal(source,Window(context.configuration.value('trial.backfill_count'),
                                              context.configuration.value('trial.following_count')),
                                 context.configuration.desired_revision)
-        except TrialConflict:return Outcome('review','TRIAL_PLAN_CONFLICT')
+        except UserEvaluationConflict:return Outcome('review','TRIAL_PLAN_CONFLICT')
         # Gate the webhook release; Prowlarr uses the same eligibility rule.
         audio_search=(discovery_kind is not None and origin=='autobrr'
                       and wants_english(context.configuration.value('acquisition.audio_check'))

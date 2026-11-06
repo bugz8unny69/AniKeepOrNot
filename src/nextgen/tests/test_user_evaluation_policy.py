@@ -9,15 +9,15 @@ from unittest.mock import patch
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError, CONVERSIONS, convert_document, ConfigurationSnapshot
 from src.nextgen.job_contracts import Outcome, Policy, Registry, Successor
-from src.nextgen.jobs.evaluate_trial_job import registration
+from src.nextgen.jobs.select_user_evaluation_job import registration
 from src.nextgen.storage.job_queue import LeaseLost
 from src.nextgen.storage.sqlite import connect, initialize, accept_event_and_job, save_identity, enqueue_job, transaction
-from src.nextgen.storage.trials import load_trial_source
-from src.nextgen.trial_policy import Window, TrialProposal, InvalidEpisodeCounts
+from src.nextgen.storage.user_evaluations import load_user_evaluation_source
+from src.nextgen.user_evaluation_policy import Window, UserEvaluationProposal, InvalidEpisodeCounts
 from src.nextgen.worker import Worker
 
 
-class TrialWindowTests(unittest.TestCase):
+class UserEvaluationWindowTests(unittest.TestCase):
     def test_following_includes_trigger_and_overlaps_count_once(self):
         self.assertEqual(Window(6,1).episodes(10),(1,2,3,4,5,6,10))
         self.assertEqual(Window(0,1).episodes(10),(10,))
@@ -57,7 +57,7 @@ class TrialWindowTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'trial':{'backfill_count':value}})
 
 
-class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
+class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temporary=tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -163,7 +163,7 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(plans[0][1],(10,20))
         self.assertEqual(self.rows('SELECT count(*),sum(selected),count(DISTINCT plan_id) FROM trial_evaluations'),[(2,1,1)])
 
-    async def test_failed_completion_rolls_back_plan_decision_and_trial_marker(self):
+    async def test_failed_completion_rolls_back_plan_decision_and_user_evaluation_marker(self):
         self.source(10)
         spec=replace(registration(),route=lambda value:(Successor.create('NOT_ALLOWED',{}),))
         worker=self.worker(spec)
@@ -172,14 +172,14 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.rows('SELECT count(*) FROM '+table),[(0,)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='TRIAL_EVALUATED'"),[(0,)])
 
-    async def test_stale_lease_cannot_create_a_trial_plan(self):
+    async def test_stale_lease_cannot_create_a_user_evaluation_plan(self):
         event,release_job,_=self.source(10)
         worker=self.worker()
         worker.queue.clock=lambda:1000
         claim,_=worker.queue.claim()
         spec=worker.registry.entries['EVALUATE_TRIAL']
         worker.queue.start(claim,spec,'a'*32,worker.registry)
-        value=TrialProposal(load_trial_source(self.database,release_job,event),Window(),1)
+        value=UserEvaluationProposal(load_user_evaluation_source(self.database,release_job,event),Window(),1)
         worker.queue.clock=lambda:31000
         with self.assertRaises(LeaseLost):
             worker.queue.finish(claim,Outcome(value=value),spec=spec,invocation='a'*32,registry=worker.registry)
@@ -189,7 +189,7 @@ class TrialEvaluationTests(unittest.IsolatedAsyncioTestCase):
 class AniDBWindowTests(unittest.TestCase):
     """Spec §0: single-episode selection in AniDB numbers (season packs unchanged)."""
     def test_spec_examples(self):
-        from src.nextgen.trial_policy import Window
+        from src.nextgen.user_evaluation_policy import Window
         cases = ((1, 6, 3, range(1, 7)), (5, 6, 3, range(1, 8)), (8, 6, 3, range(2, 11)),
                  (1000, 6, 3, range(994, 1003)), (1000, 0, 6, range(1000, 1006)))
         for anchor, backfill, following, expected in cases:
@@ -197,11 +197,11 @@ class AniDBWindowTests(unittest.TestCase):
                 self.assertEqual(Window(backfill, following).anidb_episodes(anchor), tuple(expected))
 
     def test_backfill_only_and_large_numbers(self):
-        from src.nextgen.trial_policy import Window
+        from src.nextgen.user_evaluation_policy import Window
         self.assertEqual(Window(6, 0).anidb_episodes(1000), tuple(range(994, 1000)))
         self.assertEqual(Window(6, 0).anidb_episodes(3), tuple(range(1, 7)))
         self.assertEqual(Window(2, 2).anidb_episodes(5000), (4998, 4999, 5000, 5001))
 
     def test_season_pack_window_is_unchanged(self):
-        from src.nextgen.trial_policy import Window
+        from src.nextgen.user_evaluation_policy import Window
         self.assertEqual(Window(6, 3).episodes(10), (1, 2, 3, 4, 5, 6, 10, 11, 12))

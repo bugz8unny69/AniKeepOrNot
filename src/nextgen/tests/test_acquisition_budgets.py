@@ -3,7 +3,7 @@ import asyncio
 import unittest
 from dataclasses import replace
 from src.nextgen.job_contracts import Policy, Registry, Successor
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.jobs.prepare_acquisition_job import registration as prepare
 from src.nextgen.storage.sqlite import connect, transaction

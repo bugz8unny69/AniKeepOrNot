@@ -7,8 +7,8 @@ from src.nextgen.history import integer, append_job_history
 from src.nextgen.storage.job_queue import QueueUnavailable
 from src.nextgen.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.nextgen.storage.releases import _source as release_source
-from src.nextgen.storage.trials import _source as trial_source
-from src.nextgen.trial_policy import Window, TrialConflict
+from src.nextgen.storage.user_evaluations import _source as user_evaluation_source
+from src.nextgen.user_evaluation_policy import Window, UserEvaluationConflict
 from src.nextgen.release_contracts import ReleaseNotReady
 
 
@@ -26,11 +26,11 @@ def _facts(db,evaluation_job_id,event_id):
     (verification,plan,selected,reason,release_job,aid,eid,tid,season,episode,tveid,
      identity,digest,plan_aid,plan_tid,plan_season,order,anchor,backfill,following,anchor_id)=row
     try:
-        source=trial_source(db,release_job,event_id)
+        source=user_evaluation_source(db,release_job,event_id)
         original=release_source(db,event_id,aid)
         # The window is in AniDB numbers; TVDB placement stays per episode.
         expected=source.anidb_episode_number in Window(backfill,following).anidb_episodes(anchor)
-    except (TrialConflict,ReleaseNotReady,ValueError,TypeError):raise ReservationConflict() from None
+    except (UserEvaluationConflict,ReleaseNotReady,ValueError,TypeError):raise ReservationConflict() from None
     if (source.verification_id!=verification or original.identity_result_id!=identity or
             original.release_sha256!=digest or original.tvdb_series_id!=tid or
             (source.tvdb_season,source.tvdb_episode)!=(season,episode) or

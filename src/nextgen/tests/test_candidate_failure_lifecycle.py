@@ -10,7 +10,7 @@ from unittest.mock import patch
 from src.nextgen.job_contracts import Outcome, Policy
 from src.nextgen.storage.cancellation import CancellationStore, cancel_job
 from src.nextgen.storage.job_queue import JobQueue
-from src.nextgen.storage.sonarr_candidates import (
+from src.nextgen.storage.release_candidates import (
     activate_candidate, fail_candidate, next_candidate,
     auto_cleanup_failed_candidate, schedule_after_cleanup,
 )

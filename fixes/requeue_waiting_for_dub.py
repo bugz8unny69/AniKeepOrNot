@@ -26,7 +26,7 @@ from fixes.cleanup_legacy_not_listed import backup, configured_database, open_da
 from src.nextgen.acquisition.audio import wants_english  # noqa: E402
 from src.nextgen.configuration_schema import FIELDS  # noqa: E402
 from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
-from src.nextgen.storage.sonarr_backfill import audio_exhausted  # noqa: E402
+from src.nextgen.storage.episode_discovery import audio_exhausted  # noqa: E402
 
 REASON = 'SONARR_CANDIDATES_EXHAUSTED'
 ROWS = """

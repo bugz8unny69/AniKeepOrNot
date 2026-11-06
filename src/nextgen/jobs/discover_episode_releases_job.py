@@ -16,7 +16,7 @@ from src.nextgen.providers.errors import (
     ProviderAuthenticationFailed, ProviderDeferred, ProviderInvalidResponse, ProviderUnavailable,
 )
 from src.nextgen.release_contracts import ReleaseConflict, ReleaseNotReady
-from src.nextgen.storage.sonarr_backfill import (
+from src.nextgen.storage.episode_discovery import (
     PAGE_SIZE, BackfillConflict, BackfillCompletion,
     load_batch, persist_observations, FallbackCompletion, load_fallback,
     persist_fallback, FallbackMissing, persist_fallback_missing,
@@ -25,7 +25,7 @@ from src.nextgen.storage.sonarr_backfill import (
     load_dub_search, persist_dub_found, persist_dub_exhausted,
     persist_candidates_exhausted, load_tried_hashes,
 )
-from src.nextgen.storage.sonarr_cached_retry import CachedTorrent, load_cached, persist_cached
+from src.nextgen.storage.cached_release_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
 
 KIND = 'DISCOVER_SONARR_BACKFILL'

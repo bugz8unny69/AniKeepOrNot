@@ -20,8 +20,8 @@ from src.nextgen.acquisition.submission import (
     ClientInvalid, ClientUnavailable, ClientAuthenticationFailed, ClientUnsupported,
 )
 from src.nextgen.job_contracts import Outcome, failure_facts
-from src.nextgen.storage.sonarr_magnet_intake import MagnetJournal
-from src.nextgen.storage.sonarr_selection import acquisition_identity, SelectionConflict
+from src.nextgen.storage.magnet_intake import MagnetJournal
+from src.nextgen.storage.release_selection import acquisition_identity, SelectionConflict
 from src.nextgen.storage.acquisition import source_magnet
 
 PENDING=Outcome('defer','TORRENT_METADATA_WAITING',delay_ms=60000)

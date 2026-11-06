@@ -34,7 +34,7 @@ class FakeProvider:
         return tuple((2000+i,1,i) for i in range(1,13)),False
 
 
-class BatchTrialWorkerTests(unittest.IsolatedAsyncioTestCase):
+class BatchUserEvaluationWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         temp=tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -74,7 +74,7 @@ class BatchTrialWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(worker.close)
         return worker
 
-    async def test_batch_trial_is_immutable_and_does_not_acquire(self):
+    async def test_batch_user_evaluation_is_immutable_and_does_not_acquire(self):
         worker=self.worker()
         await worker.attempt()
         await worker.attempt()

@@ -35,6 +35,8 @@ These names are not stored anywhere. Changing them affects only imports, so they
 
 ### 3.1 Modules
 
+**Done in RF-005.** Every module below is renamed, with its importers, `fixes/` and `mock.patch` targets, and recorded in `removed.json`.
+
 | Existing | New | Importers* | Notes |
 |---|---|---|---|
 | `jobs/discover_sonarr_backfill_job.py` | `jobs/discover_episode_releases_job.py` | 8 | Holds `KIND`. The job kind value itself is covered in §4. |
@@ -59,7 +61,9 @@ Its docstring says "shared by discovery and Keep", but the two halves do differe
 | `VerifiedEpisode` | discovery: `prowlarr_search`, `storage/sonarr_selection`, `storage/sonarr_cached_retry`, and `storage/sonarr_backfill` (×3); also `keep_selection` | **New module `episode_identity.py`.** It is a generic verified TVDB episode identity. |
 | `resolve_episode`, `SonarrEpisodeMismatch` | Keep only (`keep_selection.match_sonarr_episode`) | **Stay in `sonarr_episode.py`.** This is genuine Sonarr matching. |
 
-**Behavior constraint for RF-005:** `VerifiedEpisode.__post_init__` currently raises `SonarrEpisodeMismatch`. After the split it must raise a generic `EpisodeIdentityInvalid(ValueError)`. To keep every existing `except SonarrEpisodeMismatch` / `except ValueError` site behaving the same, **`SonarrEpisodeMismatch` must subclass `EpisodeIdentityInvalid`**. Today the only catch site is `keep_selection.py:48`; RF-005 re-checks this at the time of the change.
+**Done in RF-005.** `VerifiedEpisode` and the new `EpisodeIdentityInvalid(ValueError)` are in `episode_identity.py`; `sonarr_episode.py` keeps `resolve_episode` and `SonarrEpisodeMismatch`, which now subclasses `EpisodeIdentityInvalid`.
+
+Correction to the earlier plan: subclassing alone does **not** keep `except SonarrEpisodeMismatch` working, because that clause does not catch the parent class that `VerifiedEpisode` now raises. The only such catch site, `keep_selection.match_sonarr_episode`, therefore catches `EpisodeIdentityInvalid`, which covers both errors, so Keep behaves as before (tested in `test_keep_selection`). `except ValueError` sites are unaffected.
 
 ### 3.3 Classes, functions and constants
 
@@ -172,6 +176,8 @@ Risks to carry into RF-005 and RF-006:
 **Decided (owner, 2026-11-04):** "trial" was a bad term. It is replaced by **user evaluation** (`USER_EVALUATION` / `user_evaluation`) wherever it can be. The concept is the first episodes of a new anime that are downloaded so the user can evaluate it before choosing Keep or Reject. The same rules as §4 apply: rename, migrate stored values, remove the old names, no aliases.
 
 ### 8.1 Code-only identifiers (RF-005)
+
+**Done in RF-005**: modules, classes, functions, local names, tests and doc file names. Only Python names and module paths changed; every string value (job kinds, tables, columns, codes, settings keys, the API field) is unchanged until RF-006. Comments and docstrings that mention "trial" are updated with RF-006, so they match the renamed tables and codes. `trial_evaluation` became `user_evaluation_check`, matching the planned table `user_evaluation_checks`.
 
 | Existing | New |
 |---|---|

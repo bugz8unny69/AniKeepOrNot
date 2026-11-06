@@ -340,7 +340,7 @@ class BatchCandidateControllerTests(unittest.IsolatedAsyncioTestCase):
         async def mock_single_verify(source, configuration, cancelled, claim=None):
             return VerifiedRelease(source, 1, 1001, 1, 1, 2001)
 
-        reg = release_registration(mock_single_verify, trial_kind='EVALUATE_EPISODE', batch_kind='EVALUATE_BATCH')
+        reg = release_registration(mock_single_verify, user_evaluation_kind='EVALUATE_EPISODE', batch_kind='EVALUATE_BATCH')
         context = SimpleNamespace(
             claim=claim,
             configuration=config,

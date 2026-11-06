@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
 from src.nextgen.job_contracts import Registry, Policy
-from src.nextgen.jobs.discover_sonarr_backfill_job import (
+from src.nextgen.jobs.discover_episode_releases_job import (
     KIND as DISCOVER_KIND, registration as discovery_registration,
 )
-from src.nextgen.jobs.evaluate_trial_job import registration as trial_registration
+from src.nextgen.jobs.select_user_evaluation_job import registration as user_evaluation_registration
 from src.nextgen.storage.series_intake import detail, retry_episode
-from src.nextgen.storage.sonarr_cached_retry import CachedTorrent
+from src.nextgen.storage.cached_release_retry import CachedTorrent
 from src.nextgen.storage.sqlite import connect, enqueue_job, transaction
 from src.nextgen.tests import test_backfill_discovery as backfill
 from src.nextgen.worker import Worker
@@ -67,7 +67,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
             db.close()
 
     async def run_worker(self, fake, attempts=1):
-        registry = Registry((trial_registration(discovery_kind=DISCOVER_KIND),
+        registry = Registry((user_evaluation_registration(discovery_kind=DISCOVER_KIND),
                              discovery_registration(None, client_factory=lambda c, s: fake,
                                                     select_candidates=True, acquire_candidates=True)))
         worker = Worker(self.store, self.startup, registry, policy=Policy(lease_ms=30000))
@@ -179,9 +179,9 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
                                'Test - 02', 'magnet:?xt=urn:btih:' + TRIED[0])
         receipt = retry_episode(self.database, 123, 2, delete_cache=False)
         # Verify only branch selection; cache journal safety has its own tests.
-        with patch('src.nextgen.jobs.discover_sonarr_backfill_job.load_cached',
+        with patch('src.nextgen.jobs.discover_episode_releases_job.load_cached',
                    return_value=cached), patch(
-                   'src.nextgen.jobs.discover_sonarr_backfill_job.persist_cached',
+                   'src.nextgen.jobs.discover_episode_releases_job.persist_cached',
                    return_value=()):
             await self.run_worker(self.fake)
         self.assertEqual(self.fake.searches, before)

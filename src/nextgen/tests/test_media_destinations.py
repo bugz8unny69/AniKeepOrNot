@@ -32,9 +32,9 @@ class MediaDestinationTests(unittest.TestCase):
         for path in ("relative", "/", "//host/media", "/media/../trial", "/media/./trial", "/media/trial/", "/media\ntrial", 123):
             with self.subTest(path=path), self.assertRaises(ConfigurationError):
                 ConfigurationSnapshot(1, {"storage": {"trial_root": path}})
-        for trial, keep in (("/media/trial", "/media/trial"), ("/media", "/media/keep"), ("/media/trial", "/media")):
-            with self.subTest(trial=trial, keep=keep), self.assertRaises(ConfigurationError):
-                ConfigurationSnapshot(1, {"storage": {"trial_root": trial, "keep_root": keep}})
+        for user_evaluation, keep in (("/media/trial", "/media/trial"), ("/media", "/media/keep"), ("/media/trial", "/media")):
+            with self.subTest(user_evaluation=user_evaluation, keep=keep), self.assertRaises(ConfigurationError):
+                ConfigurationSnapshot(1, {"storage": {"trial_root": user_evaluation, "keep_root": keep}})
         with self.assertRaises(ConfigurationError):
             ConfigurationSnapshot(1, {"storage": {"trial_root": "/var/lib/anime-discovery"}})
 

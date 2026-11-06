@@ -2,7 +2,7 @@
 from src.nextgen.handlers import HandlerCatalog
 from src.nextgen.jobs.identify_anime_job import DEFINITION as identify
 from src.nextgen.jobs.verify_release_job import DEFINITION as verify
-from src.nextgen.jobs.evaluate_trial_job import DEFINITION as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import DEFINITION as evaluate
 from src.nextgen.jobs.evaluate_batch_job import DEFINITION as evaluate_batch
 from src.nextgen.jobs.reserve_batch_job import DEFINITION as reserve_batch
 from src.nextgen.jobs.submit_batch_job import DEFINITION as submit_batch
@@ -15,12 +15,12 @@ from src.nextgen.jobs.keep_batch_job import DEFINITION as keep_batch
 from src.nextgen.jobs.cleanup_batch_download_job import DEFINITION as cleanup_batch_download
 from src.nextgen.jobs.cleanup_batch_kept_media_job import DEFINITION as cleanup_batch_kept_media
 from src.nextgen.jobs.reserve_episode_job import DEFINITION as reserve
-from src.nextgen.jobs.discover_sonarr_backfill_job import DEFINITION as backfill
+from src.nextgen.jobs.discover_episode_releases_job import DEFINITION as backfill
 from src.nextgen.jobs.prepare_acquisition_job import DEFINITION as prepare
 from src.nextgen.jobs.submit_torrent_job import DEFINITION as submit
 from src.nextgen.jobs.download_torrent_job import DEFINITION as download
 from src.nextgen.jobs.verify_media_job import DEFINITION as media
-from src.nextgen.jobs.stage_trial_media_job import DEFINITION as stage
+from src.nextgen.jobs.stage_user_evaluation_media_job import DEFINITION as stage
 from src.nextgen.jobs.reject_series_job import DEFINITION as reject_series
 from src.nextgen.jobs.keep_media_job import DEFINITION as keep
 from src.nextgen.jobs.cleanup_canceled_operation_job import DEFINITION as cleanup

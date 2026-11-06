@@ -15,16 +15,16 @@ from src.nextgen.acquisition.prowlarr_search import (
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.job_contracts import Outcome, Policy, Registry
 from src.nextgen.job_report import main as report_main
-from src.nextgen.jobs.discover_sonarr_backfill_job import (
+from src.nextgen.jobs.discover_episode_releases_job import (
     KIND as DISCOVER_KIND, registration as discovery_registration,
 )
-from src.nextgen.jobs.evaluate_trial_job import registration as trial_registration
-from src.nextgen.sonarr_episode import VerifiedEpisode
+from src.nextgen.jobs.select_user_evaluation_job import registration as user_evaluation_registration
+from src.nextgen.episode_identity import VerifiedEpisode
 from src.nextgen.storage.prowlarr_snapshots import (
     load_latest_snapshot, prune_snapshots, sanitize_text, save_snapshots,
 )
 from src.nextgen.storage.sqlite import connect, enqueue_job, initialize, transaction
-from src.nextgen.tests.test_trial_policy import TrialEvaluationTests
+from src.nextgen.tests.test_user_evaluation_policy import UserEvaluationCheckTests
 from src.nextgen.worker import Worker
 
 
@@ -45,9 +45,9 @@ def make_raw_prowlarr_row(title, *, indexer="SubsPlease", protocol="torrent", se
 
 
 class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = TrialEvaluationTests.asyncSetUp
-    rows = TrialEvaluationTests.rows
-    source = TrialEvaluationTests.source
+    asyncSetUp = UserEvaluationCheckTests.asyncSetUp
+    rows = UserEvaluationCheckTests.rows
+    source = UserEvaluationCheckTests.source
 
     def setUpFixture(self):
         self.titles = ("FX Senshi Kurumi-chan", "FX Fighter Kurumi-chan")
@@ -304,7 +304,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.source(7)
 
         # Run EVALUATE_TRIAL to create trial_plans and first page job
-        reg_eval = Registry((trial_registration(discovery_kind=DISCOVER_KIND),))
+        reg_eval = Registry((user_evaluation_registration(discovery_kind=DISCOVER_KIND),))
         w_eval = Worker(self.store, self.startup, reg_eval, policy=Policy(lease_ms=30000))
         await w_eval.attempt()
         await w_eval.close()
@@ -379,7 +379,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
 
         # Run EVALUATE_TRIAL to create trial_plans and first page job
-        reg_eval = Registry((trial_registration(discovery_kind=DISCOVER_KIND),))
+        reg_eval = Registry((user_evaluation_registration(discovery_kind=DISCOVER_KIND),))
         w_eval = Worker(self.store, self.startup, reg_eval, policy=Policy(lease_ms=30000))
         await w_eval.attempt()
         await w_eval.close()

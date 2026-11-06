@@ -42,7 +42,7 @@ class ObservedAcquisitionTests(unittest.IsolatedAsyncioTestCase):
             return Outcome(value=AcquisitionProposal(source,observed,
                 context.configuration.desired_revision,preparation_job_id=context.claim.job_id))
         from src.nextgen.job_contracts import Registry, Policy
-        from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+        from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
         from src.nextgen.jobs.reserve_episode_job import registration as reserve
         from src.nextgen.jobs.submit_torrent_job import registration as submit
         from src.nextgen.acquisition.submission import Observation
@@ -66,7 +66,7 @@ class ObservedAcquisitionTests(unittest.IsolatedAsyncioTestCase):
         event,_=await self.prepare_queue(worker)
         # This fixture begins after provider verification; Sonarr dispatch itself
         # is separately tested. All acquisition and submission persistence is real.
-        with patch('src.nextgen.storage.sonarr_magnet_intake._verified_candidate'):
+        with patch('src.nextgen.storage.magnet_intake._verified_candidate'):
             await worker.attempt()
         self.assertEqual(self.rows('SELECT info_sha256,submission_marker FROM acquisition_plans'),[(None,marker)])
         self.assertEqual(self.rows('SELECT state FROM torrent_submissions'),[('OWNED_STOPPED',)])
@@ -88,7 +88,7 @@ class ObservedAcquisitionTests(unittest.IsolatedAsyncioTestCase):
             return Outcome(value=AcquisitionProposal(source,observed,context.configuration.desired_revision))
         worker=self.worker(registration(read,legacy_bootstrap=bootstrap))
         await self.prepare_queue(worker)
-        with patch('src.nextgen.storage.sonarr_magnet_intake._verified_candidate'):
+        with patch('src.nextgen.storage.magnet_intake._verified_candidate'):
             await worker.attempt()
         self.assertEqual(self.rows('SELECT count(*) FROM acquisition_plans'),[(0,)])
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='PREPARE_ACQUISITION'"),[('NEEDS_REVIEW',)])

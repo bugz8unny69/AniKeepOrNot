@@ -9,7 +9,7 @@ from src.nextgen.cancellation import OperationGate
 from src.nextgen.job_contracts import Policy, Registry
 from src.nextgen.jobs.cleanup_canceled_operation_job import registration as cleanup
 from src.nextgen.jobs.keep_media_job import registration as keep
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.storage.job_queue import JobQueue, LeaseLost

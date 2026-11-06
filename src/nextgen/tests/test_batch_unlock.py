@@ -107,7 +107,7 @@ class AudioGatedUnlockTests(unittest.TestCase):
             self.client.stop_completed_probe(self.intent,fp,permit)
         self.assertEqual(self.calls,[])
 
-    def test_outside_trial_and_ova_are_always_priority_zero(self):
+    def test_outside_user_evaluation_and_ova_are_always_priority_zero(self):
         plan=plan_verified_unlock(self.intent,self.snapshot(),self.media,15)
         self.assertEqual(plan.priorities[2],0)
         self.current[0]=self.snapshot(priorities=(1,1,1))

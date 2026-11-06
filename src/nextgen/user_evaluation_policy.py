@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from src.nextgen.history import integer, MAX_INTEGER
 
 
-class TrialConflict(ValueError):
+class UserEvaluationConflict(ValueError):
     reason_code="TRIAL_PLAN_CONFLICT"
     def __init__(self):super().__init__("The trial plan needs review.")
 
@@ -34,7 +34,7 @@ class Window:
     def episodes(self, anchor):
         integer(anchor,positive=True)
         if self.following_count and anchor>MAX_INTEGER-self.following_count+1:
-            raise TrialConflict()
+            raise UserEvaluationConflict()
         return tuple(sorted(set(range(1,self.backfill_count+1)) |
                             set(range(anchor,anchor+self.following_count))))
 
@@ -48,14 +48,14 @@ class Window:
         anchor=anidb_episode_number
         integer(anchor,positive=True)
         if self.following_count and anchor>MAX_INTEGER-self.following_count+1:
-            raise TrialConflict()
+            raise UserEvaluationConflict()
         n=self.backfill_count
         backfill=range(1,n+1) if anchor<=n else range(anchor-n,anchor)
         return tuple(sorted(set(backfill)|set(range(anchor,anchor+self.following_count))))
 
 
 @dataclass(frozen=True)
-class TrialSource:
+class UserEvaluationSource:
     verification_id: int
     verification_job_id: int
     event_id: int
@@ -76,11 +76,11 @@ class TrialSource:
 
 
 @dataclass(frozen=True)
-class TrialProposal:
-    source: TrialSource
+class UserEvaluationProposal:
+    source: UserEvaluationSource
     window: Window
     configuration_revision: int
 
     def __post_init__(self):
-        if type(self.source) is not TrialSource or type(self.window) is not Window: raise ValueError("invalid trial proposal")
+        if type(self.source) is not UserEvaluationSource or type(self.window) is not Window: raise ValueError("invalid trial proposal")
         integer(self.configuration_revision,positive=True)

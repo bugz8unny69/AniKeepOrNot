@@ -25,7 +25,7 @@ class MagnetMetadataTests(unittest.TestCase):
         from types import SimpleNamespace
         from src.nextgen.acquisition.settings import DownloadOptions
         from src.nextgen.acquisition.submission import Observation
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         options=DownloadOptions('http://localhost:8080',
                                 '/downloads/ad-'+'c'*32,'anime',10)
         client=self.client((2,8,19),4)
@@ -69,7 +69,7 @@ class MagnetMetadataTests(unittest.TestCase):
         from types import SimpleNamespace
         from src.nextgen.acquisition.settings import DownloadOptions
         from src.nextgen.acquisition.submission import Observation
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         options=DownloadOptions('http://localhost:8080',
                                 '/downloads/ad-'+'c'*32,'anime',10)
         client=self.client((2,8,19),4)
@@ -107,7 +107,7 @@ class MagnetMetadataTests(unittest.TestCase):
 
     def test_45_and_50_reuse_stopped_magnet_adapter(self):
         from src.nextgen.acquisition.settings import DownloadOptions
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         for major,version in ((4,(2,8,15)),(5,(2,10,0))):
             with self.subTest(major=major):
                 client=self.client(version,major)
@@ -176,7 +176,7 @@ class MagnetMetadataTests(unittest.TestCase):
         from src.nextgen.acquisition.metadata import TorrentFile
         from src.nextgen.acquisition.submission import Observation
         from src.nextgen.acquisition.settings import DownloadOptions
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         client=self.client((2,8,19),4)
         options=DownloadOptions('http://localhost:8080',
                                 '/downloads/ad-'+'c'*32,'anime',10)
@@ -204,7 +204,7 @@ class MagnetMetadataTests(unittest.TestCase):
         from src.nextgen.acquisition.metadata import TorrentFile
         from src.nextgen.acquisition.submission import Observation
         from src.nextgen.acquisition.settings import DownloadOptions
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         client=self.client((2,8,19),4)
         options=DownloadOptions('http://localhost:8080',
                                 '/downloads/ad-'+'c'*32,'anime',10)
@@ -233,7 +233,7 @@ class MagnetMetadataTests(unittest.TestCase):
         from types import SimpleNamespace
         from src.nextgen.acquisition.settings import DownloadOptions
         from src.nextgen.acquisition.submission import Observation
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         client=self.client((2,11,9),5)
         options=DownloadOptions('http://localhost:8080',
                                 '/downloads/ad-'+'c'*32,'anime',10)
@@ -259,7 +259,7 @@ class MagnetMetadataTests(unittest.TestCase):
         from types import SimpleNamespace
         from src.nextgen.acquisition.submission import Observation
         from src.nextgen.acquisition.settings import DownloadOptions
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         client=self.client((2,8,19),4)
         options=DownloadOptions('http://localhost:8080',
                                 '/downloads/ad-'+'c'*32,'anime',10)

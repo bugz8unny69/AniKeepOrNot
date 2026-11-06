@@ -6,11 +6,11 @@ import unittest
 from src.nextgen.acquisition.settings import DownloadCredentials
 from src.nextgen.acquisition.submission import ClientUnavailable, Observation
 from src.nextgen.job_contracts import Policy, Registry
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.jobs.prepare_acquisition_job import registration as prepare
 from src.nextgen.jobs.submit_torrent_job import registration as submit
-from src.nextgen.jobs.discover_sonarr_backfill_job import registration as discover
+from src.nextgen.jobs.discover_episode_releases_job import registration as discover
 from src.nextgen.storage.job_queue import LeaseLost
 from src.nextgen.storage.sqlite import connect, transaction, enqueue_job
 from src.nextgen.storage.submissions import SubmissionJournal, target_options

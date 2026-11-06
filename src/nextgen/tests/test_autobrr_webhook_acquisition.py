@@ -15,7 +15,7 @@ from src.nextgen.acquisition.metainfo_source import make_reader
 from src.nextgen.acquisition.submission import Observation
 from src.nextgen.api.app import normalize_webhook
 from src.nextgen.job_contracts import Policy, Registry
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.prepare_acquisition_job import registration as prepare
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.jobs.submit_torrent_job import registration as submit

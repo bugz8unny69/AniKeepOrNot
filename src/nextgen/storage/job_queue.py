@@ -308,7 +308,7 @@ class JobQueue:
             # never the user-facing Cancel button. Non-Sonarr jobs are untouched.
             if db.execute('SELECT state FROM jobs WHERE job_id=?',
                           (claim.job_id,)).fetchone() in (('FAILED',), ('NEEDS_REVIEW',)):
-                from src.nextgen.storage.sonarr_candidates import (
+                from src.nextgen.storage.release_candidates import (
                     auto_cleanup_failed_candidate, auto_cleanup_oversized)
                 from src.nextgen.storage.batch_candidates import auto_cleanup_failed_batch_candidate
                 records.extend(auto_cleanup_failed_candidate(db,claim))

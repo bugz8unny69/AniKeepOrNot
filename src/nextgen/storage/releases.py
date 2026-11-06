@@ -51,7 +51,7 @@ def persist_release(db, claim, value):
     origin=db.execute("SELECT source FROM incoming_events WHERE event_id=?",
                       (source.event_id,)).fetchone()
     if origin==('sonarr-discovery',):
-        from src.nextgen.storage.sonarr_selection import require_verified_delivery
+        from src.nextgen.storage.release_selection import require_verified_delivery
         require_verified_delivery(db,value)
     if origin==('manual-release',):
         # The user-selected placement is a request, not a verified identity.

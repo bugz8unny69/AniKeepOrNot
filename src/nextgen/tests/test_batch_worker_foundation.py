@@ -11,13 +11,13 @@ from src.nextgen.batch.provider_worker import (
 )
 from src.nextgen.batch.transfer import plan_stopped_batch_probe
 from src.nextgen.batch.verification import verify_batch_files
-from src.nextgen.batch.window import plan_batch_trial_window
+from src.nextgen.batch.window import plan_batch_user_evaluation_window
 from src.nextgen.configuration_schema import ConfigurationSnapshot
 from src.nextgen.jobs.verify_release_job import ReleaseCompletion, registration
 from src.nextgen.providers.http import Credentials, Options
 from src.nextgen.providers.releases import make_verifier
 from src.nextgen.release_contracts import ReleaseInput, ReleaseNotReady, VerifiedRelease
-from src.nextgen.trial_policy import Window
+from src.nextgen.user_evaluation_policy import Window
 from src.nextgen.tests.test_acquisition_metadata import metadata
 
 
@@ -31,7 +31,7 @@ class FakeProvider:
 
 
 class ProviderCompositionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_mixed_shiki_pack_verifies_without_sending_a_single_episode_trial(self):
+    async def test_mixed_shiki_pack_verifies_without_sending_a_single_episode_user_evaluation(self):
         files=[
             {b'length':100,b'path':[b'Season 01',b'Shiki S01E01.mkv']},
             {b'length':100,b'path':[b'Season 01',b'Shiki S01E02.mkv']},
@@ -55,7 +55,7 @@ class ProviderCompositionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.verified.files),2)
         self.assertEqual([f.tvdb_episode for f in result.verified.files],[1,2])
         self.assertEqual(seen,[digest])
-        spec=registration(combined,trial_kind='EVALUATE_TRIAL')
+        spec=registration(combined,user_evaluation_kind='EVALUATE_TRIAL')
         self.assertEqual(spec.route(ReleaseCompletion(result,7)),())
 
     async def test_batch_source_hash_required_without_arbitrary_url(self):
@@ -79,7 +79,7 @@ class BatchProbeTests(unittest.TestCase):
         self.verified=verify_batch_files(self.inventory,client=FakeProvider(),
             credentials=Credentials('private'),anidb_id=123,
             tvdb_series_id=456,season=1)
-        self.plan=plan_batch_trial_window(self.inventory,self.verified,
+        self.plan=plan_batch_user_evaluation_window(self.inventory,self.verified,
             window=Window(6,1),anchor_episode=1)
 
     def snapshot(self,*,state='stoppedDL',pieces=((0,0),(1,1),(2,2)),tags=None):

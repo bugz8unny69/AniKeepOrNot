@@ -581,7 +581,7 @@ def auto_cleanup_failed_batch_candidate(db, claim):
         return ()
     reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()[0]
     record_candidate_stop(db, op[0], 'FAILED', reason or 'JOB_HANDLER_FAILED')
-    from src.nextgen.storage.sonarr_candidates import request_automatic_cleanup
+    from src.nextgen.storage.release_candidates import request_automatic_cleanup
     return request_automatic_cleanup(db, claim)
 
 

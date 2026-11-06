@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, Successor
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.storage.episode_reservations import load_reservation_input
 from src.nextgen.storage.job_queue import LeaseLost
