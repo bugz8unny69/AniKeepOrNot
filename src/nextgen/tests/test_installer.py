@@ -193,7 +193,7 @@ class InstallerSupportTests(unittest.TestCase):
 
     def test_upgrade_without_installation_metadata_fails_closed(self):
         with patch.object(installer,'saved_defaults',return_value={}):
-            with self.assertRaisesRegex(ValueError,'installer metadata'):
+            with self.assertRaisesRegex(ValueError,'existing installation'):
                 installer.resolve(installer.parser().parse_args(['--upgrade']))
 
     def test_upgrade_failure_reports_reason_instead_of_generic_message(self):

@@ -1,4 +1,6 @@
 """Installed versions: readable names, one previous kept, rollback, self re-run, database backups."""
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -134,6 +136,80 @@ class ReleaseLayoutTests(base.InstallerOrchestrationTests):
     def test_rollback_is_a_mode_of_its_own(self):
         with self.assertRaises(SystemExit):
             installer.parser().parse_args(['--upgrade', '--rollback'])
+
+
+class BranchTests(base.InstallerSupportTests):
+    for _name in [n for n in dir(base.InstallerSupportTests) if n.startswith('test_')]:
+        locals()[_name] = None
+    del _name
+
+    def saved(self):
+        self.config.joinpath('settings.json').write_text(json.dumps({
+            'schema_version': 10, 'settings': {'storage': {'database_path': str(self.database)}}}))
+        return {'root': str(self.root / 'app'), 'config_dir': str(self.config), 'state_dir': str(self.root / 'state'),
+                'unit_dir': str(self.root / 'units'), 'ref': 'NextGen', 'origin': 'https://anime.example.test'}
+
+    def resolve(self, *flags):
+        with patch.object(installer, 'saved_defaults', return_value=self.saved()):
+            return installer.resolve(installer.parser().parse_args(list(flags)))
+
+    def test_upgrade_can_switch_branches(self):
+        self.assertEqual(self.resolve('--upgrade')['ref'], 'NextGen')
+        self.assertEqual(self.resolve('--upgrade', '--branch', 'refactor')['ref'], 'refactor')
+
+    def test_other_settings_still_cannot_change_on_upgrade(self):
+        with self.assertRaisesRegex(ValueError, 'use --branch'):
+            self.resolve('--upgrade', '--ref', 'refactor')
+        with self.assertRaisesRegex(ValueError, 'origin'):
+            self.resolve('--upgrade', '--branch', 'refactor', '--public-origin', 'https://other.example.test')
+
+    def test_invalid_or_conflicting_branches_are_refused(self):
+        for flags in (['--upgrade', '--branch', 'bad branch'], ['--upgrade', '--branch=-x'],
+                      ['--rollback', '--branch', 'refactor']):
+            with self.subTest(flags=flags), self.assertRaises(ValueError):
+                self.resolve(*flags)
+
+    def test_install_flag_is_gone(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            installer.parser().parse_args(['--install'])
+
+
+class BranchUpgradeTests(base.InstallerOrchestrationTests):
+    for _name in [n for n in dir(base.InstallerOrchestrationTests) if n.startswith('test_')]:
+        locals()[_name] = None
+    del _name
+
+    def test_a_branch_switch_names_the_release_saves_the_branch_and_replaces_units(self):
+        self.unitdir.mkdir()
+        (self.unitdir / UNIT).write_text('[Unit]\nDescription=Old\n')
+        self.args.source_dir = None                 # Fetch from git, like a normal upgrade.
+        self.options['ref'] = 'refactor'
+
+        def execute(args, **kwargs):
+            args = [str(a) for a in args]
+            if args[:2] == ['git', 'clone']:
+                Path(args[-1]).mkdir(parents=True)
+                for name in ('src/nextgen/__main__.py', 'src/nextgen/install_support.py',
+                             'bin/anime-discovery-install', 'bin/adm'):
+                    path = Path(args[-1]) / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('# test candidate')
+            if args[:2] == ['git', '-C'] and 'rev-parse' in args:
+                self.events.append(args)
+                return subprocess.CompletedProcess(args, 0, 'b' * 40 + '\n', '')
+            return self.execute(args, **kwargs)
+        with self.patches():
+            result = installer.apply(self.options, self.args, execute)
+        self.assertTrue(Path(result['release']).name.endswith('-refactor-bbbbbbbb'))
+        fetch = next(e for e in self.events if 'fetch' in e)
+        self.assertEqual(fetch[-1], 'refactor')                                  # The new branch was fetched.
+        saved = json.loads((self.state / 'installer' / 'installer.json').read_text())
+        self.assertEqual(saved['ref'], 'refactor')                               # Later upgrades keep it.
+        # Service files are rewritten from the new release, the old ones backed up.
+        self.assertEqual((self.unitdir / UNIT).read_text(), '[Unit]\nDescription=Test\n')
+        backup = self.state / 'installer' / 'unit-backups' / Path(result['release']).name / UNIT
+        self.assertEqual(backup.read_text(), '[Unit]\nDescription=Old\n')
+        self.assertIn(['systemctl', 'daemon-reload'], self.events)
 
 
 class ReexecTests(unittest.TestCase):

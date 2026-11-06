@@ -56,6 +56,18 @@ Upgrade with:
 sudo anime-discovery-install --upgrade --yes
 ```
 
+Running the command without `--upgrade` or `--rollback` installs. There is no `--install` switch, and switches must be spelled out in full (no abbreviations).
+
+To switch the installation to another branch:
+
+```sh
+sudo anime-discovery-install --upgrade --branch refactor
+```
+
+The branch is fetched and installed, its release folder is named after it (`…-refactor-<commit>`), and later upgrades keep using it until you pass `--branch` again. It is the only installation setting an upgrade may change. Every upgrade, with or without `--branch`, rewrites the systemd unit files from the new release (backing up the old ones) and reloads systemd.
+
+Branches can carry different database migrations. The installer upgrades the database to the branch's schema and refuses one it does not recognise, so moving back to a branch that lacks those migrations stops at the database step (and `--rollback` refuses for the same reason). Only switch between branches whose schemas are compatible.
+
 Existing native settings, credentials, administrator password, and configured database path are preserved. Native configuration and database upgrades run explicitly with the services stopped, using the maintenance preview/backup contracts. Legacy configuration and databases are not imported. Use a separate fresh Anime Discovery directory.
 
 Fresh installations start only the API. The API and worker are separate Type=notify services with 60-second event-loop watchdogs. The worker waits for API readiness and stops when the API stops; worker failure leaves the API running. Restart the worker explicitly after API recovery. Units include configured media mount dependencies and write paths; the installer does not create, move or recursively change ownership of media directories.

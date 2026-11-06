@@ -122,11 +122,15 @@ def saved_defaults():
 
 
 def parser():
-    p=argparse.ArgumentParser(description=__doc__)
-    modes=p.add_mutually_exclusive_group();modes.add_argument('--install',action='store_true');modes.add_argument('--upgrade',action='store_true')
+    # No abbreviations: "--install" must not silently mean --install-system-deps.
+    p=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
+    # Without a mode the command installs; --upgrade and --rollback act on an existing installation.
+    modes=p.add_mutually_exclusive_group();modes.add_argument('--upgrade',action='store_true')
     modes.add_argument('--rollback',action='store_true',help='Switch back to the previous installed version, if the database and settings are still compatible with it.')
     for name in DEFAULTS:p.add_argument('--'+name.replace('_','-'))
     p.add_argument('--public-origin',dest='origin',help='Exact HTTPS dashboard origin, or loopback HTTP. Existing installed origin is retained.')
+    p.add_argument('--branch',help='Git branch to install from, for example NextGen or refactor. With --upgrade it '
+                   'switches the installation to that branch, and later upgrades keep using it.')
     p.add_argument('--source-dir',type=Path,help='Use tracked files from an existing local Git checkout instead of fetching.')
     p.add_argument('--revision',help='Exact Git commit to install; defaults to the selected branch head.')
     p.add_argument('--database',type=Path,help='New Anime Discovery database path; existing configuration always wins.')
@@ -146,16 +150,23 @@ def resolve(args):
     options={**DEFAULTS,**saved}
     if args.upgrade or args.rollback:
         if not saved:
-            raise ValueError(('Rollback' if args.rollback else 'Upgrade')+' requires existing installer metadata. Run --install first.')
+            raise ValueError(('Rollback' if args.rollback else 'Upgrade')+' requires an existing installation. '
+                             'Install it first: run anime-discovery-install without --upgrade.')
         for k in (*DEFAULTS,'origin'):
             requested=getattr(args,k,None)
             if requested is not None and requested!=options.get(k):
-                raise ValueError('Upgrade cannot change installation settings: '+k)
+                raise ValueError('Upgrade cannot change installation settings: '+k
+                                 +(' (use --branch to switch branches)' if k=='ref' else ''))
         if any((args.database,args.settings_file,args.webhook_key_file,args.admin_password_file,args.install_system_deps)):
             raise ValueError('Upgrade cannot reconfigure installation or credentials.')
     else:
         for k in (*DEFAULTS,'origin'):
             if getattr(args,k,None) is not None:options[k]=getattr(args,k)
+    # --branch is the one setting an upgrade may change; it is saved for later upgrades.
+    if getattr(args,'branch',None) is not None:
+        if args.rollback:raise ValueError('--branch cannot be combined with --rollback.')
+        if getattr(args,'ref',None) is not None and args.ref!=args.branch:raise ValueError('Use --branch or --ref, not both.')
+        options['ref']=args.branch
     # Upgrades reuse the saved installation configuration. Only a fresh
     # installation asks the operator to choose paths and a public origin.
     interactive=not(args.yes or args.upgrade or args.rollback)
