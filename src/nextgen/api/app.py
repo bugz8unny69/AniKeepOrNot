@@ -662,7 +662,7 @@ class Application:
                 aid,episode=map(int,retry_match.groups())
                 return 202,retry_missing_episode(
                     configuration.value('storage.database_path'),aid,episode,
-                    delete_cache=body.get('delete_cache',True)),[]
+                    delete_cache=body.get('delete_cache',False)),[]
             if path==PREFIX+'/intake':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]
@@ -846,6 +846,10 @@ class Application:
                             WHERE submission.event_id=jobs.event_id
                             AND submission.anidb_id=? AND submission.tvdb_season=?
                             AND submission.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM manual_release_archive archived
+                            WHERE archived.event_id=jobs.event_id
+                            AND archived.anidb_id=? AND archived.tvdb_season=?
+                            AND archived.tvdb_episode=?)
                         OR EXISTS (SELECT 1 FROM sonarr_backfill_results b
                             JOIN trial_plans p USING(plan_id)
                             JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
@@ -866,7 +870,7 @@ class Application:
                             AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
                             AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
                         )""")
-                    values.extend(episode_filter*7)
+                    values.extend(episode_filter*8)
                 if not show_completed:criteria.append("state<>'DONE'")
                 if not show_canceled:
                     criteria.append("state<>'CANCELED'")
