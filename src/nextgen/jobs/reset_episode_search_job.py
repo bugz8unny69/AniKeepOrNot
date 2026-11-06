@@ -13,10 +13,12 @@ def registration():
     async def execute(context):
         payload=context.data()
         try:
-            if set(payload)!={'plan_id','episode'} or context.claim.event_id is None:
+            if set(payload)!={'plan_id','episode','mode'} or context.claim.event_id is None:
                 raise ValueError()
             plan_id=integer(payload['plan_id'],positive=True)
             episode=integer(payload['episode'],positive=True)
+            mode=payload['mode']
+            if mode not in ('search','replay'): raise ValueError()
         except (TypeError,ValueError):
             return Outcome('review','JOB_PAYLOAD_INVALID')
         try:
@@ -28,11 +30,12 @@ def registration():
             return Outcome('review','CANCELLATION_REVIEW')
         if result!='READY':
             return Outcome('defer','CANCELLATION_PENDING',delay_ms=30000)
-        return Outcome(value=(plan_id,episode))
+        return Outcome(value=(plan_id,episode,mode))
 
     def persist(db,claim,value):
-        if (type(value) is not tuple or len(value)!=2
-                or any(type(x) is not int or x<=0 for x in value)):
+        if (type(value) is not tuple or len(value)!=3
+                or any(type(x) is not int or x<=0 for x in value[:2])
+                or value[2] not in ('search','replay')):
             raise CompletionRejected(Outcome('review','JOB_PAYLOAD_INVALID'))
         try:
             return finish(db,claim,*value)
