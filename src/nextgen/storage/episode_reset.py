@@ -352,8 +352,14 @@ def find_episode(db,tvdb_episode_id):
         'WHERE e.tvdb_episode_id=? '
         'UNION SELECT p.anidb_id,p.plan_id,v.anidb_episode_number FROM release_verifications v '
         'JOIN trial_plans p ON p.anidb_id=v.anidb_id AND p.tvdb_series_id=v.tvdb_series_id '
-        'WHERE v.tvdb_episode_id=?',
-        (tvdb_episode_id,)*3
+        'WHERE v.tvdb_episode_id=? '
+        'UNION SELECT p.anidb_id,p.plan_id,e.anidb_episode_number FROM recognized_episodes e '
+        'JOIN trial_plans p ON p.anidb_id=e.anidb_id AND p.tvdb_series_id=e.tvdb_series_id '
+        'WHERE e.anidb_episode_id=? '
+        'UNION SELECT p.anidb_id,p.plan_id,v.anidb_episode_number FROM release_verifications v '
+        'JOIN trial_plans p ON p.anidb_id=v.anidb_id AND p.tvdb_series_id=v.tvdb_series_id '
+        'WHERE v.anidb_episode_id=?',
+        (tvdb_episode_id,)*5
     ).fetchall()
     if len(rows)!=1:
         raise EpisodeResetUnavailable()
