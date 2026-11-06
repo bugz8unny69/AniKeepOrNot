@@ -35,6 +35,9 @@ def can_cancel_operation(db,op):
     or file cleanup is needed, or granting permission to release the slot.
     """
     if op[1]!='ACTIVE':return False
+    if db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) "
+                  "WHERE m.operation_id=? AND j.kind='CLEANUP_DECIDED_DOWNLOAD' LIMIT 1",
+                  (op[0],)).fetchone():return False
     states=tuple(sorted(CANCELABLE))
     waiting=db.execute('SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) '
                        'WHERE m.operation_id=? AND j.state IN ('+','.join('?' for _ in states)+') LIMIT 1',

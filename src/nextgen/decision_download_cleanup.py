@@ -12,7 +12,7 @@ from src.nextgen.acquisition.owned_cleanup import OwnedCleanup
 from src.nextgen.acquisition.qbittorrent import Client
 from src.nextgen.acquisition.submission import ClientUnavailable, SubmissionPlan, manifest_from_json
 from src.nextgen.async_io import blocking
-from src.nextgen.cancellation import CancellationError, CleanupBusy, OperationGate
+from src.nextgen.cancellation import CancellationError, CleanupBusy, OperationGate, failure_location
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration
@@ -76,6 +76,7 @@ class Service(OwnedCleanup):
         self.queue=JobQueue(configuration.value('storage.database_path'))
         self.client_factory,self.files_factory=client_factory,files_factory
         self.component='worker'
+        self.legacy_move=False
 
     def _log(self,records):pass  # Durable history is committed by the shared journal.
 
@@ -97,6 +98,7 @@ class Service(OwnedCleanup):
         self.queue._owns(db,self.claim,self.queue.now())
         if self.stage_job is not None:
             op,source,publication,protected=self._staged_facts(db)
+            self.legacy_move=(publication.get('transfer')=='MOVE' and bool(source[3]))
             return self._download(db,op,source,publication,protected)
         row=db.execute("SELECT a.operation_id,a.target_job_id,a.action,j.state,j.event_id "
             "FROM management_actions a JOIN jobs j USING(job_id) WHERE a.job_id=?",(self.decision,)).fetchone()
@@ -114,6 +116,7 @@ class Service(OwnedCleanup):
         if db.execute('SELECT kind,state,created_by_job_id FROM jobs WHERE job_id=?',(predecessor,)).fetchone()!=('CLEANUP_KEPT_MEDIA','DONE',self.decision):raise CancellationError()
         protected.append(data['options']['keep_root'])
         if origin!=(predecessor,event) or status(db,self.decision)['job_id']!=self.claim.job_id:raise CancellationError()
+        self.legacy_move=(publication.get('transfer')=='MOVE' and bool(source[3]))
         return self._download(db,op,source,publication,protected)
 
     def _download(self,db,op,source,publication,protected):
@@ -197,6 +200,12 @@ def registration(secrets,*,service_factory=Service):
         except CleanupBusy:return Outcome('defer','DECISION_DOWNLOAD_CLEANUP_WAITING',delay_ms=1000)
         except ClientUnavailable:return Outcome('retry','DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE')
         except OSError:return Outcome('retry','DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE')
+        except CancellationError as exc:
+            check,path=failure_location(exc)
+            facts={}
+            if check:facts['failed_check']=check
+            if path:facts['failed_path']=path
+            return Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW',facts=facts if facts else None)
         except (ValueError,KeyError,TypeError):return Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW')
         if not done:return Outcome('defer','DECISION_DOWNLOAD_CLEANUP_WAITING',delay_ms=30000)
         return Outcome(value=decision if stage_job is None else ('staging',stage_job))

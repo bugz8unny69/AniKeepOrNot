@@ -9,6 +9,7 @@ from src.nextgen.acquisition.submission import Intent, Observation, ClientInvali
 STOPPED=frozenset(('pausedDL','pausedUP','stoppedDL','stoppedUP'))
 CHECKING=frozenset(('checkingDL','checkingUP','checkingResumeData','allocating','moving'))
 ACTIVE=frozenset(('downloading','stalledDL','forcedDL','queuedDL','uploading','stalledUP','forcedUP','queuedUP'))
+MISSING_FILES='missingFiles'
 
 
 class TransferConflict(ValueError):
