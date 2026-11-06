@@ -23,6 +23,7 @@ from src.nextgen.jobs.submit_torrent_job import KIND as SUBMIT_KIND, registratio
 from src.nextgen.jobs.download_torrent_job import KIND as DOWNLOAD_KIND, registration as download_registration
 from src.nextgen.jobs.verify_media_job import KIND as MEDIA_KIND, registration as media_registration
 from src.nextgen.jobs.stage_trial_media_job import KIND as STAGE_KIND, registration as stage_registration
+from src.nextgen.jobs.reset_episode_search_job import registration as reset_episode_registration
 from src.nextgen.jobs.management import registrations as management_registrations
 from src.nextgen.acquisition.metainfo_source import make_reader, make_batch_reader
 from src.nextgen.acquisition.legacy_magnet import make_bootstrap
@@ -129,7 +130,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                               select_candidates=backfill_select,
                               acquire_candidates=backfill_acquire),) if backfill else ()),
                          *batch_handlers,*preparation,
-                         *management_registrations(secrets),*additional_registrations))
+                         reset_episode_registration(),*management_registrations(secrets),*additional_registrations))
     if qb_readiness is None:
         from src.nextgen.acquisition.readiness import QbittorrentReadiness
         from src.nextgen.acquisition.qbittorrent import Client as DefaultClient
