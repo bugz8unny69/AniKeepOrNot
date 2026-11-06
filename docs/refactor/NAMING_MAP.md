@@ -90,16 +90,16 @@ These names are stored in user databases. A rename must be **versioned, repeatab
 | Class | Rule |
 |---|---|
 | **Mutable operational state** (job rows, schema object names, internal event source) | Migrate in one versioned migration. Afterwards a single runtime path uses only the new value. There are no parallel implementations. |
-| **Immutable history** (`job_history.event_code`, `reason_code`, `handler_code`, `handler_label`, `jobs.last_reason_code`, old `snapshot_json`) | **Never rewrite.** Old values stay registered and readable. A read-side alias maps old to new wherever lookups key on the value. |
+| **History and stored codes** (`job_history`/`event_history` event, reason and handler codes; `jobs.last_reason_code`; codes stored inside JSON) | **Rewrite in the same migration** (owner decision, 2026-11-04). After the migration, the code recognizes only the new values. Old names are removed, with **no read-side aliases**. See [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md) §3 for every column involved. |
 | **Historical migration files** (`storage/sql/042_*`–`045_*`, `migrations.py` list entries) | **Never rename or edit.** Migrations replay in order on old databases. |
 
 ### 4.2 Job kind
 
 | Existing | New | Where persisted / used | RF-006 handling |
 |---|---|---|---|
-| `DISCOVER_SONARR_BACKFILL` | `DISCOVER_EPISODE_RELEASES` | `jobs.kind` (CHECK only requires a non-empty value); `job_history.handler_code` (immutable); registry key; dashboard `HandlerCatalog`; `adm recover --kind` filter; `job_recovery`; `review_retry`; `fixes/` | **Migrate `jobs.kind`** for every row, terminal ones included, so that recovery, retry and the dashboard resolve one kind. **Keep `job_history.handler_code` as written** and register a historical handler alias, so old history still displays a label. `adm recover --kind` accepts the old value as an alias of the new one. |
+| `DISCOVER_SONARR_BACKFILL` | `DISCOVER_EPISODE_RELEASES` | `jobs.kind` (CHECK only requires a non-empty value); `job_history.handler_code` (immutable); registry key; dashboard `HandlerCatalog`; `adm recover --kind` filter; `job_recovery`; `review_retry`; `fixes/` | **Migrate `jobs.kind` and `job_history.handler_code`** for every row, terminal ones included. Recovery, retry, the dashboard and History then see only the new kind. `adm recover --kind` accepts only the new value; the old one is removed. |
 
-Why migrate every row and not just the active ones: if only active rows moved, the same capability would exist under two kinds, and every kind-keyed query would need both. One migration plus one read-side history alias is smaller and has no parallel runtime path.
+Why migrate every row and not just the active ones: if only active rows moved, the same capability would exist under two kinds, and every kind-keyed query would need both. One migration over all rows leaves a single name everywhere.
 
 ### 4.3 Event source
 
@@ -127,15 +127,11 @@ Historical intermediate names (`*_v43`, `*_v48`, `*_v53`, `*_v56`, `*_v57`, `son
 
 ### 4.6 Reason and event codes
 
-These codes are stable public identifiers. `REASON_CODES.md` requires that codes are stable and never recycled, and they appear in immutable history, `jobs.last_reason_code`, logs and `review_retry`.
+**Decided (2026-11-04): rename and migrate; old names removed.** The full audit of every reason and event code is in [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md), with the data in [reason_code_proposals.py](reason_code_proposals.py). It covers the renamed codes, the removed codes and the code each one migrates to, and new human-readable wording for every code.
 
-| Code(s) | Kind | Still emitted? | Recommendation |
-|---|---|---|---|
-| `SONARR_BACKFILL_OBSERVED` | event | yes (3 sites) | **Keep the code; fix the display text.** Today it reads "Read-only Sonarr backfill results recorded."; it should say something like "Episode discovery results recorded." |
-| `SONARR_BACKFILL_PLAN_CONFLICT`, `SONARR_CANDIDATES_EXHAUSTED`, `SONARR_SELECTION_CONFLICT` | reason | yes | **Keep the codes; fix the display text.** |
-| `SONARR_DISCOVERY_*` (8 codes), `SONARR_EPISODES_NOT_LISTED` | reason | 3 still emitted; 6 historical only | **Keep them registered.** `review_retry.py:51-52` uses them to decide whether historical jobs are eligible for retry. |
-
-**Recommended option A:** keep all codes and correct only their display messages. **Option B:** add new generic codes for new emissions and keep the old codes registered as historical aliases. B is more consistent, but every code-keyed rule (`review_retry`, `job_recovery`, the dashboard and reports) would then have to accept both values. It adds alias surface and gains no behavior. **This is an owner decision; RF-006 assumes A unless told otherwise.**
+- Renamed: `SONARR_BACKFILL_PLAN_CONFLICT` → `EPISODE_DISCOVERY_PLAN_CONFLICT`, `SONARR_CANDIDATES_EXHAUSTED` → `RELEASE_CANDIDATES_EXHAUSTED`, and event `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`. `SONARR_SELECTION_CONFLICT` becomes `RELEASE_SELECTION_CONFLICT` (NextGen #283 has since registered it) and its season counterpart `BATCH_SELECTION_CONFLICT` becomes `SEASON_PACK_SELECTION_CONFLICT`.
+- Removed (historical Sonarr-based discovery): every `SONARR_DISCOVERY_*` code and `SONARR_EPISODES_NOT_LISTED`. Their stored rows migrate to one historical code, `EPISODE_DISCOVERY_OUTDATED`, which `review_retry.py` keeps retry-eligible (owner decision, 2026-11-06).
+- Retired (no product names in codes, owner decision 2026-11-06): the per-service codes (`PROWLARR_*`, `SHOKO_*`, `JELLYFIN_*`, `DOWNLOAD_CLIENT_*`, `PROVIDER_*` and others) become the generic `SERVICE_SETUP_INVALID`, `SERVICE_UNAVAILABLE` and `SERVICE_RESPONSE_INVALID`, with the service in the details. Domain outcomes get role names, for example `RELEASE_WITHDRAWN`. This is a behavior change made on `refactor` only; see REASON_CODE_AUDIT §1a and §6.
 
 ### 4.7 Configuration and secrets
 
@@ -153,8 +149,8 @@ There are no changes. The v10 configuration upgrade already moved `sonarr.discov
 ## 6. Ordering and risks
 
 1. **RF-005 first** (§3, code-only). A pure rename and module split, with no data changes. It runs with the full suite, `fixes/` tests and entrypoint imports.
-2. **RF-006 next** (§4). One new migration, `059`, handles `jobs.kind`, the event source and the table renames. It also needs:
-   - read-side aliases for the history handler code and the `adm recover --kind` filter;
+2. **RF-006 next** (§4). One new migration, `063` (`060`–`062` are now the batch candidate tables and `service_status`), handles `jobs.kind`, the event source and the table renames. It also needs:
+   - rewriting the stored codes and handler codes in history (REASON_CODE_AUDIT §3), and removing the old names from the code (no aliases);
    - display text fixes for the codes.
 3. **RF-007** tests the migration from a **real pre-refactor schema fixture**, with pre-rename jobs in every state.
 
@@ -167,5 +163,69 @@ Risks to carry into RF-005 and RF-006:
 
 ## 7. Open owner decisions
 
-1. **Reason and event codes (§4.6):** option A (recommended) or option B.
+1. ~~Reason and event codes (§4.6)~~: **decided** (rename, migrate history, remove old names). The remaining decisions are in REASON_CODE_AUDIT §5.
+1. ~~"Trial" vocabulary~~: **decided**. It becomes "user evaluation" (`USER_EVALUATION`) everywhere it can; see §8.
 2. **New names:** confirm or adjust the names in §3 and §4. They are proposals chosen from what each piece actually does. The ones worth checking most are `magnet_intake` and `magnet_intents`, because those modules serve both discovery and webhook magnets.
+
+## 8. "Trial" → "user evaluation"
+
+**Decided (owner, 2026-11-04):** "trial" was a bad term. It is replaced by **user evaluation** (`USER_EVALUATION` / `user_evaluation`) wherever it can be. The concept is the first episodes of a new anime that are downloaded so the user can evaluate it before choosing Keep or Reject. The same rules as §4 apply: rename, migrate stored values, remove the old names, no aliases.
+
+### 8.1 Code-only identifiers (RF-005)
+
+| Existing | New |
+|---|---|
+| `trial_policy.py` | `user_evaluation_policy.py` |
+| `storage/trials.py` | `storage/user_evaluations.py` |
+| `storage/batch_trials.py` | `storage/batch_user_evaluations.py` |
+| `batch/durable_trial.py` | `batch/user_evaluation.py` |
+| `jobs/evaluate_trial_job.py` | `jobs/select_user_evaluation_job.py` |
+| `jobs/stage_trial_media_job.py` | `jobs/stage_user_evaluation_media_job.py` |
+| `TrialConflict`, `TrialProposal`, `TrialSource` | `UserEvaluationConflict`, `UserEvaluationProposal`, `UserEvaluationSource` |
+| `BatchTrialSource`, `BatchTrialProposal`, `propose_batch_trial` | `BatchUserEvaluationSource`, `BatchUserEvaluationProposal`, `propose_batch_user_evaluation` |
+| `persist_trial`, `load_trial_source`, `persist_batch_trial`, `load_batch_trial_source` | `persist_user_evaluation`, `load_user_evaluation_source`, `persist_batch_user_evaluation`, `load_batch_user_evaluation_source` |
+| `plan_batch_trial_window` (potentially dead, P2) | `plan_batch_user_evaluation_window`, unless P2 removes it first |
+| Local names and parameters: `trial`, `trial_kind`, `trial_source`, `trial_registration`, `TRIAL_KIND` | The same with `user_evaluation` |
+| Tests: `test_trial_policy.py`, `test_trial_migration.py`, `test_batch_trial_job.py` | `test_user_evaluation_policy.py`, `test_user_evaluation_migration.py`, `test_batch_user_evaluation_job.py` |
+| Docs: `TRIAL_POLICY.md`, `jobs/STAGE_TRIAL_MEDIA.md`, `architecture/INTAKE_TO_TRIAL.md` | `USER_EVALUATION_POLICY.md`, `jobs/STAGE_USER_EVALUATION_MEDIA.md`, `architecture/INTAKE_TO_USER_EVALUATION.md` |
+
+### 8.2 Persisted identifiers (RF-006)
+
+| Existing | New | Where | Handling |
+|---|---|---|---|
+| Job kind `EVALUATE_TRIAL` | `SELECT_USER_EVALUATION` | `jobs.kind`, `job_history.handler_code`, registry, dashboard, `adm` filters | Migrate every row (as in §4.2). |
+| Job kind `STAGE_TRIAL_MEDIA` | `STAGE_USER_EVALUATION_MEDIA` | same | same |
+| Table `trial_plans` | `user_evaluation_plans` | about 40 references; foreign keys from several tables | `ALTER TABLE … RENAME TO` (SQLite updates foreign-key references). |
+| Table `trial_evaluations` | `user_evaluation_checks` | holds the per-episode result (`USER_EVALUATION_SELECTED` and so on) | rename |
+| Table `batch_trial_plans` | `batch_user_evaluation_plans` | | rename |
+| Table `batch_trial_files` | `batch_user_evaluation_files` | | rename |
+| Column `acquisition_budgets.trial_plan_id` | `user_evaluation_plan_id` | | `ALTER TABLE … RENAME COLUMN` |
+| Indexes `idx_trial_evaluations_plan`, `idx_batch_trial_by_episode` | `idx_user_evaluation_checks_plan`, `idx_batch_user_evaluation_by_episode` | | drop and recreate under the new name |
+| Codes `TRIAL_*` | `USER_EVALUATION_*` | | See [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md). |
+| API field `trial_plan_ready` (`api/app.py:442`, `dashboard.js`) | `user_evaluation_plan_ready` | API response to the dashboard | Rename the server and dashboard together. |
+
+### 8.3 Settings (configuration upgrade, not just a DB migration)
+
+| Existing key | New key |
+|---|---|
+| `trial.backfill_count` | `user_evaluation.backfill_count` |
+| `trial.following_count` | `user_evaluation.following_count` |
+| `storage.trial_root` | `storage.user_evaluation_root` |
+
+These keys live in the user's settings file, not in the database, so they need a **new configuration schema version**. Its upgrade step moves the values to the new keys, the same way the v10 upgrade moved `sonarr.discovery_*` to `prowlarr.*`. The dashboard settings section `'trial'` (shown as "Intake selection") is renamed with it. The upgrade code that validates **older** published settings versions keeps the old key names, because it has to read old files.
+
+### 8.4 Must keep the old name
+
+- The historical migration files `storage/sql/011_trial_windows.sql` and `028_batch_trial_plans.sql`, and their entries in `migrations.py`. They replay on old databases.
+- The validation code for older settings versions in `configuration_schema.py` that reads `trial.*` and `storage.trial_root` from old files.
+- Historical documents in `docs/` that describe archived behavior.
+
+### 8.5 Dashboard wording
+
+| Existing | New |
+|---|---|
+| "N episode(s) planned for the trial." | "N episode(s) picked for your evaluation." |
+| "No trial plan has been committed for this pack." | "No episodes have been picked for evaluation from this pack yet." |
+| "Trial planned" / "Outside trial" | "Picked for evaluation" / "Not picked" |
+| Settings section "Intake selection" | "Evaluation episodes" |
+
