@@ -461,8 +461,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       tr.dataset.episode = tvdbLabel(item);
       tr.appendChild(node('td', tvdbLabel(item)));
       const status = node('td', item.status);
-      if (item.reservation_count) status.appendChild(node('small',
-        item.reservation_count + ' reservation(s)', 'muted job-note'));
+      if (item.active_reservation_count) status.appendChild(node('small',
+        item.active_reservation_count + ' active reservation(s)', 'muted job-note'));
+      if (item.reservation_count > (item.active_reservation_count || 0)) status.appendChild(node('small',
+        (item.reservation_count - (item.active_reservation_count || 0)) +
+        ' previous reservation(s)', 'muted job-note'));
       if (item.manual_submission_count) status.appendChild(node('small',
         item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       tr.appendChild(status);
@@ -484,8 +487,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         item.status === 'WAITING_FOR_DUB' ? 'Waiting for dub' :
         item.status.replaceAll('_', ' ').toLowerCase();
       const result = node('td', statusLabel);
-      if (item.reservation_count) result.appendChild(node('small',
-        item.reservation_count + ' reservation(s)', 'muted job-note'));
+      if (item.active_reservation_count) result.appendChild(node('small',
+        item.active_reservation_count + ' active reservation(s)', 'muted job-note'));
+      if (item.reservation_count > (item.active_reservation_count || 0)) result.appendChild(node('small',
+        (item.reservation_count - (item.active_reservation_count || 0)) +
+        ' previous reservation(s)', 'muted job-note'));
       if (item.manual_submission_count) result.appendChild(node('small',
         item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       if (item.reason_code) {
@@ -538,17 +544,35 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           }
         }
       }
+      if (item.can_retry_size) {
+        const acquire = node('button', 'Retry acquisition', 'secondary');
+        acquire.type = 'button';
+        acquire.title = 'Recheck the prior size-rejected release against the current size settings after safe cleanup.';
+        acquire.addEventListener('click', async () => {
+          if (state.seriesBusy) return;
+          if (!confirm('Retry the previous size-rejected release using current size limits? Any old ownership will be cleaned up first.')) return;
+          state.seriesBusy = true; acquire.disabled = true;
+          try {
+            const receipt = await request(API + '/intake/series/' + anidbId +
+              '/backfill/' + item.anidb_episode + '/acquire', {method: 'POST', body: {}});
+            notice('Acquisition recovery Job #' + receipt.job_id + ' queued. Open Related jobs for progress.');
+            dialog.close(); await loadActivity();
+          } catch (error) { displayError(error); }
+          finally { state.seriesBusy = false; acquire.disabled = false; }
+        });
+        action.appendChild(acquire);
+      }
       if (item.can_retry) {
         const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' :
           (item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS') ? 'Search again' : 'Retry search', 'secondary');
         retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (state.seriesBusy) return;
-          const held = item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS';
+          const held = true; // Even a first/anchor search may optionally retire stale owners.
           let deleteCache = true;
           if (held) {
             $('search-again-episode').textContent = missingLabel(item);
-            $('search-again-delete').checked = false;
+            $('search-again-delete').checked = item.status === 'CANDIDATES';
             const choice = $('search-again-dialog');
             choice.showModal();
             const confirmed = await new Promise(resolve => {
@@ -556,6 +580,10 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
             });
             if (!confirmed) return;
             deleteCache = $('search-again-delete').checked;
+            if (item.status === 'CANDIDATES' && !deleteCache) {
+              notice('Previously selected candidates require Delete cache before a fresh search.', true);
+              return;
+            }
           }
           state.seriesBusy = true; retry.disabled = true;
           try {

@@ -419,6 +419,9 @@ def parser():
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else list(argv)
+    if args[:1] == ['resv']:
+        from src.nextgen.episode_reservation_cli import main as resv
+        return resv(args[1:])
     if args[:1] == ['batch-audit']:
         # Batch backlog audit and consolidation; preview unless --apply.
         from src.nextgen.batch.backlog_audit import main as batch_audit

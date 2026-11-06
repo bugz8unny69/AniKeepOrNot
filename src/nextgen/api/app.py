@@ -662,11 +662,24 @@ class Application:
                 aid,episode=map(int,retry_match.groups())
                 return 202,retry_missing_episode(
                     configuration.value('storage.database_path'),aid,episode,
-                    delete_cache=body.get('delete_cache',True)),[]
+                    delete_cache=body.get('delete_cache',False)),[]
             if path==PREFIX+'/intake':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]
             # Series-scoped batch controller diagnostics & views (WI-09)
+            size_retry_match=re.fullmatch(
+                PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([1-9][0-9]{0,8})/acquire',path)
+            if size_retry_match:
+                if query or body: raise ApiError(400,'API_REQUEST_INVALID')
+                if method!='POST': raise ApiError(405,'API_METHOD_INVALID')
+                from src.nextgen.storage.episode_reset import schedule,EpisodeResetUnavailable
+                aid,episode=map(int,size_retry_match.groups())
+                try:
+                    result=schedule(configuration.value('storage.database_path'),
+                                    aid,episode,mode='replay')
+                except EpisodeResetUnavailable:
+                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
+                return 202,result,[]
             batch_scope_match = re.fullmatch(PREFIX + r'/intake/series/([1-9][0-9]{0,18})/batch/([1-9][0-9]{0,3})', path)
             if batch_scope_match:
                 if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
@@ -846,6 +859,10 @@ class Application:
                             WHERE submission.event_id=jobs.event_id
                             AND submission.anidb_id=? AND submission.tvdb_season=?
                             AND submission.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM manual_release_archive archived
+                            WHERE archived.event_id=jobs.event_id
+                            AND archived.anidb_id=? AND archived.tvdb_season=?
+                            AND archived.tvdb_episode=?)
                         OR EXISTS (SELECT 1 FROM sonarr_backfill_results b
                             JOIN trial_plans p USING(plan_id)
                             JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
@@ -865,8 +882,23 @@ class Application:
                             WHERE jobs.kind='DISCOVER_SONARR_BACKFILL'
                             AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
                             AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM trial_plans p JOIN (
+                            SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode FROM recognized_episodes
+                            UNION SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
+                            FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)
+                            UNION SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
+                            FROM release_verifications WHERE tvdb_order='official'
+                            ) x ON x.anidb_id=p.anidb_id
+                            AND x.anidb_episode_number=json_extract(jobs.payload_json,'$.episode')
+                            WHERE jobs.kind='RESET_EPISODE_SEARCH'
+                            AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
+                            AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM prowlarr_search_snapshots s
+                            JOIN trial_plans p ON p.plan_id=s.plan_id
+                            WHERE s.job_id=jobs.job_id AND p.anidb_id=?
+                            AND s.season=? AND s.episode=?)
                         )""")
-                    values.extend(episode_filter*7)
+                    values.extend(episode_filter*10)
                 if not show_completed:criteria.append("state<>'DONE'")
                 if not show_canceled:
                     criteria.append("state<>'CANCELED'")

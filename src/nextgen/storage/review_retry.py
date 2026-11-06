@@ -16,6 +16,7 @@ from src.nextgen.storage.sqlite import transaction
 # cleanup jobs, or independent post-Keep follow-ups with their own resume path.
 RETRY_KINDS = frozenset((
     'IDENTIFY_ANIME', 'VERIFY_RELEASE', 'EVALUATE_TRIAL', 'RESERVE_EPISODE', 'DISCOVER_SONARR_BACKFILL',
+    'RESET_EPISODE_SEARCH',
     'DISCOVER_BATCH_PROWLARR',
     'PREPARE_ACQUISITION', 'SUBMIT_TORRENT', 'DOWNLOAD_TORRENT',
     'VERIFY_MEDIA', 'STAGE_TRIAL_MEDIA', 'EVALUATE_BATCH', 'RESERVE_BATCH',
