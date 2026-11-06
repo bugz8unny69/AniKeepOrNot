@@ -555,29 +555,22 @@ def schedule_after_cleanup_batch(db, operation_id, *, prowlarr_fallback=True):
     return (receipt,)
 
 
-def execute_batch_prowlarr_fallback(db, scope_id, client, *, audio_check='japanese_english',
-                                    now_ms=None, save_snapshot_job_id=None, save_snapshot_attempt=0):
-    """Execute Prowlarr fallback search after candidate exhaustion (WI-05)."""
+def prepare_batch_prowlarr_search(db, scope_id, *, now_ms=None):
+    """Read-only preparation for Prowlarr batch search (titles, tried hashes, scope params)."""
     integer(scope_id, positive=True)
-    now = now_ms if now_ms is not None else _now()
-
     scope = db.execute(
         "SELECT scope_id, anidb_id, tvdb_series_id, tvdb_season, state, active_candidate_id "
         "FROM batch_candidate_scopes WHERE scope_id=?",
         (scope_id,)).fetchone()
-    if scope is None or scope[4] != 'ACTIVE':
-        return ()
+    if scope is None or scope[4] != 'ACTIVE' or scope[5] is not None:
+        return None
 
     scope_id, anidb_id, tvdb_series_id, season, state, active_cid = scope
-    if active_cid is not None:
-        return ()
 
-    # Get previously tried infohashes for this scope
     tried_rows = db.execute(
         "SELECT info_hash FROM batch_candidates WHERE scope_id=?", (scope_id,)).fetchall()
     tried = {r[0].lower() for r in tried_rows}
 
-    # Get anime titles
     row = db.execute("SELECT title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
     main_title = row[0] if row else None
     eng_title = None
@@ -592,23 +585,43 @@ def execute_batch_prowlarr_fallback(db, scope_id, client, *, audio_check='japane
             eng_title, rom_title = meta
     titles = tuple(t for t in (main_title, eng_title, rom_title) if t)
     if not titles:
-        exhaust_scope(db, scope_id, now_ms=now)
-        return ()
+        return None
 
-    if hasattr(client, 'set_context'):
-        client.set_context(search_mode='batch_fallback', anidb_id=anidb_id, tvdb_series_id=tvdb_series_id)
+    return (scope_id, anidb_id, tvdb_series_id, season, titles, tried)
 
-    # Perform Prowlarr batch search
-    matching_releases = client.search_batch(titles, season, tried=tried)
 
-    # Save diagnostic snapshots if job_id provided
-    if save_snapshot_job_id is not None and hasattr(client, 'snapshots'):
+def ingest_batch_prowlarr_results(db, scope_id, anidb_id, tvdb_series_id, season,
+                                  matching_releases, *, snapshots=None,
+                                  save_snapshot_job_id=None, save_snapshot_attempt=0,
+                                  audio_check='japanese_english', now_ms=None):
+    """Inside write transaction: persist snapshots, candidate facts, verified identity, and activate winner."""
+    if not db.in_transaction:
+        raise CandidateConflict()
+    now = now_ms if now_ms is not None else _now()
+
+    if save_snapshot_job_id is not None and snapshots:
         from src.nextgen.storage.prowlarr_snapshots import save_snapshots
-        save_snapshots(db, save_snapshot_job_id, save_snapshot_attempt, client.snapshots, now_ms=now)
+        save_snapshots(db, save_snapshot_job_id, save_snapshot_attempt, snapshots, now_ms=now)
 
     if not matching_releases:
         exhaust_scope(db, scope_id, now_ms=now)
         return ()
+
+    # Fetch verified series_json for this anidb_id to ensure provider-verified identity
+    series_row = db.execute(
+        "SELECT series_json FROM identity_results WHERE anidb_id=? ORDER BY validated_at_ms DESC LIMIT 1",
+        (anidb_id,)).fetchone()
+    if series_row and series_row[0]:
+        series_json = series_row[0]
+    else:
+        anime_row = db.execute("SELECT tvdb_series_id, title FROM identified_anime WHERE anidb_id=?", (anidb_id,)).fetchone()
+        tid = anime_row[0] if anime_row else tvdb_series_id
+        title = anime_row[1] if anime_row else ""
+        series_json = json.dumps({
+            "schema_version": 2,
+            "anime": {"anidb_id": anidb_id, "tvdb_series_id": tid, "title": title},
+            "episodes": [],
+        })
 
     # Add new eligible candidates to pool
     for rel in matching_releases:
@@ -625,6 +638,12 @@ def execute_batch_prowlarr_fallback(db, scope_id, client, *, audio_check='japane
             "INSERT INTO incoming_events(source, raw_body, received_at_ms, state) "
             "VALUES('prowlarr', ?, ?, 'IDENTIFIED')",
             (raw, now)).lastrowid
+
+        db.execute(
+            "INSERT INTO identity_results(event_id, anidb_id, schema_version, series_json, validated_at_ms) "
+            "VALUES(?, ?, 2, ?, ?)",
+            (event_id, anidb_id, series_json, now))
+
         add_candidate(db, scope_id, rel.info_hash, rel.title,
                       source_event_id=event_id, seeders=rel.seeders, size_bytes=rel.size,
                       now_ms=now)
@@ -652,4 +671,26 @@ def execute_batch_prowlarr_fallback(db, scope_id, client, *, audio_check='japane
         event_id=top.source_event_id,
         operation_id=new_op_id)
     return (receipt,)
+
+
+def execute_batch_prowlarr_fallback(db, scope_id, client, *, audio_check='japanese_english',
+                                    now_ms=None, save_snapshot_job_id=None, save_snapshot_attempt=0):
+    """Execute Prowlarr fallback search after candidate exhaustion (WI-05)."""
+    params = prepare_batch_prowlarr_search(db, scope_id, now_ms=now_ms)
+    if params is None:
+        exhaust_scope(db, scope_id, now_ms=now_ms)
+        return ()
+
+    scope_id, anidb_id, tvdb_series_id, season, titles, tried = params
+    if hasattr(client, 'set_context'):
+        client.set_context(search_mode='batch_fallback', anidb_id=anidb_id, tvdb_series_id=tvdb_series_id)
+
+    matching_releases = client.search_batch(titles, season, tried=tried)
+    snapshots = getattr(client, 'snapshots', None)
+
+    return ingest_batch_prowlarr_results(
+        db, scope_id, anidb_id, tvdb_series_id, season, matching_releases,
+        snapshots=snapshots, save_snapshot_job_id=save_snapshot_job_id,
+        save_snapshot_attempt=save_snapshot_attempt, audio_check=audio_check,
+        now_ms=now_ms)
 

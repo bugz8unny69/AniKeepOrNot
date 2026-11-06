@@ -325,10 +325,10 @@ def _unavailable(headers):
 
 class Client:
     """GET-only Prowlarr transport plus a provider-backed episode catalog."""
-    def __init__(self, options, api_key, *, catalog, transport=None, policy=None, sleep=time.sleep):
+    def __init__(self, options, api_key, *, catalog=None, transport=None, policy=None, sleep=time.sleep):
         if (type(options) is not Options or type(api_key) is not str or not api_key
                 or len(api_key) > 1024 or any(ord(c) < 33 or ord(c) > 126 for c in api_key)
-                or not callable(catalog)):
+                or (catalog is not None and not callable(catalog))):
             raise SearchConfiguration()
         if policy is not None and type(policy) is not DiscoveryPolicy: raise SearchConfiguration()
         self.options, self._key = options, api_key
@@ -353,10 +353,10 @@ class Client:
             self._current_tvdb_series_id = tvdb_series_id
 
     @classmethod
-    def from_context(cls, configuration, secrets, *, catalog, transport=None):
+    def from_context(cls, configuration, secrets, *, catalog=None, transport=None):
         try: key = secrets.prowlarr_api_key()
-        except ValueError: raise SearchConfiguration() from None
-        return cls(Options.capture(configuration), key, catalog=catalog, transport=transport,
+        except (ValueError, AttributeError): raise SearchConfiguration() from None
+        return cls(Options.capture(configuration), key, catalog=catalog or (lambda *args: None), transport=transport,
                    policy=DiscoveryPolicy.capture(configuration))
 
     def _get(self, query, *, search_type='search', params=None):

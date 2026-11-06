@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -263,3 +264,82 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
             receipts = schedule_after_cleanup_batch(db, op_id)
             self.assertEqual(receipts, ())
             self.assertEqual(get_or_create_scope(db, 16999, 393400, 1).state, 'EXHAUSTED')
+
+    async def test_discover_batch_prowlarr_real_claim_contracts_and_identity_handoff(self):
+        """WI-05: Real worker execution of DISCOVER_BATCH_PROWLARR, Claim contracts, and identity handoff to VERIFY_RELEASE."""
+        from src.nextgen.jobs.discover_batch_prowlarr_job import registration
+        from src.nextgen.storage.releases import load_release
+
+        now_ms = int(time.time() * 1000)
+        with self.connect() as db, transaction(db):
+            db.execute("INSERT INTO identified_anime(anidb_id, tvdb_series_id, title) VALUES(16999, 393400, 'Cyberpunk Edgerunners')")
+            # Create an existing identity_results row for this anime
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) VALUES(1, 'autobrr', X'61', 1000, 'IDENTIFIED')")
+            db.execute(
+                "INSERT INTO identity_results(result_id, event_id, anidb_id, schema_version, series_json, validated_at_ms) "
+                "VALUES(1, 1, 16999, 2, '{\"schema_version\":2,\"anime\":{\"anidb_id\":16999,\"tvdb_series_id\":393400,\"title\":\"Cyberpunk Edgerunners\"},\"episodes\":[]}', 1000)")
+
+            scope = get_or_create_scope(db, 16999, 393400, 1)
+            # Enqueue real DISCOVER_BATCH_PROWLARR job
+            enqueue_job(
+                db, component='worker', kind=BATCH_PROWLARR_KIND,
+                payload={'scope_id': scope.scope_id, 'anidb_id': 16999, 'tvdb_series_id': 393400, 'tvdb_season': 1},
+                available_at_ms=0, event_id=1,
+            )
+
+        queue = JobQueue(str(self.db_path))
+        claim, _ = queue.claim()
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim.kind, BATCH_PROWLARR_KIND)
+
+        # Mock Prowlarr client
+        mock_rel = Release(
+            title="[Group] Cyberpunk Edgerunners - S01 [Dual Audio 1080p]",
+            indexer="Nyaa",
+            resolution=1080,
+            seeders=20,
+            size=8000000000,
+            tvdb_episode_id=None,
+            info_hash=HASH_4,
+            magnet_url=f"magnet:?xt=urn:btih:{HASH_4}",
+        )
+        mock_client = Mock()
+        mock_client.snapshots = []
+        mock_client.search_batch.return_value = (mock_rel,)
+
+        config = ConfigurationSnapshot(1, {
+            'storage': {'database_path': str(self.db_path)},
+            'acquisition': {'audio_check': 'japanese_english'},
+        })
+        mock_secrets = Mock()
+
+        reg = registration(mock_secrets, client_factory=lambda c, s: mock_client)
+        context = SimpleNamespace(
+            claim=claim,
+            configuration=config,
+            cancelled=threading.Event(),
+            data=claim.data,
+            logger=None,
+        )
+
+        outcome = await reg.execute(context)
+        # Outcome contract: must be 'complete' (DONE), NOT 'pass'
+        self.assertEqual(outcome.kind, 'complete')
+
+        # Verify candidate was added and activated in scope
+        with self.connect() as db:
+            active = get_active_candidate(db, scope.scope_id)
+            self.assertIsNotNone(active)
+            self.assertEqual(active.info_hash, HASH_4)
+
+        # Next job in queue is VERIFY_RELEASE
+        verify_claim, _ = queue.claim()
+        self.assertIsNotNone(verify_claim)
+        self.assertEqual(verify_claim.kind, 'VERIFY_RELEASE')
+
+        # Provider-verified identity handoff: load_release must succeed under worker contracts!
+        rel_input = load_release(str(self.db_path), verify_claim.event_id, 16999)
+        self.assertIsNotNone(rel_input)
+        self.assertEqual(rel_input.anidb_id, 16999)
+        self.assertEqual(rel_input.tvdb_series_id, 393400)
+        self.assertEqual(rel_input.event_id, verify_claim.event_id)
