@@ -3,7 +3,6 @@
 Never produces a BEP3 Manifest or a torrent send permit for SUBMIT_TORRENT.
 Observed inventories enter the existing transfer pipeline without another add.
 """
-import asyncio
 import logging
 
 from src.nextgen.async_io import blocking

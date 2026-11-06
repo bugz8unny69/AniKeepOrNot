@@ -26,7 +26,7 @@ from src.nextgen.acquisition.metadata import infohash
 from src.nextgen.acquisition.metadata_service import verify_torrent_ownership
 from src.nextgen.batch.recognition import release_scope_hint
 from src.nextgen.storage.batch_candidates import (
-    _metadata_evidence, activate_candidate, add_candidate, get_active_candidate, get_candidate,
+    _metadata_evidence, activate_candidate, release_facts, add_candidate, get_active_candidate, get_candidate,
     get_candidate_pool, get_or_create_scope, rank_candidates, reorder_candidates,
 )
 
@@ -83,15 +83,8 @@ def _release(db, operation_id):
         "SELECT e.event_id, e.raw_body FROM jobs j JOIN job_operation_members m USING(job_id) "
         "JOIN incoming_events e ON e.event_id=j.event_id "
         "WHERE m.operation_id=? AND j.kind='VERIFY_RELEASE' ORDER BY j.job_id LIMIT 1", (operation_id,)).fetchone()
-    if row is None:
-        return None
-    try:
-        body = json.loads(bytes(row[1]).decode('utf-8'))
-        title = body.get('release_name') or body.get('title')
-        digest = infohash(body.get('torrent_infohash') or body.get('info_hash'))
-    except (ValueError, TypeError, UnicodeError, AttributeError):
-        return None
-    return (row[0], digest, title) if type(title) is str and title.strip() else None
+    facts = None if row is None else release_facts(*row)
+    return None if facts is None else (facts.event_id, facts.info_hash, facts.title)
 
 
 def operation_scope(db, operation_id):

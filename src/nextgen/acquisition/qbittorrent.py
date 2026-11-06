@@ -8,6 +8,7 @@ import urllib.request
 import uuid
 
 from src.nextgen.acquisition.metadata import TorrentFile, parse_metainfo
+from src.nextgen.acquisition.metadata_service import STOPPED
 from src.nextgen.acquisition.settings import DownloadOptions, DownloadCredentials
 from src.nextgen.acquisition.submission import (Observation, SendPermit, ClientUnavailable, ClientInvalid,
                                                ClientAuthenticationFailed, ClientUnsupported)
@@ -257,7 +258,7 @@ class Client:
             raise ClientInvalid()
         if not snapshot.files:
             return None
-        if snapshot.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if snapshot.state not in STOPPED:
             return None
         # Read the exact same inventory again, rejecting concurrent changes.
         confirmed=self.inspect(expected_hash)
@@ -326,7 +327,7 @@ class Client:
                                 for t in row.tags))
         if not matches(before):
             raise ClientInvalid()
-        if before.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if before.state not in STOPPED:
             # A previous lease may have died during metadata discovery.
             # Stop before considering another start.
             stopped=self.stop_legacy_metadata(intent)
@@ -378,11 +379,11 @@ class Client:
                 or any(tag.startswith('ad-') and tag!='ad-'+intent.marker
                        for tag in before.tags)):
             raise ClientInvalid()
-        if before.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if before.state not in STOPPED:
             self._request(self.protocol.stop_endpoint,
                           form={'hashes':intent.info_hash},limit=4096)
         after=self.inspect(intent.info_hash)
-        if after is None or after.state not in ('pausedDL','pausedUP','stoppedDL','stoppedUP'):
+        if after is None or after.state not in STOPPED:
             return None
         if not after.files:
             return None
@@ -465,7 +466,7 @@ class Client:
 
     def apply_selection(self,intent,fingerprint,permit,action):
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, STOPPED, verify_snapshot, selection_fingerprint)
+        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, verify_snapshot, selection_fingerprint)
         if type(permit) is not TransferPermit or self.options!=intent.options:raise ClientInvalid()
         snapshot=self.inspect_transfer(intent.plan.manifest.info_hash)
         if snapshot is None:raise TransferConflict()
@@ -482,7 +483,7 @@ class Client:
 
     def start_selected(self,intent,fingerprint,permit):
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, STOPPED, verify_snapshot, exact_selection, selection_fingerprint)
+        from src.nextgen.acquisition.transfers import (TransferPermit, TransferConflict, verify_snapshot, exact_selection, selection_fingerprint)
         if type(permit) is not TransferPermit or self.options!=intent.options:raise ClientInvalid()
         snapshot=self.inspect_transfer(intent.plan.manifest.info_hash)
         if snapshot is None:raise TransferConflict()
@@ -495,7 +496,6 @@ class Client:
 
     def cleanup_control(self,intent,fingerprint,permit,action):
         from src.nextgen.acquisition.cleanup import CleanupPermit, owned
-        from src.nextgen.acquisition.transfers import STOPPED
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
         if type(permit) is not CleanupPermit or self.options!=intent.options or fingerprint!=intent.fingerprint:raise ClientInvalid()
         current=owned(intent,self.inspect(intent.plan.manifest.info_hash))

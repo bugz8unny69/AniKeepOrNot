@@ -15,9 +15,9 @@ from typing import Any
 
 from src.nextgen.async_io import blocking
 
-METADATA_TIMEOUT_SECONDS = 600
 METADATA_TIMEOUT_MS = 600000
 DEFAULT_METADATA_CONCURRENCY = 2
+# qBittorrent's stopped/paused torrent states. The only definition; other modules import it.
 STOPPED = frozenset(('pausedDL', 'pausedUP', 'stoppedDL', 'stoppedUP'))
 
 

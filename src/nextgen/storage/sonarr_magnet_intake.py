@@ -23,7 +23,7 @@ from src.nextgen.storage.acquisition import _source
 from src.nextgen.storage.job_queue import JobQueue, Claim
 from src.nextgen.storage.sqlite import transaction
 
-STOPPED=frozenset(('pausedDL','pausedUP','stoppedDL','stoppedUP'))
+from src.nextgen.acquisition.metadata_service import STOPPED  # The one definition of qBittorrent's stopped states.
 
 
 @dataclass(frozen=True)

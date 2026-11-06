@@ -156,9 +156,7 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         )
         from src.nextgen.batch.qb_client import BatchClient
         from src.nextgen.acquisition.metadata import hash_magnet
-        from src.nextgen.storage.batch_metadata_admission import STOPPED
         from src.nextgen.acquisition.metadata_evidence import fresh
-        import inspect
 
         database=configuration.value('storage.database_path')
         owned,stored=await blocking(lookup,database,digest)

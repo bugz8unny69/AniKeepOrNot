@@ -16,7 +16,7 @@ from src.nextgen.jobs.verify_batch_probe_job import KIND as BATCH_PROBE_KIND, re
 from src.nextgen.jobs.unlock_batch_job import KIND as BATCH_UNLOCK_KIND, registration as batch_unlock_registration
 from src.nextgen.jobs.verify_batch_episode_job import KIND as BATCH_EPISODE_KIND, registration as batch_episode_registration
 from src.nextgen.jobs.stage_batch_episode_job import KIND as BATCH_STAGE_KIND, registration as batch_stage_registration
-from src.nextgen.jobs.discover_batch_prowlarr_job import KIND as BATCH_PROWLARR_KIND, registration as batch_prowlarr_registration
+from src.nextgen.jobs.discover_batch_prowlarr_job import registration as batch_prowlarr_registration
 from src.nextgen.jobs.reserve_episode_job import KIND as RESERVE_KIND, registration as reserve_registration
 from src.nextgen.jobs.prepare_acquisition_job import KIND as PREPARE_KIND, registration as prepare_registration
 from src.nextgen.jobs.submit_torrent_job import KIND as SUBMIT_KIND, registration as submit_registration
