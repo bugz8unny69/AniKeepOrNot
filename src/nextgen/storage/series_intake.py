@@ -257,7 +257,14 @@ def detail(db, anidb_id, language='english'):
             status = (work['status'] if work else
                       WAITING_FOR_DUB if number in waiting else observed.get(number, 'NOT_SEARCHED'))
             season, episode = place or (None, None)
+            from src.nextgen.storage.episode_reset import can_replay
+            can_retry_size = (
+                rejected is None and work is None and place is not None
+                and status == 'CANDIDATES'
+                and can_replay(db,plan_id,number,anidb_id,season,episode)
+            )
             result['missing'].append({
+                'can_retry_size': can_retry_size,
                 'anidb_episode': number,
                 # Verified TVDB placement is a label only; None when not yet known.
                 'season': season, 'episode': episode, 'status': status,
