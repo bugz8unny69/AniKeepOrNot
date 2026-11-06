@@ -98,6 +98,22 @@ def _inventory(intent):
         raise MetadataInvalid() from None
 
 
+def admitted(database,digest):
+    """Read-only: whether any early batch admission exists for this hash, in any state.
+
+    A hash with an admission (even UNCERTAIN or REVIEW) stays on the journal
+    path; only a torrent we never admitted may be observed read-only.
+    """
+    digest=infohash(digest)
+    db=_open(database,readonly=True,timeout_ms=5000)
+    try:
+        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
+            raise AcquisitionConflict()
+        return _select(db,info_hash=digest) is not None
+    finally:
+        db.close()
+
+
 def lookup(database,digest):
     """Read-only lookup for downstream batch jobs; no permits or mutations."""
     digest=infohash(digest)

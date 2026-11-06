@@ -406,7 +406,8 @@ class BatchCandidateControllerTests(unittest.IsolatedAsyncioTestCase):
 
         verifier = make_batch_verifier(Options('registeredclient', 1), lambda: Credentials('private'),
                                        mock_read_metainfo, client_factory=lambda *a: None)
-        with self.assertRaises(sqlite3.Error):
-            await verifier(source, bad_config, threading.Event())
+        from src.nextgen.storage.job_queue import QueueUnavailable
+        with self.assertRaises(QueueUnavailable):
+            await verifier(source, bad_config, threading.Event(), claim=SimpleNamespace(job_id=1))
         self.assertFalse(called_independent)
 
