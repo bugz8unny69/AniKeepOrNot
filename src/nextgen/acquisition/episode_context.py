@@ -165,14 +165,10 @@ def load_authoritative_episode_context(db, plan_id, episode):
     if season_row:
         add_title(season_row[0])
 
-    # Aliases from recognized_aliases
-    alias_rows = db.execute(
-        "SELECT alias_key FROM recognized_aliases WHERE anidb_id=? AND tvdb_series_id=? AND tvdb_season=? "
-        "ORDER BY rowid",
-        (aid, tid, tvdb_season)
-    ).fetchall()
-    for (alias_key,) in alias_rows:
-        add_title(alias_key)
+    # recognized_aliases.alias_key is norm(title): punctuation and whitespace
+    # are intentionally stripped for identity lookups. It is NOT a display
+    # alias and must never be sent to Prowlarr as a query. Only collect
+    # readable original titles from the metadata and saved identity snapshot.
 
     # English and romaji titles from anime_title_metadata
     meta_row = db.execute(
