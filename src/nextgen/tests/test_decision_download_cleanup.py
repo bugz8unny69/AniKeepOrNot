@@ -40,13 +40,16 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
 
     def attach(self,worker,mode='normal',*,preserve_controls=False):
         test=self
-        if not preserve_controls:self.controls=[]
+        if not preserve_controls:
+            self.controls=[]
+            self.delete_files_args=[]
         class Client:
             def __init__(self,*args):pass
             def login(self):pass
             def inspect(self,expected):return None if test.snapshot is None else test.snapshot.observation
-            def cleanup_control(self,intent,fingerprint,permit,action):
+            def cleanup_control(self,intent,fingerprint,permit,action,*,delete_files=True):
                 permit.take(fingerprint,action);test.controls.append(action)
+                if action=='remove':test.delete_files_args.append(delete_files)
                 if action=='stop':
                     first_delayed=mode=='stop_delayed' and test.controls.count('stop')==1
                     if mode!='stop_present' and not first_delayed:
@@ -271,3 +274,162 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.assertNotIn('remove',self.controls);self.assertEqual(replacement.read_bytes(),b'new')
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
+
+    async def test_legacy_move_missing_files_recovery_from_prepared(self):
+        """WI-19 / Job #6030: Legacy MOVE plan reporting missingFiles from PREPARED recovers using deleteFiles=false."""
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                db.execute("UPDATE staging_publications SET manifest_json = json_set(manifest_json, '$.transfer', 'MOVE') WHERE job_id=?",(stage_job,))
+        finally:db.close()
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.payload_root.mkdir(parents=True,exist_ok=True)
+        # In legacy MOVE, the video file was moved to staging and is missing from download dir.
+        if self.remainder.exists():self.remainder.unlink()
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['remove'])
+        self.assertEqual(self.delete_files_args,[False])
+        self.assertIsNone(self.snapshot)
+        self.assertEqual(len(list(staging.rglob('*.mkv'))),1)
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
+        # Repeat execution does not issue another delete
+        self.controls.clear();self.delete_files_args.clear()
+        await worker.attempt()
+        self.assertEqual(self.controls,[])
+
+    async def test_legacy_move_missing_files_recovery_from_stop_uncertain(self):
+        """WI-19 / Job #3089: Legacy MOVE plan in STOP_UNCERTAIN recovers without resetting journal."""
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                db.execute("UPDATE staging_publications SET manifest_json = json_set(manifest_json, '$.transfer', 'MOVE') WHERE job_id=?",(stage_job,))
+                plan_id=self.rows('SELECT plan_id FROM staging_publications WHERE job_id=?',(stage_job,))[0][0]
+                op_id=self.rows('SELECT operation_id FROM job_operation_members WHERE job_id=?',(stage_job,))[0][0]
+                fp=self.rows('SELECT fingerprint FROM torrent_submissions WHERE plan_id=?',(plan_id,))[0][0]
+                db.execute("INSERT INTO cancellation_cleanup VALUES(?,?,?,'{}','STOP_UNCERTAIN',1000,1000)",
+                           (plan_id,op_id,fp))
+        finally:db.close()
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.payload_root.mkdir(parents=True,exist_ok=True)
+        if self.remainder.exists():self.remainder.unlink()
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['remove'])
+        self.assertEqual(self.delete_files_args,[False])
+        self.assertIsNone(self.snapshot)
+        self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
+
+    async def test_copy_missing_files_is_rejected_without_deletion(self):
+        """WI-19: COPY plans reporting missingFiles must NOT be deleted."""
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.payload_root.mkdir(parents=True,exist_ok=True)
+        if self.remainder.exists():self.remainder.unlink()
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
+        self.assertEqual(self.controls,[])
+        self.assertIsNotNone(self.snapshot)
+
+    async def test_retry_cleanup_capability_and_execution(self):
+        """WI-20: Retry Cleanup for CLEANUP_DECIDED_DOWNLOAD jobs in NEEDS_REVIEW."""
+        from src.nextgen.storage.review_retry import capability, request_review_retry, RetryStale
+        from src.nextgen.storage.cancellation import CancellationStore, CancellationError
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.payload_root.mkdir(parents=True,exist_ok=True)
+        if self.remainder.exists():self.remainder.unlink()
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
+
+        db=connect(self.database)
+        try:
+            self.assertTrue(capability(db,job)['enabled'])
+            self.assertFalse(CancellationStore(self.database).status(job)['can_cancel'])
+            with self.assertRaises(CancellationError):
+                CancellationStore(self.database).request(job)
+        finally:db.close()
+
+        with self.assertRaises(RetryStale):
+            request_review_retry(self.database,job,expected_attempt=999,expected_reason='DECISION_DOWNLOAD_CLEANUP_REVIEW')
+
+        # Fix the underlying issue (simulate upgrading to MOVE or resolving state)
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                db.execute("UPDATE staging_publications SET manifest_json = json_set(manifest_json, '$.transfer', 'MOVE') WHERE job_id=?",(stage_job,))
+        finally:db.close()
+
+        receipt=request_review_retry(self.database,job,expected_attempt=1,expected_reason='DECISION_DOWNLOAD_CLEANUP_REVIEW')
+        self.assertEqual(receipt.outcome,'QUEUED')
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('PENDING',)])
+
+        # Duplicate retry is idempotent
+        dup=request_review_retry(self.database,job,expected_attempt=1,expected_reason='DECISION_DOWNLOAD_CLEANUP_REVIEW')
+        self.assertEqual(dup.outcome,'ALREADY_QUEUED')
+
+        # Now run worker and prove completion
+        await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['remove'])
+        self.assertEqual(self.delete_files_args,[False])
+
+    async def test_bounded_waiting_escalates_to_review(self):
+        """WI-20: Unchanging torrent state escalates to NEEDS_REVIEW when phase deadline is exceeded."""
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.remainder.parent.mkdir(parents=True,exist_ok=True)
+        self.remainder.write_bytes(b'partial')
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='checkingDL'))
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
+        # First attempt defers
+        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)),
+                         [('RETRY_WAIT','DECISION_DOWNLOAD_CLEANUP_WAITING')])
+        # Age the phase in cancellation_cleanup past 10 minutes
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                db.execute('UPDATE cancellation_cleanup SET created_at_ms=created_at_ms-700000, updated_at_ms=updated_at_ms-700000')
+        finally:db.close()
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)),
+                         [('NEEDS_REVIEW','DECISION_DOWNLOAD_CLEANUP_REVIEW')])
+        facts=self.rows("SELECT details_json FROM job_history WHERE job_id=? AND event_code='NEEDS_REVIEW'",(job,))
+        self.assertTrue(len(facts)>0)
+        self.assertIn('STOP_TIMEOUT',facts[0][0])
+
+    async def test_job_report_follows_staging_job(self):
+        """WI-20: adm report job follows staging_job_id and displays originating operation and journal."""
+        from src.nextgen.job_report import report
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        db=connect(self.database)
+        try:
+            lines=[]
+            report(db,job,out=lines.append)
+            text='\n'.join(lines)
+            self.assertIn(f'download cleanup for staging Job #{stage_job}',text)
+            self.assertIn('Staging publication',text)
+            self.assertIn('Torrent submission',text)
+        finally:db.close()

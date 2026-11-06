@@ -117,6 +117,17 @@ def report(db, job_id, out=print):
     focus = target[0]['target_job_id'] if target else job_id
     if target:
         out(f'This is the {target[0]["action"]} action for Job #{focus}; the report below covers that work.')
+    elif job['kind'] == 'CLEANUP_DECIDED_DOWNLOAD':
+        try: payload = json.loads(job['payload_json'] or '{}')
+        except (ValueError, TypeError): payload = {}
+        if payload.get('staging_job_id'):
+            focus = payload['staging_job_id']
+            out(f'This is the download cleanup for staging Job #{focus}; the report below covers that work.')
+        elif payload.get('decision_job_id'):
+            dec_id = payload['decision_job_id']
+            act = rows(db, 'SELECT action,target_job_id FROM management_actions WHERE job_id=?', (dec_id,))
+            focus = act[0]['target_job_id'] if act else dec_id
+            out(f'This is the download cleanup for decision Job #{dec_id}; the report below covers that work.')
     from src.nextgen.job_diagnostics import diagnose
     diagnostics = diagnose(db, job_id)
     render(out, diagnostics)
