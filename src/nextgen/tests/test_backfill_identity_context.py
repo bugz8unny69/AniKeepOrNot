@@ -429,3 +429,33 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(load_authoritative_episode_context(db, 19, 999))
         finally:
             db.close()
+
+    def test_deferred_prowlarr_facts_are_valid_without_contract_regression(self):
+        from src.nextgen.job_contracts import Outcome
+        from src.nextgen.storage.sonarr_backfill import AUTOMATIC_RETRY_MS
+        for reason in ('PROWLARR_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE'):
+            with self.subTest(reason=reason):
+                outcome = Outcome('defer',reason,delay_ms=AUTOMATIC_RETRY_MS,
+                    facts={'failed_check': 'src/nextgen/acquisition/prowlarr_search.py:63 search PROWLARR_TIMEOUT'})
+                self.assertEqual(outcome.facts['failed_check'].split()[-1],'PROWLARR_TIMEOUT')
+        with self.assertRaises(ValueError):
+            Outcome('complete', facts={'failed_check': 'src/nextgen/acquisition/prowlarr_search.py:63 search PROWLARR_TIMEOUT'})
+
+    def test_saved_search_context_never_calls_provider_catalog(self):
+        self.setUpFixture()
+        queries=[]
+        def unavailable(*args):
+            raise AssertionError('Provider catalog accessed with saved episode context')
+        client=Client(Options('http://127.0.0.1:9696',60),'key',
+                      catalog=unavailable,policy=DiscoveryPolicy())
+        client._get=lambda query: queries.append(query) or []
+        context=EpisodeSearchContext(
+            tvdb_series_id=self.tid,tvdb_episode_id=self.tvdb_ep_id,
+            tvdb_season=1,tvdb_episode=2,anidb_id=self.aid,
+            anidb_episode=2,titles=('Original Series','English Series','Romaji Series'),
+            english_title='English Series',verified=False)
+        result=client.search(self.aid,2,context)
+        self.assertEqual(result.tvdb_episode_id,self.tvdb_ep_id)
+        self.assertTrue(any('Original Series' in q for q in queries))
+        self.assertTrue(any('English Series' in q for q in queries))
+        self.assertTrue(any('Romaji Series' in q for q in queries))

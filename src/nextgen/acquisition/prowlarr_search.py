@@ -838,8 +838,9 @@ class Client:
         self._current_anidb_id = anidb_id
         self._current_tvdb_series_id = identity.tvdb_series_id
 
-        from src.nextgen.acquisition.episode_context import EpisodeSearchContext
-        if isinstance(identity, EpisodeSearchContext) and identity.verified:
+        # Saved search coordinates may be used without independently verifying
+        # a release. VERIFY_RELEASE remains mandatory before acquisition.
+        if isinstance(identity, EpisodeSearchContext):
             if identity.anidb_id != anidb_id or identity.anidb_episode != episode:
                 raise SearchReview(
                     f'Episode context ({identity.anidb_id} ep {identity.anidb_episode}) does not match requested ({anidb_id} ep {episode})',
@@ -855,21 +856,10 @@ class Client:
                     'Episode context has no anime titles for search queries',
                     failed_check='src/nextgen/acquisition/prowlarr_search.py:856 search SEARCH_QUERIES_EMPTY'
                 )
-            season = identity.tvdb_season
-            titles = identity.titles
-            if callable(self.catalog):
-                try:
-                    cat = self.catalog(anidb_id, identity.tvdb_series_id)
-                    if cat is not None and getattr(cat, 'titles', None):
-                        titles = tuple(dict.fromkeys((*cat.titles, *identity.titles)))
-                except Exception:
-                    pass
-            from dataclasses import replace
-            search_context = replace(identity, titles=titles) if titles != identity.titles else identity
             return SearchResult(
-                identity.tvdb_series_id,
-                identity.tvdb_episode_id,
-                self._search(search_context, season, identity, tried=tried, target_hash=target_hash)
+                identity.tvdb_series_id, identity.tvdb_episode_id,
+                self._search(identity, identity.tvdb_season, identity,
+                             tried=tried, target_hash=target_hash)
             )
 
         # Legacy / unverified resolution path via provider catalog
