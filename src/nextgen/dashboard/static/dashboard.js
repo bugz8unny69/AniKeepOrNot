@@ -544,11 +544,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (state.seriesBusy) return;
-          const held = item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS';
+          const held = true; // Even a first/anchor search may optionally retire stale owners.
           let deleteCache = true;
           if (held) {
             $('search-again-episode').textContent = missingLabel(item);
-            $('search-again-delete').checked = false;
+            $('search-again-delete').checked = item.status === 'CANDIDATES';
             const choice = $('search-again-dialog');
             choice.showModal();
             const confirmed = await new Promise(resolve => {
@@ -556,6 +556,10 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
             });
             if (!confirmed) return;
             deleteCache = $('search-again-delete').checked;
+            if (item.status === 'CANDIDATES' && !deleteCache) {
+              notice('Previously selected candidates require Delete cache before a fresh search.', true);
+              return;
+            }
           }
           state.seriesBusy = true; retry.disabled = true;
           try {
