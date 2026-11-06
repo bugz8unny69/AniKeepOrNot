@@ -104,6 +104,10 @@ def _plan(db, plan_id, start, retry_episode=None):
         raise BackfillConflict()
     aid, tid, backfill, anchor, following = row[:5]
     episodes = plan_window(db, plan_id, anchor, backfill, following)
+    # Explicit single-episode recovery may include the original delivered
+    # anchor, even when automatic backfill correctly excluded it.
+    if retry_episode == anchor:
+        episodes = tuple(sorted(set(episodes) | {anchor}))
     if not episodes or start > len(episodes) or (start - 1) % PAGE_SIZE:
         raise BackfillConflict()
     numbers = episodes[start-1:start-1+PAGE_SIZE]
