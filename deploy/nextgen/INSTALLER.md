@@ -66,7 +66,39 @@ sudo anime-discovery-install --upgrade --branch refactor
 
 The branch is fetched and installed, its release folder is named after it (`…-refactor-<commit>`), and later upgrades keep using it until you pass `--branch` again. It is the only installation setting an upgrade may change. Every upgrade, with or without `--branch`, rewrites the systemd unit files from the new release (backing up the old ones) and reloads systemd.
 
-Branches can carry different database migrations. The installer upgrades the database to the branch's schema and refuses one it does not recognise, so moving back to a branch that lacks those migrations stops at the database step (and `--rollback` refuses for the same reason). Only switch between branches whose schemas are compatible.
+### Each branch keeps its own settings and database
+
+Branches can carry different database migrations and settings versions, so a branch never runs on another branch's data:
+
+| | Settings, credentials, password | Database |
+|---|---|---|
+| The branch you installed first | the configuration folder you installed with (`/etc/anime-discovery`) | the database in its settings |
+| Any other branch | `/etc/anime-discovery/branches/<branch>/` | `/var/lib/anime-discovery/anime-discovery-<branch>.sqlite` |
+
+`<branch>` is the branch name with `/` replaced by `-`. The installer records which folder belongs to which branch in `/var/lib/anime-discovery/installer/installer.json`.
+
+- **The first switch to a branch** sets up its folder:
+  - the credentials and administrator password are copied;
+  - the settings are copied and converted by the new branch's own settings upgrade, with the database path pointing at the branch's file. If the new branch cannot read them (they are newer than it understands), the switch is refused and nothing changes.
+  - The new branch starts with an **empty database**, unless you ask for a copy:
+
+    ```sh
+    sudo anime-discovery-install --upgrade --branch refactor --copy-db-data
+    ```
+
+- **Switching back** to a branch you used before reuses its own folder and database exactly as you left them, so changes made on one branch never reach the other. That includes settings and passwords.
+- **`--rollback`** to a release of another branch uses that branch's folder too.
+- **A failed first switch** removes the new branch's folder and database again, and the current branch is untouched. Leftovers from an interrupted switch are never reused: the installer refuses until you move them away.
+
+### When a database can be copied
+
+`--copy-db-data` copies the current branch's database (an SQLite backup, taken while the services are stopped). The new branch then upgrades the copy with its own migrations. Before copying, the installer checks that the two branches' **migration files are identical, byte for byte, up to the database's version**. A version number alone proves nothing: two branches can both reach v65 with different tables, or with the same tables but different data rewrites. Identical migration files mean the new branch would have built exactly this database.
+
+If the histories differ, the switch stops before anything is copied, and the message names the first migration that differs. The new branch's own upgrade then also checks the copy's structure, foreign keys and integrity before using it. A database newer than the new branch understands is never copied.
+
+For example, NextGen and `refactor` share migrations 001–061. A NextGen database at v61 can therefore be copied into `refactor`, which then upgrades the copy to v65. A `refactor` database at v65 can never be copied back into NextGen, and switching back simply returns to NextGen's own database.
+
+`--copy-db-data` needs an installer that knows it: on an older installation, run `--upgrade` once first, so the current branch's installer is updated.
 
 Existing native settings, credentials, administrator password, and configured database path are preserved. Native configuration and database upgrades run explicitly with the services stopped, using the maintenance preview/backup contracts. Legacy configuration and databases are not imported. Use a separate fresh Anime Discovery directory.
 
