@@ -882,8 +882,19 @@ class Application:
                             WHERE jobs.kind='DISCOVER_SONARR_BACKFILL'
                             AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
                             AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
+                        OR EXISTS (SELECT 1 FROM trial_plans p JOIN (
+                            SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode FROM recognized_episodes
+                            UNION SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
+                            FROM sonarr_episode_selections s2 JOIN trial_plans p2 USING(plan_id)
+                            UNION SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
+                            FROM release_verifications WHERE tvdb_order='official'
+                            ) x ON x.anidb_id=p.anidb_id
+                            AND x.anidb_episode_number=json_extract(jobs.payload_json,'$.episode')
+                            WHERE jobs.kind='RESET_EPISODE_SEARCH'
+                            AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
+                            AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
                         )""")
-                    values.extend(episode_filter*8)
+                    values.extend(episode_filter*9)
                 if not show_completed:criteria.append("state<>'DONE'")
                 if not show_canceled:
                     criteria.append("state<>'CANCELED'")
