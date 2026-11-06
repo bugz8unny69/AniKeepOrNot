@@ -16,6 +16,7 @@ from src.nextgen.storage.batch_verifications import persist_batch_verification
 from src.nextgen.acquisition.metainfo_source import (
     MetadataSourceWaiting, MetadataSourceUnavailable,
     MetadataSourceConfigurationError, MetadataSourceDenied,
+    MetadataSourceTimeout,
 )
 from src.nextgen.storage.releases import load_release, persist_release
 from src.nextgen.worker import blocking
@@ -79,6 +80,7 @@ def registration(verify, *, trial_kind=None, batch_kind=None):
                 result=await verify(source,context.configuration,context.cancelled)
         except MetadataSourceWaiting as exc: return Outcome("defer",exc.reason_code,delay_ms=exc.delay_ms,
                                                    metadata_evidence=exc.evidence)
+        except MetadataSourceTimeout as exc: return Outcome("fail", exc.reason_code, facts=failure_facts(exc))
         except MetadataSourceUnavailable as exc: return Outcome("retry",exc.reason_code)
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome("review",exc.reason_code, facts=failure_facts(exc))
