@@ -87,8 +87,12 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
     pool=ClientPool()
     resolve = make_resolver(options_from_configuration, partial(series_credentials, secrets), client_pool=pool)
     read_batch_metainfo=make_batch_reader(secrets=secrets) if read_batch_metainfo is None else read_batch_metainfo
+    from src.nextgen.acquisition.existing_metadata import make_existing_observer
+    # Read-only qB file lists rank batch candidates; observed outside any
+    # write transaction and never used to adopt a torrent.
     verify_batch=make_batch_verifier(options_from_configuration, partial(episode_placement_credentials, secrets),
-                                     read_batch_metainfo,client_pool=pool)
+                                     read_batch_metainfo,client_pool=pool,
+                                     observe_existing=make_existing_observer(secrets,client_factory=client_factory))
     verify = make_verifier(options_from_configuration, partial(episode_placement_credentials, secrets), client_pool=pool,
                            batch_verifier=verify_batch)
     # The hash-bound magnet path is the normal webhook acquisition route, not
