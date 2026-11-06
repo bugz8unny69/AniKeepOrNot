@@ -175,6 +175,17 @@ class CoordinationTests(Fixture):
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE event_id=1"), [(1,)])
         self.assertEqual(self.coordinate(*x).action, 'PROCEED')
 
+    def test_a_second_job_for_the_active_release_never_runs_it_again(self):
+        event, first, title = self.release(1)
+        db = self.connect()
+        with transaction(db):      # The same delivery has another open job (e.g. pooled earlier).
+            second = enqueue_job(db, component='worker', kind='VERIFY_RELEASE', payload={'anidb_id': AID},
+                                 event_id=event, available_at_ms=0)
+        db.close()
+        self.assertEqual(self.coordinate(event, first, title).action, 'PROCEED')
+        self.assertEqual(self.coordinate(event, second, title).action, 'POOLED')
+        self.assertEqual(self.coordinate(event, first, title).action, 'PROCEED')   # Its own restart still runs.
+
     def test_restart_preserves_the_active_selection(self):
         a, b = self.release(1), self.release(2)
         self.assertEqual(self.coordinate(*a).action, 'PROCEED')
