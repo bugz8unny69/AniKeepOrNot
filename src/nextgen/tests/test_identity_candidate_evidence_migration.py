@@ -58,7 +58,10 @@ class IdentityCandidateEvidenceMigrationTests(unittest.TestCase):
         fresh = sqlite3.connect(':memory:')
         try:
             initialize(fresh)
-            self.assertEqual(_structure(self.migrate()), _structure(fresh))
+            db = self.migrate()
+            for name in SCRIPTS[59:]:  # Later versions build on v59.
+                db.executescript((SQL_DIR / name).read_text())
+            self.assertEqual(_structure(db), _structure(fresh))
         finally:
             fresh.close()
 

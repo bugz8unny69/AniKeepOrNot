@@ -111,8 +111,13 @@ class ArrAdapterTests(unittest.TestCase):
 
     def test_missing_or_unreadable_settings_never_reach_the_network(self):
         transport = Transport()
+        # Prowlarr and Sonarr are optional: a blank address turns their feature off.
         blank = ProwlarrAdapter().probe(Config(prowlarr__base_url=''), Secrets(), transport=transport)
-        self.assertEqual((blank.status, blank.detail), (NOT_CONFIGURED, 'set the Prowlarr address in Settings'))
+        self.assertEqual((blank.status, blank.detail), (DISABLED, 'no address is set, so automatic search is off'))
+        self.assertEqual(blank.message('Prowlarr'),
+                         'Prowlarr is turned off (optional): no address is set, so automatic search is off')
+        bad = ProwlarrAdapter().probe(Config(prowlarr__base_url='ftp://x'), Secrets(), transport=transport)
+        self.assertEqual((bad.status, bad.detail), (NOT_CONFIGURED, 'the Prowlarr address is not valid'))
         no_key = ProwlarrAdapter().probe(Config(), Secrets(missing={'prowlarr'}), transport=transport)
         self.assertEqual((no_key.status, no_key.detail), (NOT_CONFIGURED, 'set the Prowlarr API key in Settings'))
         unreadable = ProwlarrAdapter().probe(Config(), Secrets(broken=True), transport=transport)

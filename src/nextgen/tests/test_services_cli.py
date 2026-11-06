@@ -57,7 +57,7 @@ class ServicesCliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(text), [{'service': 'beta', 'label': 'Beta', 'status': 'DOWN',
                                             'message': 'Beta is unavailable: gone', 'detail': 'gone',
-                                            'from_cache': False}])
+                                            'from_cache': False, 'required': False}])
 
     def test_unknown_service_and_unreadable_settings_exit_two(self):
         registry = ServiceRegistry([Plugin('alpha', 'Alpha', UP)])

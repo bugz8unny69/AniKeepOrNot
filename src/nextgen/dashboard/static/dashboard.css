@@ -76,6 +76,11 @@ align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .setting-field input,.setting-field select,.setting-field textarea{width:100%;min-width:0}
 .setting-field small{grid-column:2}.setting-field textarea{font:inherit;background:#101725;color:#eff5ff;border:1px solid #47607e;border-radius:8px;padding:10px;min-height:90px}
 .action-tooltip{display:inline-flex;margin:2px}.action-tooltip:focus-visible{outline:2px solid #87c8ff;outline-offset:3px}
+.service-bar{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.service{font-size:.8rem;border-radius:20px;padding:4px 11px;background:#24344a;color:#d6e2f2;cursor:help}
+.service strong{font-weight:700}.service:focus-visible{outline:2px solid #87c8ff;outline-offset:2px}
+.service.ok{background:#173f39;color:#a6f6d4}.service.bad{background:#572c38;color:#ffd0d7}
+.service.off{background:#25364a;color:#a8bad1}.service.unknown{background:#604923;color:#ffe5a4}
 .action-tooltip button{margin:0}.action-tooltip[data-disabled=true]{cursor:help}
 .job-note{display:block;margin-top:8px}.history-entry{padding:14px 0;border-bottom:1px solid #34465c}
 .integration button{align-self:flex-start}.form-status{white-space:pre-wrap}button.danger{background:#713646}

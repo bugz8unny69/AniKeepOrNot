@@ -21,6 +21,31 @@ class ActionUnavailable(ValueError):
     def __init__(self):super().__init__('This action is not available for this work.')
 
 
+class KeepServiceUnavailable(ActionUnavailable):
+    """Keep needs Sonarr, and Sonarr is not set up or not working right now."""
+    def __init__(self,stored):
+        from src.nextgen.services.base import DISABLED,NOT_CONFIGURED
+        self.reason_code=('KEEP_CONFIGURATION_INVALID' if stored.status in (DISABLED,NOT_CONFIGURED)
+                          else 'SERVICE_UNAVAILABLE')
+        self.detail=stored.message()
+        ValueError.__init__(self,self.detail)
+
+
+def keep_blocker(db):
+    """Sonarr's stored status when it rules out a new Keep, else None."""
+    from src.nextgen.services.status_store import blocking
+    return blocking(db,'sonarr')
+
+
+def needs_sonarr(job):
+    """Whether pressing Keep would run the Sonarr import.
+
+    A Keep job that already finished only resumes its cleanup or Shoko
+    follow-up, which do not contact Sonarr.
+    """
+    return job is None or job.get('state')!='DONE'
+
+
 class ActionNotFound(ActionUnavailable):
     reason_code='API_ROUTE_NOT_FOUND'
 
@@ -90,6 +115,10 @@ class ManagementActions:
             selected='KEEP' if action=='keep' else 'CLEANUP'
             prior=db.execute('SELECT job_id FROM management_actions WHERE operation_id=? AND action=?',
                              (op[0],selected)).fetchone()
+            if action=='keep':
+                state=None if not prior else db.execute('SELECT state FROM jobs WHERE job_id=?',(prior[0],)).fetchone()[0]
+                blocked=keep_blocker(db) if needs_sonarr(None if not prior else {'state':state}) else None
+                if blocked is not None:raise KeepServiceUnavailable(blocked)
             if prior:
                 state=db.execute('SELECT state FROM jobs WHERE job_id=?',(prior[0],)).fetchone()[0]
                 if action=='cleanup' and state=='DONE' and op[1:3]==('CANCELED','COMPLETE'):
@@ -230,6 +259,11 @@ class ManagementActions:
             result[name]={'enabled':allowed,'disabled_reason':reason,'job':job}
         result['keep']['execution_available']=True
         result['keep']['availability_reason']=None
+        blocked=keep_blocker(db) if needs_sonarr(result['keep']['job']) else None
+        if blocked is not None:
+            result['keep']['execution_available']=False
+            result['keep']['availability_reason']={**CATALOG.reason(KeepServiceUnavailable(blocked).reason_code),
+                                                   'message':blocked.message()}
         return result
 
     def bind(self,claim,action):

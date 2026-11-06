@@ -20,6 +20,7 @@ from src.nextgen.configuration_schema import ConfigurationError
 from src.nextgen.diagnostics import configure_logging, event, exception, log_history
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json, failure_facts
 from src.nextgen.reasons import get_reason
+from src.nextgen.services.startup import StartupRefused
 from src.nextgen.maintenance import MaintenanceGate, MaintenanceBusy, MaintenancePending
 from src.nextgen.storage.job_queue import JobQueue, LeaseLost, QueueUnavailable
 
@@ -71,6 +72,8 @@ class Worker:
         self._required = tuple(sorted({s for spec in registry.entries.values() for s in spec.services}))
         self._service_health = service_health
         self._service_settings = None
+        self._services_dirty = True     # Saved for the API on the next attempt.
+        self._services_saved_ms = None
         if service_health is not None:
             for name in self._required:
                 service_health.registry.get(name)
@@ -144,6 +147,49 @@ class Worker:
                 continue
             event(self.logger, level, name, component="worker", service=change.service,
                   service_status=change.new, service_detail=change.state.message())
+        if changes:
+            self._services_dirty = True
+
+    async def _save_services(self):
+        """Write service status for the API (dashboard status bar, Keep check).
+
+        Written on every change, and at least once a minute so the API can tell
+        a running worker from one that stopped checking. A failed write is
+        logged and never stops processing.
+        """
+        health = self._service_health
+        if health is None:
+            return
+        now = health.now()
+        if not self._services_dirty and self._services_saved_ms is not None \
+                and now - self._services_saved_ms < 60000:
+            return
+        from src.nextgen.services import status_store
+        try:
+            await self._io(status_store.save, self.startup.value("storage.database_path"),
+                           health.snapshot(), now_ms=now)
+        except Exception as exc:
+            exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
+                      reason_code="STORAGE_UNAVAILABLE", component="worker")
+        self._services_dirty = False
+        self._services_saved_ms = now
+
+    async def _check_services_at_startup(self):
+        """Check every service once; refuse to start if a required one is misconfigured."""
+        from src.nextgen.services import status_store
+        from src.nextgen.services.startup import StartupRefused, refusals
+        config = await self._io(self.config.operation, self.startup, component="worker")
+        previous = await self._io(status_store.load, self.startup.value("storage.database_path"))
+        changes = await self._io(self._service_health.startup, config, self._secrets, previous)
+        self._log_service_changes(changes)
+        await self._save_services()
+        refused = refusals(self._service_health)
+        if refused:
+            for state in refused:
+                event(self.logger, logging.ERROR, "SERVICE_STARTUP_REFUSED", component="worker",
+                      reason_code="SERVICE_SETUP_INVALID", service=state.service,
+                      service_status=state.status, service_detail=state.message())
+            raise StartupRefused(refused)
 
     def _settings_key(self, configuration):
         """Settings and credentials revisions; a change makes every service due for a recheck."""
@@ -314,9 +360,9 @@ class Worker:
                     if self._service_settings is not None:
                         self._service_health.recheck_all()
                     self._service_settings = key
-                changes = await self._io(self._service_health.probe_due, configuration, self._secrets,
-                                         self._required)
+                changes = await self._io(self._service_health.probe_due, configuration, self._secrets)
                 self._log_service_changes(changes)
+                await self._save_services()
             exclude_kinds = self._waiting_kinds()
             claim, audits = await self._io(self.queue.claim,halted=self._halt_claims.is_set,exclude_kinds=exclude_kinds)
             if claim is None:
@@ -354,6 +400,7 @@ class Worker:
                     outcome = await self._invoke(claim,spec,context)
             self._observe_services(spec, outcome)
             outcome = self._service_wait(spec, outcome)
+            await self._save_services()
             try:
                 records = await self._io(self.queue.finish,claim,outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
@@ -432,16 +479,8 @@ class Worker:
                 if not self._paused:
                     await self._recover()
                     if not ready:
-                        if self._service_health is not None and self._secrets is not None and self._required:
-                            # Check every needed service once at startup and log what is not usable.
-                            try:
-                                config = await self._io(self.config.operation, self.startup, component="worker")
-                                changes = await self._io(self._service_health.probe_due, config,
-                                                         self._secrets, self._required)
-                                self._log_service_changes(changes)
-                            except Exception as exc:
-                                exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
-                                          reason_code="JOB_HANDLER_FAILED", component="worker")
+                        if self._service_health is not None and self._secrets is not None:
+                            await self._check_services_at_startup()
                         ready = True
                         if on_ready is not None:
                             on_ready()
@@ -459,6 +498,8 @@ class Worker:
                         await asyncio.wait_for(self._stop.wait(),timeout=self.policy.poll_ms/1000)
                     except asyncio.TimeoutError:
                         pass
+        except StartupRefused:
+            raise                     # Already logged, one line per service.
         except Exception as exc:
             self._log_error(exc)
             self.stop()

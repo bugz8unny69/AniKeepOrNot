@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 import threading
 import time
 
-from src.nextgen.services.base import DOWN, NOT_A_FAILURE, UNKNOWN, UP, USABLE, ProbeResult
+from src.nextgen.services.base import DISABLED, DOWN, NOT_A_FAILURE, UNKNOWN, UP, USABLE, ProbeResult
 
 
 @dataclass(frozen=True)
@@ -113,6 +113,8 @@ class ServiceHealth:
             return None
         text = detail if detail is not None else (str(exc)[:200] if exc is not None else '')
         with self._lock:
+            if self._get(service).status == DISABLED:
+                return None   # Turned off in Settings; a failed leftover job does not change that.
             return self._apply(service, status, text, self.now(), probed=False)
 
     def mark_succeeded(self, service):
@@ -149,6 +151,27 @@ class ServiceHealth:
             result = ProbeResult(service, status, f'check failed: {type(exc).__name__}', now)
         return self.record(result)
 
+    def startup(self, configuration, secrets, previous=None):
+        """Check every service once with its startup check. Returns the transitions.
+
+        previous maps service names to the status saved by the last worker
+        (status_store.load); adapters use it to avoid repeating a request.
+        """
+        changes = []
+        for adapter in self.registry:
+            now = self.now()
+            try:
+                result = adapter.startup_probe(configuration, secrets, now_ms=now,
+                                               previous=(previous or {}).get(adapter.name))
+            except Exception as exc:  # A probe bug must not stop the caller.
+                status = adapter.classify(exc)
+                status = DOWN if status in (None, NOT_A_FAILURE) else status
+                result = ProbeResult(adapter.name, status, f'check failed: {type(exc).__name__}', now)
+            change = self.record(result)
+            if change is not None:
+                changes.append(change)
+        return tuple(changes)
+
     def _reserve(self, service):
         """Claim the next probe of a service so concurrent callers do not repeat it."""
         with self._lock:
@@ -176,4 +199,6 @@ class ServiceHealth:
         if status is None or status in USABLE:
             return None
         with self._lock:
+            if self._get(service).status == DISABLED:
+                return None
             return self._apply(service, status, detail, self.now(), probed=False)

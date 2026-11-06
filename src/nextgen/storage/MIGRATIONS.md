@@ -245,3 +245,14 @@ to persist all evaluated AniDB candidates for an IDENTIFY_ANIME job attempt,
 capturing similarity scores, rankings, eligibility, and explainable selection
 evidence. Existing data is preserved; fresh SCHEMA and migration runner match v59.
 
+
+
+## v59 → v60: service status
+
+060_service_status.sql adds the `service_status` table: one row per external
+service (qBittorrent, Prowlarr, Sonarr, Jellyfin, Shoko, AniDB, Anime-Lists,
+TVDB) with its last known status, a readable detail and when it was checked.
+The worker writes it; the API reads it for the dashboard status bar and to
+refuse a Keep while Sonarr is unavailable. Existing data is unchanged; fresh
+SCHEMA and the migration runner match v60. See
+[services/README.md](../services/README.md).

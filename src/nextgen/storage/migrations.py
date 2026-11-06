@@ -18,7 +18,7 @@ from src.nextgen.diagnostics import event
 from src.nextgen.maintenance import MaintenanceLease, MaintenanceError
 from src.nextgen.storage.sqlite import SCHEMA
 
-LATEST_VERSION = 59
+LATEST_VERSION = 60
 SQL_DIR = Path(__file__).with_name("sql")
 SCRIPTS = (
     "001_foundation.sql", "002_independent_jobs.sql", "003_incoming_events.sql",
@@ -27,6 +27,7 @@ SCRIPTS = (
     "057_anidb_first_staging.sql",
     "058_failed_job_state.sql",
     "059_identity_candidate_evidence.sql",
+    "060_service_status.sql",
 )
 
 
