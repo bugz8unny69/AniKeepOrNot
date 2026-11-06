@@ -133,7 +133,7 @@ def failed_detail(details):
     cause=details.get('cause_reason_code')
     blocker=details.get('blocking_job_id')
     op=details.get('operation_id')
-    if blocker is not None:
+    if blocker is not None and type(check) is not str:
         msg = f'Waiting for reservation owned by Job #{blocker}' + (f' (operation #{op})' if op is not None else '')
         return msg
     if type(check) is not str:
@@ -145,6 +145,9 @@ def failed_detail(details):
         res += f' (cause: {cause})'
     if type(path) is str:
         res += f' · file: {path}'
+    if blocker is not None:
+        # A stop caused by another job (e.g. a reset whose owner's cleanup stopped).
+        res += f' · see Job #{blocker}' + (f' (operation #{op})' if op is not None else '')
     return res
 
 

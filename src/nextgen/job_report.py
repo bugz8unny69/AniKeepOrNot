@@ -178,6 +178,10 @@ def report(db, job_id, out=print):
             out(f'    audio check: observed=[{obs}] missing required=[{mis}] (ffprobe verified)')
         if details.get('failed_check'):
             out(f'    failed check: {details["failed_check"]}')
+            if details.get('blocking_job_id') and h['event_code'] != 'ON_HOLD':
+                op = details.get('operation_id')
+                out(f'    stopped by job #{details["blocking_job_id"]}' + (f' (operation #{op})' if op else '')
+                    + f'; inspect it with: adm report job --id {details["blocking_job_id"]}')
             failed.append(details['failed_check'])
         if details.get('failed_path'):
             out(f'    file: {details["failed_path"]}')
