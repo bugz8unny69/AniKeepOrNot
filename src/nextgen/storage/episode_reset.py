@@ -187,13 +187,87 @@ def progress(database,plan_id,episode):
         return 'READY' if _ready(db,plan_id,episode) else 'WAIT'
 
 
-def finish(db,claim,plan_id,episode):
+def _size_source(db,plan_id,episode,aid,season,number):
+    """Newest previously size-rejected source; verification still runs again."""
+    size_reasons=('ACQUISITION_SIZE_LIMIT','ACQUISITION_PLAN_SIZE_LIMIT')
+    common=(
+        "EXISTS (SELECT 1 FROM jobs j JOIN job_history h ON h.job_id=j.job_id "
+        "WHERE j.event_id=source.event_id AND h.reason_code IN (?,?))"
+    )
+    sources=(
+        "SELECT source.event_id,source.info_hash,source.source,source.metainfo,"
+        "e.raw_body,i.series_json,source.created_at_ms FROM manual_release_submissions source "
+        "JOIN incoming_events e ON e.event_id=source.event_id "
+        "JOIN identity_results i ON i.event_id=source.event_id AND i.anidb_id=? "
+        "WHERE source.anidb_id=? AND source.tvdb_season=? AND source.tvdb_episode=? AND "+common+
+        " UNION ALL SELECT source.event_id,source.info_hash,'magnet',NULL,"
+        "e.raw_body,i.series_json,source.created_at_ms FROM sonarr_magnet_intents source "
+        "JOIN incoming_events e ON e.event_id=source.event_id "
+        "JOIN identity_results i ON i.event_id=source.event_id AND i.anidb_id=? "
+        "WHERE source.plan_id=? AND source.anidb_episode_number=? AND "+common+
+        " ORDER BY 7 DESC LIMIT 1"
+    )
+    return db.execute(sources,(
+        aid,aid,season,number,*size_reasons,
+        aid,plan_id,episode,*size_reasons
+    )).fetchone()
+
+
+def can_replay(db,plan_id,episode,aid,season,number):
+    # The smaller historical Intake test fixtures have no magnet-intent table.
+    # Keep their read model compatible while real migrated DBs use v62.
+    tables={r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    if 'sonarr_magnet_intents' not in tables:
+        return False
+    return _size_source(db,plan_id,episode,aid,season,number) is not None
+
+
+def _replay(db,claim,source,aid,season,number,now):
+    """Clone immutable input into a fresh manual-scoped VERIFY_RELEASE attempt."""
+    import json
+    from src.nextgen.history import append_event_history
+    from src.nextgen.storage.sqlite import persist_identity
+    event_id,digest,method,metainfo,raw,series,_=source
+    document=json.loads(bytes(raw))
+    if (document.get('torrent_infohash')!=digest
+            or type(document.get('release_name')) is not str
+            or type(document.get('magnet_uri')) is not str
+            or method not in ('torrent','magnet')):
+        raise EpisodeResetUnavailable()
+    new_event=db.execute(
+        'INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)',
+        ('manual-release',raw,now)
+    ).lastrowid
+    append_event_history(db,event_id=new_event,event_code='ACCEPTED',
+                         component='worker',occurred_at_ms=now)
+    persist_identity(db,new_event,json.loads(series),validated_at_ms=now)
+    job,audit=enqueue_job_with_receipt(
+        db,kind='VERIFY_RELEASE',payload={'anidb_id':aid},
+        component='worker',event_id=new_event,created_by_job_id=claim.job_id
+    )
+    db.execute(
+        'INSERT INTO manual_release_submissions('
+        'event_id,verify_job_id,anidb_id,tvdb_season,tvdb_episode,'
+        'info_hash,source,metainfo,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?)',
+        (new_event,job,aid,season,number,digest,method,metainfo,now)
+    )
+    return audit
+
+
+def finish(db,claim,plan_id,episode,mode='search'):
     """Worker-fenced transaction: archive only AFTER the owned cleanup completed."""
     if not db.in_transaction or not _ready(db,plan_id,episode):
         raise EpisodeResetUnavailable()
     from src.nextgen.storage.sonarr_cached_retry import clear_cached
     from src.nextgen.storage.sonarr_backfill import PAGE_SIZE,plan_window
     aid,_,season,number,anchor,backfill,following=_scope(db,plan_id,episode)
+    if mode not in ('search','replay'):
+        raise EpisodeResetUnavailable()
+    source=_size_source(db,plan_id,episode,aid,season,number) if mode=='replay' else None
+    if mode=='replay' and source is None:
+        raise EpisodeResetUnavailable()
     now=time.time_ns()//1_000_000
     # Keep episode/job/hash history and exact TVDB links, but retire the active
     # candidate registry so the same hash can be submitted after a size change.
@@ -217,22 +291,27 @@ def finish(db,claim,plan_id,episode):
                (plan_id,episode))
     db.execute('DELETE FROM sonarr_backfill_results WHERE plan_id=? AND anidb_episode_number=?',
                (plan_id,episode))
-    numbers=tuple(sorted(set(plan_window(db,plan_id,anchor,backfill,following)) | ({anchor} if episode==anchor else set())))
-    if episode not in numbers:
-        raise EpisodeResetUnavailable()
-    start=(numbers.index(episode)//PAGE_SIZE)*PAGE_SIZE+1
-    job,audit=enqueue_job_with_receipt(
-        db,kind='DISCOVER_SONARR_BACKFILL',
-        payload={'plan_id':plan_id,'start':start,'retry_episode':episode},
-        event_id=claim.event_id,created_by_job_id=claim.job_id,component='worker')
+    if mode=='replay':
+        audit=_replay(db,claim,source,aid,season,number,now)
+    else:
+        numbers=tuple(sorted(set(plan_window(db,plan_id,anchor,backfill,following)) | ({anchor} if episode==anchor else set())))
+        if episode not in numbers:
+            raise EpisodeResetUnavailable()
+        start=(numbers.index(episode)//PAGE_SIZE)*PAGE_SIZE+1
+        job,audit=enqueue_job_with_receipt(
+            db,kind='DISCOVER_SONARR_BACKFILL',
+            payload={'plan_id':plan_id,'start':start,'retry_episode':episode},
+            event_id=claim.event_id,created_by_job_id=claim.job_id,component='worker')
     record=append_job_history(
         db,job_id=claim.job_id,event_code='EPISODE_SEARCH_RESET',
         component='worker',occurred_at_ms=now,details={'attempt':claim.attempt})
     return (audit,record)
 
 
-def schedule(database,aid,episode):
+def schedule(database,aid,episode,*,mode='search'):
     """Queue exactly one reset for a selected AniDB episode; no I/O or deletion."""
+    if mode not in ('search','replay'):
+        raise EpisodeResetUnavailable()
     queue=JobQueue(database)
     with queue.connection() as db, transaction(db):
         row=db.execute(
@@ -243,7 +322,9 @@ def schedule(database,aid,episode):
         if row is None:
             raise EpisodeResetUnavailable()
         plan_id,anchor,parent_job,event=row
-        _scope(db,plan_id,episode)
+        _,_,season,number,*_=_scope(db,plan_id,episode)
+        if mode=='replay' and not can_replay(db,plan_id,episode,aid,season,number):
+            raise EpisodeResetUnavailable()
         previous=db.execute(
             "SELECT job_id FROM jobs WHERE kind='RESET_EPISODE_SEARCH' "
             "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
@@ -254,7 +335,7 @@ def schedule(database,aid,episode):
         if previous:
             return {'job_id':previous[0],'reused':True}
         job,_=enqueue_job_with_receipt(
-            db,kind='RESET_EPISODE_SEARCH',payload={'plan_id':plan_id,'episode':episode},
+            db,kind='RESET_EPISODE_SEARCH',payload={'plan_id':plan_id,'episode':episode,'mode':mode},
             event_id=event,created_by_job_id=parent_job,component='api')
         return {'job_id':job,'reused':False}
 
