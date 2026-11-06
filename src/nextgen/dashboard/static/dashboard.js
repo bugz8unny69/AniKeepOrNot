@@ -538,6 +538,24 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           }
         }
       }
+      if (item.can_retry_size) {
+        const acquire = node('button', 'Retry acquisition', 'secondary');
+        acquire.type = 'button';
+        acquire.title = 'Recheck the prior size-rejected release against the current size settings after safe cleanup.';
+        acquire.addEventListener('click', async () => {
+          if (state.seriesBusy) return;
+          if (!confirm('Retry the previous size-rejected release using current size limits? Any old ownership will be cleaned up first.')) return;
+          state.seriesBusy = true; acquire.disabled = true;
+          try {
+            const receipt = await request(API + '/intake/series/' + anidbId +
+              '/backfill/' + item.anidb_episode + '/acquire', {method: 'POST', body: {}});
+            notice('Acquisition recovery Job #' + receipt.job_id + ' queued. Open Related jobs for progress.');
+            dialog.close(); await loadActivity();
+          } catch (error) { displayError(error); }
+          finally { state.seriesBusy = false; acquire.disabled = false; }
+        });
+        action.appendChild(acquire);
+      }
       if (item.can_retry) {
         const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' :
           (item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS') ? 'Search again' : 'Retry search', 'secondary');
