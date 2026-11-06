@@ -98,11 +98,18 @@ def _event_magnet(database,event_id,digest):
 
 
 async def _qb_metadata(source, digest, configuration, cancelled, *,
-                       secrets, client_factory, batch, claim=None, event_id=None):
+                       secrets, client_factory, batch, claim=None, event_id=None, evaluation=False):
     """Version-gated metadata access; legacy batch sends require a durable lease.
 
     Web API fetch returns BEP3 bytes without adding a torrent. Older clients
     use one journaled paused/stopped magnet, which later batch jobs reuse.
+
+    evaluation=True (batch release verification only): a torrent that already
+    exists in qBittorrent with a complete file list, but that no admission
+    journal owns, is read through the shared read-only observer instead of
+    being rediscovered or refused. Nothing is stopped, tagged or adopted, and
+    every later stage that must control or download it still goes through
+    the journals, which treat it as EXTERNAL.
     """
     if cancelled.is_set():
         raise asyncio.CancelledError()
@@ -115,6 +122,13 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         await blocking(qb.login)
         if cancelled.is_set():
             raise asyncio.CancelledError()
+        if batch and evaluation:
+            from src.nextgen.storage.batch_metadata_admission import admitted
+            from src.nextgen.acquisition.existing_metadata import observe_existing_metadata
+            if not await blocking(admitted,configuration.value('storage.database_path'),digest):
+                existing=await blocking(observe_existing_metadata,qb,digest)
+                if existing is not None:
+                    return existing.inventory
         if qb.metadata_strategy=='fetch':
             result=await blocking(qb.fetch_metadata,source,digest,batch=batch)
             if result is None:
@@ -257,9 +271,12 @@ def make_reader(*, client_factory=QbClient, secrets=None):
 
 def make_batch_reader(*, client_factory=QbClient, secrets=None):
     """Only a normalized hash is supplied to the batch verifier."""
-    async def read_batch_metainfo(expected_hash, configuration, cancelled, *, claim=None, event_id=None):
+    async def read_batch_metainfo(expected_hash, configuration, cancelled, *, claim=None, event_id=None,
+                                  evaluation=False):
         digest = infohash(expected_hash)
+        if type(evaluation) is not bool:
+            raise MetadataSourceConfigurationError()
         return await _qb_metadata(digest,digest,configuration,cancelled,
                                   secrets=secrets,client_factory=client_factory,
-                                  batch=True,claim=claim,event_id=event_id)
+                                  batch=True,claim=claim,event_id=event_id,evaluation=evaluation)
     return read_batch_metainfo

@@ -142,8 +142,10 @@ def make_batch_verifier(options, credentials, read_batch_metainfo, *,
         # issuing any older-client stopped-magnet admission. Custom injected
         # readers used by tests retain their three-argument contract.
         if claim is not None and 'claim' in inspect.signature(read_batch_metainfo).parameters:
+            # Evaluation may read an existing torrent's file list read-only (WI-12).
+            extra={'evaluation':True} if 'evaluation' in inspect.signature(read_batch_metainfo).parameters else {}
             raw=await read_batch_metainfo(digest,configuration,cancelled,
-                                          claim=claim,event_id=source.event_id)
+                                          claim=claim,event_id=source.event_id,**extra)
         else:
             raw=await read_batch_metainfo(digest,configuration,cancelled)
         inventory=await blocking(read_batch_inventory,raw,digest)
