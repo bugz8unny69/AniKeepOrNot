@@ -15,7 +15,7 @@ class EpisodeResetUnavailable(ValueError):
     reason_code = 'MANAGEMENT_ACTION_UNAVAILABLE'
 
 
-def _scope(db, plan_id, episode):
+def _scope(db, plan_id, episode, *, allow_staged=False):
     from src.nextgen.storage.series_intake import _placements
     from src.nextgen.storage.sonarr_backfill import plan_window
     row = db.execute(
@@ -36,12 +36,12 @@ def _scope(db, plan_id, episode):
     ).fetchone():
         raise EpisodeResetUnavailable()
     season, number = place
-    for table, join in (
+    for table, join in (() if allow_staged else (
         ('staging_publications',
          'JOIN acquisition_plans p USING(plan_id) JOIN episode_reservations r USING(reservation_id)'),
         ('batch_staging_publications',
          'JOIN batch_episode_reservations r ON r.plan_id=s.plan_id AND r.file_index=s.file_index'),
-    ):
+    )):
         if db.execute(
             f'SELECT 1 FROM {table} s {join} '
             'WHERE s.state=\'PUBLISHED\' AND r.anidb_id=? '
@@ -147,9 +147,19 @@ def progress(database,plan_id,episode):
         # an operation. Cancel it, rather than let it acquire after the reset.
         for (job_id,) in _pending_unowned_manual(db,aid,season,number):
             cancel_job(db,job_id,now,'worker')
-        for op,target in _owners(db,plan_id,episode,aid,season,number):
+        owners=_owners(db,plan_id,episode,aid,season,number)
+        # Validate every target before starting any cancellation: a batch
+        # owning another episode must not be partially torn down.
+        for op,_ in owners:
             if _foreign_reservation(db,op,aid,season,number):
-                return 'REVIEW'  # A season pack must not be canceled partially.
+                return 'REVIEW'
+            owner_state=db.execute(
+                'SELECT state,cleanup_state FROM job_operations WHERE operation_id=?',(op,)
+            ).fetchone()
+            if owner_state is None or owner_state[0]=='STAGED' or (
+                    owner_state[0]=='CANCELED' and owner_state[1]=='REVIEW'):
+                return 'REVIEW'
+        for op,target in owners:
             row=db.execute(
                 'SELECT operation_id,state,cleanup_state,reason_code FROM job_operations '
                 'WHERE operation_id=?',(op,)
@@ -182,7 +192,7 @@ def progress(database,plan_id,episode):
                         "INSERT INTO management_actions(operation_id,action,target_job_id,job_id,created_at_ms) "
                         "VALUES(?,'CLEANUP',?,?,?)",(op,target,control,now)
                     )
-                elif old[1] in ('NEEDS_REVIEW','BLOCKED','FAILED'):
+                elif old[1] in ('NEEDS_REVIEW','BLOCKED','FAILED','DONE'):
                     return 'REVIEW'
         return 'READY' if _ready(db,plan_id,episode) else 'WAIT'
 
@@ -341,7 +351,7 @@ def schedule(database,aid,episode,*,mode='search'):
 
 
 def find_episode(db,tvdb_episode_id):
-    """Resolve a TVDB episode ID uniquely, without guessing from a release name."""
+    """Resolve an AniDB or TVDB episode ID uniquely, without release-name guesses."""
     if type(tvdb_episode_id) is not int or tvdb_episode_id<1:
         raise EpisodeResetUnavailable()
     rows=db.execute(
@@ -364,7 +374,7 @@ def find_episode(db,tvdb_episode_id):
     if len(rows)!=1:
         raise EpisodeResetUnavailable()
     aid,plan_id,episode=rows[0]
-    _,_,season,number,*_=_scope(db,plan_id,episode)
+    _,_,season,number,*_=_scope(db,plan_id,episode,allow_staged=True)
     return {'anidb_id':aid,'plan_id':plan_id,'anidb_episode':episode,
             'tvdb_season':season,'tvdb_episode':number,
             'reservations':tuple(db.execute(
