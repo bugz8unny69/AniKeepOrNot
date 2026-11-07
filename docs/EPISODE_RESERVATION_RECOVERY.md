@@ -84,3 +84,35 @@ reservation is granted to a manual or replayed release.
 
 **Validation:** Regression tests were added. No CI was requested or triggered
 for this branch; tests have not been run on the user's deployment.
+
+## Cleanup stuck in CANCELLATION_PENDING
+
+When an operation is already canceled and its jobs are DONE/CANCELED, a
+`CLEANUP_CANCELED_OPERATION` job may nevertheless be waiting for the
+exclusive operation lock. Previously the cleanup service suppressed this
+`CleanupBusy` condition, reused an old `CANCELLATION_PENDING` reason
+(sometimes from an earlier download-client error) and retried every 30
+seconds without a limit.
+
+The control job now records `CANCELLATION_DRAINING` for a busy operation
+lock. A scheduled cleanup action older than 15 minutes that **still**
+cannot obtain its lock, or still encounters an unavailable/invalid
+download-client response, stops with `CANCELLATION_REVIEW`, including a
+code-location `failed_check` and a bounded `cause_reason_code`.
+This is **not** successful cleanup and does **not** release reservations.
+
+To recover an old operation whose actual workers are already stopped:
+
+1. Review `sudo adm report job --id <cleanup-job-id>`.
+2. Restart `anime-discovery-worker.service` to release locks held by
+   that process; verify no other Anime Discovery instance still uses the
+   same database.
+3. If cleanup is in Needs Review, use its existing Retry action. If it
+   remains in RETRY_WAIT, its next attempt runs automatically.
+4. Confirm `CANCELED / COMPLETE` and that **all** single/batch episode
+   reservations are `RELEASED` before starting new acquisition work.
+
+A batch pack may reserve multiple episodes. Do **not** force-set its
+reservations to RELEASED, delete its `ad-<marker>` folder, or modify the
+job-operation status directly to work around an exclusive lock. These
+operations can strand owned torrents or allow concurrent acquisitions.
