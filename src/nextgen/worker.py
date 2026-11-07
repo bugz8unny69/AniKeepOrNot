@@ -323,6 +323,12 @@ class Worker:
                     log_history(self.logger,record)
                 for record in await self._io(reconcile_unreserved_waiters,self.queue.database):
                     log_history(self.logger,record)
+                # Old builds incorrectly parked transient cleanup waits in
+                # NEEDS_REVIEW. Recover them only when the target gate can be
+                # obtained exclusively; never infer resource removal.
+                from src.nextgen.storage.cleanup_recovery import recover_timeout_reviews
+                for record in await self._io(recover_timeout_reviews,self.queue.database):
+                    log_history(self.logger,record)
         except (MaintenanceBusy, MaintenancePending):
             return
 
