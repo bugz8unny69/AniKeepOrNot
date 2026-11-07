@@ -252,7 +252,7 @@ class ManagementActionTests(unittest.IsolatedAsyncioTestCase):
                     append_job_history(
                         db,job_id=target,event_code='CANCELLATION_CLEANUP_CHANGED',
                         reason_code='CANCELLATION_REVIEW',component='worker',
-                        occurred_at_ms=1000000000000,
+                        occurred_at_ms=JobQueue(self.database).now(),
                         details={'attempt':job_attempt(db,target),
                                  'cause_reason_code':'CANCELLATION_DRAINING'})
             finally:
@@ -299,7 +299,7 @@ class ManagementActionTests(unittest.IsolatedAsyncioTestCase):
                     append_job_history(
                         db,job_id=target,event_code='CANCELLATION_CLEANUP_CHANGED',
                         reason_code='CANCELLATION_REVIEW',component='worker',
-                        occurred_at_ms=1000000000000,
+                        occurred_at_ms=JobQueue(self.database).now(),
                         details={'attempt':job_attempt(db,target),
                                  'cause_reason_code':'STORAGE_UNAVAILABLE'})
             finally:
