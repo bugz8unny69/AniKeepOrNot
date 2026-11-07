@@ -34,7 +34,8 @@ def registration(secrets,*,service_factory=CancellationService):
         if status['cleanup_state']=='COMPLETE':return Outcome(value=target)
         if status['cleanup_state']=='REVIEW':
             # Name the failed check on this job's own History, not only the target's.
-            facts={k:status[k] for k in ('failed_check','failed_path') if status.get(k)}
+            facts={k:status[k] for k in ('failed_check','failed_path','cause_reason_code')
+                   if status.get(k)}
             return Outcome('review','CANCELLATION_REVIEW',facts=facts or None)
         # A bounded reconciliation pass frees a slot. Waiting is not retry failure
         # and never rearms an uncertain external cleanup command.
