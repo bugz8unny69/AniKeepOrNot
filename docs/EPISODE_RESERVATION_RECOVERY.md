@@ -94,12 +94,19 @@ exclusive operation lock. Previously the cleanup service suppressed this
 (sometimes from an earlier download-client error) and retried every 30
 seconds without a limit.
 
-The control job now records `CANCELLATION_DRAINING` for a busy operation
-lock. A scheduled cleanup action older than 15 minutes that **still**
-cannot obtain its lock, or still encounters an unavailable/invalid
-download-client response, stops with `CANCELLATION_REVIEW`, including a
-code-location `failed_check` and a bounded `cause_reason_code`.
-This is **not** successful cleanup and does **not** release reservations.
+The control job records `CANCELLATION_DRAINING` for a busy operation
+lock. **Elapsed time alone never changes a transient lock or temporary
+transport wait into `NEEDS_REVIEW`.** Cleanup stays queued with a gradually
+longer retry interval (30 seconds initially, at most five minutes) until the
+existing owned-resource cleanup succeeds. A genuine ownership contradiction
+or unsafe filesystem result still goes to `CANCELLATION_REVIEW`.
+
+Earlier releases incorrectly parked temporary waits in Needs Review after
+15 minutes. On startup and worker reconciliation, the new worker identifies
+*only those historical temporary-review outcomes* and automatically requeues
+their cleanup action once it can obtain the operation's exclusive lock. This
+does not change any reservation or torrent record: those are released by the
+normal cleanup handler **after** owned-resource removal is confirmed.
 
 To recover an old operation whose actual workers are already stopped:
 
@@ -107,8 +114,11 @@ To recover an old operation whose actual workers are already stopped:
 2. Restart `anime-discovery-worker.service` to release locks held by
    that process; verify no other Anime Discovery instance still uses the
    same database.
-3. If cleanup is in Needs Review, use its existing Retry action. If it
-   remains in RETRY_WAIT, its next attempt runs automatically.
+3. Old Needs Review states caused solely by the removed timeout are
+   requeued automatically when the operation lock can be acquired. If it
+   remains in RETRY_WAIT, the next scheduled attempt runs automatically.
+   Genuine ownership-review states still require their recorded conflict
+   to be resolved.
 4. Confirm `CANCELED / COMPLETE` and that **all** single/batch episode
    reservations are `RELEASED` before starting new acquisition work.
 
