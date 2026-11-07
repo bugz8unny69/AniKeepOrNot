@@ -193,9 +193,8 @@ class ManagementActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(CancellationStore(self.database).status(target)['cleanup_state'],'COMPLETE')
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE job_id=? AND event_code='RETRY_SCHEDULED'",(data['job_id'],)),[(0,)])
 
-    async def test_cleanup_lock_wait_has_bounded_review_and_preserves_reservations(self):
-        """A genuinely blocked operation must not retry hundreds of times."""
-        import json
+    async def test_aged_cleanup_lock_wait_stays_retryable_without_releasing_reservations(self):
+        """The elapsed time must NEVER turn a transient lock into Needs Review."""
         _,target=await reserve_without_metadata(self)
         scope=CancellationStore(self.database).status(target)['operation_id']
         worker=Worker(self.store,self.startup,Registry((cleanup(object()),)))
@@ -205,30 +204,112 @@ class ManagementActionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status,202)
             db=connect(self.database)
             try:
-                # Simulate the action being blocked longer than the 15-min
-                # recovery window, without sleeping or assuming real clock.
                 with transaction(db):
                     db.execute('UPDATE management_actions SET created_at_ms=0 WHERE job_id=?',
                                (data['job_id'],))
-            finally:db.close()
+            finally:
+                db.close()
             await worker.attempt()
             self.assertEqual(self.rows(
                 'SELECT state,last_reason_code FROM jobs WHERE job_id=?',
-                (data['job_id'],)), [('NEEDS_REVIEW','CANCELLATION_REVIEW')])
+                (data['job_id'],)), [('RETRY_WAIT','CANCELLATION_DRAINING')])
             self.assertEqual(self.rows(
                 'SELECT state,cleanup_state,reason_code FROM job_operations WHERE operation_id=?',
-                (scope,)), [('CANCELED','REVIEW','CANCELLATION_REVIEW')])
-            # Cancellation review never grants competing acquisition ownership.
+                (scope,)), [('CANCELED','PENDING','CANCELLATION_DRAINING')])
             self.assertEqual(self.rows('SELECT state FROM episode_reservations'),
                              [('ACTIVE',)])
-            rows=self.rows(
-                "SELECT details_json FROM job_history WHERE job_id=? "
-                "AND event_code='NEEDS_REVIEW' ORDER BY history_id DESC LIMIT 1",
-                (data['job_id'],))
-            details=json.loads(rows[0][0])
-            self.assertEqual(details['cause_reason_code'],'CANCELLATION_DRAINING')
-            self.assertRegex(details['failed_check'],
-                             r'^src/nextgen/.*\.py:[0-9]+ .+')
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                db.execute('UPDATE jobs SET available_at_ms=0 WHERE job_id=?',
+                           (data['job_id'],))
+        finally:
+            db.close()
+        await worker.attempt()
+        self.assertEqual(self.rows(
+            'SELECT state FROM jobs WHERE job_id=?',(data['job_id'],)), [('DONE',)])
+        self.assertEqual(self.rows(
+            'SELECT state FROM episode_reservations'), [('RELEASED',)])
+
+    async def test_old_transient_review_auto_recovers_after_lock_drains(self):
+        """Resume the exact old timeout regression, without manual Retry."""
+        from src.nextgen.storage.cleanup_recovery import recover_timeout_reviews
+        from src.nextgen.history import append_job_history, job_attempt
+        _,target=await reserve_without_metadata(self)
+        scope=CancellationStore(self.database).status(target)['operation_id']
+        with OperationGate(self.database).hold(scope):
+            status,data,_=self.actions().submit(target,'cancel')
+            self.assertEqual(status,202)
+            db=connect(self.database)
+            try:
+                with transaction(db):
+                    db.execute(
+                        "UPDATE job_operations SET state='CANCELED',cleanup_state='REVIEW',"
+                        "reason_code='CANCELLATION_REVIEW' WHERE operation_id=?",(scope,))
+                    db.execute(
+                        "UPDATE jobs SET state='NEEDS_REVIEW',last_reason_code='CANCELLATION_REVIEW' "
+                        "WHERE job_id=?",(data['job_id'],))
+                    append_job_history(
+                        db,job_id=target,event_code='CANCELLATION_CLEANUP_CHANGED',
+                        reason_code='CANCELLATION_REVIEW',component='worker',
+                        occurred_at_ms=1000000000000,
+                        details={'attempt':job_attempt(db,target),
+                                 'cause_reason_code':'CANCELLATION_DRAINING'})
+            finally:
+                db.close()
+            self.assertEqual(recover_timeout_reviews(self.database),())
+            self.assertEqual(self.rows(
+                'SELECT cleanup_state FROM job_operations WHERE operation_id=?',(scope,)),
+                [('REVIEW',)])
+        receipts=recover_timeout_reviews(self.database)
+        self.assertEqual(len(receipts),1)
+        self.assertEqual(self.rows(
+            'SELECT state FROM jobs WHERE job_id=?',(data['job_id'],)), [('PENDING',)])
+        self.assertEqual(self.rows(
+            'SELECT cleanup_state FROM job_operations WHERE operation_id=?',(scope,)),
+            [('PENDING',)])
+        # Repair changes no reservation until the standard ownership cleanup runs.
+        self.assertEqual(self.rows('SELECT state FROM episode_reservations'),
+                         [('ACTIVE',)])
+        worker=Worker(self.store,self.startup,Registry((cleanup(object()),)))
+        self.addAsyncCleanup(worker.close)
+        await worker.attempt()
+        self.assertEqual(self.rows(
+            'SELECT state FROM jobs WHERE job_id=?',(data['job_id'],)), [('DONE',)])
+        self.assertEqual(self.rows('SELECT state FROM episode_reservations'),
+                         [('RELEASED',)])
+
+    async def test_genuine_cleanup_review_is_not_auto_resumed(self):
+        """An ownership/file conflict stays review, even after the lock clears."""
+        from src.nextgen.storage.cleanup_recovery import recover_timeout_reviews
+        from src.nextgen.history import append_job_history,job_attempt
+        _,target=await reserve_without_metadata(self)
+        scope=CancellationStore(self.database).status(target)['operation_id']
+        with OperationGate(self.database).hold(scope):
+            _,data,_=self.actions().submit(target,'cancel')
+            db=connect(self.database)
+            try:
+                with transaction(db):
+                    db.execute(
+                        "UPDATE job_operations SET state='CANCELED',cleanup_state='REVIEW',"
+                        "reason_code='CANCELLATION_REVIEW' WHERE operation_id=?",(scope,))
+                    db.execute(
+                        "UPDATE jobs SET state='NEEDS_REVIEW',last_reason_code='CANCELLATION_REVIEW' "
+                        "WHERE job_id=?",(data['job_id'],))
+                    append_job_history(
+                        db,job_id=target,event_code='CANCELLATION_CLEANUP_CHANGED',
+                        reason_code='CANCELLATION_REVIEW',component='worker',
+                        occurred_at_ms=1000000000000,
+                        details={'attempt':job_attempt(db,target),
+                                 'cause_reason_code':'STORAGE_UNAVAILABLE'})
+            finally:
+                db.close()
+        self.assertEqual(recover_timeout_reviews(self.database),())
+        self.assertEqual(self.rows(
+            'SELECT state FROM jobs WHERE job_id=?',(data['job_id'],)),
+            [('NEEDS_REVIEW',)])
+        self.assertEqual(self.rows('SELECT state FROM episode_reservations'),
+                         [('ACTIVE',)])
 
     async def test_stale_control_lease_cannot_mutate_target(self):
         target=self.add();JobQueue(self.database).claim()
