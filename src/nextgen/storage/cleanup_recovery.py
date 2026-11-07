@@ -67,7 +67,7 @@ def recover_timeout_reviews(database):
             "WHERE a.action='CLEANUP' AND o.state='CANCELED' "
             "AND o.cleanup_state='REVIEW' AND o.reason_code='CANCELLATION_REVIEW' "
             "AND j.state='NEEDS_REVIEW' AND j.last_reason_code='CANCELLATION_REVIEW' "
-            "ORDER BY a.operation_id LIMIT 25"
+            "ORDER BY a.operation_id LIMIT 250"
         ).fetchall()
     records=[]
     for op,control,target in candidates:
