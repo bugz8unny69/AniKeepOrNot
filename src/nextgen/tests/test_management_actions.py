@@ -228,7 +228,7 @@ class ManagementActionTests(unittest.IsolatedAsyncioTestCase):
             details=json.loads(rows[0][0])
             self.assertEqual(details['cause_reason_code'],'CANCELLATION_DRAINING')
             self.assertRegex(details['failed_check'],
-                             r'^src/nextgen/.*\\.py:[0-9]+ .+')
+                             r'^src/nextgen/.*\.py:[0-9]+ .+')
 
     async def test_stale_control_lease_cannot_mutate_target(self):
         target=self.add();JobQueue(self.database).claim()
