@@ -15,6 +15,12 @@ from src.nextgen.storage.cancellation import CancellationStore, operation, cance
 from src.nextgen.storage.sqlite import transaction
 
 
+# Cleanup jobs recheck transient drain/client failures. After 15 minutes, 
+# transfer ownership of the problem to a visible NEEDS_REVIEW action rather
+# than retrying indefinitely without changing what the user can do.
+CLEANUP_STALL_MS = 15 * 60 * 1000
+
+
 class CancellationService:
     def __init__(self,configuration,secrets,*,client_factory=Client,files_factory=None,logger=None,admitted=False,guard=None,component="api"):
         if type(admitted) is not bool or admitted and not callable(guard):raise CancellationError()
@@ -64,6 +70,23 @@ class CancellationService:
                 records+=cleanup_completed(db,op[0],job_id,now,component=self.component,
                                            previous_cleanup_state=op[2])
         self._log(records)
+    def _cleanup_stalled(self,job_id):
+        """Only a scheduled cleanup action has a durable retry deadline.
+
+        There is deliberately NO deadline for the underlying ownership proof:
+        once this expires, operator review is required, never forced release.
+        The action timestamp survives worker restarts and lease recovery.
+        """
+        with self.store.queue.connection() as db,transaction(db):
+            self._fence(db)
+            row=db.execute(
+                "SELECT created_at_ms FROM management_actions "
+                "WHERE target_job_id=? AND action='CLEANUP'", (job_id,)
+            ).fetchone()
+            return row is not None and (
+                self.store.queue.now()-row[0] >= CLEANUP_STALL_MS
+            )
+
     def cleanup(self,job_id,*,max_targets=1):
         """Delete what the canceled work owns (see cancel_cleanup), then free its slots.
 
@@ -106,10 +129,30 @@ class CancellationService:
                         self._fence(db)
                         db.execute("UPDATE staging_cleanup_artifacts SET phase='REMOVED' WHERE operation_id=?",(operation_id,))
                     self._state(job_id,'COMPLETE','CANCELLATION_COMPLETE')
-            except CleanupBusy:
-                # Handlers are still stopping; try again shortly.
+            except CleanupBusy as exc:
+                # Do not silently reuse the PREVIOUS pending reason (often a
+                # stale qBittorrent error). This attempt could not acquire the
+                # exclusive operation lock and did not contact qBittorrent.
+                if self._cleanup_stalled(job_id):
+                    from src.nextgen.cancellation import failure_location
+                    check,path=failure_location(exc)
+                    self._state(job_id,'REVIEW','CANCELLATION_REVIEW',
+                                cause='CANCELLATION_DRAINING',check=check,path=path)
+                    return {**self.store.status(job_id),
+                            'failed_check':check,'failed_path':path,
+                            'cause_reason_code':'CANCELLATION_DRAINING'}
+                self._state(job_id,'PENDING','CANCELLATION_DRAINING',
+                            cause='CANCELLATION_DRAINING')
                 return self.store.status(job_id)
-            except (ClientUnavailable,ClientInvalid):
+            except (ClientUnavailable,ClientInvalid) as exc:
+                if self._cleanup_stalled(job_id):
+                    from src.nextgen.cancellation import failure_location
+                    check,path=failure_location(exc)
+                    self._state(job_id,'REVIEW','CANCELLATION_REVIEW',
+                                cause='DOWNLOAD_CLIENT_UNAVAILABLE',check=check,path=path)
+                    return {**self.store.status(job_id),
+                            'failed_check':check,'failed_path':path,
+                            'cause_reason_code':'DOWNLOAD_CLIENT_UNAVAILABLE'}
                 self._state(job_id,'PENDING','CANCELLATION_PENDING',cause='DOWNLOAD_CLIENT_UNAVAILABLE')
             except (ClientAuthenticationFailed,ClientUnsupported,OSError,CancellationError,ValueError) as exc:
                 from src.nextgen.reasons import get_reason
