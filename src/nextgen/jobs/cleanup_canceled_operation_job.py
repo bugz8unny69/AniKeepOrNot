@@ -37,7 +37,14 @@ def registration(secrets,*,service_factory=CancellationService):
             facts={k:status[k] for k in ('failed_check','failed_path','cause_reason_code')
                    if status.get(k)}
             return Outcome('review','CANCELLATION_REVIEW',facts=facts or None)
-        # A bounded reconciliation pass frees a slot. Waiting is not retry failure
-        # and never rearms an uncertain external cleanup command.
-        return Outcome('defer',status['reason_code'] or 'CANCELLATION_PENDING',delay_ms=30000)
+        # A temporary lock/client wait is not a reason for Needs Review. Keep
+        # polling until the existing safe cleanup succeeds, but back off the
+        # interval to avoid thousands of no-op attempts and history events.
+        # A worker restart releases process-held locks; the next attempt still
+        # verifies owned-resource removal before freeing reservations.
+        attempt=context.claim.attempt
+        delay=(30000 if attempt<=10 else 60000 if attempt<=25
+               else 120000 if attempt<=50 else 300000)
+        return Outcome('defer',status['reason_code'] or 'CANCELLATION_PENDING',
+                       delay_ms=delay)
     return Registration(KIND,DEFINITION,execute,persist=_persist)
