@@ -4,203 +4,164 @@ Status: **design, awaiting owner approval**. No code changes yet.
 Branch: `refactor`. The owner's rule is that NextGen keeps only fixes, and behaviour
 changes that improve things land on `refactor` and are listed in the PR.
 
-## What the owner wants
+## The owner's goals
 
-> The worker is the one who directs, depending on what it gets from the API.
-> When the worker gets a job from the API, it assigns a duty. That job is
-> responsible for the whole lifecycle, to get things done. The parts inside it
-> are activities: "I am identifying", and so on. Each step of the one job
-> explains what it is doing.
-
-> Intake needs to know, when it identifies, whether to reject. Identification
-> never needs review.
+1. **The worker directs.** What arrives through the API becomes one job with
+   one duty. The job carries it through its lifecycle, and its steps are
+   activities that say what they are doing.
+2. **Accept everything.** autobrr's request is always accepted, with no error
+   and no rejection reply. What happens next is the job's lifecycle.
+3. **Nothing needs review.** NextGen's biggest problem is that work ends up in
+   Needs review, so "it's working" while no new episodes appear. On `refactor`, no
+   job ever stops to wait for a person.
+4. **No silent loops.** A job must never repeat the same check over and
+   over without saying which check and how many times.
+5. **Logging is cheap and respects the configured level.** Writing a log or
+   a History row has a cost, so only what changed is written.
 
 ## Terms
 
 | Term | Meaning |
 |---|---|
-| **Intake** | Accepts what arrives through the API and identifies it. It either hands the work to the worker or **rejects** it. It never sends anything to review. |
-| **Worker** | The director. It takes what arrives from the API, decides the duty, gives it to a job and runs that job. |
-| **Job** | One job per piece of work from the API. It owns that work from start to finish. It does not launch other jobs. |
-| **Duty** | What the job has to get done, assigned once by the worker: `EPISODE`, `SEASON_PACK`, `BATCH`, plus maintenance duties such as `RESET_EPISODE` and `CLEANUP`. |
-| **Activity** | One step of the job's lifecycle, e.g. *Identifying*, *Verifying release*, *Downloading 42%*, *Staging*. The job always shows its current activity and what it is doing. |
+| **Worker** | The director. It takes what the API accepted, assigns the duty, gives it to a job and runs that job. |
+| **Job** | One job per piece of work accepted from the API, created at acceptance. It owns that work from start to finish and never launches other jobs. |
+| **Duty** | What the job must get done: `EPISODE`, `SEASON_PACK`, `BATCH`, `RESET_EPISODE`, … |
+| **Activity** | One step of the lifecycle: *Identifying*, *Verifying release*, *Downloading 42%*, … The job always shows its current activity and what it is doing. |
 
-## Why
+## 1. Accept, and the job exists
 
-Today one release becomes a chain of a dozen or more jobs:
-- Identify, Verify, Reserve, Prepare, Submit and Download;
-- Verify media, Stage and Keep;
-- Cleanup and Reset.
+* The API accepts autobrr's request (`202`) and **creates the job in the same
+  transaction**. Nothing is ever accepted without an owner.
+* The first activity is **Identifying**: the full identity check (the release
+  name parsing and AniDB/TVDB). Its result:
+  * identified: the worker assigns the duty (episode, season pack or batch)
+    and the job continues;
+  * a series you rejected (autobrr re-sends), unidentifiable, conflicting or
+    unsupported type: the job **ends `REJECTED`**. This is a normal ending, like
+    Done, with the reason. It is not an error, a hold or a review. The Intake page
+    shows re-sends of a rejected series as a count, not one entry each;
+  * an identity service is down: the job **waits** for it (below).
+* Release-name parsing, now spread over `acquisition/release_titles.py`,
+  `providers/scoring.py` and `providers/parsing.py`, moves into one pure
+  module, `release_names.py`. It has no database and no network access, and
+  everything that reads a release name uses it.
 
-Each job knows only the job that created it. Batches have their own chain of
-nine kinds, and whether the work is an episode or a pack is only discovered
-partway down the chain. When something stops, you have to find which of
-the many jobs stopped and why. Job #7362 got stuck because a reset had to
-rediscover the cleanup jobs it had launched.
-
-## How it works
-
-### 1. The API stops known rejections before any job
-
-The webhook is received by the **API process**. Before it creates anything,
-it checks the release name against **local memory only**: the recognized
-release names (`recognized_for_release`, seeded by earlier verified
-releases) and your rejections (`anime_review_decisions`). It makes no AniDB,
-TVDB or Prowlarr call, so the webhook stays fast.
-
-| API check | What happens |
-|---|---|
-| Name recognized as a series you rejected | Release recorded as **rejected** (`ANIME_REJECTED`) in its History. The rejected series' count goes up. **No job is created.** Response: `200 {"rejected": true, "reason_code": "ANIME_REJECTED"}` |
-| Name not recognized, or a series not rejected | Accepted as today and handed to intake (`202`) |
-
-* A series you rejected was identified and verified before you rejected it,
-  so its release names are normally already recognized. The API stops it on
-  the very first re-send.
-* A re-send under a name the API doesn't recognize (a new group or a
-  different title) goes to intake. Intake identifies it and rejects it, still
-  with no job and no review.
-* The response is a `200` with `rejected: true`, not an error, so autobrr
-  doesn't log the webhook as a failure. If autobrr is set up to call the webhook as
-  an external filter, autobrr can then skip the download on its side too
-  (to confirm with the owner's autobrr setup).
-
-### 1b. Intake identifies, then accepts or rejects
-
-Identification happens **at intake, before any job exists**. Intake decides
-on the spot:
-
-| Intake result | What happens |
-|---|---|
-| Identified: series known, release type supported | handed to the worker |
-| Not identifiable (no AniDB/TVDB match, ambiguous match) | **rejected**, with the reason (`IDENTITY_INCOMPLETE`) |
-| Conflicting identity (AniDB and TVDB disagree) | **rejected**, with the reason (`IDENTITY_CONFLICT`) |
-| Unsupported release type (movie, specials) | **rejected**, with the reason (`RELEASE_TYPE_UNSUPPORTED`) |
-| Series already rejected by you (e.g. autobrr sends it again) | **rejected** (`ANIME_REJECTED`). No job is created |
-| An identity service is down (AniDB, TVDB) | **waits** for the service (service health layer), then identifies; this is not a rejection |
-
-* **Repeat sends of a rejected series.** Autobrr can keep sending releases of
-  a series you rejected. Each one is identified at intake, matched to your
-  rejection and rejected: no job, no hold and no review. The Intake page
-  doesn't list each one separately. The rejected series shows a count and the
-  last time, e.g. "rejected · autobrr sent 7 more releases, last 18:40".
-  Each one is still recorded in that release's History.
-
-  Today the same re-send runs Identify, Verify release and Select as jobs,
-  then stops `ON_HOLD · ANIME_REJECTED` at Reserve (or Evaluate/Reserve for
-  batches), leaving held jobs behind on every send.
-* Intake **never** produces Needs review. Today `IDENTITY_INCOMPLETE` and
-  `IDENTITY_CONFLICT` go to Needs review; on `refactor` they become intake
-  rejections (a behaviour change, to be listed in the PR).
-* A rejected intake is visible on the Intake page with its reason. The
-  manual-identity action stays: entering a match there re-submits the release
-  to intake, which identifies it again and either accepts or rejects it.
-* Only an accepted, identified release reaches the worker, so every job knows
-  its series from its first activity.
-
-### 2. The worker directs
-
-For each thing intake accepts (a release, or a retry, reset, Keep or Reject
-for an existing series), the worker:
-
-1. creates **one job** for it;
-2. assigns the **duty**. For a release, that means deciding episode, season pack
-   or batch, once and up front, using today's rules moved into one place;
-3. runs the job, concurrently with other jobs, within its concurrency limit.
-
-### 3. The job carries the duty through its lifecycle
-
-The job runs its duty's activities in order. The activities are today's job kinds,
-reused as steps with the same code, checks and atomic commits:
+## 2. The lifecycle: every state has a deadline
 
 ```
-EPISODE      Verifying release → Selecting → Reserving → Preparing
-             → Submitting → Downloading → Verifying media → Staging
-             → Waiting for your evaluation → Keeping | Rejecting → Cleaning up
-SEASON_PACK  Evaluating pack → Reserving → Submitting → Transferring
- / BATCH     → Verifying probe → Verifying episodes (n of N) → Staging
-             → Keeping → Unlocking → Cleaning up
-RESET_EPISODE  Cancelling owned work → Cleaning up → Searching again
+ACCEPTED ─► RUNNING (activity) ◄──► WAITING (why, until when)
+                │
+                ├─► DONE
+                ├─► REJECTED      the release or series is not wanted (normal ending)
+                ├─► CANCELED      by you, or by a reset
+                └─► FAILED        gave up after its deadline; cleanup has run
 ```
 
-* After each activity the job saves where it is. If the worker restarts, the
-  job continues from that activity.
-* A waiting activity (a download in progress, a service outage) gives the
-  worker its slot back until its next check. Nothing else waits on it.
-* The job **never launches another job**. Work that is a separate job today,
-  such as cleanup during a reset, becomes an activity of the same job.
+There is **no `NEEDS_REVIEW`, `STOPPED`, `BLOCKED` or `ON_HOLD`**. A job is
+stale when it is unfinished and nothing will move it, so every unfinished state
+carries a deadline:
 
-### 4. Each activity says what it is doing
+| State | Deadline | When it passes |
+|---|---|---|
+| ACCEPTED | picked up within N minutes | the worker picks it up (oldest first) |
+| RUNNING | the lease | another worker continues it **at the saved activity** |
+| WAITING | `next check at` | the activity checks again |
+| WAITING on a service | 72 h (the existing service give-up) | `FAILED`, naming the service; cleanup runs first |
 
-The job's current activity and its own words are always visible:
+* **Progress is saved after every activity.** A crash, restart or watchdog
+  kill continues at the activity that was running.
+* **Activities check what already happened before acting.** Submitting looks
+  for the torrent by hash before adding it; Downloading checks progress instead
+  of starting over. Doing an activity again is always safe.
+* **Errors spend a retry budget, outages don't.** An unexpected error fails
+  *that job* with its failed check. It never stops the worker (#7362).
+* **Failing includes cleaning up.** Before `FAILED` or `CANCELED`, the job
+  runs *Cleaning up*: it releases its reservation and removes its torrents and
+  staged files. Nothing is left held.
 
-```
-Job #900 · Episode · Frieren S01E03 (AniDB 17617)         NEEDS REVIEW
-  ✓ Verifying release      [SubsPlease] Frieren - 03 (1080p)
-  ✓ Downloading            done, 1.4 GB
-  ✗ Cleaning up            stopped at cancellation_service.py:… TORRENT_MOVED
-                           file /downloads/…                   [Resume] [Reset]
+## 3. Nothing needs review
 
-Job #901 · Season pack · Frieren S02 (12 episodes)        ACTIVE
-  ✓ Evaluating pack        12 of 12 episodes covered
-  ▶ Verifying episodes     episode 7 of 12
-```
+Today about 150 places in 33 modules send work to Needs review, for about 40
+reasons. On `refactor`, each one becomes one of four things, and **the work keeps moving**:
 
-`jobs.activity_code` and the job diagnostics ("doing", "waiting for")
-already exist. They become the activity list above, one line per activity,
-recorded in History as the job goes.
+| Today | Group | On `refactor` |
+|---|---|---|
+| `SERVICE_SETUP_INVALID`, `SERVICE_RESPONSE_INVALID` | service setup | **wait** for the service (one service alert, not N stuck jobs) |
+| size limit, missing audio, `RELEASE_CONFLICT`, `TORRENT_ALREADY_PRESENT`, identity | unusable release | **reject that release** and try the next candidate; the episode keeps going |
+| `EPISODE_RESERVATION_CONFLICT`, plan conflicts, `TORRENT_OWNERSHIP_CONFLICT`, `TORRENT_TRANSFER_CONFLICT` | our own jobs clashing | **wait** for the owning job, or end as a duplicate |
+| `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `POST_KEEP_CLEANUP_REVIEW`, `REJECT_CLEANUP_REVIEW`, `KEEP_IMPORT_REVIEW`, `STAGING_REVIEW` | cleanup safety | the file we can't prove we own goes on a **Leftovers** list. **The job finishes anyway**; cleanup never holds an episode |
+| `MEDIA_SERVER_REFRESH_REVIEW` | Jellyfin | retry later; never blocks |
+| `JOB_PAYLOAD_INVALID`, `JOB_STATE_INVALID`, `UNSUPPORTED_JOB_KIND` | our bugs | a **bug report** with the failed check; the episode goes back to searching |
 
-### 5. Jobs of the same series stay together
+* **Leftovers** and **bug reports** are lists you check when you want. They
+  never hold up a job. Leftovers keep the safety rule: nothing we can't prove
+  we own is ever deleted.
+* The full list of today's review paths, each mapped to its row above, is
+  part of phase JD-0. Ranking by real counts from the server comes first.
+* The dashboard shows what matters: **episodes moving** (doing what), **episodes
+  waiting** (why, until when) and **episodes done** today.
 
-A second release for the same series is its own job with its own duty. It is
-**attached to the series**: the dashboard shows the series' jobs together,
-and the worker keeps two jobs of one series from working on the same episode
-or torrent at once (today's reservations, with one clear owner).
+## 4. No silent loops
 
-### 6. Stops, retries and resets
+A loop is a job repeating the same activity with the same result. Today, each
+repeat writes CLAIMED, HANDLER_STARTED, HANDLER_COMPLETED and DEFERRED again,
+without saying which check it is waiting on.
 
-* A stopped activity stops **its job only**. Other jobs keep running, and so
-  does the worker. An unexpected error in one job sends that job to review; it
-  does not stop the worker.
-* **Resume** continues the job from the activity that stopped, recording
-  who asked. A cleanup that stopped to protect files it doesn't own is resumed
-  only by an explicit Resume.
-* **Reset** of an episode is a `RESET_EPISODE` job: its own activities clean up
-  and search again. It doesn't depend on other jobs.
+* **Every repeat names its check.** A waiting activity records *what* it is
+  waiting for (`failed_check`, the service, the owning job). There is no
+  unnamed wait.
+* **Repeats are counted, not re-written.** The same activity with the same
+  result increments a counter on the job (`repeats`, `first_seen`,
+  `last_seen`) instead of appending new History rows.
+* **Repeats are bounded.** After N identical repeats with no progress, the
+  activity backs off (longer checks). At its deadline it fails with
+  `NO_PROGRESS` and the repeated check named, and cleanup runs. It never loops forever.
+* The dashboard shows e.g. "*Waiting for qBittorrent to confirm removal ·
+  check `cancellation_service.py:… TORRENT_STOPPED` · 37 times since 16:46*".
 
-## What changes in the code
+## 5. Quiet, level-respecting logging
 
-| Area | Change |
-|---|---|
-| handlers in `jobs/` | each becomes an **activity function** (same code), callable from the job's lifecycle |
-| new `duties.py` | each duty's ordered activities, plus the worker's duty decision |
-| API `/webhook` (`api/app.py`) | local check (recognized names and rejections) before `accept_event_and_job`; a rejected series gets no job |
-| intake (`storage/series_intake.py`, identify step) | identifies before any job; identity failures become rejections; outages wait |
-| `worker.py` | creates the job, assigns the duty, runs activities, saves progress after each one |
-| successor enqueue in handlers | replaced by "next activity"; no new jobs |
-| `jobs` table | `duty` and `activity_code` (exists); job kinds become duties |
-| History | one job's History shows every activity, with what it did |
-| dashboard and `adm report job` | the activity list above; jobs grouped by series |
+Measured today (local, a real worker attempt):
+- WARNING logged 0 lines and DEBUG logged 4. So the level *is* applied to job
+  loggers.
+- DEBUG adds nothing, because the code has almost no DEBUG messages, so it looks
+  ignored.
+- The worker's own logger reads the level **only at startup**.
+- `logging.components` silently overrides `logging.level`.
+- Every attempt writes **4 History rows** to the database, even when nothing changed.
+
+On `refactor`:
+
+* **History records changes only:** accepted, activity started, activity
+  finished, state changed, waiting reason changed, ended. A repeat that changed
+  nothing updates the counter (section 4).
+* **Log lines follow the same rule.** INFO shows lifecycle changes; DEBUG
+  shows each check (the repeats); WARNING shows failures and service problems.
+* **The level applies live** to every logger (worker, job, API, providers)
+  on the next operation, without a restart. The settings page shows the
+  effective level per component, so an override is visible.
+* A test asserts the History and log volume of one download: a fixed small number
+  of rows, not one per poll.
 
 ## Phases (each a PR, tests local only)
 
-0. **JD-0 Reject before any job.** The API stops recognized rejected series
-   at the webhook, with no job and no provider call. Intake identifies the rest; identity failures
-   become rejections and never go to review; outages wait; re-sends of a
-   rejected series are rejected without a job. Test: each row of the intake
-   table above, and the same rejected series sent five times (no job, one
-   series entry, count 5). Also: a webhook for a recognized rejected
-   series creates no `jobs` row and makes no provider call.
-1. **JD-1 Activities.** Each handler's work becomes an activity function, called by
-   today's job wrappers. No behaviour change yet.
-2. **JD-2 Episode duty.** The worker assigns `EPISODE`, and one job runs every
-   activity. Test: one release end to end in a real worker as **one job**, the
-   activity list, a restart mid-download, and one job stopping while another
-   finishes.
-3. **JD-3 Season-pack and batch duties.**
-4. **JD-4 Reset and cleanup duties.** No cross-job waiting.
-5. **JD-5 Switch-over.** All new work arrives as duties.
-6. **JD-6 Dashboard and report.** The activity list, and jobs grouped by series.
-   The old kinds are removed (ledger entries).
+0. **JD-0 Measure and map.** Rank today's review, hold and fail reasons with
+   counts from the server; map every review path to section 3; fix the logging
+   level bugs (startup-only level, override visibility). Bug fixes go to NextGen too.
+1. **JD-1 `release_names.py` and activities.** Parsing in one module; each
+   handler becomes an activity function. No behaviour change yet.
+2. **JD-2 Episode duty.** Job created on accept, Identifying as its first
+   activity, `REJECTED` as a normal ending, saved progress, deadlines,
+   repeat counting and change-only History. Test: one release end to end as
+   **one job**, a restart mid-download, a rejected re-send, and the History
+   volume of one download.
+3. **JD-3 No review.** Each review path becomes a wait, a rejected release
+   (with the next candidate), a leftover or a bug report.
+4. **JD-4 Season-pack and batch duties.**
+5. **JD-5 Reset and cleanup duties**, with no cross-job waiting.
+6. **JD-6 Switch-over, dashboard and report**: episodes moving, waiting and
+   done; Leftovers; bug reports. The old kinds and review states are removed
+   (ledger entries).
 
 ## Decisions for the owner
 
@@ -208,8 +169,6 @@ or torrent at once (today's reservations, with one clear owner).
    the old way, and new work starts as duty jobs.
 2. **Duty rules.** Recommended: today's rules for episode, season pack and
    batch, moved into the worker, with no new rules yet.
-3. **Re-identifying a rejected release.** Recommended: a manual match on the
-   Intake page re-submits it to intake. Alternative: rejected stays rejected,
-   and a new release is needed.
-4. **Resume scope.** Recommended: Resume one job. The series view also offers
-   "Resume all stopped jobs of this series".
+3. **Repeat limit.** Recommended: back off after 10 identical repeats, and
+   fail with `NO_PROGRESS` at the activity's deadline (24 h for downloads, 72 h
+   for service waits).
