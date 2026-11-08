@@ -5,7 +5,7 @@ import inspect
 from src.nextgen.acquisition.metadata import AcquisitionConflict, MetadataInvalid, SourceMissing, parse_metainfo
 from src.nextgen.acquisition.settings import DownloadConfigurationError, SizeEvidenceMissing, download_options
 from src.nextgen.acquisition.submission import (ClientUnavailable, ClientInvalid, ClientAuthenticationFailed, ClientUnsupported)
-from src.nextgen.acquisition.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent import Client
 from src.nextgen.diagnostics import log_history
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer

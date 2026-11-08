@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from src.nextgen.acquisition.qbittorrent import _NoRedirect, _json
+from src.nextgen.torrent_client.qbittorrent import _NoRedirect, _json
 from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
 from src.nextgen.acquisition.settings import endpoint
 from src.nextgen.episode_identity import VerifiedEpisode

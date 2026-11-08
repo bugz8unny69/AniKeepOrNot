@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 
-from src.nextgen.acquisition.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent import Client
 from src.nextgen.acquisition.settings import DownloadOptions, DownloadCredentials
 from src.nextgen.acquisition.submission import (ClientInvalid, ClientUnavailable, ClientAuthenticationFailed,
                                                ClientUnsupported, Intent, SubmissionPlan, SendPermit)

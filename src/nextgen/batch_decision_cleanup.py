@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from src.nextgen.acquisition.cleanup import FileCleanup
 from src.nextgen.acquisition.owned_cleanup import OwnedCleanup
-from src.nextgen.acquisition.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent import Client
 from src.nextgen.cancellation import CancellationError, OperationGate
 from src.nextgen.history import append_job_history, job_attempt
 from src.nextgen.storage.batch_acquisition_candidate import _candidate

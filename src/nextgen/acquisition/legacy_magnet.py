@@ -8,7 +8,7 @@ import logging
 from src.nextgen.async_io import blocking
 from src.nextgen.diagnostics import exception
 from src.nextgen.acquisition.contracts import AcquisitionProposal
-from src.nextgen.acquisition.qbittorrent import Client as QBClient
+from src.nextgen.torrent_client.qbittorrent import Client as QBClient
 from src.nextgen.acquisition.settings import (download_options, size_limits, DownloadConfigurationError,
     SizeLimitExceeded, SizeEvidenceMissing)
 from src.nextgen.acquisition.metadata import (ObservedInventory, MetadataInvalid,

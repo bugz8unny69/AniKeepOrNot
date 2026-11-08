@@ -95,7 +95,7 @@ class OwnershipGuardTests(unittest.TestCase):
             cancel_cleanup.remove_download_folder(str(mine),marker)  # Already gone: fine.
 
     def test_files_are_deleted_only_when_tag_and_folder_agree(self):
-        from src.nextgen.acquisition.qbittorrent import Client
+        from src.nextgen.torrent_client.qbittorrent import Client
         client=Client.__new__(Client);client.protocol=object();sent=[]
         client._request=lambda path,**kw:sent.append(path) or (b'',{})
         h='b'*40;marker='c'*32;folder='/d/ad-'+marker

@@ -9,7 +9,8 @@ from src.nextgen.acquisition.settings import DownloadOptions, DownloadCredential
 from src.nextgen.acquisition.submission import Intent, SubmissionPlan, Observation, ClientInvalid
 from src.nextgen.acquisition.transfers import (TransferSnapshot, TransferPermit, TransferConflict,
     PieceOverlap, SnapshotChanged, verify_snapshot, transfer_state, selection_fingerprint)
-from src.nextgen.acquisition.qbittorrent import Client, _Protocol
+from src.nextgen.torrent_client.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
 from src.nextgen.tests.test_acquisition_metadata import metadata
 
 
@@ -68,7 +69,7 @@ class TransferPolicyTests(unittest.TestCase):
     def client(self,intent,snapshot,major=5):
         client=Client(intent.options,DownloadCredentials('user','password'))
         client.major=major
-        client.protocol=_Protocol(major,(2,11,0) if major==5 else (2,8,19))
+        client.protocol=select_adapter(major,(2,11,0) if major==5 else (2,8,19))
         client._sid="offline-session"
         client.inspect_transfer=Mock(return_value=snapshot)
         client._request=Mock(return_value=(b'',None))

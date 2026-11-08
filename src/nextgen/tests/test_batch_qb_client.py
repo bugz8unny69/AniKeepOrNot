@@ -9,6 +9,7 @@ from src.nextgen.batch.probe_transfer import (
     selection_fingerprint, verify_probe_snapshot, exact_probe_selection,
 )
 from src.nextgen.batch.qb_client import BatchClient
+from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
 from src.nextgen.storage.batch_acquisition_candidate import BatchAcquisitionCandidate
 from src.nextgen.storage.batch_submission_journal import (
     BatchSubmissionIntent, BatchSendPermit,
@@ -40,9 +41,9 @@ class BatchQbClientTests(unittest.TestCase):
 
     def test_observed_batch_metadata_is_distinct_and_double_checked(self):
         from src.nextgen.acquisition.metadata import ObservedBatchInventory
-        from src.nextgen.acquisition.qbittorrent import _Protocol
+        from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
         from unittest.mock import Mock
-        self.client.protocol=_Protocol(4,(2,8,19))
+        self.client.protocol=select_adapter(4,(2,8,19))
         self.client.major=4
         self.client.inspect=Mock()
         expected=Observation(self.intent.inventory.info_hash,'pausedDL',
@@ -60,9 +61,9 @@ class BatchQbClientTests(unittest.TestCase):
 
     def test_adopted_active_batch_supports_read_only_inventory_rechecks(self):
         from unittest.mock import Mock
-        from src.nextgen.acquisition.qbittorrent import _Protocol
+        from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
         from src.nextgen.acquisition.metadata import ObservedBatchInventory
-        self.client.protocol=_Protocol(4,(2,8,19))
+        self.client.protocol=select_adapter(4,(2,8,19))
         self.client.major=4
         active=Observation(self.intent.inventory.info_hash,'downloading',
             self.options.download_root,self.options.category,
@@ -79,9 +80,9 @@ class BatchQbClientTests(unittest.TestCase):
         self.assertIsNone(actual.info_sha256)
 
     def test_observed_batch_never_adopts_foreign_or_changed_torrent(self):
-        from src.nextgen.acquisition.qbittorrent import _Protocol
+        from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
         from unittest.mock import Mock
-        self.client.protocol=_Protocol(4,(2,8,19))
+        self.client.protocol=select_adapter(4,(2,8,19))
         self.client.major=4
         expected=Observation(self.intent.inventory.info_hash,'pausedDL',
             self.options.download_root,self.options.category,
@@ -101,7 +102,7 @@ class BatchQbClientTests(unittest.TestCase):
         self.assertEqual(self.calls,[])
 
     def test_older_protocol_one_use_batch_magnet_admission(self):
-        from src.nextgen.acquisition.qbittorrent import _Protocol
+        from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
         from src.nextgen.storage.batch_metadata_admission import (
             EarlyBatchIntent, EarlyBatchPermit)
         digest=self.intent.inventory.info_hash
@@ -111,7 +112,7 @@ class BatchQbClientTests(unittest.TestCase):
                 self.calls.clear()
                 self.client.major=major
                 self.client.api_version=version
-                self.client.protocol=_Protocol(major,version)
+                self.client.protocol=select_adapter(major,version)
                 early=EarlyBatchIntent(7,21,digest,'a'*32,self.options,major,
                                        'UNCERTAIN')
                 permit=EarlyBatchPermit(7,'a'*32)

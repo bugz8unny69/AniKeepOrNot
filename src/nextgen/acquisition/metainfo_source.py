@@ -19,7 +19,7 @@ from src.nextgen.acquisition.settings import (
 from src.nextgen.acquisition.submission import (
     ClientAuthenticationFailed, ClientInvalid, ClientUnavailable, ClientUnsupported,
 )
-from src.nextgen.acquisition.qbittorrent import Client as QbClient
+from src.nextgen.torrent_client.qbittorrent import Client as QbClient
 
 
 class MetadataSourceConfigurationError(ValueError):

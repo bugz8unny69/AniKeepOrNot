@@ -4,7 +4,7 @@ import urllib.error
 import urllib.request
 
 from src.nextgen.acquisition.settings import endpoint
-from src.nextgen.acquisition.qbittorrent import _NoRedirect
+from src.nextgen.torrent_client.qbittorrent import _NoRedirect
 
 
 class RefreshConfiguration(ValueError):

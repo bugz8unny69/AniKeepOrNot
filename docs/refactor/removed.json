@@ -182,6 +182,20 @@
       "module": "src.nextgen.sonarr_episode",
       "name": "VerifiedEpisode",
       "why": "Moved to src.nextgen.episode_identity: a verified TVDB episode is not Sonarr-specific. sonarr_episode keeps only the Sonarr matching for Keep."
+    },
+    {
+      "id": "JD-1b",
+      "kind": "module",
+      "module": "src.nextgen.acquisition.qbittorrent",
+      "name": "qbittorrent",
+      "why": "The qBittorrent client moved to src.nextgen.torrent_client.qbittorrent (torrent client adapters, JD-1b)."
+    },
+    {
+      "id": "JD-1b",
+      "kind": "class",
+      "module": "src.nextgen.torrent_client.qbittorrent",
+      "name": "_Protocol",
+      "why": "Replaced by the version adapters in torrent_client/qbittorrent_versions.py (select_adapter); same rules."
     }
   ],
   "renamed": [

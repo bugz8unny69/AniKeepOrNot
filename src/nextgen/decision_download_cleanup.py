@@ -9,7 +9,7 @@ import json
 
 from src.nextgen.acquisition.cleanup import FileCleanup
 from src.nextgen.acquisition.owned_cleanup import OwnedCleanup
-from src.nextgen.acquisition.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent import Client
 from src.nextgen.acquisition.submission import ClientUnavailable, SubmissionPlan, manifest_from_json
 from src.nextgen.async_io import blocking
 from src.nextgen.cancellation import CancellationError, CleanupBusy, OperationGate
