@@ -861,6 +861,33 @@ CREATE TABLE IF NOT EXISTS batch_candidate_stops (
 );
 CREATE INDEX IF NOT EXISTS idx_batch_candidate_stops_operation ON batch_candidate_stops(operation_id);
 
+
+CREATE TABLE IF NOT EXISTS resources (
+ resource_id INTEGER PRIMARY KEY,
+ job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+ kind TEXT NOT NULL CHECK(kind IN ('TORRENT','DOWNLOADED_FILE','STAGED_FILE','FOLDER','LIBRARY_FILE')),
+ info_hash TEXT CHECK(info_hash IS NULL OR (length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*')),
+ path TEXT CHECK(path IS NULL OR (substr(path,1,1)='/' AND length(path) BETWEEN 2 AND 4096)),
+ size INTEGER CHECK(size IS NULL OR size >= 0),
+ parent_id INTEGER REFERENCES resources(resource_id),
+ state TEXT NOT NULL CHECK(state IN ('PRESENT','DELETED','HANDED_OVER')),
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms >= 0),
+ updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0),
+ CHECK((kind='TORRENT') = (info_hash IS NOT NULL)),
+ CHECK((kind='TORRENT') OR path IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS resources_one_torrent_per_job ON resources(job_id, info_hash) WHERE kind='TORRENT';
+CREATE UNIQUE INDEX IF NOT EXISTS resources_one_path_per_job ON resources(job_id, kind, path) WHERE path IS NOT NULL;
+CREATE INDEX IF NOT EXISTS resources_by_hash ON resources(info_hash) WHERE info_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS resources_by_path ON resources(path) WHERE path IS NOT NULL;
+CREATE TABLE IF NOT EXISTS resource_operations (
+ operation_id INTEGER PRIMARY KEY,
+ resource_id INTEGER NOT NULL REFERENCES resources(resource_id),
+ job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+ operation TEXT NOT NULL CHECK(operation IN ('ADDED','DOWNLOADED','STAGED','IMPORTED','DELETED','HANDED_OVER')),
+ occurred_at_ms INTEGER NOT NULL CHECK(occurred_at_ms >= 0)
+);
+CREATE INDEX IF NOT EXISTS resource_operations_by_resource ON resource_operations(resource_id, operation_id);
 """
 
 def connect(path):

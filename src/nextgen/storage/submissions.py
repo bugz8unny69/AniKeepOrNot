@@ -137,6 +137,8 @@ class SubmissionJournal:
                            (state,reason,now,plan.plan_id))
                 records=(append_job_history(db,job_id=claim.job_id,event_code='TORRENT_RECONCILED',reason_code=reason,
                     component='worker',occurred_at_ms=now,details={'attempt':claim.attempt}),)
+                if state=='OWNED_STOPPED':
+                    _record_torrent(db,claim.job_id,now,observation)
             self.queue._owns(db,claim,self.queue.now())
             return state,reason,records
 
@@ -144,3 +146,13 @@ class SubmissionJournal:
 def target_options(options,plan):
     return DownloadOptions(options.base_url,str(PurePosixPath(options.download_root)/('ad-'+plan.marker)),
                            options.category,options.timeout_seconds)
+
+
+def _record_torrent(db,job_id,now,observation):
+    """Resources (JD-1c): the confirmed torrent, its folder and the files it lists."""
+    from src.nextgen.resources import Resources
+    resources=Resources(db,job_id,now)
+    save_path=observation.save_path.rstrip('/') or '/'
+    torrent=resources.torrent(observation.info_hash,save_path=save_path)
+    for item in observation.files:
+        resources.downloaded(torrent,save_path+"/"+item.path,item.size)

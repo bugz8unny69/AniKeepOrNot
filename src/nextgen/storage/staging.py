@@ -156,6 +156,18 @@ def persist(db,claim,value):
             if artifact!=expected:raise StagingReview()
     db.execute("UPDATE staging_publications SET state='PUBLISHED',receipts_json=?,published_at_ms=? WHERE plan_id=?",
                (encoded(receipts),__import__('time').time_ns()//1000000,intent.plan.plan_id))
+    # Resources (JD-1c): every staged file, linked to its download when it is one.
+    from src.nextgen.resources import Resources
+    resources=Resources(db,claim.job_id,__import__('time').time_ns()//1000000)
+    for entry in plan['entries']:
+        source=None
+        if entry['role']=='media':
+            found=db.execute("SELECT f.resource_id FROM resources f JOIN resources t ON t.resource_id=f.parent_id "
+                             "WHERE f.kind='DOWNLOADED_FILE' AND f.state='PRESENT' AND t.info_hash=? "
+                             "AND substr(f.path,-length(?)-1)=? ORDER BY f.resource_id DESC LIMIT 1",
+                             (intent.plan.manifest.info_hash,evidence['path'],'/'+evidence['path'])).fetchone()
+            source=found[0] if found else None
+        resources.staged(plan['root']+'/'+entry['path'],entry['size'],source_id=source)
     mark_staged(db,claim)
     from src.nextgen.storage.release_candidates import mark_published
     mark_published(db,event_id=claim.event_id,info_hash=intent.plan.manifest.info_hash)
