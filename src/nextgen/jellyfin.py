@@ -18,7 +18,7 @@ class RefreshUnavailable(RuntimeError):
 
 
 class RefreshReview(ValueError):
-    reason_code='JELLYFIN_REFRESH_REVIEW'
+    reason_code='MEDIA_SERVER_REFRESH_REVIEW'
     def __init__(self):super().__init__('Jellyfin refresh needs review.')
 
 

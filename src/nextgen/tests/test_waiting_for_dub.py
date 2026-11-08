@@ -144,7 +144,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
     async def test_check_only_runs_when_english_is_required(self):
         await self.exhausted(audio='japanese')
         await self.run_worker(self.fake)
-        self.assertEqual(self.state(), ('CANCELED', 'SONARR_CANDIDATES_EXHAUSTED'))
+        self.assertEqual(self.state(), ('CANCELED', 'RELEASE_CANDIDATES_EXHAUSTED'))
         self.assertEqual(self.fake.searches, 0)
         self.assertEqual(self.rows('SELECT status FROM episode_discovery_results WHERE anidb_episode_number=2'),
                          [('NO_RESULTS',)])
@@ -241,7 +241,7 @@ class RequeueFixTests(WaitingForDubTests):
         try:
             with transaction(db):
                 db.execute("UPDATE jobs SET state='NEEDS_REVIEW',attempt_count=1,"
-                           "last_reason_code='SONARR_CANDIDATES_EXHAUSTED' WHERE job_id=?", (self.job,))
+                           "last_reason_code='RELEASE_CANDIDATES_EXHAUSTED' WHERE job_id=?", (self.job,))
         finally:
             db.close()
 

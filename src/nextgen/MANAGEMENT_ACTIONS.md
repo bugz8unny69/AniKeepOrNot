@@ -13,7 +13,7 @@ actions; browser sessions still require Origin and CSRF on mutations.
 
 | Action | Admission and result | Worker behavior |
 | --- | --- | --- |
-| Keep | POST `/api/v1/jobs/{id}/keep`; target operation must be STAGED | Durable KEEP_MEDIA request; currently BLOCKED with KEEP_NOT_READY |
+| Keep | POST `/api/v1/jobs/{id}/keep`; target operation must be STAGED | Durable KEEP_MEDIA request, carried out by the Keep worker (KEEP_SONARR.md) |
 | Cancel | POST `/api/v1/jobs/{id}/cancel`; target must be cancelable unfinished work | Fence target immediately. Enqueue cleanup if handlers must drain or resource receipts exist |
 | Cleanup | POST `/api/v1/jobs/{id}/cleanup`; target already canceled/cancel-requested | Reconcile one bounded pass; defer for drain/external confirmation; stop for review on unsafe evidence |
 
@@ -38,7 +38,7 @@ translation keys and persisted records retain their identities. No migration or
 media relocation is involved.
 
 A receipt contains job_id, status_url, history_url, state, readable status,
-notification (`Job submitted.`), reused and disable_action. Location points at
+notification (`Action submitted.`), reused and disable_action. Location points at
 GET `/api/v1/jobs/{job_id}`. Poll that URL and its history until the job completes,
 waits or needs attention. A queued acknowledgement is never a completion receipt.
 After an uncertain HTTP outcome, repeat the explicit action; the database returns
@@ -51,12 +51,12 @@ contain enabled, disabled_reason, plus an existing action job/receipt where appl
 Use disabled_reason.message for the disabled button tooltip; its code and
 message_key come from the shared diagnostic catalog. Enabled actions have a null
 disabled_reason. An active action job disables competing Keep/Cancel/Cleanup
-buttons for that operation. Queued jobs say “A job is already queued.” Running
-jobs say “A job is already in progress.” Waiting jobs say “A job is waiting to
+buttons for that operation. Queued jobs say “An action is already queued.” Running
+jobs say “An action is already running.” Waiting jobs say “A job is waiting to
 continue.” Held, blocked, review, completed and canceled jobs must not be labeled
 as running. Receipts also expose disabled_reason for the submitted action;
 refresh action availability from the target read rather than using a stale receipt.
-Keep the notification “Job submitted.” These messages explain state without
+Keep the notification “Action submitted.” These messages explain state without
 claiming the requested work is complete. Keep remains unavailable for execution;
 execution_available and availability_reason must still be respected by clients. A repeated
 click through another job in the same operation resolves to the same action.
@@ -89,21 +89,14 @@ failure history, discard uncertain journal phases, release reservations, or gran
 new destructive permits. Keep and cleanup receipts remain immutable history;
 there is no generic job deletion or arbitrary enqueue/retry route.
 
-## Keep prerequisite
+## Keep
 
-KEEP_MEDIA is an explicit durable intent boundary, **not a working media mover**.
-Both the submission response and target action metadata expose
-execution_available=false and the readable KEEP_NOT_READY reason. It must not be
-presented as an operational Keep feature. A correctly staged target can record
-one request; the installed handler records BLOCKED and never moves/deletes files
-or marks success. Current staging is itself still future work, so ordinary
-current acquisitions are not yet eligible for Keep admission.
-
-Implement the verified staging receipt, permanent-directory publication journal,
-identity/placement and post-publication steps from the Keep architecture before
-replacing this boundary with the real library. Explicit resume of recorded Keep
-intent after that implementation requires a separate reviewed change; jobs do
-not silently restart when code is deployed.
+A Keep request for a correctly staged target records one KEEP_MEDIA job, which
+imports the episode into the library through Sonarr (see KEEP_SONARR.md). While
+Sonarr's saved status says it cannot work, the target's Keep capability reports
+execution_available=false with the reason, and the request is refused. Jobs that
+stopped before Keep existed (KEEP_NOT_READY) were migrated to KEEP_IMPORT_REVIEW
+by migration 064; they resume only through an explicit Keep request.
 
 `jobs.management.registrations(secrets)` supplies the trusted cleanup and Keep
 registrations. The composed identity worker installs them even without a metadata

@@ -36,17 +36,17 @@ not a port of a complete legacy catalog. No runtime dependency on legacy exists.
 | Code | Dashboard message | Retry classification |
 | --- | --- | --- |
 | `IDENTITY_INCOMPLETE` | Anime identification is incomplete. | Context required |
-| `IDENTITY_INVALID` | Anime identification could not be verified. | Changed input/evidence needed |
+| `IDENTITY_INVALID` | The anime could not be verified. | Changed input/evidence needed |
 | `IDENTITY_CONFLICT` | Conflicting anime information needs review. | Review needed |
 | `PROVIDER_UNAVAILABLE` | An information provider is temporarily unavailable. | Potentially transient |
 | `JOB_LEASE_EXPIRED` | Processing was interrupted. | Potentially transient |
-| `JOB_HANDLER_FAILED` | An unexpected processing error occurred. | Context required |
-| `JOB_RETRY_EXHAUSTED` | Automatic retries have stopped. | Review needed |
-| `SERVICE_UNAVAILABLE` | Waiting for a service that is unavailable. | Potentially transient |
-| `SERVICE_SETUP_INVALID` | A required service is not set up correctly. | Changed input/evidence needed |
-| `STORAGE_UNAVAILABLE` | Processing is temporarily unavailable. | Context required |
-| `STORAGE_STATEMENT_INVALID` | An internal database statement error stopped processing. | Component change needed |
-| `UNSUPPORTED_JOB_KIND` | This type of work cannot be processed. | Component change needed |
+| `JOB_HANDLER_FAILED` | An unexpected error occurred. | Context required |
+| `JOB_RETRY_EXHAUSTED` | Automatic retries stopped. | Review needed |
+| `SERVICE_UNAVAILABLE` | Waiting for a service to come back. | Potentially transient |
+| `SERVICE_SETUP_INVALID` | A service is not set up correctly. | Changed input/evidence needed |
+| `STORAGE_UNAVAILABLE` | The database is unavailable. | Context required |
+| `STORAGE_STATEMENT_INVALID` | A program error stopped processing. | Component change needed |
+| `UNSUPPORTED_JOB_KIND` | This type of job cannot be processed. | Component change needed |
 
 Lease expiry does not prove a handler had no external effects. Recovery must
 fence stale owners and establish whether replay is safe. A handler exception
@@ -131,10 +131,10 @@ without deriving status from a reason string. See JOB_STATUSES.md.
 
 | Code | Human-readable meaning |
 | --- | --- |
-| CONFIGURATION_INVALID | Configuration could not be validated. |
-| CONFIGURATION_CONFLICT | Configuration changed before this update could be applied. |
-| CONFIGURATION_MIGRATION_REQUIRED | Configuration needs an upgrade. |
-| CONFIGURATION_STORAGE_FAILED | Configuration storage is unavailable. |
+| CONFIGURATION_INVALID | The settings are not valid. |
+| CONFIGURATION_CONFLICT | The settings changed before this update was saved. |
+| CONFIGURATION_MIGRATION_REQUIRED | The settings need an upgrade. |
+| CONFIGURATION_STORAGE_FAILED | Settings could not be read or saved. |
 | CONFIGURATION_DURABILITY_UNCONFIRMED | Configuration was updated, but durable storage could not be confirmed. |
 
 The first three require corrected input, refreshed revision or explicit upgrade,
@@ -213,21 +213,21 @@ identify the failing source and their actions explain what to check before
 retrying. These remain review outcomes: anime identity alone does not authorize
 an episode download. Exact cached episode proofs and successful mappings retain
 their existing behavior.
-RELEASE_CONFLICT says "Release episode information conflicts." and asks for the
+RELEASE_CONFLICT says "The release episode details disagree." and asks for the
 identifiers/mapping evidence to be checked. Both have static messages/actions and
 translation keys through the shared catalog. Neither a provider title nor raw
 release name/payload is placed in diagnostic history.
 
 
-Episode selection retains stable historical identifiers `TRIAL_SELECTED`,
-`TRIAL_OUTSIDE_WINDOW`, `TRIAL_DISABLED` and `TRIAL_PLAN_CONFLICT`. Their
+Episode selection retains stable historical identifiers `USER_EVALUATION_SELECTED`,
+`USER_EVALUATION_OUTSIDE_WINDOW`, `USER_EVALUATION_DISABLED` and `USER_EVALUATION_PLAN_CONFLICT`. Their
 English messages use "Intake selection" or "episode selection", not the old
-product name. `TRIAL_EVALUATED` remains the durable job event with a registered
+product name. `USER_EVALUATION_CHECKED` remains the durable job event with a registered
 reason; its audit and selection facts commit together and log only after commit.
 A selected episode does not mean download, staging or Keep completed.
 
-`TRIAL_COUNTS_INVALID` rejects two zero episode-selection counts during
-configuration validation. `TRIAL_DISABLED` is retained for historical
+`USER_EVALUATION_COUNTS_INVALID` rejects two zero episode-selection counts during
+configuration validation. `USER_EVALUATION_DISABLED` is retained for historical
 compatibility only; current evaluations do not emit it. Do not rename any of
 these stored codes without a separate compatibility migration.
 
@@ -235,7 +235,7 @@ EPISODE_RESERVATION_GRANTED explains a durable exact-episode reservation;
 EPISODE_RESERVED holds competing work; EPISODE_RESERVATION_CONFLICT requires
 identity/selection review. All have static readable messages/actions and
 translation keys. EPISODE_RESERVATION_CREATED and EPISODE_RESERVATION_SKIPPED
-are durable job markers; a skipped gate carries TRIAL_OUTSIDE_WINDOW.
+are durable job markers; a skipped gate carries USER_EVALUATION_OUTSIDE_WINDOW.
 
 ACQUISITION_SOURCE_MISSING requires a normalized supported source identity;
 ACQUISITION_METADATA_INVALID requires file-list/declaration review;
@@ -253,9 +253,9 @@ translation keys, without values or paths in exceptions/history.
 DOWNLOAD_CLIENT_UNAVAILABLE/AUTH_FAILED/RESPONSE_INVALID/UNSUPPORTED describe
 bounded transport failures without response bodies or credential values.
 TORRENT_SUBMISSION_UNCERTAIN defers read-only reconciliation; TORRENT_ALREADY_PRESENT
-protects externally present torrents; TORRENT_PROVENANCE_CONFLICT reviews changed
+protects externally present torrents; TORRENT_OWNERSHIP_CONFLICT reviews changed
 provenance/state/files; TORRENT_STOPPED_CONFIRMED describes a stopped snapshot
-only. TORRENT_INTENT_RECORDED and TORRENT_RECONCILED are durable job markers with
+only. TORRENT_SUBMISSION_RECORDED and TORRENT_RECONCILED are durable job markers with
 readable messages/actions/translation keys and after-commit logging.
 
 ## Selected-video transfers
@@ -266,15 +266,15 @@ is descriptive: worker policy and the durable journal decide behavior.
 
 | Reason | Message |
 | --- | --- |
-| TORRENT_SELECTION_UNCERTAIN | Video file selection is waiting for confirmation. |
-| TORRENT_SELECTION_CONFIRMED | The video file is selected and ready to download. |
-| TORRENT_START_UNCERTAIN | Download startup is waiting for confirmation. |
-| TORRENT_DOWNLOAD_IN_PROGRESS | The selected video is downloading. |
-| TORRENT_DOWNLOAD_COMPLETE | The download client reports that the selected video is complete. |
-| TORRENT_DOWNLOAD_WAITING | Waiting for the existing download to appear. |
-| TORRENT_TRANSFER_CONFLICT | Download details changed and need review. |
-| TORRENT_PIECE_OVERLAP | This video shares download pieces with files that are not selected. |
-| TORRENT_SNAPSHOT_CHANGED | The download is changing or being checked. |
+| TORRENT_SELECTION_UNCERTAIN | Waiting to confirm which file is downloaded. |
+| TORRENT_SELECTION_CONFIRMED | The video file is selected. |
+| TORRENT_START_UNCERTAIN | Waiting to confirm the download started. |
+| TORRENT_DOWNLOAD_IN_PROGRESS | Downloading. |
+| TORRENT_DOWNLOAD_COMPLETE | Download finished. |
+| TORRENT_DOWNLOAD_WAITING | Waiting for the torrent to appear in qBittorrent. |
+| TORRENT_TRANSFER_CONFLICT | The download changed and needs review. |
+| TORRENT_PIECE_OVERLAP | This video cannot be downloaded without other files. |
+| TORRENT_SNAPSHOT_CHANGED | The download is being checked or moved. |
 
 Selection/start uncertainty never authorizes replay. Client completion is not
 local media verification or permission to stage a video.
@@ -288,10 +288,10 @@ a reason-code retry flag.
 | Code | Message |
 | --- | --- |
 | JOB_CANCELED | This work was canceled. |
-| CANCELLATION_DRAINING | Waiting for active work to stop before cleanup. |
+| CANCELLATION_DRAINING | Waiting for running work to stop before cleanup. |
 | CANCELLATION_PENDING | Cancellation cleanup is waiting for confirmation. |
 | CANCELLATION_REVIEW | Cancellation cleanup needs attention. |
-| CANCELLATION_COMPLETE | Cancellation cleanup is complete. |
+| CANCELLATION_COMPLETE | Cancellation cleanup finished. |
 
 CANCELLATION_REQUESTED, CANCELLATION_CONTROL_RECORDED and
 CANCELLATION_CLEANUP_CHANGED identify events; reasons explain their outcomes.
@@ -313,16 +313,15 @@ credential separation. These reasons do not dictate Worker retry policy.
 
 | Code | Human-readable message | Meaning |
 | --- | --- | --- |
-| MANAGEMENT_ACTION_UNAVAILABLE | This action is not available for this work. | Current target cannot accept the action |
-| MANAGEMENT_JOB_SUBMITTED | Job submitted. | Durable acknowledgement, not execution success |
-| MANAGEMENT_JOB_EXISTS | This action already has a job. | Follow the existing action receipt |
-| KEEP_NOT_READY | Keeping videos is not available yet. | Intent recorded; verified media promotion remains unimplemented |
+| MANAGEMENT_ACTION_UNAVAILABLE | This action is not available here. | Current target cannot accept the action |
+| MANAGEMENT_JOB_SUBMITTED | Action submitted. | Durable acknowledgement, not execution success |
+| MANAGEMENT_JOB_EXISTS | This action is already submitted. | Follow the existing action receipt |
 
 All include static suggested actions and translation keys through MessageCatalog.
 `MANAGEMENT_ACTION_RESUMED` is a registered readable job event for explicit
 cleanup resubmission after review. No arbitrary exception text is presented.
 
-SONARR_SELECTION_CONFLICT and BATCH_SELECTION_CONFLICT name an inconsistent
+RELEASE_SELECTION_CONFLICT and SEASON_PACK_SELECTION_CONFLICT name an inconsistent
 candidate or selection state for one episode or one season. They appear in the
 worker log of a job that hits one; the job itself still ends with
 JOB_HANDLER_FAILED. A batch candidate whose failing job recorded no reason is

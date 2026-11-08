@@ -39,7 +39,7 @@ def registration(secrets,*,refresh=request_refresh):
         try:await blocking(run)
         except RefreshConfiguration:return Outcome('review','JELLYFIN_CONFIGURATION_INVALID')
         except (RefreshUnavailable,SecretStorageError):return Outcome('retry','JELLYFIN_UNAVAILABLE')
-        except RefreshReview:return Outcome('review','JELLYFIN_REFRESH_REVIEW')
+        except RefreshReview:return Outcome('review','MEDIA_SERVER_REFRESH_REVIEW')
         except (ValueError,TypeError):return Outcome('review','JOB_PAYLOAD_INVALID')
         return Outcome()
     return Registration(KIND,DEFINITION,execute,services=SERVICES)

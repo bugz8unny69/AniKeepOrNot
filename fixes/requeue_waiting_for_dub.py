@@ -3,7 +3,7 @@
 
 Before this fix, when English audio was required and every release of an
 episode failed (at least one on the audio check), the backfill job stopped in
-Needs review (SONARR_CANDIDATES_EXHAUSTED). Now it waits for a dub instead.
+Needs review (RELEASE_CANDIDATES_EXHAUSTED). Now it waits for a dub instead.
 
 This presses the existing Retry on each of those jobs. The worker then searches
 Prowlarr once more: a new Dual/Multi Audio release is tried normally, otherwise
@@ -28,7 +28,7 @@ from src.nextgen.configuration_schema import FIELDS  # noqa: E402
 from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
 from src.nextgen.storage.episode_discovery import audio_exhausted  # noqa: E402
 
-REASON = 'SONARR_CANDIDATES_EXHAUSTED'
+REASON = 'RELEASE_CANDIDATES_EXHAUSTED'
 ROWS = """
 SELECT job_id, attempt_count, json_extract(payload_json,'$.plan_id'),
        json_extract(payload_json,'$.exhausted_episode')

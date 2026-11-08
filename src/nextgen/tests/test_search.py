@@ -149,7 +149,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         status, data = await self.search('scope=jobs&q=retries&state=NEEDS_REVIEW')
         self.assertEqual(status, 200)
         self.assertEqual([item['job_id'] for item in data['items']], [stuck])
-        self.assertEqual(data['items'][0]['reason']['message'], 'Automatic retries have stopped.')
+        self.assertEqual(data['items'][0]['reason']['message'], 'Automatic retries stopped.')
         status, data = await self.search('scope=jobs&q=audio_probe')
         self.assertEqual([item['job_id'] for item in data['items']], [stopped])
         status, data = await self.search('scope=jobs&q=retries&state=DONE')

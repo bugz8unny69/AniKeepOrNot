@@ -59,7 +59,7 @@ def _persist(db,claim,value):
         if (metadata['anidb_id'],metadata['anidb_episode_id'])!=(selection['anidb_id'],selection['anidb_episode_id']):raise ShokoReview()
         data['shoko']={'job_id':claim.job_id,'state':'COMPLETE','metadata':metadata}
         _save(db,keep,data)
-    except (ValueError,TypeError,KeyError):raise CompletionRejected(Outcome('review','SHOKO_METADATA_REVIEW')) from None
+    except (ValueError,TypeError,KeyError):raise CompletionRejected(Outcome('review','METADATA_ENRICHMENT_REVIEW')) from None
 
 
 def registration(secrets,*,read=lookup):
@@ -79,6 +79,6 @@ def registration(secrets,*,read=lookup):
         try:metadata=await blocking(run)
         except ShokoConfiguration:return Outcome('review','SHOKO_CONFIGURATION_INVALID')
         except (ShokoUnavailable,SecretStorageError):return Outcome('retry','SHOKO_UNAVAILABLE')
-        except (ValueError,TypeError,KeyError):return Outcome('review','SHOKO_METADATA_REVIEW')
+        except (ValueError,TypeError,KeyError):return Outcome('review','METADATA_ENRICHMENT_REVIEW')
         return Outcome(value={'keep_job_id':keep,'metadata':metadata})
     return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

@@ -165,7 +165,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
                      patch('src.nextgen.acquisition.legacy_magnet.source_magnet',return_value=MAGNET):
                     outcome=await cb(self.source,self._config())
                 self.assertEqual((outcome.kind,outcome.reason_code),('review','TORRENT_ALREADY_PRESENT'))
-                self.assertIn('already exists in qBittorrent',get_reason(outcome.reason_code).message)
+                self.assertIn('already in qBittorrent',get_reason(outcome.reason_code).message)
                 probe.add_legacy_magnet.assert_not_called()
                 self.assertEqual(factory.call_count,1)
 

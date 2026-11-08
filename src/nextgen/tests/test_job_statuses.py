@@ -93,7 +93,7 @@ class JobStatusTests(unittest.TestCase):
             self.db.execute("UPDATE jobs SET state='RETRY_WAIT',attempt_count=1,"
                             "activity_code='WAITING_FOR_DOWNLOAD' WHERE job_id=?", (self.job,))
             receipt = append_job_history(
-                self.db, job_id=self.job, event_code="ACTIVITY_CHANGED",
+                self.db, job_id=self.job, event_code="DEFERRED", reason_code="TORRENT_DOWNLOAD_WAITING",
                 component="acquisition", occurred_at_ms=10, details={"attempt": 1})
         with transaction(self.db):
             self.db.execute("UPDATE jobs SET state='DONE',activity_code='SKIPPED_DUPLICATE' WHERE job_id=?",

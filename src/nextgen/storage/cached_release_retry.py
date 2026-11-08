@@ -142,7 +142,7 @@ def persist_cached(db,claim,plan,episode,expected,english):
     identity=VerifiedEpisode(plan.tvdb_series_id,current[0],current[3],current[4])
     routed=dispatch_cached(db,claim,plan,identity,expected)
     audit=append_job_history(
-        db,job_id=claim.job_id,event_code='SONARR_BACKFILL_OBSERVED',
+        db,job_id=claim.job_id,event_code='EPISODE_DISCOVERY_RECORDED',
         component='worker',occurred_at_ms=time.time_ns()//1000000,
         details={'attempt':claim.attempt,'cached_replay':True})
     return (audit,*routed)

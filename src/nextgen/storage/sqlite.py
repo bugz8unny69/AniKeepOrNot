@@ -238,11 +238,11 @@ CREATE TABLE IF NOT EXISTS user_evaluation_checks (
  verification_id INTEGER NOT NULL REFERENCES release_verifications(verification_id),
  plan_id INTEGER REFERENCES user_evaluation_plans(plan_id),
  selected INTEGER NOT NULL CHECK(selected IN (0,1)),
- reason_code TEXT NOT NULL CHECK(reason_code IN ('TRIAL_SELECTED','TRIAL_OUTSIDE_WINDOW','TRIAL_DISABLED')),
+ reason_code TEXT NOT NULL CHECK(reason_code IN ('USER_EVALUATION_SELECTED','USER_EVALUATION_OUTSIDE_WINDOW','USER_EVALUATION_DISABLED')),
  evaluated_at_ms INTEGER NOT NULL CHECK(evaluated_at_ms>=0),
- CHECK((plan_id IS NULL AND selected=0 AND reason_code='TRIAL_DISABLED') OR
-       (plan_id IS NOT NULL AND ((selected=1 AND reason_code='TRIAL_SELECTED') OR
-                                (selected=0 AND reason_code='TRIAL_OUTSIDE_WINDOW'))))
+ CHECK((plan_id IS NULL AND selected=0 AND reason_code='USER_EVALUATION_DISABLED') OR
+       (plan_id IS NOT NULL AND ((selected=1 AND reason_code='USER_EVALUATION_SELECTED') OR
+                                (selected=0 AND reason_code='USER_EVALUATION_OUTSIDE_WINDOW'))))
 );
 CREATE INDEX IF NOT EXISTS idx_user_evaluation_checks_plan ON user_evaluation_checks(plan_id);
 
@@ -312,7 +312,7 @@ CREATE TABLE IF NOT EXISTS torrent_submissions (
  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=created_at_ms),
  CHECK((state='UNCERTAIN' AND reason_code='TORRENT_SUBMISSION_UNCERTAIN') OR
        (state='EXTERNAL' AND reason_code='TORRENT_ALREADY_PRESENT') OR
-       (state='REVIEW' AND reason_code='TORRENT_PROVENANCE_CONFLICT') OR
+       (state='REVIEW' AND reason_code='TORRENT_OWNERSHIP_CONFLICT') OR
        (state='OWNED_STOPPED' AND reason_code='TORRENT_STOPPED_CONFIRMED'))
 );
 
@@ -549,7 +549,7 @@ CREATE TABLE IF NOT EXISTS batch_torrent_submissions (
  reason_code TEXT NOT NULL CHECK(
    (state='UNCERTAIN' AND reason_code='TORRENT_SUBMISSION_UNCERTAIN') OR
    (state='EXTERNAL' AND reason_code='TORRENT_ALREADY_PRESENT') OR
-   (state='REVIEW' AND reason_code='TORRENT_PROVENANCE_CONFLICT') OR
+   (state='REVIEW' AND reason_code='TORRENT_OWNERSHIP_CONFLICT') OR
    (state='OWNED_STOPPED' AND reason_code='TORRENT_STOPPED_CONFIRMED')),
  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=created_at_ms)

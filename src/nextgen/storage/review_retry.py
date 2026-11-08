@@ -47,10 +47,9 @@ def _retryable_state(kind, state, reason):
         kind == 'DISCOVER_EPISODE_RELEASES' and state == 'ON_HOLD'
         and reason == 'WAITING_FOR_DUB') or (
         kind == 'DISCOVER_EPISODE_RELEASES' and state == 'BLOCKED'
-        and reason in ('PROWLARR_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE',
-                       # Jobs stopped before the Prowlarr search existed.
-                       'SONARR_DISCOVERY_EPISODE_NOT_FOUND', 'SONARR_EPISODES_NOT_LISTED',
-                       'SONARR_DISCOVERY_TIMEOUT', 'SONARR_DISCOVERY_UNAVAILABLE'))
+        and reason in ('RELEASE_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE',
+                       # Jobs stopped under the old Sonarr-based discovery (migration 064).
+                       'EPISODE_DISCOVERY_OUTDATED'))
 
 
 def _allowed(db, job_id, row):

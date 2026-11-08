@@ -232,7 +232,7 @@ class MagnetJournal:
                  target.category,state,now,now,target.timeout_seconds))
             intent=_prior(db,source.event_id)
             receipt=append_job_history(
-                db,job_id=claim.job_id,event_code='TORRENT_INTENT_RECORDED',
+                db,job_id=claim.job_id,event_code='TORRENT_SUBMISSION_RECORDED',
                 reason_code=('TORRENT_ALREADY_PRESENT' if present else
                              'TORRENT_SUBMISSION_UNCERTAIN'),
                 component='worker',occurred_at_ms=now,

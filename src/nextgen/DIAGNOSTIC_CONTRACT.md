@@ -63,19 +63,18 @@ Scopes and reason requirements are validated by the shared writer.
 
 | event_code | Scope | Reason | Default English message |
 | --- | --- | --- | --- |
-| ACCEPTED | incoming event | Absent | Incoming event accepted. |
-| SERIES_IDENTIFIED | incoming event | Absent | Anime series identification completed. |
+| ACCEPTED | incoming event | Absent | Release received. |
+| SERIES_IDENTIFIED | incoming event | Absent | Anime identified. |
 | CREATED | job | Absent | Job created. |
-| CLAIMED | job | Absent | Job processing started. |
-| LEASE_EXPIRED | job | JOB_LEASE_EXPIRED | The processing lease expired before the job completed. |
-| RETRY_SCHEDULED | job | Required | Another processing attempt has been scheduled. |
-| NEEDS_REVIEW | job | Required | Processing has stopped for review. |
-| DONE | job | Absent | Job completed. |
-| ON_HOLD | job | Required | Job placed on hold. |
-| BLOCKED | job | Required | Job blocked from proceeding. |
+| CLAIMED | job | Absent | Job started. |
+| LEASE_EXPIRED | job | JOB_LEASE_EXPIRED | The job was interrupted before it finished. |
+| RETRY_SCHEDULED | job | Required | Another attempt is scheduled. |
+| NEEDS_REVIEW | job | Required | Stopped; needs review. |
+| DONE | job | Absent | Job finished. |
+| ON_HOLD | job | Required | Job on hold. |
+| BLOCKED | job | Required | Job blocked. |
 | CANCELED | job | Required | Job canceled. |
-| ACTIVITY_CHANGED | job | Absent | Job activity updated. |
-| OPERATION_FAILED | runtime log only | Required | A processing operation failed. |
+| OPERATION_FAILED | runtime log only | Required | An operation failed. |
 
 OPERATION_FAILED is a catch-boundary observation, not a durable job transition
 or a new FAILED state. Event message keys are event.<CODE>.message. SERIES_IDENTIFIED does not imply
@@ -295,8 +294,9 @@ The v5 schema and messages cover legacy operational display distinctions.
 MessageCatalog.job_status(state, activity_code) selects a readable/translated
 label without masking terminal, held or review states. log_history emits both
 activity_code and its static readable label. New ON_HOLD/BLOCKED/CANCELED
-events require registered reasons; ACTIVITY_CHANGED records a snapshot without
-inventing a failure reason. Specific handler reasons are registered when their
+events require registered reasons. Activity is recorded on the event that carries
+it, for example DEFERRED with TORRENT_DOWNLOAD_WAITING (ACTIVITY_CHANGED was
+never emitted and was removed in migration 064). Specific handler reasons are registered when their
 semantics are implemented. No cancellation actions, download ownership logic,
 condition signaling or worker loop is implemented by the schema change.
 

@@ -30,6 +30,6 @@ A received episode outside the selected window does not get a reservation or aut
 
 ## Durable compatibility
 
-Earlier versions already persisted versioned configuration keys, job-kind identifiers, event/reason markers and database rows using previous internal names. **Keep those stored identifiers unchanged** until an explicit compatible migration has been designed and validated; never do a raw global string replacement in storage/code. New operator-facing text and documentation use **episode selection** and **staging**. In particular, the historical event identifier `TRIAL_EVALUATED`, reasons beginning with `TRIAL_` and settings under the `trial` namespace remain stable machine contracts; their English descriptions must not use the old product name.
+Earlier versions already persisted versioned configuration keys, job-kind identifiers, event/reason markers and database rows using previous internal names. **Keep those stored identifiers unchanged** until an explicit compatible migration has been designed and validated; never do a raw global string replacement in storage/code. New operator-facing text and documentation use **episode selection** and **staging**. In particular, the historical event identifier `USER_EVALUATION_CHECKED`, reasons beginning with `TRIAL_` and settings under the `trial` namespace remain stable machine contracts; their English descriptions must not use the old product name.
 
 The implementation in the current draft stack is not yet end-to-end lab validated.

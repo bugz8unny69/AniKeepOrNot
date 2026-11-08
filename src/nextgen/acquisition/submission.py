@@ -135,9 +135,9 @@ def classify(intent,observation):
             or observation.category!=intent.options.category or observation.auto_tmm is not False
             or 'ad-'+plan.marker not in observation.tags
             or any(tag.startswith('ad-') and tag!='ad-'+plan.marker for tag in observation.tags)):
-        return 'REVIEW','TORRENT_PROVENANCE_CONFLICT'
+        return 'REVIEW','TORRENT_OWNERSHIP_CONFLICT'
     if observation.state in ('checkingDL','checkingUP','checkingResumeData','allocating') or not observation.files:
         return 'UNCERTAIN','TORRENT_SUBMISSION_UNCERTAIN'
     if observation.state not in STOPPED or observation.files!=plan.manifest.files:
-        return 'REVIEW','TORRENT_PROVENANCE_CONFLICT'
+        return 'REVIEW','TORRENT_OWNERSHIP_CONFLICT'
     return 'OWNED_STOPPED','TORRENT_STOPPED_CONFIRMED'

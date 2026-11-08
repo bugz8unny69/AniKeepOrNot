@@ -41,7 +41,7 @@ def _persist(db,claim,value,*,discovery_kind=None):
             source=_facts(db,plan.evaluation_job_id,claim.event_id)
             return schedule_first(db,claim,source,kind=discovery_kind)
     except (ValueError,TypeError) as exc:
-        reason=getattr(exc,'reason_code','TORRENT_PROVENANCE_CONFLICT')
+        reason=getattr(exc,'reason_code','TORRENT_OWNERSHIP_CONFLICT')
         raise CompletionRejected(Outcome('review',reason)) from None
 
 
@@ -67,7 +67,7 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
         try:
             plan,prior=await blocking(journal.load,context.claim,preparation)
             if prior is not None and prior.state in ('EXTERNAL','REVIEW'):
-                return Outcome('review','TORRENT_ALREADY_PRESENT' if prior.state=='EXTERNAL' else 'TORRENT_PROVENANCE_CONFLICT')
+                return Outcome('review','TORRENT_ALREADY_PRESENT' if prior.state=='EXTERNAL' else 'TORRENT_OWNERSHIP_CONFLICT')
             if prior is not None and prior.state=='OWNED_STOPPED' and await blocking(journal.handed_off,context.claim,prior):
                 return Outcome(value=done)
             options=prior.options if prior is not None else target_options(download_options(context.configuration),plan)

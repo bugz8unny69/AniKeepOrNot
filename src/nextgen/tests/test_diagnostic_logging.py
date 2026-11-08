@@ -52,7 +52,7 @@ class DiagnosticLoggingTests(unittest.TestCase):
         logger, stream = self.make_logger()
         event(logger, logging.ERROR, "NEEDS_REVIEW", reason_code="JOB_RETRY_EXHAUSTED",
               cause_reason_code="PROVIDER_UNAVAILABLE", job_id=8)
-        self.assertIn("Automatic retries have stopped.", stream.getvalue())
+        self.assertIn("Automatic retries stopped.", stream.getvalue())
         self.assertIn("An information provider is temporarily unavailable.", stream.getvalue())
         with self.assertRaises(ValueError):
             event(logger, logging.ERROR, "NEEDS_REVIEW", reason_code="JOB_RETRY_EXHAUSTED",

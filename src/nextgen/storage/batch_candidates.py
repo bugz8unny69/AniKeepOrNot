@@ -21,7 +21,7 @@ class BatchCandidateConflict(ValueError):
     It never becomes a job's reason: callers turn it into a review or the
     worker reports JOB_HANDLER_FAILED.
     """
-    reason_code = 'BATCH_SELECTION_CONFLICT'
+    reason_code = 'SEASON_PACK_SELECTION_CONFLICT'
 
 
 @dataclass(frozen=True)

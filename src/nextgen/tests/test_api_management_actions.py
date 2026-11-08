@@ -55,9 +55,9 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
         with patch('src.nextgen.cancellation_service.CancellationService.cleanup',side_effect=AssertionError('HTTP must not run cleanup')):
             status,result,headers=await self.request('POST',f'/api/v1/jobs/{target}/cancel',{},token=ADMIN)
         self.assertEqual(status,202);data=result['data']
-        self.assertEqual(data['notification']['message'],'Job submitted.')
+        self.assertEqual(data['notification']['message'],'Action submitted.')
         self.assertTrue(data['disable_action']);self.assertEqual(data['state'],'PENDING')
-        self.assertEqual(data['disabled_reason']['message'],'A job is already queued.')
+        self.assertEqual(data['disabled_reason']['message'],'An action is already queued.')
         self.assertEqual(data['disabled_reason']['message_key'],'reason.MANAGEMENT_JOB_QUEUED.message')
         self.assertEqual(headers[b'location'].decode(),data['status_url'])
         self.app.close();self.app=Application(self.root,origin='https://anime.example');self.addCleanup(self.app.close)
@@ -84,7 +84,7 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
         for name in ('keep','cancel','cleanup'):
             action=running['data']['actions'][name]
             self.assertFalse(action['enabled'])
-            self.assertEqual(action['disabled_reason']['message'],'A job is already in progress.')
+            self.assertEqual(action['disabled_reason']['message'],'An action is already running.')
             self.assertEqual(action['disabled_reason']['message_key'],'reason.MANAGEMENT_JOB_RUNNING.message')
         _,history,_=await self.request('GET',data['history_url'],token=ADMIN)
         self.assertEqual(history['data']['items'][0]['event']['code'],'CREATED')
@@ -206,11 +206,11 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
 
 class ActionMessageTests(unittest.TestCase):
     def test_disabled_explanations_follow_state_not_stale_progress_reason(self):
-        expected={'PENDING':'A job is already queued.',
-                  'RUNNING':'A job is already in progress.',
-                  'RETRY_WAIT':'A job is waiting to continue.',
-                  'DONE':'This job is already complete.',
-                  'CANCELED':'This job was canceled.'}
+        expected={'PENDING':'An action is already queued.',
+                  'RUNNING':'An action is already running.',
+                  'RETRY_WAIT':'An action is waiting to continue.',
+                  'DONE':'This action is already done.',
+                  'CANCELED':'This action was canceled.'}
         for state,message in expected.items():
             with self.subTest(state=state):
                 reason=disabled_reason(state,'CANCELLATION_DRAINING')
@@ -219,4 +219,4 @@ class ActionMessageTests(unittest.TestCase):
         for state in ('ON_HOLD','BLOCKED','NEEDS_REVIEW'):
             with self.subTest(state=state):
                 self.assertEqual(disabled_reason(state)['code'],'MANAGEMENT_JOB_ATTENTION')
-        self.assertEqual(disabled_reason('BLOCKED','KEEP_NOT_READY')['code'],'KEEP_NOT_READY')
+        self.assertEqual(disabled_reason('BLOCKED','KEEP_IMPORT_REVIEW')['code'],'KEEP_IMPORT_REVIEW')

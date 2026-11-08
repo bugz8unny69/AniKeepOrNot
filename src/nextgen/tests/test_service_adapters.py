@@ -139,7 +139,7 @@ class ArrAdapterTests(unittest.TestCase):
         registry = default_registry()
         self.assertEqual(registry.get('qbittorrent').status_for_reason('DOWNLOAD_CLIENT_UNAVAILABLE'), DOWN)
         self.assertEqual(registry.get('qbittorrent').status_for_reason('DOWNLOAD_CLIENT_AUTH_FAILED'), AUTH_FAILED)
-        self.assertEqual(registry.get('prowlarr').status_for_reason('PROWLARR_SEARCH_TIMEOUT'), DOWN)
+        self.assertEqual(registry.get('prowlarr').status_for_reason('RELEASE_SEARCH_TIMEOUT'), DOWN)
         self.assertEqual(registry.get('sonarr').status_for_reason('KEEP_SERVICE_UNAVAILABLE'), DOWN)
         self.assertIsNone(registry.get('sonarr').status_for_reason('KEEP_IMPORT_REVIEW'))
         # Every mapped code is a real, registered reason.

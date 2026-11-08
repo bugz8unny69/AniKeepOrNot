@@ -93,7 +93,7 @@ class HandlerHistoryTests(unittest.TestCase):
         with self.assertRaises(ValueError), transaction(self.db):
             self.append("HANDLER_STARTED")
         with self.assertRaises(ValueError), transaction(self.db):
-            self.append("ACTIVITY_CHANGED")
+            self.append("CLAIMED")  # handler metadata on a non-handler event
 
     def test_history_and_caller_work_roll_back_together_and_no_writer_commit(self):
         with self.assertRaises(RuntimeError):
@@ -118,7 +118,7 @@ class HandlerHistoryTests(unittest.TestCase):
         logger.addHandler(logging.StreamHandler(stream))
         log_history(logger, receipt)
         text = stream.getvalue()
-        for value in ("HANDLER_COMPLETED", "Job handler completed.", "TEST_IDENTIFY", "Identify anime", "invocation_id="+"a"*32):
+        for value in ("HANDLER_COMPLETED", "Step finished.", "TEST_IDENTIFY", "Identify anime", "invocation_id="+"a"*32):
             self.assertIn(value, text)
         with self.assertRaises(ValueError):
             event(logger, logging.INFO, "HANDLER_STARTED", handler_code="TEST_IDENTIFY", handler_label="unsafe\nlabel", invocation_id="a"*32)

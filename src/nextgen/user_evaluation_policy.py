@@ -9,12 +9,12 @@ from src.nextgen.history import integer, MAX_INTEGER
 
 
 class UserEvaluationConflict(ValueError):
-    reason_code="TRIAL_PLAN_CONFLICT"
+    reason_code="USER_EVALUATION_PLAN_CONFLICT"
     def __init__(self):super().__init__("The trial plan needs review.")
 
 
 class InvalidEpisodeCounts(ValueError):
-    reason_code="TRIAL_COUNTS_INVALID"
+    reason_code="USER_EVALUATION_COUNTS_INVALID"
     def __init__(self):
         super().__init__("Set backfill or episodes starting with the received episode to at least 1.")
 

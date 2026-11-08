@@ -53,10 +53,11 @@ scopes in one user action.
 
 The dashboard enables Keep for eligible staged work and uses existing job
 receipts, polling and disabled-button explanations. It displays the catalog
-message "This episode has been kept." only when a durable Keep result exists.
+message "This episode is kept." only when a durable Keep result exists.
 Held/review work can explicitly resume the same job after the cause is addressed.
-Successful imports are not submitted again. Old KEEP_NOT_READY history stays
-readable; these stopped jobs resume only through an explicit Keep request.
+Successful imports are not submitted again. Jobs stopped before Keep existed
+(KEEP_NOT_READY) were migrated to KEEP_IMPORT_REVIEW by migration 064; they
+resume only through an explicit Keep request.
 
 Configuration v8 explicitly adds Sonarr settings; existing v0–v7 shapes remain
 versioned. Secrets v4 adds the API key while v1–v3 files remain readable and retain

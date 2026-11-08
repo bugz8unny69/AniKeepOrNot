@@ -35,7 +35,7 @@ def _facts(db,evaluation_job_id,event_id):
             original.release_sha256!=digest or original.tvdb_series_id!=tid or
             (source.tvdb_season,source.tvdb_episode)!=(season,episode) or
             (plan_aid,plan_tid,order)!=(aid,tid,'official') or
-            bool(selected)!=expected or reason!=('TRIAL_SELECTED' if expected else 'TRIAL_OUTSIDE_WINDOW')):
+            bool(selected)!=expected or reason!=('USER_EVALUATION_SELECTED' if expected else 'USER_EVALUATION_OUTSIDE_WINDOW')):
         raise ReservationConflict()
     anchor_row=db.execute("SELECT anidb_id,tvdb_series_id,anidb_episode_number,tvdb_order "
                           "FROM release_verifications WHERE verification_id=?",(anchor_id,)).fetchone()
@@ -67,7 +67,7 @@ def persist_reservation(db,claim,value):
     now=integer(time.time_ns()//1000000)
     if not value.selected:
         return append_job_history(db,job_id=claim.job_id,event_code='EPISODE_RESERVATION_SKIPPED',
-            reason_code='TRIAL_OUTSIDE_WINDOW',component='worker',occurred_at_ms=now,details={'attempt':claim.attempt})
+            reason_code='USER_EVALUATION_OUTSIDE_WINDOW',component='worker',occurred_at_ms=now,details={'attempt':claim.attempt})
     key=(value.tvdb_series_id,value.tvdb_season,value.tvdb_episode)
     # Check the batch namespace in this same fenced SQLite transaction,
     # before the existing single-episode reservation is inserted.

@@ -27,7 +27,7 @@ class ConfigurationError(ValueError):
 
 
 class ConfigurationEpisodeSelectionError(ConfigurationError):
-    reason_code = "TRIAL_COUNTS_INVALID"
+    reason_code = "USER_EVALUATION_COUNTS_INVALID"
 
     def __init__(self):
         ValueError.__init__(self, "Set backfill or episodes starting with the received episode to at least 1.")

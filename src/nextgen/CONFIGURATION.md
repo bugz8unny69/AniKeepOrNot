@@ -237,7 +237,7 @@ See SECRETS.md for private credential publication, status and service entry poin
 trial.backfill_count defaults to 6; trial.following_count defaults to 1 and
 includes the triggering episode. Both accept 0–1000, with zero disabling that
 window provided the other count is positive. Both zero raises
-TRIAL_COUNTS_INVALID during validation/conversion and is never saved. Their union is deduplicated; there is no combined maximum. Labels/help
+USER_EVALUATION_COUNTS_INVALID during validation/conversion and is never saved. Their union is deduplicated; there is no combined maximum. Labels/help
 make the inclusive following count explicit for the future dashboard.
 
 v4→v5 explicitly adds these fields and advances revision. Published older steps

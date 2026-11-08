@@ -1,10 +1,10 @@
-"""The reason/event code audit covers today's catalog, and its proposals follow its rules.
+"""The catalog is what the reason/event code audit says, and the audit follows its rules.
 
-docs/refactor/reason_code_proposals.py is what RF-006 applies. When a NextGen
-merge adds, removes or rewords a code, this fails until the audit is updated:
-add a proposal (REASONS/EVENTS), or map a code that is no longer emitted in
-REMOVED, then regenerate REASON_CODE_AUDIT.md with
-docs/refactor/render_reason_code_audit.py.
+docs/refactor/reason_code_proposals.py was applied by RF-006b (migration 064).
+When a NextGen merge adds or rewords a code, this fails until the audit data and
+the catalog are updated together: add the code to REASONS or EVENTS (or NEW), and
+if NextGen still uses an old name, map it in the next migration. Old names must
+never come back (see also the ledger rule RF-006b).
 """
 from pathlib import Path
 import re
@@ -29,23 +29,44 @@ SERVICES = {'qbittorrent', 'prowlarr', 'sonarr', 'jellyfin', 'shoko', 'anidb', '
 CODE = re.compile(r'^[A-Z][A-Z0-9_]{0,63}$')
 JARGON = re.compile(r'\b(durable|durably|fenced|provenance|immutable|bounded|authoritative|'
                     r'journal|permit|admission|intent)\b', re.I)
-UPDATE = ('Update docs/refactor/reason_code_proposals.py, then regenerate REASON_CODE_AUDIT.md '
-          '(python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md).')
+UPDATE = 'Update docs/refactor/reason_code_proposals.py and the catalog (reasons.py, messages.py) together.'
 
 
-class CoverageTests(unittest.TestCase):
-    def test_every_registered_reason_has_a_proposal_or_is_removed(self):
-        missing = sorted(set(REGISTRY) - set(REASONS) - set(REMOVED) - set(RETIRED))
-        self.assertEqual(missing, [], f'Reason codes the audit does not cover: {missing}. {UPDATE}')
+class CatalogMatchesAuditTests(unittest.TestCase):
+    """RF-006b applied the audit: the catalog is exactly what the proposals say."""
 
-    def test_every_registered_event_has_a_proposal_or_is_removed(self):
-        missing = sorted(set(EVENTS) - set(NEW_EVENTS) - set(REMOVED))
-        self.assertEqual(missing, [], f'Event codes the audit does not cover: {missing}. {UPDATE}')
+    def test_registered_reasons_are_the_audits_new_catalog(self):
+        retired_registered = set(RETIRED) & set(REGISTRY)
+        # The retired per-service codes stay until RF-006c retires them all at once.
+        self.assertIn(retired_registered, (set(), set(RETIRED)))
+        expected = {entry[0] for entry in REASONS.values()} | (set(NEW) & set(REGISTRY)) | retired_registered
+        self.assertEqual(sorted(set(REGISTRY) ^ expected), [], f'Catalog and audit differ. {UPDATE}')
+        missing_new = sorted(set(NEW) - set(REGISTRY))
+        targets_pending = {entry[0] for code, entry in RETIRED.items() if code in REGISTRY}
+        self.assertLessEqual(set(missing_new), targets_pending,
+                             f'Added codes that should be registered: {missing_new}')
 
-    def test_proposals_only_cover_codes_that_exist(self):
-        stale = sorted((set(REASONS) - set(REGISTRY)) | (set(NEW_EVENTS) - set(EVENTS))
-                       | (set(REMOVED) - set(REGISTRY) - set(EVENTS)) | (set(RETIRED) - set(REGISTRY)))
-        self.assertEqual(stale, [], f'Proposals for codes that are no longer registered: {stale}. {UPDATE}')
+    def test_registered_events_are_the_audits_new_catalog(self):
+        self.assertEqual(sorted(set(EVENTS) ^ {entry[0] for entry in NEW_EVENTS.values()}), [])
+
+    def test_old_names_are_gone(self):
+        renamed = {old for table in (REASONS, NEW_EVENTS) for old, entry in table.items() if entry[0] != old}
+        self.assertEqual(sorted((renamed | set(REMOVED)) & (set(REGISTRY) | set(EVENTS))), [])
+
+    def test_wording_is_the_audits(self):
+        for old, (new, description, message, action) in REASONS.items():
+            with self.subTest(code=new):
+                reason = REGISTRY[new]
+                self.assertEqual((reason.description, reason.message, reason.action), (description, message, action))
+        for old, (new, message) in NEW_EVENTS.items():
+            with self.subTest(event=new):
+                self.assertEqual(EVENTS[new].message, message)
+        for code, (severity, retryable, description, message, action) in NEW.items():
+            if code in REGISTRY:
+                with self.subTest(added=code):
+                    reason = REGISTRY[code]
+                    self.assertEqual((reason.severity, reason.retryable, reason.description, reason.message,
+                                      reason.action), (severity, retryable, description, message, action))
 
     def test_unregistered_labels_are_really_unregistered(self):
         registered = sorted(set(UNREGISTERED) & (set(REGISTRY) | set(EVENTS)))
@@ -64,7 +85,6 @@ class ProposalRuleTests(unittest.TestCase):
         for code, entry in NEW.items():
             with self.subTest(code=code):
                 self.assertRegex(code, CODE)
-                self.assertNotIn(code, REGISTRY)
                 severity, retryable, *text = entry
                 self.assertIn(severity, {'INFO', 'WARNING', 'ERROR', 'CRITICAL'})
                 self.assertIn(retryable, {True, False, None})
@@ -72,6 +92,9 @@ class ProposalRuleTests(unittest.TestCase):
                 for part in text:
                     self.assertTrue(part.strip())
                     self.assertIsNone(JARGON.search(part), part)
+                    # messages._validate_text refuses these when the catalog loads.
+                    self.assertLessEqual(len(part), 512, part)
+                    self.assertNotRegex(part, r'[{}<>]')
 
     def test_retired_codes_name_a_known_service(self):
         for code, (target, service) in RETIRED.items():
@@ -114,6 +137,9 @@ class ProposalRuleTests(unittest.TestCase):
                     for part in text:
                         self.assertTrue(part.strip(), 'empty wording')
                         self.assertIsNone(JARGON.search(part), part)
+                        # messages._validate_text refuses these when the catalog loads.
+                        self.assertLessEqual(len(part), 512, part)
+                        self.assertNotRegex(part, r'[{}<>]')
 
 
 if __name__ == '__main__':

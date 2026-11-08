@@ -51,7 +51,7 @@ def _persist(db,claim,value):
         if row!=(claim.event_id,'RESERVE_BATCH','DONE','OWNED_STOPPED'):
             raise AcquisitionConflict()
     except (ValueError,TypeError,AcquisitionConflict):
-        raise CompletionRejected(Outcome('review','TORRENT_PROVENANCE_CONFLICT')) from None
+        raise CompletionRejected(Outcome('review','TORRENT_OWNERSHIP_CONFLICT')) from None
 
 
 def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
@@ -85,7 +85,7 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
                 journal.load,context.claim,reservation,inventory)
             if prior is not None and prior.state in ('EXTERNAL','REVIEW'):
                 return Outcome('review','TORRENT_ALREADY_PRESENT' if prior.state=='EXTERNAL'
-                               else 'TORRENT_PROVENANCE_CONFLICT')
+                               else 'TORRENT_OWNERSHIP_CONFLICT')
             # Recheck current ownership even after a previous stopped
             # confirmation; the tag and file list may have changed.
             credentials=await blocking(secrets.qbittorrent_credentials)

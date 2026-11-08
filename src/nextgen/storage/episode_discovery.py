@@ -20,14 +20,14 @@ STATUSES = ('IN_PROGRESS', 'NOT_AIRED', 'MAPPING_MISSING', 'CANDIDATES', 'NO_RES
 
 
 class BackfillConflict(ValueError):
-    reason_code = 'SONARR_BACKFILL_PLAN_CONFLICT'
+    reason_code = 'EPISODE_DISCOVERY_PLAN_CONFLICT'
     def __init__(self, message=None, *, failed_check=None, failed_path=None):
         super().__init__(message or 'Frozen backfill discovery facts need review.')
         self.failed_check = failed_check
         self.failed_path = failed_path
 
 
-AUDIO_SEARCH_EVENT = 'TRIAL_AUDIO_SEARCH'
+AUDIO_SEARCH_EVENT = 'USER_EVALUATION_AUDIO_SEARCH'
 
 
 def window(anchor, backfill, following, include_anchor=False):
@@ -136,7 +136,7 @@ def _plan(db, plan_id, start, retry_episode=None):
 
 
 AUTOMATIC_RETRY_MS = 30 * 60 * 1000
-SEARCH_FAILURES = ('PROWLARR_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE')
+SEARCH_FAILURES = ('RELEASE_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE')
 
 
 def automatic_retry_used(database, job_id):
@@ -253,7 +253,7 @@ def persist_fallback_missing(db,claim,value):
                            info_hash=target.next_hash)
         fail_candidate(db,plan_id=plan.plan_id,episode=episode,
                        info_hash=target.next_hash,
-                       reason_code='PROWLARR_RELEASE_WITHDRAWN')
+                       reason_code='RELEASE_WITHDRAWN')
     except CandidateConflict:raise BackfillConflict() from None
     following=next_candidate(db,plan_id=plan.plan_id,episode=episode)
     _,created=enqueue_job_with_receipt(
@@ -364,7 +364,7 @@ def persist_fallback(db,claim,value):
         routed=dispatch_source(db,claim,plan,choice)
     except (CandidateConflict,SelectionConflict):raise BackfillConflict() from None
     receipt=append_job_history(db,job_id=claim.job_id,
-        event_code='SONARR_BACKFILL_OBSERVED',component='worker',
+        event_code='EPISODE_DISCOVERY_RECORDED',component='worker',
         occurred_at_ms=integer(time.time_ns()//1_000_000),
         details={'attempt':claim.attempt})
     return (receipt,*routed)
@@ -443,7 +443,7 @@ def persist_observations(db, claim, value, *, dispatch=False):
              item.candidates,item.accepted,item.accepted,now)
         )
     return (append_job_history(db,job_id=claim.job_id,
-        event_code='SONARR_BACKFILL_OBSERVED',component='worker',occurred_at_ms=now,
+        event_code='EPISODE_DISCOVERY_RECORDED',component='worker',occurred_at_ms=now,
         details={'attempt':claim.attempt}),*routed)
 
 

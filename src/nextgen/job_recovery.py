@@ -65,7 +65,7 @@ RECOVERY_MATRIX = {
         'description': 'Search failure classified; retrying searches again.',
         'action': 'retry',
     },
-    'SONARR_CANDIDATES_EXHAUSTED': {
+    'RELEASE_CANDIDATES_EXHAUSTED': {
         'category': 'AUTONOMOUS_RETRY',
         'description': 'Candidates exhausted; retrying searches again or marks waiting for dub.',
         'action': 'retry',

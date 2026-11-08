@@ -91,8 +91,8 @@ Unknown lifecycle values receive generic Unknown status text.
 
 ON_HOLD, BLOCKED and CANCELED lifecycle audit events each require a registered
 reason and a matching attempt snapshot (which may be zero before first claim).
-ACTIVITY_CHANGED records an activity observation without requiring a failure
-reason. Its activity snapshot is captured from the job row, never supplied as
+Activity is recorded on the event that carries it, for example DEFERRED with
+TORRENT_DOWNLOAD_WAITING (ACTIVITY_CHANGED was removed in migration 064). The activity snapshot is captured from the job row, never supplied as
 an unverified log string. A DONE audit with SKIPPED_DUPLICATE retains that
 outcome in history. Every emitted code/activity has central English copy and
 stable translation keys. No domain-specific reasons are invented ahead of

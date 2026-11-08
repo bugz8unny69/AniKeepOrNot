@@ -112,7 +112,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                     if req_eng else None)
                 if target is None:
                     log.info('Backfill episode %s: candidates exhausted without usable releases', exhausted_episode)
-                    return Outcome('cancel', 'SONARR_CANDIDATES_EXHAUSTED',
+                    return Outcome('cancel', 'RELEASE_CANDIDATES_EXHAUSTED',
                                    value=CandidatesExhausted(plan, exhausted_episode))
                 client = connect('exhausted')
                 search_kwargs = {'tried': target.tried} if isinstance(client, Client) else {}
@@ -172,7 +172,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             snapshots = getattr(client, 'snapshots', None)
             return Outcome(value=BackfillCompletion(plan,observed,retry_episode),search_snapshots=snapshots)
         except BackfillConflict:
-            return Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')
+            return Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')
         except SearchUnavailable as exc:   # includes SearchTimeout
             # The client already tried three times. Wait 30 minutes once, then
             # stop for a manual Retry; nothing is published for this page.
@@ -219,7 +219,7 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_cached(db,claim,value[0],value[1],value[2],eng)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
         except BackfillConflict:
-            raise CompletionRejected(Outcome('review','SONARR_BACKFILL_PLAN_CONFLICT')) from None
+            raise CompletionRejected(Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')) from None
 
     def route(value):
         if (type(value) in (FallbackCompletion,FallbackMissing,DubFound,DubExhausted,CandidatesExhausted)
