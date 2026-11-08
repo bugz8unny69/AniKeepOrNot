@@ -86,7 +86,7 @@ def configure_logging(settings: Settings, component: str, *, logger=None):
         raise ValueError("invalid logging settings")
     selected_level = _LEVELS[settings.logging.level_for(component)]
     formatter = SafeFormatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    target = logger if logger is not None else logging.getLogger("nextgen." + component)
+    target = logger if logger is not None else logging.getLogger("anime." + component)
     if not target.handlers:
         target.addHandler(logging.StreamHandler())
     for handler in target.handlers:
