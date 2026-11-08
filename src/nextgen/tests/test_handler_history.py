@@ -118,8 +118,10 @@ class HandlerHistoryTests(unittest.TestCase):
         logger.addHandler(logging.StreamHandler(stream))
         log_history(logger, receipt)
         text = stream.getvalue()
-        for value in ("HANDLER_COMPLETED", "Step finished.", "TEST_IDENTIFY", "Identify anime", "invocation_id="+"a"*32):
+        for value in ("Identify anime", "Step finished"):        # activity, then what happened
             self.assertIn(value, text)
+        for value in ("HANDLER_COMPLETED", "TEST_IDENTIFY", "a"*32):  # codes and invocation ids stay in History
+            self.assertNotIn(value, text)
         with self.assertRaises(ValueError):
             event(logger, logging.INFO, "HANDLER_STARTED", handler_code="TEST_IDENTIFY", handler_label="unsafe\nlabel", invocation_id="a"*32)
 

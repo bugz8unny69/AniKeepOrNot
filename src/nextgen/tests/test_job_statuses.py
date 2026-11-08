@@ -108,7 +108,7 @@ class JobStatusTests(unittest.TestCase):
         logger.addHandler(logging.StreamHandler(stream))
         configure_logging(Settings(), "acquisition", logger=logger)
         log_history(logger, receipt)
-        self.assertIn("activity_code=WAITING_FOR_DOWNLOAD", stream.getvalue())
+        self.assertIn("Waiting for download", stream.getvalue())
         self.assertIn("Waiting for download", stream.getvalue())
 
     def test_initial_job_can_be_held_blocked_or_canceled_without_an_attempt(self):

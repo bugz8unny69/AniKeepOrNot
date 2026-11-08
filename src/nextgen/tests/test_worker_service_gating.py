@@ -5,6 +5,8 @@ import sqlite3
 import tempfile
 import unittest
 
+from src.nextgen.messages import DEFAULT_CATALOG
+
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.job_contracts import Outcome, Policy, Registration, Registry
@@ -121,7 +123,7 @@ class WorkerServiceGatingTests(unittest.IsolatedAsyncioTestCase):
             await self.drain(worker)
         self.assertEqual(sorted(self.ran), ['LOCAL_JOB', 'SEARCH_JOB'])
         self.assertEqual(self.states()['QB_JOB'], 'PENDING')  # Never claimed: no retry spent.
-        self.assertEqual(sum('event_code=SERVICE_DOWN' in line and 'service=qbittorrent' in line
+        self.assertEqual(sum(DEFAULT_CATALOG.event('SERVICE_DOWN')['message'].rstrip('.') in line and 'service qbittorrent' in line
                              for line in logs.output), 1)
         self.assertTrue(any('Qbittorrent is unavailable: Qbittorrent test status' in line for line in logs.output))
 
@@ -134,7 +136,7 @@ class WorkerServiceGatingTests(unittest.IsolatedAsyncioTestCase):
             await self.drain(worker)
         self.assertIn('QB_JOB', self.ran)
         self.assertEqual(self.states()['QB_JOB'], 'DONE')
-        self.assertTrue(any('event_code=SERVICE_RESTORED' in line for line in logs.output))
+        self.assertTrue(any(DEFAULT_CATALOG.event('SERVICE_RESTORED')['message'].rstrip('.') in line for line in logs.output))
 
     async def test_a_failing_job_marks_its_service_down_without_a_probe(self):
         self.qb.status = UP

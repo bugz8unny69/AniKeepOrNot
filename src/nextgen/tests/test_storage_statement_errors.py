@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from src.nextgen.messages import DEFAULT_CATALOG
+
 from src.nextgen.diagnostics import exception
 from src.nextgen.job_contracts import failure_facts
 from src.nextgen.reasons import get_reason
@@ -64,7 +66,7 @@ class StorageStatementErrorTests(unittest.TestCase):
                 exception(logging.getLogger('test.statement'), 'OPERATION_FAILED', error,
                           reason_code=error.reason_code, component='worker')
         line = logs.output[0]
-        self.assertIn('reason_code=STORAGE_STATEMENT_INVALID', line)
+        self.assertIn(DEFAULT_CATALOG.reason('STORAGE_STATEMENT_INVALID')['message'].rstrip('.'), line)
         self.assertNotIn('STORAGE_UNAVAILABLE', line)
         self.assertIn('ProgrammingError', line)
         self.assertIn('test_storage_statement_errors.py', line)

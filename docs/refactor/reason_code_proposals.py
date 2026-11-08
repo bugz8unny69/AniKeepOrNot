@@ -654,6 +654,10 @@ EVENTS = {
     'MAINTENANCE_REQUESTED': ('MAINTENANCE_REQUESTED', 'New work paused for maintenance.'),
     'MAINTENANCE_COMPLETED': ('MAINTENANCE_COMPLETED', 'Maintenance finished; new work can start.'),
     'OPERATION_FAILED': ('OPERATION_FAILED', 'An operation failed.'),
+    # Added by JD-1d: DEBUG-only lines naming each check and why a step did not finish.
+    'CHECK_PASSED': ('CHECK_PASSED', 'Check passed.'),
+    'CHECK_FAILED': ('CHECK_FAILED', 'Check failed.'),
+    'STEP_NOT_FINISHED': ('STEP_NOT_FINISHED', 'Not finished.'),
     # Service health (added after the first audit).
     'SERVICE_DOWN': ('SERVICE_DOWN', 'A service stopped working; jobs that need it wait.'),
     'SERVICE_RESTORED': ('SERVICE_RESTORED', 'A service is working again; waiting jobs continue.'),

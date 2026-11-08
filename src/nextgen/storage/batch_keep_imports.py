@@ -15,6 +15,7 @@ from src.nextgen.storage.cancellation import operation
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.review_decisions import require_allowed
 from src.nextgen.storage.sqlite import transaction
+from src.nextgen.checks import here
 
 
 def batch_publications(db,operation_id):
@@ -29,12 +30,12 @@ def batch_publications(db,operation_id):
         "WHERE m.operation_id=? AND p.state='PUBLISHED' "
         "ORDER BY p.file_index",(operation_id,)).fetchall()
     if not rows or len(rows)>32 or len({r[0] for r in rows})!=1:
-        raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:33 batch_publications COUNT_INVALID')
+        raise KeepReview(failed_check=here('COUNT_INVALID'))
     count=db.execute(
         'SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?',
         (rows[0][0],)).fetchone()[0]
     if len(rows)!=count:
-        raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:37 batch_publications MISMATCH_COUNT')
+        raise KeepReview(failed_check=here('MISMATCH_COUNT'))
     return rows
 
 
@@ -47,19 +48,19 @@ class BatchKeepJournal:
     def guard(self,db,claim):
         self.queue._owns(db,claim,self.queue.now())
         if claim.kind!='KEEP_BATCH':
-            raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:49 guard KIND_NOT_KEEP_BATCH')
+            raise KeepReview(failed_check=here('KIND_NOT_KEEP_BATCH'))
         action=db.execute(
             "SELECT a.target_job_id,a.operation_id,a.action "
             "FROM management_actions a WHERE a.job_id=?",
             (claim.job_id,)).fetchone()
         if action is None or action[2]!='KEEP':
-            raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:54 guard ACTION_NOT_KEEP')
+            raise KeepReview(failed_check=here('ACTION_NOT_KEEP'))
         if operation(db,action[0])[:2]!=(action[1],'STAGED'):
-            raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:56 guard OPERATION_NOT_STAGED')
+            raise KeepReview(failed_check=here('OPERATION_NOT_STAGED'))
         rows=batch_publications(db,action[1])
         selected=[row for row in rows if row[1]==self.file_index]
         if len(selected)!=1:
-            raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:59 guard FILE_NOT_FOUND')
+            raise KeepReview(failed_check=here('FILE_NOT_FOUND'))
         row=selected[0]
         require_allowed(db,row[4])
         return action[0],row
@@ -68,7 +69,7 @@ class BatchKeepJournal:
         with self.queue.connection() as db,transaction(db):
             parent,row=self.guard(db,claim)
             if parent!=target:
-                raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:67 load PARENT_MISMATCH')
+                raise KeepReview(failed_check=here('PARENT_MISMATCH'))
             plan,index,manifest,proofs,*rest=row
             old=db.execute(
                 'SELECT phase,data_json FROM batch_keep_imports '
@@ -96,7 +97,7 @@ class BatchKeepJournal:
                 if (len(media)!=1 or len(checked)!=1
                         or media[0]['path']!=checked[0]['path']
                         or recorded.get('transfer')!='COPY'):
-                    raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:95 load MEDIA_RECEIPT_INVALID')
+                    raise KeepReview(failed_check=here('MEDIA_RECEIPT_INVALID'))
                 identity=tuple(row[4:10])
                 selection=KeepSelection(
                     *identity,plan,recorded['root'],media[0]['path'])
@@ -110,7 +111,7 @@ class BatchKeepJournal:
                     'source_parent':checked[0]['root'],
                 }
             except (KeyError,ValueError,TypeError):
-                raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:109 load DATA_FORMAT_INVALID') from None
+                raise KeepReview(failed_check=here('DATA_FORMAT_INVALID')) from None
             db.execute(
                 "INSERT INTO batch_keep_imports(job_id,plan_id,file_index,phase,"
                 "data_json,updated_at_ms) VALUES(?,?,?,'PLANNED',?,?)",
@@ -121,7 +122,7 @@ class BatchKeepJournal:
     def change(self,claim,prior,phase,data):
         raw=json.dumps(data,sort_keys=True,allow_nan=False)
         if len(raw.encode())>65536:
-            raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:119 change DATA_SIZE_EXCEEDED')
+            raise KeepReview(failed_check=here('DATA_SIZE_EXCEEDED'))
         with self.queue.connection() as db,transaction(db):
             self.guard(db,claim)
             if db.execute(
@@ -129,7 +130,7 @@ class BatchKeepJournal:
                 'WHERE job_id=? AND file_index=? AND phase=?',
                 (phase,raw,self.queue.now(),claim.job_id,self.file_index,prior)
             ).rowcount!=1:
-                raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:126 change FENCE_CONFLICT')
+                raise KeepReview(failed_check=here('FENCE_CONFLICT'))
 
     def fence(self,claim):
         with self.queue.connection() as db,transaction(db):

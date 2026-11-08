@@ -11,6 +11,7 @@ from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.review_decisions import staged, require_allowed
 from src.nextgen.storage.cancellation import operation
 from src.nextgen.storage.sqlite import transaction
+from src.nextgen.checks import here
 
 
 class Journal:
@@ -54,12 +55,12 @@ class Journal:
 
     def change(self,claim,prior,phase,data):
         raw=json.dumps(data,sort_keys=True,allow_nan=False)
-        if len(raw.encode())>65536:raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:58 change DATA_SIZE_EXCEEDED')
+        if len(raw.encode())>65536:raise KeepReview(failed_check=here('DATA_SIZE_EXCEEDED'))
         with self.queue.connection() as db,transaction(db):
             self.guard(db,claim)
             if db.execute('UPDATE keep_imports SET phase=?,data_json=?,updated_at_ms=? WHERE job_id=? AND phase=?',
                           (phase,raw,self.queue.now(),claim.job_id,prior)).rowcount!=1:
-                raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:62 change FENCE_CONFLICT')
+                raise KeepReview(failed_check=here('FENCE_CONFLICT'))
 
     def fence(self,claim):
         with self.queue.connection() as db,transaction(db):self.guard(db,claim)
@@ -73,8 +74,8 @@ def check_source(data):
             try:
                 info = os.stat(name, dir_fd=folder, follow_symlinks=False)
             except FileNotFoundError:
-                raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:75 check_source STAGED_FILE_MISSING',
+                raise KeepReview(failed_check=here('STAGED_FILE_MISSING'),
                                  failed_path=staged_abs) from None
             if not stat.S_ISREG(info.st_mode) or info.st_size != data['source_file'][2]:
-                raise KeepReview(failed_check='src/nextgen/storage/keep_imports.py:77 check_source STAGED_FILE_CORRUPT',
+                raise KeepReview(failed_check=here('STAGED_FILE_CORRUPT'),
                                  failed_path=staged_abs)

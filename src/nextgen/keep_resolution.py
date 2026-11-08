@@ -10,6 +10,7 @@ from src.nextgen.providers.errors import (
 from src.nextgen.release_contracts import ReleaseNotReady, ReleaseConflict
 from src.nextgen.secrets import Credentials
 from src.nextgen.sonarr import KeepReview, KeepUnavailable, KeepConfiguration
+from src.nextgen.checks import here
 
 
 def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, secret=None):
@@ -58,7 +59,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
     except ReleaseNotReady:
         return None
     except ReleaseConflict as exc:
-        raise KeepReview(failed_check='src/nextgen/keep_resolution.py:51 resolve_tvdb_placement MAPPING_CONFLICT') from exc
+        raise KeepReview(failed_check=here('MAPPING_CONFLICT')) from exc
 
     target = mappings.get(anidb_number)
     if target is None:
@@ -139,7 +140,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
                 batch_plan_id = batch_res_row[0]
 
     if user_evaluation_plan_id is None and batch_plan_id is None:
-        raise KeepReview(failed_check='src/nextgen/keep_resolution.py:125 resolve_tvdb_placement UNRESOLVED_PLAN')
+        raise KeepReview(failed_check=here('UNRESOLVED_PLAN'))
 
     # Commit placement to active reservations and selections for the resolved plan type
     if user_evaluation_plan_id is not None:
@@ -156,7 +157,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
         if existing_sel is not None:
             curr_s, curr_ep, curr_eid = existing_sel
             if curr_eid is not None and (curr_s, curr_ep, curr_eid) != (target_season, target_episode, tvdb_eid):
-                raise KeepReview(failed_check='src/nextgen/keep_resolution.py:140 resolve_tvdb_placement SELECTION_MISMATCH')
+                raise KeepReview(failed_check=here('SELECTION_MISMATCH'))
         db.execute(
             "UPDATE episode_release_selections SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
             "WHERE plan_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NULL",

@@ -291,7 +291,7 @@ class WorkerStartupTests(unittest.IsolatedAsyncioTestCase):
             await worker.run(on_ready=lambda: ready.append(True))
         self.assertEqual(ready, [])                                   # Never reported ready to systemd.
         self.assertEqual([s.service for s in refused.exception.states], ['qbittorrent'])
-        self.assertTrue(any('event_code=SERVICE_STARTUP_REFUSED' in line and 'service=qbittorrent' in line
+        self.assertTrue(any('service qbittorrent' in line
                             and 'qBittorrent address' in line for line in logs.output))
         # The dashboard can still show why: the statuses were saved first.
         self.assertEqual(status_store.load(self.database)['qbittorrent'].status, NOT_CONFIGURED)
