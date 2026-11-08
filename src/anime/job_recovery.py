@@ -12,7 +12,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
-from src.anime.configuration import ConfigurationStore
+from src.anime.configuration import ConfigurationStore, cli_config_dir
 from src.anime.maintenance import MaintenanceGate
 from src.anime.messages import MessageCatalog
 from src.anime.storage.review_retry import (
@@ -381,7 +381,7 @@ def parser():
         prog='adm recover',
         description='Historical stopped jobs recovery, diagnostic classification, and safe retry tooling'
     )
-    p.add_argument('--config-dir', default='/etc/anime-discovery', help='Path to anime-discovery configuration directory')
+    p.add_argument('--config-dir', default=cli_config_dir(), help='Path to anime-discovery configuration directory')
     p.add_argument('--json', action='store_true', help='Output results as structured JSON')
 
     sub = p.add_subparsers(dest='action', required=False)

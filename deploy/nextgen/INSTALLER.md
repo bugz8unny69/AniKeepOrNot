@@ -77,6 +77,8 @@ Branches can carry different database migrations and settings versions, so a bra
 
 `<branch>` is the branch name with `/` replaced by `-`. The installer records which folder belongs to which branch in `/var/lib/anime-discovery/installer/installer.json`.
 
+The installed `adm` launcher automatically selects the active branch's configuration directory for `services`, `report`, `recover`, reservation recovery and batch audit. An explicit `--config-dir` still overrides it. Switching branches and rolling back update the launcher; the original branch's settings are never migrated just to run a newer branch's CLI.
+
 - **The first switch to a branch** sets up its folder:
   - the credentials and administrator password are copied;
   - the settings are copied and converted by the new branch's own settings upgrade, with the database path pointing at the branch's file. If the new branch cannot read them (they are newer than it understands), the switch is refused and nothing changes.

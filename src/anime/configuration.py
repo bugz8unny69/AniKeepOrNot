@@ -27,6 +27,11 @@ CONFIG_NAME = "settings.json"
 LOCK_NAME = ".settings.lock"
 
 
+def cli_config_dir():
+    """The installed ADM launcher selects its branch; direct use keeps the native default."""
+    return os.environ.get("ANIME_DISCOVERY_CONFIG_DIR") or "/etc/anime-discovery"
+
+
 @dataclass(frozen=True)
 class UpdateResult:
     snapshot: ConfigurationSnapshot

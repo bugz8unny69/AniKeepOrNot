@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 
+from src.anime.configuration import cli_config_dir
 from src.anime.maintenance import MaintenanceGate
 from src.anime.storage.episode_reset import find_episode, schedule, EpisodeResetUnavailable
 
@@ -14,7 +15,7 @@ from src.anime.storage.episode_reset import find_episode, schedule, EpisodeReset
 def main(argv=None):
     p=argparse.ArgumentParser(prog='adm recover resv',
         description='Inspect verified episode ownership; --release safely queues cleanup and a fresh search.')
-    p.add_argument('--config-dir',default='/etc/anime-discovery')
+    p.add_argument('--config-dir',default=cli_config_dir())
     p.add_argument('--ep-id','--ep_id',dest='ep_id',type=int,required=True,
                    help='Exact AniDB or TVDB episode ID (not SxxEyy or a sequential episode number)')
     p.add_argument('--release',action='store_true',

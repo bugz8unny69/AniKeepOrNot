@@ -116,6 +116,26 @@ class ReleaseLayoutTests(base.InstallerOrchestrationTests):
         check = next(e for e in self.events if 'check' in e)
         self.assertEqual(check[:4], ['runuser', '-u', self.options['user'], '--'])   # As the service account.
 
+    def test_rollback_restores_adm_to_previous_branch(self):
+        old, new = self.installed_pair()
+        (old / installer.RELEASE_INFO).write_text(
+            json.dumps({'revision': '1' * 40, 'ref': 'NextGen'}))
+        current_config = str(self.config / 'branches' / 'refactor')
+        previous_config = str(self.config)
+        self.options['config_dir'] = current_config
+        self.options['branches'] = {
+            'NextGen': {'config_dir': previous_config},
+            'refactor': {'config_dir': current_config},
+        }
+        self.command.parent.mkdir(parents=True, exist_ok=True)
+        (self.command.parent / 'adm').write_text(
+            installer.adm_launcher(self.root, current_config))
+        with self.patches():
+            installer.rollback(self.options, self.args, self.rollback_execute())
+        launcher = (self.command.parent / 'adm').read_text()
+        self.assertIn('ANIME_DISCOVERY_CONFIG_DIR='+previous_config+'\n', launcher)
+        self.assertEqual(os.readlink(self.root / 'current'), str(old))
+
     def test_rollback_refuses_when_the_database_is_too_new_for_the_previous_release(self):
         old, new = self.installed_pair()
         execute = self.rollback_execute(1, 'DATABASE_VERSION_UNSUPPORTED: This database version cannot be upgraded')
@@ -153,6 +173,25 @@ class BranchTests(base.InstallerSupportTests):
         with patch.object(installer, 'saved_defaults', return_value=self.saved()):
             return installer.resolve(installer.parser().parse_args(list(flags)))
 
+    def test_saved_installation_metadata_retains_branch_index(self):
+        import stat
+        from types import SimpleNamespace
+        record = {
+            'ref': 'refactor',
+            'config_dir': '/etc/anime-discovery/branches/refactor',
+            'config_base': '/etc/anime-discovery',
+            'branches': {'NextGen': {'config_dir': '/etc/anime-discovery'},
+                         'refactor': {'config_dir': '/etc/anime-discovery/branches/refactor'}},
+        }
+        with patch.object(installer, 'private_json', return_value=record), \
+             patch.object(installer.Path, 'lstat',
+                          return_value=SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0)), \
+             patch.object(installer.Path, 'stat',
+                          return_value=SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)):
+            loaded = installer._saved_installation_file(Path('/not-used/installer.json'))
+        self.assertEqual(loaded['branches'], record['branches'])
+        self.assertEqual(loaded['config_base'], record['config_base'])
+
     def test_upgrade_can_switch_branches(self):
         self.assertEqual(self.resolve('--upgrade')['ref'], 'NextGen')
         self.assertEqual(self.resolve('--upgrade', '--branch', 'refactor')['ref'], 'refactor')
@@ -184,6 +223,7 @@ class BranchUpgradeTests(base.InstallerOrchestrationTests):
         (self.unitdir / UNIT).write_text('[Unit]\nDescription=Old\n')
         self.args.source_dir = None                 # Fetch from git, like a normal upgrade.
         self.options['ref'] = 'refactor'
+        self.options['config_dir'] = str(self.config / 'branches' / 'refactor')
 
         def execute(args, **kwargs):
             args = [str(a) for a in args]
@@ -205,6 +245,8 @@ class BranchUpgradeTests(base.InstallerOrchestrationTests):
         self.assertEqual(fetch[-1], 'refactor')                                  # The new branch was fetched.
         saved = json.loads((self.state / 'installer' / 'installer.json').read_text())
         self.assertEqual(saved['ref'], 'refactor')                               # Later upgrades keep it.
+        self.assertIn('ANIME_DISCOVERY_CONFIG_DIR='+self.options['config_dir']+'\n',
+                      (self.command.parent / 'adm').read_text())
         # Service files are rewritten from the new release, the old ones backed up.
         self.assertEqual((self.unitdir / UNIT).read_text(), '[Unit]\nDescription=Test\n')
         backup = self.state / 'installer' / 'unit-backups' / Path(result['release']).name / UNIT
