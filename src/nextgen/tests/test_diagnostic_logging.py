@@ -27,10 +27,13 @@ class DiagnosticLoggingTests(unittest.TestCase):
             fields=({'handler_code':'TEST_HANDLER','handler_label':'Test handler','invocation_id':'a'*32}
                     if name in ('HANDLER_STARTED','HANDLER_COMPLETED','HANDLER_FAILED') else {})
             event(logger, logging.INFO, name, reason_code=reason,**fields)
-            self.assertIn("event_code=" + name, stream.getvalue())
-            self.assertIn(DEFAULT_CATALOG.event(name)["message"], stream.getvalue())
+            # The line uses the catalog's words (codes stay in History). Check
+            # lines show the check itself instead of their own sentence.
+            if name not in ("CHECK_PASSED", "CHECK_FAILED"):
+                self.assertIn(DEFAULT_CATALOG.event(name)["message"].rstrip("."), stream.getvalue())
             if reason:
-                self.assertIn(DEFAULT_CATALOG.reason(reason)["message"], stream.getvalue())
+                self.assertIn(DEFAULT_CATALOG.reason(reason)["message"].rstrip("."), stream.getvalue())
+            self.assertNotIn("event_code=", stream.getvalue())
 
     def test_correlation_is_derived_and_untrusted_fields_are_dropped(self):
         logger, stream = self.make_logger()
@@ -39,21 +42,25 @@ class DiagnosticLoggingTests(unittest.TestCase):
               trace_id="arbitrary-secret", raw_body="private-body", error_type="private-class",
               component="worker", retryable=True, outcome="RETRY_WAIT")
         output = stream.getvalue()
-        for text in ("event_id=4", "job_id=8", "trace_id=AD-4", "created_by_job_id=3",
-                     "attempt=2", "retryable=true", "component=worker"):
+        for text in ("job #8 ·", "attempt 2", "will retry", "ended RETRY_WAIT"):
             self.assertIn(text, output)
+        # One job, one name: no event, creator, trace or component fields (JD-1d).
+        for text in ("event_id", "created_by", "trace_id", "component"):
+            self.assertNotIn(text, output)
         for text in ("arbitrary-secret", "private-body", "private-class"):
             self.assertNotIn(text, output)
         event(logger, TRACE, "CREATED", job_id=9, event_id=True)
-        self.assertIn("trace_id=JOB-9", stream.getvalue())
-        self.assertNotIn("event_id=True", stream.getvalue())
+        self.assertIn("job #9 · Job created", stream.getvalue())
+        self.assertNotIn("True", stream.getvalue())
+        event(logger, TRACE, "ACCEPTED", event_id=5)
+        self.assertIn("release #5 · Release received", stream.getvalue())
 
     def test_exhaustion_retains_a_readable_underlying_cause(self):
         logger, stream = self.make_logger()
         event(logger, logging.ERROR, "NEEDS_REVIEW", reason_code="JOB_RETRY_EXHAUSTED",
               cause_reason_code="SERVICE_UNAVAILABLE", job_id=8)
-        self.assertIn("Automatic retries stopped.", stream.getvalue())
-        self.assertIn("Waiting for a service to come back.", stream.getvalue())
+        self.assertIn("Automatic retries stopped", stream.getvalue())
+        self.assertIn("because: Waiting for a service to come back", stream.getvalue())
         with self.assertRaises(ValueError):
             event(logger, logging.ERROR, "NEEDS_REVIEW", reason_code="JOB_RETRY_EXHAUSTED",
                   cause_reason_code="unregistered")
@@ -83,7 +90,7 @@ class DiagnosticLoggingTests(unittest.TestCase):
         self.assertIsNone(capture.record.exc_info)
         content = capture.record.getMessage()
         # The exact error is shown; named credentials are still redacted.
-        self.assertIn("error=ValueError: token=[REDACTED] at nextgen/tests/test_diagnostic_logging.py:", content)
+        self.assertIn("error: ValueError: token=[REDACTED] at nextgen/tests/test_diagnostic_logging.py:", content)
         self.assertNotIn("arbitrary secret", content)
 
     def test_safe_exception_at_all_supported_levels_including_custom_names(self):
@@ -96,7 +103,7 @@ class DiagnosticLoggingTests(unittest.TestCase):
                 exception(logger, "OPERATION_FAILED", failure, level=level,
                           reason_code="JOB_HANDLER_FAILED")
             content = stream.getvalue()
-            self.assertIn("error=private_secret_class_name: entire provider body", content)
+            self.assertIn("error: private_secret_class_name: entire provider body", content)
             self.assertLess(len(content), 4096)
 
     def test_formatter_discards_cached_exception_text_and_raw_stack(self):
@@ -128,7 +135,7 @@ class DiagnosticLoggingTests(unittest.TestCase):
         overrides["worker"] = "CRITICAL"
         configure_logging(settings, "worker", logger=logger)
         event(logger, TRACE, "CREATED", job_id=1)
-        self.assertIn("Job created.", stream.getvalue())
+        self.assertIn("Job created", stream.getvalue())
         self.assertEqual(len(logger.handlers), 1)
         with self.assertRaises(TypeError):
             settings.logging.components["worker"] = "INFO"

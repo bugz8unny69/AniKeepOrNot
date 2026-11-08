@@ -71,6 +71,10 @@ _EVENTS = (
     EventDefinition('MAINTENANCE_COMPLETED','runtime','Maintenance finished; new work can start.'),
     # A runtime observation, not a persisted job state or lifecycle transition.
     EventDefinition('OPERATION_FAILED','runtime','An operation failed.',True),
+    # DEBUG only (JD-1d): each check a job runs, and why a step did not finish.
+    EventDefinition('CHECK_PASSED','runtime','Check passed.'),
+    EventDefinition('CHECK_FAILED','runtime','Check failed.'),
+    EventDefinition('STEP_NOT_FINISHED','runtime','Not finished.',True),
     EventDefinition('SERVICE_DOWN','runtime','A service stopped working; jobs that need it wait.'),
     EventDefinition('SERVICE_RESTORED','runtime','A service is working again; waiting jobs continue.'),
     EventDefinition('SERVICE_STARTUP_REFUSED','runtime','The worker did not start: a required service is not set up correctly.',True,'SERVICE_SETUP_INVALID'),

@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from src.nextgen.acquisition.cleanup import directory, parent
 from src.nextgen.acquisition.media import signature, cancelled
+from src.nextgen.checks import here
 
 
 class StagingReview(ValueError):
@@ -177,17 +178,17 @@ class Publisher:
         if entry['role']!='media':
             if os.fstat(fd).st_size!=entry['size']:
                 raise StagingReview(
-                    failed_check='src/nextgen/staging.py:166 _check NFO_SIZE',
+                    failed_check=here('NFO_SIZE'),
                     failed_path=path)
             try:return digest_fd(fd,entry['size'],self.flag)
             except StagingReview:
                 raise StagingReview(
-                    failed_check='src/nextgen/staging.py:166 _check NFO_VALIDATION',
+                    failed_check=here('NFO_VALIDATION'),
                     failed_path=path) from None
         info=signature(os.fstat(fd))
         if info[2]!=entry['size']:
             raise StagingReview(
-                failed_check='src/nextgen/staging.py:166 _check MEDIA_SIZE',
+                failed_check=here('MEDIA_SIZE'),
                 failed_path=path)
         # The video was hashed during verification. A staging copy is checked
         # with its byte count, size and stable source metadata, not rehashed.
@@ -253,7 +254,7 @@ class Publisher:
                             digest,info=self._check(entry,final)
                             if digest!=entry['sha256']:
                                 raise StagingReview(
-                                    failed_check='src/nextgen/staging.py:166 _check NFO_CONTENT',
+                                    failed_check=here('NFO_CONTENT'),
                                     failed_path=self._staging_root+'/'+entry['path'])
                         except StagingReview:
                             # NFOs are generated from the pinned manifest. Repair

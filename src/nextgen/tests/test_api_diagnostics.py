@@ -36,8 +36,8 @@ class ApiDiagnosticsTests(unittest.TestCase):
             log_history(logger, receipt)
             self.assertEqual(db.execute("SELECT component FROM job_history").fetchall(),
                              [("api",), ("api",)])
-            self.assertIn("component=api", stream.getvalue())
-            self.assertNotIn("component=worker", stream.getvalue())
+            self.assertIn("from api", stream.getvalue())
+            self.assertNotIn("from worker", stream.getvalue())
             self.assertEqual(logger.level, logging.DEBUG)
             self.assertEqual(settings.logging.level_for("worker"), "WARNING")
         finally:

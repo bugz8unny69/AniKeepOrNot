@@ -68,11 +68,16 @@ and state copy is specified in DIAGNOSTIC_CONTRACT.md. Existing reason English
 copy remains owned by reasons.py; do not duplicate it into an independently
 maintained runtime dictionary.
 
-Illustrative journal entry (not a captured runtime log):
+Illustrative journal entries (not captured runtime logs). Since JD-1d a line is
+`job #N [subject] · activity · what happened · facts`, in the catalog's words.
+Codes stay in History (`adm report job --id N` shows them):
 
 ```text
-event_code=RETRY_SCHEDULED message="Another attempt is scheduled." reason_code=SERVICE_UNAVAILABLE reason_message="Waiting for a service to come back." trace_id=AD-42 job_id=73 attempt=2
+2026-11-08 18:40:05 WARNING job #73 · Download selected video · Another attempt is scheduled · Waiting for a service to come back · will retry · attempt 2
+2026-11-08 18:40:05 DEBUG   job #73 · Verify release · check EPISODE_SIZE passed · acquisition/settings.py:93 · 1434 MB (expected ≤ 2000 MB)
 ```
+
+INFO shows lifecycle changes only; each check and each repeated wait are DEBUG.
 
 A provider-unavailable reason by itself must not claim a retry will happen.
 Only RETRY_SCHEDULED says a retry was actually scheduled. The same separation

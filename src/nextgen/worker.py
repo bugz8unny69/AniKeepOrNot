@@ -17,6 +17,7 @@ from src.nextgen.cancellation import OperationGate, CancellationRequested
 from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.configuration_schema import ConfigurationError
+from src.nextgen.checks import here
 from src.nextgen.diagnostics import configure_logging, event, exception, log_history
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, payload_json, failure_facts
 from src.nextgen.reasons import get_reason
@@ -275,6 +276,19 @@ class Worker:
                 changes.append(change)
         self._log_service_changes(changes)
 
+    @staticmethod
+    def _log_unfinished(logger, claim, outcome):
+        """DEBUG (JD-1d): for every attempt that did not complete, which check stopped it and why."""
+        if outcome.kind == "complete" or outcome.reason_code is None or not logger.isEnabledFor(logging.DEBUG):
+            return
+        facts = outcome.facts or {}
+        event(logger, logging.DEBUG, "STEP_NOT_FINISHED", reason_code=outcome.reason_code, component="worker",
+              job_id=claim.job_id, event_id=claim.event_id, attempt=claim.attempt,
+              failed_check=facts.get("failed_check") or "not recorded", failed_path=facts.get("failed_path"),
+              service=facts.get("service"), video_mb=facts.get("video_mb"), limit_mb=facts.get("limit_mb"),
+              plan_used_mb=facts.get("plan_used_mb"), blocking_job_id=facts.get("blocking_job_id"),
+              operation_id=facts.get("operation_id"))
+
     def _log_error(self, exc, claim=None):
         reason = getattr(exc, "reason_code", "JOB_HANDLER_FAILED")
         if get_reason(reason) is None:
@@ -327,7 +341,7 @@ class Worker:
                 exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
                           job_id=claim.job_id, event_id=claim.event_id, attempt=claim.attempt)
-                facts = failure_facts(exc) or {"failed_check": "src/nextgen/worker.py:171 _invoke"}
+                facts = failure_facts(exc) or {"failed_check": here("HANDLER_EXCEPTION")}
                 return Outcome("retry", "JOB_HANDLER_FAILED", facts=facts)
         finally:
             context.cancelled.set()
@@ -392,6 +406,10 @@ class Worker:
             # mutate another running attempt's logger threshold/formatter.
             logger = configure_logging(configuration.logging_settings(), "worker",
                                        logger=logging.Logger("nextgen.worker.job." + str(claim.job_id)))
+            known = self.registry.entries.get(claim.kind)
+            if known is not None:
+                # Every line of this attempt names what the job is doing (JD-1d).
+                logger.nextgen_context = {"activity": known.definition.label, "job_id": claim.job_id}
             for audit in audits:
                 try:
                     log_history(logger, audit)
@@ -417,6 +435,7 @@ class Worker:
                     outcome = await self._invoke(claim,spec,context)
             self._observe_services(spec, outcome)
             outcome = self._service_wait(spec, outcome)
+            self._log_unfinished(logger, claim, outcome)
             await self._save_services()
             try:
                 records = await self._io(self.queue.finish,claim,outcome,spec=spec,

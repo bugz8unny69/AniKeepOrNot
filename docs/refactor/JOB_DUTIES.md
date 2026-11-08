@@ -297,6 +297,25 @@ On `refactor`:
 * A test asserts the History and log volume of one download: a fixed small number
   of rows, not one per poll.
 
+### The log line (agreed 2026-11-08, built in JD-1d)
+
+`time LEVEL job #N [subject] · activity · what happened · facts`
+
+```
+2026-11-08 18:40:02 INFO    job #900 Frieren S01E03 · Identifying · done · AniDB 17617, TVDB 424536 S01E03
+2026-11-08 18:40:04 DEBUG   job #900 Frieren S01E03 · Verifying release · check EPISODE_SIZE passed · settings.py:93 · 1434 MB (expected ≤ 2000 MB)
+2026-11-08 19:05:10 WARNING job #901 Frieren S01E04 · Verifying release · check EPISODE_SIZE failed · settings.py:93 · 2650 MB (expected ≤ 2000 MB)
+```
+
+* **One job, one name.** No `event_id`, `created_by_job_id`, `trace_id`,
+  `invocation_id` or `component` fields. A non-worker emitter is noted as
+  "from api".
+* **The catalog's words are the message.** Codes stay in History.
+* **Checks always name themselves** (`checks.check` / `require` / `here`): the
+  name, the real file:line, and on failure actual vs expected and the path.
+* **INFO is lifecycle only.** Claiming, handler start/end and repeated waits are
+  DEBUG. Every attempt that does not complete logs its failed check at DEBUG.
+
 ## Phases (each a PR, tests local only)
 
 0. **JD-0 Measure and map.** Rank today's review, hold and fail reasons with

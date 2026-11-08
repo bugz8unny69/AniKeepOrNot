@@ -372,6 +372,15 @@
         "src/nextgen/resources.py"
       ],
       "why": "Only the resources interface writes the resources records (JD-1c)."
+    },
+    {
+      "id": "JD-1d",
+      "rule": "only_in",
+      "pattern": "failed_check['\"]?\\s*[:=]\\s*f?['\"]src/nextgen/",
+      "files": [
+        "src/nextgen/checks.py"
+      ],
+      "why": "Write failed checks with checks.here('NAME') or require(): a hand-written 'file.py:LINE' drifts from the real line (JD-1d)."
     }
   ]
 }

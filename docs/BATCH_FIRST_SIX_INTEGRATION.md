@@ -76,7 +76,7 @@ and a stable reason code where applicable.
 
 Use `journalctl -u anime-discovery-worker -f` **only after verifying
 the actual installed service unit name**; to inspect historic decisions,
-`journalctl -u <verified-unit> --since today --no-pager | grep 'event='`.
+`journalctl -u <verified-unit> --since today --no-pager | grep 'job #'`.
 The repo does not itself prove the production systemd unit name.
 
 Important: the trial-window and batch-manifest/probe components remain
@@ -413,7 +413,7 @@ untrusted release filenames into logs.
 After reviewed VM deployment:
 
     journalctl -u anime-discovery.service -f -o cat
-    journalctl -u anime-discovery.service --since "1 hour ago" -o cat | grep 'event='
+    journalctl -u anime-discovery.service --since "1 hour ago" -o cat | grep 'job #'
 
 **Still outstanding:** Provider-verified season/part/ongoing classification
 and its trusted window-recording call, complete registered batch worker,

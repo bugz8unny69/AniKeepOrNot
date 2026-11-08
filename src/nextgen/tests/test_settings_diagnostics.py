@@ -60,10 +60,8 @@ class FoundationTests(unittest.TestCase):
         for secret in ("secretBearer", "hidden", "apikey123", "alice:pass",
                        "querysecret", "abc123"):
             self.assertNotIn(secret, content)
-        self.assertIn("event_code=OPERATION_FAILED", content)
-        self.assertIn("job_id=42", content)
-        self.assertIn("trace_id=AD-2", content)
-        self.assertIn("error=RuntimeError: authorization=[REDACTED] at nextgen/tests/test_settings_diagnostics.py:", content)
+        self.assertIn("job #42 · An operation failed", content)
+        self.assertIn("error: RuntimeError: authorization=[REDACTED] at nextgen/tests/test_settings_diagnostics.py:", content)
 
     def test_metadata_allowlist(self):
         logger, stream = self.logger()
@@ -72,7 +70,7 @@ class FoundationTests(unittest.TestCase):
         event(logger, logging.INFO, "RETRY_SCHEDULED", job_id=42, attempt=2,
               reason_code="SERVICE_UNAVAILABLE",
               retryable=True, raw_body="never log this")
-        self.assertIn("job_id=42", stream.getvalue())
+        self.assertIn("job #42", stream.getvalue())
         self.assertNotIn("never log this", stream.getvalue())
 
     def test_span(self):

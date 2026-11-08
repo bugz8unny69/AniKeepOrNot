@@ -156,9 +156,8 @@ episodes when they arrive through the webhook.
 Open **History** on any job of a backfill episode. "Releases tried for
 episode N" lists every ranked release in order: the group's title, whether it
 was staged, failed (with the reason and, for size stops, the actual sizes),
-is in progress or was not tried yet, and the trace ID (`AD-<n>`) of that
-attempt for the worker log:
-`journalctl -u anime-discovery-worker | grep 'trace_id=AD-<n>'`.
+is in progress or was not tried yet, and the job of that attempt for the
+worker log: `journalctl -u anime-discovery-worker | grep 'job #<n> '`.
 
 ## Settings
 

@@ -12,6 +12,7 @@ from src.nextgen.staging import StagingReview, StagingBusy
 from src.nextgen.keep_selection import KeepSelectionInvalid
 from src.nextgen.acquisition.media import MediaInvalid
 from src.nextgen.services.base import service_facts
+from src.nextgen.checks import here
 
 
 async def execute_keep(context, secrets, *, service_factory, journals=None, shoko=False):
@@ -31,7 +32,7 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
         factories = (None,) if journals is None else await blocking(journals, actions, target)
         if (not isinstance(factories, tuple) or not 1 <= len(factories) <= 32
                 or (journals is not None and any(not callable(factory) for factory in factories))):
-            raise KeepReview(failed_check='src/nextgen/jobs/keep_execution.py:33 execute JOURNALS_INVALID')
+            raise KeepReview(failed_check=here('JOURNALS_INVALID'))
         for factory in factories:
             options = {} if factory is None else {'journal_factory': factory}
             service = service_factory(context.configuration, secrets, **options)

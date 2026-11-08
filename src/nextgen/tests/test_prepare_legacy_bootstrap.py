@@ -3,6 +3,8 @@ import logging
 import asyncio
 from types import SimpleNamespace
 import unittest
+
+from src.nextgen.messages import DEFAULT_CATALOG
 from unittest.mock import Mock, patch
 
 from src.nextgen.acquisition.metainfo_source import MetadataSourceConfigurationError
@@ -126,8 +128,8 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((outcome.kind,outcome.reason_code),('review',reason))
                 journal.authorize.assert_not_called()
                 # Which call failed is recorded as line numbers only, never secrets.
-                self.assertIn('error=',logs.output[0])
-                self.assertIn('reason_code='+reason,logs.output[0])
+                self.assertIn(' · error: ',logs.output[0])
+                self.assertIn(DEFAULT_CATALOG.reason(reason)['message'].rstrip('.'),logs.output[0])
                 self.assertNotIn('SID',logs.output[0])
 
     async def test_metadata_failure_logs_its_location_without_resubmitting(self):
@@ -143,8 +145,8 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
              self.assertLogs('anime-discovery.test.bootstrap','WARNING') as logs:
             outcome=await cb(self.source,self._config())
         self.assertEqual((outcome.kind,outcome.reason_code),('fail',MetadataInvalid.reason_code))
-        self.assertIn('error=',logs.output[0])
-        self.assertIn('reason_code='+MetadataInvalid.reason_code,logs.output[0])
+        self.assertIn(' · error: ',logs.output[0])
+        self.assertIn(DEFAULT_CATALOG.reason(MetadataInvalid.reason_code)['message'].rstrip('.'),logs.output[0])
         probe.add_legacy_magnet.assert_not_called()
 
     async def test_existing_torrent_reports_duplicate_without_another_add(self):
