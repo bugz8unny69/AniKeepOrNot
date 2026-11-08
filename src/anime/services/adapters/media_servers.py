@@ -10,6 +10,9 @@ class JellyfinAdapter(KeyedServiceAdapter):
     key_getter = 'jellyfin_api_key'
     key_header = 'X-Emby-Token'
     version_keys = ('Version',)
+    # /System/Info can include long installation histories; the authenticated
+    # response from Jellyfin may legitimately exceed the shared 64 KiB cap.
+    response_limit = 512 * 1024
     reasons = {}  # SERVICE_* codes naming 'jellyfin' are handled by the base class.
 
     def classify(self, exc):

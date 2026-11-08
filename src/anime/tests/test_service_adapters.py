@@ -177,6 +177,55 @@ class OptionalAdapterTests(unittest.TestCase):
         url, headers, _ = transport.requests[0]
         self.assertEqual((url, headers['X-emby-token']), ('http://jf:8096/System/Info', 'k' * 32))
 
+    def test_jellyfin_large_authenticated_status_response(self):
+        # A live /System/Info response can be ~215 KiB (e.g. 214,913 bytes).
+        payload = {'Version': '12.2.0', 'CompletedInstallations': ''}
+        baseline = len(json.dumps(payload).encode('utf-8'))
+        payload['CompletedInstallations'] = 'x' * (214913 - baseline)
+        transport = Transport(body=payload)
+        self.assertEqual(len(transport.body), 214913)
+        self.assertGreater(len(transport.body), 65536)
+        result = JellyfinAdapter().probe(
+            Config(jellyfin__base_url='http://jf:8096'), Secrets(), transport=transport)
+        self.assertEqual((result.status, result.detail), (UP, 'version 12.2.0'))
+        self.assertEqual(transport.requests[0][1]['X-emby-token'], 'k' * 32)
+
+    def test_jellyfin_status_response_stays_bounded_and_validated(self):
+        config = Config(jellyfin__base_url='http://jf:8096')
+        limit = JellyfinAdapter.response_limit
+        self.assertEqual(limit, 512 * 1024)
+
+        exact = Transport(body={'Version': '12.2.0', 'padding': ''})
+        exact_baseline = len(exact.body)
+        exact.body = json.dumps({
+            'Version': '12.2.0', 'padding': 'x' * (limit - exact_baseline)
+        }).encode()
+        self.assertEqual(len(exact.body), limit)
+        self.assertEqual(JellyfinAdapter().probe(config, Secrets(), transport=exact).status, UP)
+
+        excessive = Transport(body={'Version': '12.2.0', 'padding': 'x' * limit})
+        too_large = JellyfinAdapter().probe(config, Secrets(), transport=excessive)
+        self.assertEqual(too_large.status, DOWN)
+        self.assertIn('status response too large', too_large.detail)
+
+        malformed = Transport()
+        malformed.body = b'{"Version":'
+        invalid = JellyfinAdapter().probe(config, Secrets(), transport=malformed)
+        self.assertEqual(invalid.status, DOWN)
+        self.assertIn('status response was not JSON', invalid.detail)
+
+        rejected = JellyfinAdapter().probe(config, Secrets(), transport=Transport(code=401))
+        self.assertEqual(rejected.status, AUTH_FAILED)
+
+    def test_other_services_retain_64_kib_limit(self):
+        self.assertEqual(ShokoAdapter.response_limit, 65536)
+        self.assertEqual(ProwlarrAdapter.response_limit, 65536)
+        oversized = Transport(body={'Version': '5.0.0', 'padding': 'x' * 65536})
+        result = ShokoAdapter().probe(
+            Config(shoko__base_url='http://shoko:8111'), Secrets(), transport=oversized)
+        self.assertEqual(result.status, DOWN)
+        self.assertIn('status response too large', result.detail)
+
     def test_shoko_auth_failure_and_invalid_address(self):
         rejected = ShokoAdapter().probe(Config(shoko__base_url='http://shoko:8111'), Secrets(),
                                         transport=Transport(code=403))

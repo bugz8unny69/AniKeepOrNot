@@ -80,6 +80,7 @@ class KeyedServiceAdapter(ServiceAdapter):
     version_keys = ()
     supported_major = None   # e.g. '4' for Sonarr v4; None accepts any version.
     off_detail = ''
+    response_limit = 65536  # Per-adapter bounded body; shared default remains 64 KiB.
 
     def probe(self, configuration, secrets, *, now_ms=0, transport=None):
         if not configuration.value(f'{self.name}.base_url'):
@@ -93,7 +94,7 @@ class KeyedServiceAdapter(ServiceAdapter):
             return problem
         timeout = configuration.value(f'{self.name}.timeout_seconds')
         status, detail, data = get_status(url + self.status_path, {self.key_header: key}, timeout,
-                                          transport=transport)
+                                          transport=transport, limit=self.response_limit)
         if status == AUTH_FAILED:
             return self.result(AUTH_FAILED, f'{detail}; check the {self.label} API key', now_ms=now_ms)
         if status != UP:
