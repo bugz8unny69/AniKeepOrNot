@@ -47,7 +47,7 @@ def _persist(db,claim,value):
         if row!=('COMPLETE',claim.job_id):raise TransferConflict()
         rows=db.execute(
             'SELECT t.file_index FROM batch_torrent_unlocks u '
-            'JOIN batch_trial_files t USING(plan_id) '
+            'JOIN batch_user_evaluation_files t USING(plan_id) '
             'JOIN batch_probe_media m USING(plan_id) '
             'WHERE m.verification_job_id=? ORDER BY t.file_index',
             (verification,)).fetchall()

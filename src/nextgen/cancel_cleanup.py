@@ -29,7 +29,7 @@ def owned_torrents(db, operation_id):
     rows = []
     rows += db.execute(
         "SELECT info_hash,marker,base_url,save_path,category,timeout_seconds "
-        f"FROM sonarr_magnet_intents WHERE job_id IN ({members}) "
+        f"FROM magnet_intents WHERE job_id IN ({members}) "
         "AND state NOT IN ('EXTERNAL','RELEASED')", (operation_id,)).fetchall()
     rows += db.execute(
         "SELECT info_hash,ownership_marker,base_url,save_path,category,timeout_seconds "

@@ -16,7 +16,7 @@ from src.nextgen.staging import Publisher, StagingReview, StagingUnavailable, St
 from src.nextgen.storage.staging import Journal, persist
 from src.nextgen.episode_reservations import ReservationConflict
 
-KIND='STAGE_TRIAL_MEDIA'
+KIND='STAGE_USER_EVALUATION_MEDIA'
 DEFINITION=HandlerDefinition(KIND,'Copy verified video into staging with episode metadata')
 REVIEW=(StagingReview,MediaInvalid,AcquisitionConflict,MetadataInvalid,SourceMissing,
         SizeEvidenceMissing,DownloadConfigurationError,ClientInvalid,TransferConflict,CancellationError,

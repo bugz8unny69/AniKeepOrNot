@@ -9,7 +9,7 @@ is launched: bounded blocking requests use the Worker's existing drained executo
 while waiting returns a deferred job so other work can proceed.
 
 Trusted metadata composition now follows:
-IDENTIFY_ANIME → VERIFY_RELEASE → EVALUATE_TRIAL → RESERVE_EPISODE →
+IDENTIFY_ANIME → VERIFY_RELEASE → SELECT_USER_EVALUATION → RESERVE_EPISODE →
 PREPARE_ACQUISITION → SUBMIT_TORRENT → DOWNLOAD_TORRENT.
 Without the explicitly supplied trusted metadata reader it still ends at
 reservation. A real metadata retrieval adapter is still future work.

@@ -17,7 +17,7 @@ def operation(db,job_id):
 def unfinished_resources(db,operation_id):
     return (db.execute('SELECT 1 FROM acquisition_plans p JOIN job_operation_members m ON m.job_id=p.job_id '
                        'WHERE m.operation_id=? LIMIT 1',(operation_id,)).fetchone() is not None
-            or db.execute('SELECT 1 FROM sonarr_magnet_intents i JOIN job_operation_members m '
+            or db.execute('SELECT 1 FROM magnet_intents i JOIN job_operation_members m '
                           "ON m.job_id=i.job_id WHERE m.operation_id=? AND i.state<>'RELEASED' LIMIT 1",(operation_id,)).fetchone() is not None
             or db.execute('SELECT 1 FROM batch_metadata_admissions i JOIN job_operation_members m '
                           'ON m.job_id=i.verification_job_id WHERE m.operation_id=? '
@@ -64,7 +64,7 @@ def mark_staged(db,claim):
     Call only after verified durable publication; not a public management action.
     Partial staging/refresh failures must not call this. No file proof is invented.
     """
-    if not db.in_transaction or claim.kind not in ('STAGE_TRIAL_MEDIA','STAGE_BATCH_EPISODE'):raise CancellationError('TRANSACTION_OR_KIND_INVALID')
+    if not db.in_transaction or claim.kind not in ('STAGE_USER_EVALUATION_MEDIA','STAGE_BATCH_EPISODE'):raise CancellationError('TRANSACTION_OR_KIND_INVALID')
     row=db.execute('SELECT state,lease_token,attempt_count,lease_expires_at_ms FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()
     import time
     now=time.time_ns()//1000000
@@ -77,7 +77,7 @@ def mark_staged(db,claim):
             (claim.job_id,)).fetchone()
         if plan is None:raise CancellationError('PLAN_NOT_FOUND')
         selected=db.execute(
-            'SELECT count(*) FROM batch_trial_files WHERE plan_id=?',plan).fetchone()[0]
+            'SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?',plan).fetchone()[0]
         published=db.execute(
             "SELECT count(*) FROM batch_staging_publications "
             "WHERE plan_id=? AND state='PUBLISHED'",plan).fetchone()[0]

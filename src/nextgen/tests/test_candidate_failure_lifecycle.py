@@ -28,17 +28,17 @@ class CandidateFailureLifecycleTests(unittest.IsolatedAsyncioTestCase):
         db = sqlite3.connect(self.db_path)
         initialize(db)
         raw_event = json.dumps({"torrent_infohash": FIRST}).encode('utf-8')
-        db.execute("INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES(1,'sonarr-discovery',?,1)", (raw_event,))
+        db.execute("INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES(1,'release-discovery',?,1)", (raw_event,))
         db.executescript(f"""
             INSERT INTO identified_anime VALUES(50,100,'Test Anime');
             INSERT INTO identity_results VALUES(1,1,50,2,'{{"anime":{{"anidb_id":50,"tvdb_series_id":100}}}}',1);
-            INSERT INTO trial_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,
+            INSERT INTO user_evaluation_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,
               anchor_verification_id,anchor_episode,backfill_count,following_count,
               configuration_revision,created_at_ms) VALUES(1,50,100,1,1,1,6,3,1,0);
-            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,
+            INSERT INTO episode_release_selections(plan_id,anidb_episode_number,tvdb_season,
               tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
               VALUES(1,2,1,2,9002,'{FIRST}',1);
-            INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash,state)
+            INSERT INTO episode_release_candidates(plan_id,anidb_episode_number,rank,info_hash,state)
               VALUES(1,2,1,'{FIRST}','READY'),
                     (1,2,2,'{SECOND}','READY');
         """)
@@ -86,7 +86,7 @@ class CandidateFailureLifecycleTests(unittest.IsolatedAsyncioTestCase):
         queue = JobQueue(str(self.db_path), policy=Policy(lease_ms=5000))
         with queue.connection() as conn, transaction(conn):
             # Create discover backfill parent with future available_at_ms so prepare is claimed first
-            parent_id = enqueue_job(conn, component='worker', kind='DISCOVER_SONARR_BACKFILL',
+            parent_id = enqueue_job(conn, component='worker', kind='DISCOVER_EPISODE_RELEASES',
                                     payload={'plan_id': 1}, available_at_ms=9999999, event_id=1)
             # Create verify release job (which starts an operation)
             verify_id = enqueue_job(conn, component='worker', kind='VERIFY_RELEASE',
@@ -119,7 +119,7 @@ class CandidateFailureLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             # Candidate is STILL ACTIVE during cleanup (not yet FAILED!)
             self.assertEqual(
-                db.execute("SELECT rank,state,reason_code FROM sonarr_episode_candidates WHERE rank=1").fetchone(),
+                db.execute("SELECT rank,state,reason_code FROM episode_release_candidates WHERE rank=1").fetchone(),
                 (1, 'ACTIVE', None)
             )
 
@@ -146,15 +146,15 @@ class CandidateFailureLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 schedule_after_cleanup(db, op_id)
 
             # Candidate 1 is now marked FAILED with exact failure reason!
-            cand1 = db.execute("SELECT rank,state,reason_code FROM sonarr_episode_candidates WHERE rank=1").fetchone()
+            cand1 = db.execute("SELECT rank,state,reason_code FROM episode_release_candidates WHERE rank=1").fetchone()
             self.assertEqual(cand1, (1, 'FAILED', 'ACQUISITION_SIZE_LIMIT'))
 
             # Candidate 2 is ready and next fallback discovery job is scheduled
-            cand2 = db.execute("SELECT rank,state,reason_code FROM sonarr_episode_candidates WHERE rank=2").fetchone()
+            cand2 = db.execute("SELECT rank,state,reason_code FROM episode_release_candidates WHERE rank=2").fetchone()
             self.assertEqual(cand2, (2, 'READY', None))
 
             fallback_job = db.execute(
-                "SELECT kind,payload_json FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' AND job_id != ?",
+                "SELECT kind,payload_json FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES' AND job_id != ?",
                 (parent_id,)
             ).fetchone()
             self.assertIsNotNone(fallback_job)
@@ -164,7 +164,7 @@ class CandidateFailureLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with self.connect() as db:
             with db:
                 db.execute("BEGIN IMMEDIATE")
-                parent_id = enqueue_job(db, component='worker', kind='DISCOVER_SONARR_BACKFILL',
+                parent_id = enqueue_job(db, component='worker', kind='DISCOVER_EPISODE_RELEASES',
                                         payload={'plan_id': 1}, available_at_ms=0, event_id=1)
                 job_id = enqueue_job(db, component='worker', kind='PREPARE_ACQUISITION',
                                      payload={'info_hash': FIRST}, available_at_ms=0, event_id=1,
@@ -240,7 +240,7 @@ class CandidateFailureLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state, 'NEEDS_REVIEW')
 
             # Progression remains halted: candidate 2 is still READY (not activated)
-            cand2 = db.execute("SELECT rank,state FROM sonarr_episode_candidates WHERE rank=2").fetchone()
+            cand2 = db.execute("SELECT rank,state FROM episode_release_candidates WHERE rank=2").fetchone()
             self.assertEqual(cand2, (2, 'READY'))
 
 

@@ -87,7 +87,7 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
                            "anidb_episode_number,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms) "
                            "VALUES(?,?,123,?,'DECLARED_SINGLE_EPISODE',?,?,456,?,?,?,1)",
                            (release_job,identity,'a'*64,anidb or episode,eid,season,episode,eid+100000))
-                job=enqueue_job(db,kind='EVALUATE_TRIAL',payload={'verification_job_id':release_job},
+                job=enqueue_job(db,kind='SELECT_USER_EVALUATION',payload={'verification_job_id':release_job},
                                 component='worker',event_id=event,created_by_job_id=release_job,available_at_ms=0)
             return event,release_job,job
         finally:db.close()
@@ -107,12 +107,12 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.source(1)
         await worker.attempt()
-        self.assertEqual(self.rows('SELECT anchor_episode,backfill_count,following_count FROM trial_plans'),[(10,6,1)])
+        self.assertEqual(self.rows('SELECT anchor_episode,backfill_count,following_count FROM user_evaluation_plans'),[(10,6,1)])
         # AniDB window: backfill 4-9 and the trigger 10; E01 is outside it.
-        self.assertEqual(self.rows('SELECT selected,reason_code FROM trial_evaluations ORDER BY evaluation_id'),
+        self.assertEqual(self.rows('SELECT selected,reason_code FROM user_evaluation_checks ORDER BY evaluation_id'),
                          [(1,'TRIAL_SELECTED'),(0,'TRIAL_OUTSIDE_WINDOW'),(0,'TRIAL_OUTSIDE_WINDOW')])
         self.assertIn(('TRIAL_EVALUATED','TRIAL_SELECTED'),[(row.event_code,row.reason_code) for row in audits])
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','EVALUATE_TRIAL')"),[(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','SELECT_USER_EVALUATION')"),[(0,)])
 
     async def test_live_changes_apply_only_to_new_plans_and_later_seasons_reuse_the_plan(self):
         self.store.update({'trial':{'backfill_count':0,'following_count':2}},expected_revision=1)
@@ -127,9 +127,9 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         self.source(20,season=2)
         await worker.attempt()
         # One frozen plan per AniDB anime, even for a delivery in another TVDB season.
-        self.assertEqual(self.rows('SELECT tvdb_season,anchor_episode,following_count,configuration_revision FROM trial_plans ORDER BY plan_id'),
+        self.assertEqual(self.rows('SELECT tvdb_season,anchor_episode,following_count,configuration_revision FROM user_evaluation_plans ORDER BY plan_id'),
                          [(1,10,2,2)])
-        self.assertEqual(self.rows('SELECT selected FROM trial_evaluations ORDER BY evaluation_id'),[(1,),(1,),(0,),(0,)])
+        self.assertEqual(self.rows('SELECT selected FROM user_evaluation_checks ORDER BY evaluation_id'),[(1,),(1,),(0,),(0,)])
 
     async def test_anidb_anchor_across_a_tvdb_season_boundary(self):
         # AniDB E1000 verified as TVDB S02E01: the window stays at AniDB 994-1000.
@@ -140,8 +140,8 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         self.source(3,season=2,anidb=3)
         await worker.attempt()
-        self.assertEqual(self.rows('SELECT tvdb_season,anchor_episode FROM trial_plans'),[(2,1000)])
-        self.assertEqual(self.rows('SELECT selected FROM trial_evaluations ORDER BY evaluation_id'),[(1,),(1,),(0,)])
+        self.assertEqual(self.rows('SELECT tvdb_season,anchor_episode FROM user_evaluation_plans'),[(2,1000)])
+        self.assertEqual(self.rows('SELECT selected FROM user_evaluation_checks ORDER BY evaluation_id'),[(1,),(1,),(0,)])
 
     async def test_zero_counts_rejected_before_saving_or_creating_work(self):
         before=self.store.read()
@@ -149,8 +149,8 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
             self.store.update({'trial':{'backfill_count':0,'following_count':0}},expected_revision=1)
         self.assertEqual(error.exception.reason_code,'TRIAL_COUNTS_INVALID')
         self.assertEqual(self.store.read(),before)
-        self.assertEqual(self.rows('SELECT count(*) FROM trial_plans'),[(0,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM trial_evaluations'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_plans'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_checks'),[(0,)])
 
     async def test_concurrent_evaluations_create_one_plan_and_one_anchor(self):
         self.store.update({'trial':{'backfill_count':0,'following_count':1}},expected_revision=1)
@@ -158,17 +158,17 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         self.source(20)
         worker=self.worker()
         await asyncio.gather(worker.attempt(),worker.attempt())
-        plans=self.rows('SELECT plan_id,anchor_episode FROM trial_plans')
+        plans=self.rows('SELECT plan_id,anchor_episode FROM user_evaluation_plans')
         self.assertEqual(len(plans),1)
         self.assertIn(plans[0][1],(10,20))
-        self.assertEqual(self.rows('SELECT count(*),sum(selected),count(DISTINCT plan_id) FROM trial_evaluations'),[(2,1,1)])
+        self.assertEqual(self.rows('SELECT count(*),sum(selected),count(DISTINCT plan_id) FROM user_evaluation_checks'),[(2,1,1)])
 
     async def test_failed_completion_rolls_back_plan_decision_and_user_evaluation_marker(self):
         self.source(10)
         spec=replace(registration(),route=lambda value:(Successor.create('NOT_ALLOWED',{}),))
         worker=self.worker(spec)
         with self.assertRaises(ValueError):await worker.attempt()
-        for table in ('trial_plans','trial_evaluations'):
+        for table in ('user_evaluation_plans','user_evaluation_checks'):
             self.assertEqual(self.rows('SELECT count(*) FROM '+table),[(0,)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='TRIAL_EVALUATED'"),[(0,)])
 
@@ -177,13 +177,13 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         worker=self.worker()
         worker.queue.clock=lambda:1000
         claim,_=worker.queue.claim()
-        spec=worker.registry.entries['EVALUATE_TRIAL']
+        spec=worker.registry.entries['SELECT_USER_EVALUATION']
         worker.queue.start(claim,spec,'a'*32,worker.registry)
         value=UserEvaluationProposal(load_user_evaluation_source(self.database,release_job,event),Window(),1)
         worker.queue.clock=lambda:31000
         with self.assertRaises(LeaseLost):
             worker.queue.finish(claim,Outcome(value=value),spec=spec,invocation='a'*32,registry=worker.registry)
-        self.assertEqual(self.rows('SELECT count(*) FROM trial_plans'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_plans'),[(0,)])
 
 
 class AniDBWindowTests(unittest.TestCase):

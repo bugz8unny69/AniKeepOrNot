@@ -300,6 +300,13 @@
         "src/nextgen/storage/batch_candidates.py"
       ],
       "why": "Connections have passed the schema-version check, so the batch tables exist; a probe only hides a broken database."
+    },
+    {
+      "id": "RF-006a",
+      "rule": "only_in",
+      "pattern": "(?<![A-Za-z0-9_])(idx_trial_evaluations_plan|idx_batch_trial_by_episode|sonarr_episode_candidates|sonarr_episode_selections|DISCOVER_SONARR_BACKFILL|sonarr_backfill_results|sonarr_magnet_intents|STAGE_TRIAL_MEDIA|trial_evaluations|batch_trial_plans|batch_trial_files|sonarr\\-discovery|trial_plan_ready|EVALUATE_TRIAL|trial_plan_id|trial_plans)(?![A-Za-z0-9_])",
+      "files": [],
+      "why": "Migration 063 renamed these stored names (tables, column, indexes, job kinds, event source, API field); see storage/MIGRATIONS.md v62 -> v63. Only the historical migration files under storage/sql keep them."
     }
   ]
 }

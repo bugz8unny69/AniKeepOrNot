@@ -88,10 +88,10 @@ def _payload(job):
 def _episode(db, job, have):
     """Episode identity this RESERVE_EPISODE job matches on, from its evaluation."""
     evaluation = _payload(job).get('evaluation_job_id')
-    if type(evaluation) is not int or not {'trial_evaluations', 'release_verifications'} <= have:
+    if type(evaluation) is not int or not {'user_evaluation_checks', 'release_verifications'} <= have:
         return None
     return _one(db, 'SELECT t.selected,r.anidb_id,r.anidb_episode_id,r.tvdb_series_id,r.tvdb_season,'
-                    'r.tvdb_episode,r.tvdb_episode_id FROM trial_evaluations t '
+                    'r.tvdb_episode,r.tvdb_episode_id FROM user_evaluation_checks t '
                     'JOIN release_verifications r ON r.verification_id=t.verification_id WHERE t.job_id=?',
                 (evaluation,))
 

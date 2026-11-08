@@ -66,7 +66,7 @@ download client, provider, migration, service restart or deployment was used.
 
 ## Staging follow-up
 
-The default composition now supplies STAGE_TRIAL_MEDIA as an optional successor.
+The default composition now supplies STAGE_USER_EVALUATION_MEDIA as an optional successor.
 The worker commits verification evidence, DONE and the successor together. See
 [STAGE_USER_EVALUATION_MEDIA.md](STAGE_USER_EVALUATION_MEDIA.md). Custom registrations can omit it;
 verification alone still never marks STAGED or authorizes Keep. Earlier scope

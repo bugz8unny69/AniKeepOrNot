@@ -64,6 +64,7 @@ class Step2StagingMigrationTests(unittest.TestCase):
         self.db.executescript((SQL_DIR / '060_batch_candidate_operations.sql').read_text())
         self.db.executescript((SQL_DIR / '061_batch_candidate_stops.sql').read_text())
         self.db.executescript((SQL_DIR / '062_service_status.sql').read_text())
+        self.db.executescript((SQL_DIR / '063_renamed_stored_names.sql').read_text())
         return self.db
 
     def test_fresh_schema_matches_upgrade_to_v57(self):
@@ -92,7 +93,7 @@ class Step2StagingMigrationTests(unittest.TestCase):
             INSERT INTO episode_reservations(reservation_id,owner_job_id,evaluation_job_id,verification_id,
               plan_id,anidb_id,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,
               reserved_at_ms) VALUES(2,5,2,2,1,50,5002,100,NULL,NULL,NULL,2);
-            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,
+            INSERT INTO episode_release_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,
               tvdb_episode_id,info_hash,selected_at_ms) VALUES(1,2,NULL,NULL,NULL,'{e40}',2);
         """)
         upgraded.commit()

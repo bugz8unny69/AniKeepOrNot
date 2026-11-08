@@ -21,7 +21,7 @@ def dispatch(db, claim, plan, choice):
     checks the release title against the recognized episode before reservation.
     """
     if (not db.in_transaction or type(choice) is not CandidateSelection
-            or claim.event_id is None or claim.kind != 'DISCOVER_SONARR_BACKFILL'
+            or claim.event_id is None or claim.kind != 'DISCOVER_EPISODE_RELEASES'
             or choice.identity.tvdb_series_id != plan.tvdb_series_id):
         raise SelectionConflict()
     return _dispatch_verified(db, claim, plan, choice.identity,
@@ -33,7 +33,7 @@ def dispatch_cached(db, claim, plan, identity, source):
     """Replay a verified historical source as a NEW internal delivery."""
     from src.nextgen.storage.cached_release_retry import CachedTorrent
     if (type(source) is not CachedTorrent or not db.in_transaction
-            or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or claim.kind!='DISCOVER_EPISODE_RELEASES' or claim.event_id is None
             or identity.tvdb_series_id!=plan.tvdb_series_id):
         raise SelectionConflict()
     return _dispatch_verified(db,claim,plan,identity,source.declared_title,
@@ -57,7 +57,7 @@ def _dispatch_verified(db,claim,plan,identity,declared_title,title,digest,source
         # Copy only the already verified series identity from the frozen anchor;
         # never its TVDB season. VERIFY_RELEASE still checks this episode.
         row=db.execute(
-            "SELECT i.series_json, NULL FROM trial_plans p "
+            "SELECT i.series_json, NULL FROM user_evaluation_plans p "
             "JOIN release_verifications r ON r.verification_id=p.anchor_verification_id "
             "JOIN identity_results i ON i.result_id=r.identity_result_id "
             "WHERE p.plan_id=? AND p.anidb_id=r.anidb_id "
@@ -95,7 +95,7 @@ def _dispatch_verified(db,claim,plan,identity,declared_title,title,digest,source
     now=time.time_ns()//1_000_000
     event_id=db.execute(
         "INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)",
-        ('sonarr-discovery',body,now)).lastrowid
+        ('release-discovery',body,now)).lastrowid
     receipt=append_event_history(db,event_id=event_id,event_code='ACCEPTED',
                                  component='worker',occurred_at_ms=now)
     # Publish already verified anime identity for the NEW, transparently

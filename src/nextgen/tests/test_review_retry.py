@@ -23,7 +23,7 @@ class ReviewRetryTests(unittest.TestCase):
         db = connect(self.database)
         initialize(db)
         self.event, self.job = accept_event_and_job(db, 'test',
-            b'{"release_name":"Test S01E01"}', kind='STAGE_TRIAL_MEDIA',
+            b'{"release_name":"Test S01E01"}', kind='STAGE_USER_EVALUATION_MEDIA',
             payload={'verification_job_id':123})
         with transaction(db):
             db.execute("UPDATE jobs SET state='NEEDS_REVIEW',attempt_count=4,"
@@ -116,7 +116,7 @@ class ReviewRetryTests(unittest.TestCase):
         with self.assertRaises(RetryNotAllowed):self.retry()
 
     def test_requeues_single_and_batch_failed_steps_without_new_jobs(self):
-        for kind in ('SUBMIT_TORRENT','DOWNLOAD_TORRENT','STAGE_TRIAL_MEDIA',
+        for kind in ('SUBMIT_TORRENT','DOWNLOAD_TORRENT','STAGE_USER_EVALUATION_MEDIA',
                      'SUBMIT_BATCH','TRANSFER_BATCH','STAGE_BATCH_EPISODE'):
             with self.subTest(kind=kind):
                 db=connect(self.database)
@@ -143,7 +143,7 @@ class ReviewRetryTests(unittest.TestCase):
 
     def test_acquisition_only_allowlist_covers_batch_and_single_steps(self):
         for kind in ('IDENTIFY_ANIME','VERIFY_RELEASE','SUBMIT_TORRENT',
-                     'DOWNLOAD_TORRENT','STAGE_TRIAL_MEDIA','SUBMIT_BATCH',
+                     'DOWNLOAD_TORRENT','STAGE_USER_EVALUATION_MEDIA','SUBMIT_BATCH',
                      'TRANSFER_BATCH','VERIFY_BATCH_EPISODE','STAGE_BATCH_EPISODE'):
             self.assertIn(kind,RETRY_KINDS)
         for kind in ('KEEP_MEDIA','KEEP_BATCH','REJECT_SERIES',

@@ -1,8 +1,8 @@
 """Frozen backfill/continue plan snapshots, de-duplicated scheduling, and observations.
 
 Never grants an episode reservation, media ownership, or torrent send permit.
-Table and job names keep their historical "sonarr" prefix; the search source
-is Prowlarr (acquisition.prowlarr_search).
+Episodes are searched with Prowlarr (acquisition.prowlarr_search); results are
+in episode_discovery_results and jobs of kind DISCOVER_EPISODE_RELEASES.
 """
 from dataclasses import dataclass
 import sqlite3
@@ -47,7 +47,7 @@ def window(anchor, backfill, following, include_anchor=False):
 def anchor_searched(db, plan_id):
     """The plan's anchor delivery was skipped for audio, so search its episode."""
     return db.execute(
-        "SELECT 1 FROM trial_plans p JOIN trial_evaluations t "
+        "SELECT 1 FROM user_evaluation_plans p JOIN user_evaluation_checks t "
         "ON t.verification_id=p.anchor_verification_id AND t.plan_id=p.plan_id "
         "JOIN job_history h ON h.job_id=t.job_id "
         "WHERE p.plan_id=? AND h.event_code=? LIMIT 1",
@@ -58,7 +58,7 @@ def plan_window(db, plan_id, anchor, backfill, following):
     computed = window(anchor, backfill, following, anchor_searched(db, plan_id))
     try:
         stored = tuple(r[0] for r in db.execute(
-            "SELECT anidb_episode_number FROM sonarr_backfill_results "
+            "SELECT anidb_episode_number FROM episode_discovery_results "
             "WHERE plan_id=? ORDER BY anidb_episode_number", (plan_id,)).fetchall())
     except (sqlite3.OperationalError, sqlite3.DatabaseError):
         stored = ()
@@ -96,7 +96,7 @@ def _plan(db, plan_id, start, retry_episode=None):
     row = db.execute(
         "SELECT p.anidb_id,p.tvdb_series_id,p.backfill_count,"
         "p.anchor_episode,p.following_count,v.anidb_id,v.tvdb_series_id,"
-        "v.anidb_episode_number FROM trial_plans p JOIN release_verifications v ON "
+        "v.anidb_episode_number FROM user_evaluation_plans p JOIN release_verifications v ON "
         "v.verification_id=p.anchor_verification_id WHERE p.plan_id=? "
         "AND p.tvdb_order='official' AND v.tvdb_order='official'", (plan_id,)
     ).fetchone()
@@ -174,7 +174,7 @@ def schedule_first(db, claim, source, *, kind):
     if not db.in_transaction: raise ValueError('worker transaction required')
     row = db.execute(
         "SELECT p.plan_id,p.backfill_count,p.anchor_episode,p.following_count "
-        "FROM trial_plans p WHERE p.anidb_id=? AND p.tvdb_series_id=? "
+        "FROM user_evaluation_plans p WHERE p.anidb_id=? AND p.tvdb_series_id=? "
         "AND p.tvdb_order='official'",
         (source.anidb_id,source.tvdb_series_id)
     ).fetchone()
@@ -227,7 +227,7 @@ def persist_fallback_missing(db,claim,value):
     """Skip one withdrawn release and schedule the same existing worker."""
     from src.nextgen.storage.release_candidates import (
         activate_candidate,fail_candidate,next_candidate,CandidateConflict)
-    if (not db.in_transaction or claim.kind!='DISCOVER_SONARR_BACKFILL'
+    if (not db.in_transaction or claim.kind!='DISCOVER_EPISODE_RELEASES'
             or claim.event_id is None or type(value) is not FallbackMissing):
         raise BackfillConflict()
     plan,episode,target=value.plan,value.episode,value.target
@@ -241,7 +241,7 @@ def persist_fallback_missing(db,claim,value):
     if _selected(db,plan.plan_id,episode)!=(target.identity,target.failed_hash):
         raise BackfillConflict()
     prior=db.execute(
-        "SELECT state FROM sonarr_episode_candidates WHERE plan_id=? "
+        "SELECT state FROM episode_release_candidates WHERE plan_id=? "
         "AND anidb_episode_number=? AND info_hash=?",
         (plan.plan_id,episode,target.failed_hash)).fetchone()
     pending=next_candidate(db,plan_id=plan.plan_id,episode=episode)
@@ -257,7 +257,7 @@ def persist_fallback_missing(db,claim,value):
     except CandidateConflict:raise BackfillConflict() from None
     following=next_candidate(db,plan_id=plan.plan_id,episode=episode)
     _,created=enqueue_job_with_receipt(
-        db,component='worker',kind='DISCOVER_SONARR_BACKFILL',
+        db,component='worker',kind='DISCOVER_EPISODE_RELEASES',
         event_id=claim.event_id,created_by_job_id=claim.job_id,
         payload={'plan_id':plan.plan_id,'start':plan.start,
                  ('fallback_episode' if following else 'exhausted_episode'):episode})
@@ -269,7 +269,7 @@ def _selected(db,plan_id,episode):
     from src.nextgen.episode_identity import VerifiedEpisode
     row=db.execute(
         "SELECT p.tvdb_series_id,s.tvdb_episode_id,s.tvdb_season,s.tvdb_episode,s.info_hash "
-        "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
+        "FROM user_evaluation_plans p JOIN episode_release_selections s USING(plan_id) "
         "WHERE p.plan_id=? AND s.anidb_episode_number=?",(plan_id,episode)).fetchone()
     return None if row is None else (VerifiedEpisode(*row[:4]),row[4])
 
@@ -288,7 +288,7 @@ def load_fallback(database,plan_id,episode):
         if selected is None:raise BackfillConflict()
         identity,digest=selected
         failed=db.execute(
-            "SELECT state FROM sonarr_episode_candidates WHERE plan_id=? "
+            "SELECT state FROM episode_release_candidates WHERE plan_id=? "
             "AND anidb_episode_number=? AND info_hash=?",
             (plan_id,episode,digest)).fetchone()
         pending=next_candidate(db,plan_id=plan_id,episode=episode)
@@ -308,7 +308,7 @@ def persist_fallback(db,claim,value):
     from src.nextgen.storage.release_dispatch import dispatch as dispatch_source
     from src.nextgen.storage.release_selection import SelectionConflict
     if (not db.in_transaction or type(value) is not FallbackCompletion
-            or claim.kind!='DISCOVER_SONARR_BACKFILL'
+            or claim.kind!='DISCOVER_EPISODE_RELEASES'
             or claim.event_id is None):
         raise BackfillConflict()
     plan,episode,target,choice=value.plan,value.episode,value.target,value.selection
@@ -330,15 +330,15 @@ def persist_fallback(db,claim,value):
                 plan.tvdb_series_id,plan.window_size,plan.numbers)):
         raise BackfillConflict()
     current=db.execute(
-        "SELECT s.info_hash,c.state FROM sonarr_episode_selections s "
-        "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+        "SELECT s.info_hash,c.state FROM episode_release_selections s "
+        "JOIN episode_release_candidates c ON c.plan_id=s.plan_id "
         "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
         "WHERE s.plan_id=? AND s.anidb_episode_number=? AND s.tvdb_episode_id=?",
         (plan.plan_id,episode,target.identity.tvdb_episode_id)).fetchone()
     if current!=(target.failed_hash,'FAILED'):
         raise BackfillConflict()
     if db.execute(
-        "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? "
+        "SELECT 1 FROM episode_release_candidates WHERE plan_id=? "
         "AND anidb_episode_number=? AND state='ACTIVE'",(plan.plan_id,episode)).fetchone():
         raise BackfillConflict()
     pending=next_candidate(db,plan_id=plan.plan_id,episode=episode)
@@ -353,7 +353,7 @@ def persist_fallback(db,claim,value):
              target.identity.tvdb_episode)).fetchone():
             raise BackfillConflict()
     updated=db.execute(
-        "UPDATE sonarr_episode_selections SET info_hash=?,selected_at_ms=? "
+        "UPDATE episode_release_selections SET info_hash=?,selected_at_ms=? "
         "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=?",
         (target.next_hash,integer(time.time_ns()//1_000_000),
          plan.plan_id,episode,target.failed_hash))
@@ -396,7 +396,7 @@ def persist_observations(db, claim, value, *, dispatch=False):
                    and (item.candidates or item.accepted)):
             raise BackfillConflict()
         previous = db.execute(
-            'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND anidb_episode_number=?',
+            'SELECT status FROM episode_discovery_results WHERE plan_id=? AND anidb_episode_number=?',
             (plan.plan_id,number)
         ).fetchone()
         if previous and (value.retry_episode != number or
@@ -431,7 +431,7 @@ def persist_observations(db, claim, value, *, dispatch=False):
             except (SelectionConflict,CandidateConflict):
                 raise BackfillConflict() from None
         db.execute(
-            "INSERT INTO sonarr_backfill_results("
+            "INSERT INTO episode_discovery_results("
             "plan_id,anidb_episode_number,job_id,sonarr_episode_id,tvdb_episode_id,status,"
             "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,?,?,?,?,?,?) "
             "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "
@@ -487,7 +487,7 @@ class CandidatesExhausted:
 def _audio_only(db, plan_id, episode):
     """Hashes tried for this episode when all candidates are failed."""
     rows = db.execute(
-        'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
+        'SELECT info_hash,state,reason_code FROM episode_release_candidates '
         'WHERE plan_id=? AND anidb_episode_number=?', (plan_id, episode)).fetchall()
     if not rows or any(state != 'FAILED' for _, state, _ in rows):
         return None
@@ -496,7 +496,7 @@ def _audio_only(db, plan_id, episode):
 
 def audio_exhausted(db, plan_id, episode):
     rows = db.execute(
-        'SELECT info_hash,state,reason_code FROM sonarr_episode_candidates '
+        'SELECT info_hash,state,reason_code FROM episode_release_candidates '
         'WHERE plan_id=? AND anidb_episode_number=?', (plan_id, episode)).fetchall()
     return bool(rows and all(state == 'FAILED' for _, state, _ in rows)
                 and any(reason == 'MEDIA_AUDIO_REQUIRED' for *_, reason in rows))
@@ -510,7 +510,7 @@ def load_tried_hashes(database, plan_id, numbers):
         db = _open(database, readonly=True, timeout_ms=5000)
         placeholders = ','.join('?' for _ in numbers)
         rows = db.execute(
-            f"SELECT anidb_episode_number, info_hash FROM sonarr_episode_candidates "
+            f"SELECT anidb_episode_number, info_hash FROM episode_release_candidates "
             f"WHERE plan_id=? AND anidb_episode_number IN ({placeholders})",
             (plan_id, *numbers)
         ).fetchall()
@@ -548,20 +548,20 @@ def load_dub_search(database, plan_id, episode):
 def persist_dub_found(db, claim, value):
     """Append new tagged releases after the tried ones and hand off to fallback."""
     if (not db.in_transaction or type(value) is not DubFound
-            or claim.kind != 'DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or claim.kind != 'DISCOVER_EPISODE_RELEASES' or claim.event_id is None
             or type(value.plan) is not BackfillBatch or value.episode not in value.plan.numbers
             or not value.hashes or len(set(value.hashes)) != len(value.hashes)):
         raise BackfillConflict()
     plan, episode = value.plan, value.episode
     if _audio_only(db, plan.plan_id, episode) != value.target.tried or set(value.hashes) & value.target.tried:
         raise BackfillConflict()
-    last = db.execute('SELECT max(rank) FROM sonarr_episode_candidates WHERE plan_id=? '
+    last = db.execute('SELECT max(rank) FROM episode_release_candidates WHERE plan_id=? '
                       'AND anidb_episode_number=?', (plan.plan_id, episode)).fetchone()[0]
     for rank, digest in enumerate(value.hashes, last + 1):
-        db.execute('INSERT INTO sonarr_episode_candidates(plan_id,anidb_episode_number,rank,info_hash) '
+        db.execute('INSERT INTO episode_release_candidates(plan_id,anidb_episode_number,rank,info_hash) '
                    'VALUES(?,?,?,?)', (plan.plan_id, episode, rank, digest))
     _, created = enqueue_job_with_receipt(
-        db, component='worker', kind='DISCOVER_SONARR_BACKFILL',
+        db, component='worker', kind='DISCOVER_EPISODE_RELEASES',
         event_id=claim.event_id, created_by_job_id=claim.job_id,
         payload={'plan_id': plan.plan_id, 'start': plan.start, 'fallback_episode': episode})
     return (created,)
@@ -570,13 +570,13 @@ def persist_dub_found(db, claim, value):
 def persist_dub_exhausted(db, claim, value):
     """Mark the episode as WAITING_FOR_DUB after candidate exhaustion."""
     if (not db.in_transaction or type(value) is not DubExhausted
-            or claim.kind != 'DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or claim.kind != 'DISCOVER_EPISODE_RELEASES' or claim.event_id is None
             or type(value.plan) is not BackfillBatch or value.episode not in value.plan.numbers):
         raise BackfillConflict()
     plan, episode = value.plan, value.episode
     now = int(time.time() * 1000)
     db.execute(
-        "INSERT INTO sonarr_backfill_results("
+        "INSERT INTO episode_discovery_results("
         "plan_id,anidb_episode_number,job_id,sonarr_episode_id,tvdb_episode_id,status,"
         "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,NULL,'WAITING_FOR_DUB',0,0,0,?) "
         "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "
@@ -589,13 +589,13 @@ def persist_dub_exhausted(db, claim, value):
 def persist_candidates_exhausted(db, claim, value):
     """Mark the episode as NO_RESULTS after candidate exhaustion."""
     if (not db.in_transaction or type(value) is not CandidatesExhausted
-            or claim.kind != 'DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or claim.kind != 'DISCOVER_EPISODE_RELEASES' or claim.event_id is None
             or type(value.plan) is not BackfillBatch or value.episode not in value.plan.numbers):
         raise BackfillConflict()
     plan, episode = value.plan, value.episode
     now = int(time.time() * 1000)
     db.execute(
-        "INSERT INTO sonarr_backfill_results("
+        "INSERT INTO episode_discovery_results("
         "plan_id,anidb_episode_number,job_id,sonarr_episode_id,tvdb_episode_id,status,"
         "candidates,approved,exact,observed_at_ms) VALUES(?,?,?,NULL,NULL,'NO_RESULTS',0,0,0,?) "
         "ON CONFLICT(plan_id,anidb_episode_number) DO UPDATE SET "

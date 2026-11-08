@@ -74,7 +74,7 @@ class KeepResolutionTests(unittest.TestCase):
               release_sha256,verification_scope,anidb_episode_number,anidb_episode_id,tvdb_series_id,
               tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms)
               VALUES({verification_id},{job_base + 10},{verification_id},{aid},'{d64}','DECLARED_SINGLE_EPISODE',{ep_num},{eid},{tid},NULL,NULL,NULL,1);
-            INSERT INTO trial_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
+            INSERT INTO user_evaluation_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
               backfill_count,following_count,configuration_revision,created_at_ms)
               VALUES({user_evaluation_plan_id},{aid},{tid},1,'official',{verification_id},{ep_num},6,3,1,1);
             INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
@@ -82,7 +82,7 @@ class KeepResolutionTests(unittest.TestCase):
             INSERT INTO episode_reservations(reservation_id,owner_job_id,evaluation_job_id,verification_id,
               plan_id,anidb_id,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,
               reserved_at_ms) VALUES({res_id},{job_base + 11},2,{verification_id},{user_evaluation_plan_id},{aid},{eid},{tid},NULL,NULL,NULL,1);
-            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
+            INSERT INTO episode_release_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
               VALUES({user_evaluation_plan_id},{ep_num},NULL,NULL,NULL,'{a40}',1);
             INSERT INTO acquisition_plans(plan_id,job_id,reservation_id,info_hash,info_sha256,manifest_json,
               submission_marker,state,configuration_revision,prepared_at_ms)
@@ -95,7 +95,7 @@ class KeepResolutionTests(unittest.TestCase):
               VALUES({acq_plan_id},{job_base + 13},{job_base + 12},'{f64}','{f64}','{{"path":"s/S01E01.mkv"}}',1);
             INSERT OR IGNORE INTO job_operations(operation_id,state,created_at_ms,updated_at_ms) VALUES({op_id},'STAGED',1,1);
             INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
-              VALUES({stage_job_id},1,'STAGE_TRIAL_MEDIA','{{}}','DONE',0,0,0);
+              VALUES({stage_job_id},1,'STAGE_USER_EVALUATION_MEDIA','{{}}','DONE',0,0,0);
             INSERT OR IGNORE INTO job_operation_members(job_id,operation_id) VALUES({stage_job_id},{op_id});
             INSERT INTO staging_publications(plan_id,job_id,verification_job_id,manifest_json,receipts_json,state,created_at_ms,published_at_ms)
               VALUES({acq_plan_id},{stage_job_id},{job_base + 13},'{{"entries":[{{"role":"media","path":"s/S01E01.mkv"}}],"root":"/staging"}}',
@@ -163,8 +163,8 @@ class KeepResolutionTests(unittest.TestCase):
         r = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_reservations WHERE reservation_id=1").fetchone()
         self.assertEqual(r, (1, 1, 9001))
 
-        # sonarr_episode_selections
-        s = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
+        # episode_release_selections
+        s = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=1").fetchone()
         self.assertEqual(s, (1, 1, 9001))
 
         # recognized_episodes
@@ -224,17 +224,17 @@ class KeepResolutionTests(unittest.TestCase):
               release_sha256,verification_scope,anidb_episode_number,anidb_episode_id,tvdb_series_id,
               tvdb_season,tvdb_episode,tvdb_episode_id,verified_at_ms)
               VALUES(3,30,2,60,'{d64}','DECLARED_SINGLE_EPISODE',1,6001,200,NULL,NULL,NULL,1);
-            INSERT INTO trial_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
+            INSERT INTO user_evaluation_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
               backfill_count,following_count,configuration_revision,created_at_ms)
               VALUES(2,60,200,1,'official',3,1,6,3,1,1);
-            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
+            INSERT INTO episode_release_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
               VALUES(2,1,NULL,NULL,NULL,'{a40}',1);
         """)
         self.db.commit()
 
         # Both plans have NULL tvdb_episode_id for ep_num=1
-        sel_a = self.db.execute("SELECT tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
-        sel_b = self.db.execute("SELECT tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=2").fetchone()
+        sel_a = self.db.execute("SELECT tvdb_episode_id FROM episode_release_selections WHERE plan_id=1").fetchone()
+        sel_b = self.db.execute("SELECT tvdb_episode_id FROM episode_release_selections WHERE plan_id=2").fetchone()
         self.assertIsNone(sel_a[0])
         self.assertIsNone(sel_b[0])
 
@@ -248,11 +248,11 @@ class KeepResolutionTests(unittest.TestCase):
         self.assertEqual(resolved, (9001, 1, 1))
 
         # Check: Anime A is updated to (1, 1, 9001)
-        sel_a_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
+        sel_a_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=1").fetchone()
         self.assertEqual(sel_a_after, (1, 1, 9001))
 
         # Check: Anime B is UNTOUCHED!
-        sel_b_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=2").fetchone()
+        sel_b_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=2").fetchone()
         self.assertEqual(sel_b_after, (None, None, None))
 
     def test_provider_outage_raises_keep_unavailable(self):
@@ -313,10 +313,10 @@ class KeepResolutionTests(unittest.TestCase):
         """High 2: Resolves exact plan associated with staged acquisition when anime has multiple plans."""
         self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001)
 
-        # Seed plan 2 for the same anime via batch_staging_publications and sonarr_episode_selections
+        # Seed plan 2 for the same anime via batch_staging_publications and episode_release_selections
         b40 = 'b' * 40
         self.db.execute(f"""
-            INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
+            INSERT INTO episode_release_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
             VALUES(2, 1, NULL, NULL, NULL, '{b40}', 1)
         """)
         self.db.execute("""
@@ -340,11 +340,11 @@ class KeepResolutionTests(unittest.TestCase):
         self.assertEqual(resolved, (9001, 1, 1))
 
         # Verify plan 1 is updated
-        sel_1 = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=1").fetchone()
+        sel_1 = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=1").fetchone()
         self.assertEqual(sel_1, (1, 1, 9001))
 
         # Verify plan 2 is UNTOUCHED
-        sel_2 = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=2").fetchone()
+        sel_2 = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=2").fetchone()
         self.assertEqual(sel_2, (None, None, None))
 
     def test_unresolved_plan_raises_keep_review_without_guessing(self):
@@ -395,12 +395,12 @@ class KeepResolutionTests(unittest.TestCase):
         """Instruction 1 & 3: Seed different numeric IDs for acquisition plans, trial plans, and batch plans.
         Include an unrelated anime whose trial plan ID equals another anime's acquisition plan ID.
         """
-        # Anime A (aid=50, tid=100): trial_plan_id=10, acq_plan_id=30, res_id=20, verification_id=1, stage_job_id=14, op_id=20
+        # Anime A (aid=50, tid=100): user_evaluation_plan_id=10, acq_plan_id=30, res_id=20, verification_id=1, stage_job_id=14, op_id=20
         self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001,
                                    user_evaluation_plan_id=10, acq_plan_id=30, res_id=20,
                                    verification_id=1, stage_job_id=14, op_id=20)
 
-        # Unrelated Anime B (aid=60, tid=200): trial_plan_id=30 (matches Anime A's acq_plan_id!),
+        # Unrelated Anime B (aid=60, tid=200): user_evaluation_plan_id=30 (matches Anime A's acq_plan_id!),
         # acq_plan_id=35, res_id=25, verification_id=2, stage_job_id=24, op_id=22
         self._seed_staged_unmapped(self.db, aid=60, tid=200, ep_num=1, eid=6001,
                                    user_evaluation_plan_id=30, acq_plan_id=35, res_id=25,
@@ -420,10 +420,10 @@ class KeepResolutionTests(unittest.TestCase):
               VALUES(1, 701, 70, 70, 300, 1, '{d64}', '{c40}', '{d64}', 1);
             INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
               VALUES(702, 1, 'EVALUATE_BATCH', '{{}}', 'DONE', 0, 0, 0);
-            INSERT INTO batch_trial_plans(plan_id,batch_id,evaluation_job_id,anchor_episode,
+            INSERT INTO batch_user_evaluation_plans(plan_id,batch_id,evaluation_job_id,anchor_episode,
               backfill_count,following_count,configuration_revision,max_episode_bytes,max_plan_bytes,planned_size_bytes,created_at_ms)
               VALUES(40, 1, 702, 1, 5, 0, 1, 1000000, 5000000, 1000000, 1);
-            INSERT INTO batch_trial_files(plan_id,file_index,tvdb_episode,selected_size_bytes)
+            INSERT INTO batch_user_evaluation_files(plan_id,file_index,tvdb_episode,selected_size_bytes)
               VALUES(40, 0, 1, 1000);
             INSERT INTO batch_verified_files(batch_id,file_index,file_path,file_size_bytes,release_episode,
               anidb_episode_number,anidb_episode_id,tvdb_season,tvdb_episode,tvdb_episode_id)
@@ -441,9 +441,9 @@ class KeepResolutionTests(unittest.TestCase):
         """)
         self.db.commit()
 
-        # Both single trial plans have NULL placement in sonarr_episode_selections
-        sel_a = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=10").fetchone()
-        sel_b = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=30").fetchone()
+        # Both single trial plans have NULL placement in episode_release_selections
+        sel_a = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=10").fetchone()
+        sel_b = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=30").fetchone()
         self.assertEqual(sel_a, (None, None, None))
         self.assertEqual(sel_b, (None, None, None))
 
@@ -457,11 +457,11 @@ class KeepResolutionTests(unittest.TestCase):
         self.assertEqual(res_a, (9001, 1, 1))
 
         # Check Anime A's selection (plan_id=10) IS updated
-        sel_a_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=10").fetchone()
+        sel_a_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=10").fetchone()
         self.assertEqual(sel_a_after, (1, 1, 9001))
 
         # Check Anime B's selection (plan_id=30, matching Anime A's acq_plan_id) is UNTOUCHED!
-        sel_b_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=30").fetchone()
+        sel_b_after = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=30").fetchone()
         self.assertEqual(sel_b_after, (None, None, None))
 
         # Check Anime A's reservation (res_id=20) IS updated
@@ -485,10 +485,10 @@ class KeepResolutionTests(unittest.TestCase):
         batch_res_row = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM batch_episode_reservations WHERE reservation_id=50").fetchone()
         self.assertEqual(batch_res_row, (1, 1, 9002))
 
-        # Confirm sonarr_episode_selections was NOT touched for batch plan (neither plan 40 exists nor plan 30 changed)
-        sel_b_still = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections WHERE plan_id=30").fetchone()
+        # Confirm episode_release_selections was NOT touched for batch plan (neither plan 40 exists nor plan 30 changed)
+        sel_b_still = self.db.execute("SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM episode_release_selections WHERE plan_id=30").fetchone()
         self.assertEqual(sel_b_still, (None, None, None))
-        sel_c_exists = self.db.execute("SELECT 1 FROM sonarr_episode_selections WHERE plan_id=40").fetchone()
+        sel_c_exists = self.db.execute("SELECT 1 FROM episode_release_selections WHERE plan_id=40").fetchone()
         self.assertIsNone(sel_c_exists)
 
     def test_missing_secret_during_keep_maps_to_keep_configuration_real_path(self):

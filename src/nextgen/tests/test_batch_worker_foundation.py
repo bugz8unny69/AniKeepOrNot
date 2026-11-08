@@ -55,7 +55,7 @@ class ProviderCompositionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.verified.files),2)
         self.assertEqual([f.tvdb_episode for f in result.verified.files],[1,2])
         self.assertEqual(seen,[digest])
-        spec=registration(combined,user_evaluation_kind='EVALUATE_TRIAL')
+        spec=registration(combined,user_evaluation_kind='SELECT_USER_EVALUATION')
         self.assertEqual(spec.route(ReleaseCompletion(result,7)),())
 
     async def test_batch_source_hash_required_without_arbitrary_url(self):

@@ -1,6 +1,6 @@
 # Stage verified viewing media
 
-New STAGE_TRIAL_MEDIA plans use **COPY**. The source remains in the
+New STAGE_USER_EVALUATION_MEDIA plans use **COPY**. The source remains in the
 qBittorrent-owned `ad-<marker>` directory until staging is committed.
 Persisted `transfer: MOVE` plans are kept as-is to recover older jobs
 (including those whose media was already renamed into staging). Do not

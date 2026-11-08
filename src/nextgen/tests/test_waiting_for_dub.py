@@ -50,15 +50,15 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
             self.store.update({'acquisition': {'audio_check': audio}}, expected_revision=1)
         self.source(7)
         self.fake = FakeSearch()
-        await self.run_worker(self.fake)        # EVALUATE_TRIAL -> first page job.
+        await self.run_worker(self.fake)        # SELECT_USER_EVALUATION -> first page job.
         db = connect(self.database)
         try:
             with transaction(db):
                 event = db.execute('SELECT event_id FROM jobs WHERE kind=?', (DISCOVER_KIND,)).fetchone()[0]
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
-                db.execute('INSERT INTO sonarr_episode_selections VALUES(1,2,1,2,2002,?,1)', (TRIED[-1],))
+                db.execute('INSERT INTO episode_release_selections VALUES(1,2,1,2,2002,?,1)', (TRIED[-1],))
                 for rank, (digest, reason) in enumerate(zip(TRIED, reasons), 1):
-                    db.execute("INSERT INTO sonarr_episode_candidates VALUES(1,2,?,?,'FAILED',?)",
+                    db.execute("INSERT INTO episode_release_candidates VALUES(1,2,?,?,'FAILED',?)",
                                (rank, digest, reason))
                 self.job = enqueue_job(db, kind=DISCOVER_KIND, component='worker', event_id=event,
                                        payload={'plan_id': 1, 'start': 1, 'exhausted_episode': 2},
@@ -104,7 +104,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()  # Page 1 -> page 2
         await worker.attempt()  # Page 2
         self.assertEqual(self.rows(
-            "SELECT status,candidates,approved FROM sonarr_backfill_results "
+            "SELECT status,candidates,approved FROM episode_discovery_results "
             "WHERE anidb_episode_number=2"), [('WAITING_FOR_DUB', 4, 0)])
         self.assertEqual(self.rows(
             "SELECT count(*) FROM jobs WHERE kind=? AND state='ON_HOLD'",
@@ -117,7 +117,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retry_episode(self.database, 123, 2)['reused'], True)
         await worker.attempt()
         self.assertEqual(self.rows(
-            "SELECT status,approved FROM sonarr_backfill_results WHERE anidb_episode_number=2"),
+            "SELECT status,approved FROM episode_discovery_results WHERE anidb_episode_number=2"),
             [('CANDIDATES', 1)])
         episode = next(x for x in self.series()['missing'] if x['anidb_episode'] == 2)
         self.assertEqual(episode['status'], 'CANDIDATES')
@@ -146,7 +146,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         await self.run_worker(self.fake)
         self.assertEqual(self.state(), ('CANCELED', 'SONARR_CANDIDATES_EXHAUSTED'))
         self.assertEqual(self.fake.searches, 0)
-        self.assertEqual(self.rows('SELECT status FROM sonarr_backfill_results WHERE anidb_episode_number=2'),
+        self.assertEqual(self.rows('SELECT status FROM episode_discovery_results WHERE anidb_episode_number=2'),
                          [('NO_RESULTS',)])
         missing = next(x for x in self.series()['missing'] if x['anidb_episode'] == 2)
         self.assertEqual(missing['status'], 'NO_RESULTS')
@@ -164,7 +164,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         await self.run_worker(self.fake)
         new_state = self.rows('SELECT state FROM jobs WHERE job_id=?', (result['job_id'],))[0][0]
         self.assertEqual(new_state, 'DONE')
-        self.assertEqual(self.rows('SELECT rank,info_hash,state FROM sonarr_episode_candidates '
+        self.assertEqual(self.rows('SELECT rank,info_hash,state FROM episode_release_candidates '
                                    'WHERE anidb_episode_number=2 AND rank=3'), [(3, DUBBED, 'READY')])
         payloads = self.rows('SELECT payload_json FROM jobs WHERE created_by_job_id=?', (result['job_id'],))
         self.assertEqual([json.loads(p) for p, in payloads],
@@ -202,7 +202,7 @@ class WaitingForDubTests(unittest.IsolatedAsyncioTestCase):
         new_state = self.rows('SELECT state FROM jobs WHERE job_id=?', (receipt['job_id'],))[0][0]
         self.assertEqual(new_state, 'DONE')
         self.assertEqual(self.rows(
-            "SELECT rank,info_hash,state FROM sonarr_episode_candidates "
+            "SELECT rank,info_hash,state FROM episode_release_candidates "
             "WHERE plan_id=1 AND anidb_episode_number=2 AND rank=3"
         ), [(3, DUBBED, 'READY')])
 

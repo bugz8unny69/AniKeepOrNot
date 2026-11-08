@@ -181,13 +181,13 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         db = connect(self.database)
         try:
             with transaction(db):
-                db.execute("INSERT OR REPLACE INTO trial_plans VALUES(1, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
+                db.execute("INSERT OR REPLACE INTO user_evaluation_plans VALUES(1, 123, 456, 1, 'official', 1, 10, 6, 2, 1, 0)")
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, payload={"plan_id": 1, "start": 1},
                                      component="worker", available_at_ms=0)
                 # Seed 9 historical candidates
                 for rank in range(1, 10):
                     db.execute(
-                        "INSERT INTO sonarr_episode_candidates VALUES(1,1,?,?,'FAILED','MEDIA_AUDIO_REQUIRED')",
+                        "INSERT INTO episode_release_candidates VALUES(1,1,?,?,'FAILED','MEDIA_AUDIO_REQUIRED')",
                         (rank, f"00{rank:02d}" + "0" * 36)
                     )
                 save_snapshots(db, job_id, attempt=8, snapshots=[snapshot])
@@ -303,7 +303,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
         self.source(7)
 
-        # Run EVALUATE_TRIAL to create trial_plans and first page job
+        # Run SELECT_USER_EVALUATION to create user_evaluation_plans and first page job
         reg_eval = Registry((user_evaluation_registration(discovery_kind=DISCOVER_KIND),))
         w_eval = Worker(self.store, self.startup, reg_eval, policy=Policy(lease_ms=30000))
         await w_eval.attempt()
@@ -314,8 +314,8 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
             with transaction(db):
                 event_id = db.execute("SELECT event_id FROM jobs WHERE kind=?", (DISCOVER_KIND,)).fetchone()[0]
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
-                db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'MEDIA_AUDIO_REQUIRED')")
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
+                db.execute("INSERT INTO episode_release_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'MEDIA_AUDIO_REQUIRED')")
+                db.execute("INSERT INTO episode_release_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
                 job_id = enqueue_job(db, kind=DISCOVER_KIND, component="worker", event_id=event_id,
                                      payload={"plan_id": 1, "start": 1, "exhausted_episode": 2, "delete_cache": True},
                                      available_at_ms=0)
@@ -378,7 +378,7 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.source(7)
         self.store.update({"acquisition": {"audio_check": "japanese_english"}}, expected_revision=1)
 
-        # Run EVALUATE_TRIAL to create trial_plans and first page job
+        # Run SELECT_USER_EVALUATION to create user_evaluation_plans and first page job
         reg_eval = Registry((user_evaluation_registration(discovery_kind=DISCOVER_KIND),))
         w_eval = Worker(self.store, self.startup, reg_eval, policy=Policy(lease_ms=30000))
         await w_eval.attempt()
@@ -390,10 +390,10 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
                 event_id = db.execute("SELECT event_id FROM jobs WHERE kind=?", (DISCOVER_KIND,)).fetchone()[0]
                 db.execute("UPDATE jobs SET state='DONE' WHERE kind=?", (DISCOVER_KIND,))
                 # Seed candidate failed for metadata timeout
-                db.execute("INSERT INTO sonarr_episode_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'TORRENT_METADATA_TIMEOUT')")
-                db.execute("INSERT INTO sonarr_episode_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
+                db.execute("INSERT INTO episode_release_candidates VALUES(1, 2, 1, '1111111111111111111111111111111111111111', 'FAILED', 'TORRENT_METADATA_TIMEOUT')")
+                db.execute("INSERT INTO episode_release_selections VALUES(1, 2, 1, 2, 2002, '1111111111111111111111111111111111111111', 1)")
                 # Seed cached torrent intent
-                db.execute("""INSERT INTO sonarr_magnet_intents (
+                db.execute("""INSERT INTO magnet_intents (
                     job_id, plan_id, anidb_episode_number, info_hash, marker, api_major, base_url, save_path, category, timeout_seconds, state, created_at_ms, updated_at_ms
                 ) VALUES (1, 1, 2, '1111111111111111111111111111111111111111', '0123456789abcdef0123456789abcdef', 4, 'http://qb', '/downloads', 'test', 15, 'RELEASED', 0, 0)""")
 

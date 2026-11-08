@@ -4,7 +4,7 @@ A new webhook may acquire the same torrent hash after the previous acquisition
 has been canceled, fully cleaned up and released. A worker restart or an absent
 torrent alone does not permit another submission.
 
-Schema v47 keeps historical `sonarr_magnet_intents` rows as `RELEASED` and applies
+Schema v47 keeps historical `magnet_intents` rows as `RELEASED` and applies
 the unique hash claim only to unreleased rows. The original event, job, marker
 and inventory remain available. Install with the existing explicit database
 upgrade flow; no startup migration or database reset is needed.

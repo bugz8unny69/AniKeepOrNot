@@ -186,7 +186,7 @@ class ServiceDeclarationTests(unittest.TestCase):
                        'TRANSFER_BATCH', 'UNLOCK_BATCH', 'CLEANUP_BATCH_DOWNLOAD',
                        'CLEANUP_CANCELED_OPERATION', 'CLEANUP_DECIDED_DOWNLOAD'}
         expected = {**dict.fromkeys(qbittorrent, ('qbittorrent',)),
-                    'DISCOVER_SONARR_BACKFILL': ('prowlarr',),
+                    'DISCOVER_EPISODE_RELEASES': ('prowlarr',),
                     **dict.fromkeys(('KEEP_MEDIA', 'KEEP_BATCH', 'CLEANUP_KEPT_MEDIA',
                                      'CLEANUP_BATCH_KEPT_MEDIA'), ('sonarr',)),
                     'REFRESH_JELLYFIN': ('jellyfin',), 'ENRICH_SHOKO_METADATA': ('shoko',)}

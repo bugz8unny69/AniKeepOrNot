@@ -74,7 +74,7 @@ def _verified_candidate(db,source):
     origin=db.execute("SELECT source FROM incoming_events WHERE event_id=?",
                       (source.event_id,)).fetchone()
     if origin is None:raise AcquisitionConflict()
-    if origin[0]!='sonarr-discovery':
+    if origin[0]!='release-discovery':
         rows=db.execute(
             "SELECT plan_id FROM episode_reservations "
             "WHERE reservation_id=? AND evaluation_job_id=? AND state='ACTIVE' "
@@ -89,12 +89,12 @@ def _verified_candidate(db,source):
         "JOIN jobs verification ON verification.event_id=e.event_id "
         " AND verification.kind='VERIFY_RELEASE' AND verification.state='DONE' "
         "JOIN jobs parent ON parent.job_id=verification.created_by_job_id "
-        " AND parent.kind='DISCOVER_SONARR_BACKFILL' "
-        "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
-        "JOIN sonarr_episode_selections selected ON selected.plan_id=p.plan_id "
-        "JOIN sonarr_episode_candidates c ON c.plan_id=selected.plan_id "
+        " AND parent.kind='DISCOVER_EPISODE_RELEASES' "
+        "JOIN user_evaluation_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
+        "JOIN episode_release_selections selected ON selected.plan_id=p.plan_id "
+        "JOIN episode_release_candidates c ON c.plan_id=selected.plan_id "
         " AND c.anidb_episode_number=selected.anidb_episode_number AND c.info_hash=selected.info_hash "
-        "WHERE e.event_id=? AND e.source='sonarr-discovery' "
+        "WHERE e.event_id=? AND e.source='release-discovery' "
         "AND selected.anidb_episode_number=? AND selected.tvdb_season=? "
         "AND selected.tvdb_episode=? AND selected.info_hash=? AND c.state='ACTIVE'",
         (source.event_id,source.anidb_episode_number,source.tvdb_season,source.tvdb_episode,
@@ -113,7 +113,7 @@ def _restore(row):
 def _prior(db,event_id):
     row=db.execute(
         "SELECT event_id,job_id,info_hash,marker,api_major,base_url,save_path,"
-        "category,timeout_seconds,state FROM sonarr_magnet_intents WHERE event_id=?",
+        "category,timeout_seconds,state FROM magnet_intents WHERE event_id=?",
         (event_id,)).fetchone()
     return None if row is None else _restore(row)
 
@@ -139,7 +139,7 @@ def release_cleaned(db,operation_id,now):
     for table,state in (('acquisition_plans','PREPARED'),('staging_publications','PUBLISHED')):
         if db.execute('SELECT 1 FROM '+table+' p JOIN job_operation_members m ON m.job_id=p.job_id '
                       'WHERE m.operation_id=? AND p.state=? LIMIT 1',(operation_id,state)).fetchone():return
-    db.execute("UPDATE sonarr_magnet_intents SET state='RELEASED',updated_at_ms=? "
+    db.execute("UPDATE magnet_intents SET state='RELEASED',updated_at_ms=? "
                "WHERE job_id IN (SELECT job_id FROM job_operation_members WHERE operation_id=?) "
                "AND state<>'RELEASED'",(now,operation_id))
 
@@ -177,7 +177,7 @@ class MagnetJournal:
             now=self.queue.now()
             self.queue._owns(db,claim,now)
             if _prior(db,intent.event_id)!=intent:raise AcquisitionConflict()
-            row=db.execute('SELECT created_at_ms FROM sonarr_magnet_intents '
+            row=db.execute('SELECT created_at_ms FROM magnet_intents '
                            'WHERE event_id=?',(intent.event_id,)).fetchone()
             if row is None:raise AcquisitionConflict()
             return is_metadata_expired(row[0],now,timeout_ms=timeout_ms)
@@ -210,12 +210,12 @@ class MagnetJournal:
                 raise AcquisitionConflict()
             # Older completed cleanups predate RELEASED magnet intents. Retire
             # those claims here as well, without erasing the original journal.
-            conflict=db.execute("SELECT job_id FROM sonarr_magnet_intents "
+            conflict=db.execute("SELECT job_id FROM magnet_intents "
                                 "WHERE info_hash=? AND state<>'RELEASED'",(source.info_hash,)).fetchone()
             if conflict is not None:
                 owner=db.execute('SELECT operation_id FROM job_operation_members WHERE job_id=?',conflict).fetchone()
                 if owner is not None:release_cleaned(db,owner[0],now)
-                if db.execute("SELECT 1 FROM sonarr_magnet_intents WHERE info_hash=? AND state<>'RELEASED'",
+                if db.execute("SELECT 1 FROM magnet_intents WHERE info_hash=? AND state<>'RELEASED'",
                               (source.info_hash,)).fetchone():raise AcquisitionConflict()
             marker=uuid.uuid4().hex
             target=DownloadOptions(options.base_url,
@@ -223,7 +223,7 @@ class MagnetJournal:
                 options.category,options.timeout_seconds)
             state='EXTERNAL' if present else 'UNCERTAIN'
             db.execute(
-                "INSERT INTO sonarr_magnet_intents"
+                "INSERT INTO magnet_intents"
                 "(event_id,job_id,plan_id,anidb_episode_number,info_hash,marker,api_major,"
                 "base_url,save_path,category,state,created_at_ms,updated_at_ms,"
                 "timeout_seconds) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -268,7 +268,7 @@ class MagnetJournal:
                     or _prior(db,intent.event_id).state!='OWNED_STOPPED'):
                 raise AcquisitionConflict()
             row=db.execute(
-                "SELECT inventory_json FROM sonarr_magnet_intents "
+                "SELECT inventory_json FROM magnet_intents "
                 "WHERE event_id=? AND job_id=? AND info_hash=? AND marker=?",
                 (intent.event_id,intent.job_id,intent.info_hash,intent.marker)
             ).fetchone()
@@ -276,7 +276,7 @@ class MagnetJournal:
                 raise AcquisitionConflict()
             if row[0] is None:
                 updated=db.execute(
-                    "UPDATE sonarr_magnet_intents SET inventory_json=?,"
+                    "UPDATE magnet_intents SET inventory_json=?,"
                     "updated_at_ms=? WHERE event_id=? AND inventory_json IS NULL",
                     (encoded,self.queue.now(),intent.event_id))
                 if updated.rowcount!=1:raise AcquisitionConflict()
@@ -304,7 +304,7 @@ class MagnetJournal:
                     state='OWNED_STOPPED'
             if state!=current.state:
                 db.execute(
-                    "UPDATE sonarr_magnet_intents SET state=?,updated_at_ms=? "
+                    "UPDATE magnet_intents SET state=?,updated_at_ms=? "
                     "WHERE event_id=? AND state='UNCERTAIN'",
                     (state,now,intent.event_id))
             return state

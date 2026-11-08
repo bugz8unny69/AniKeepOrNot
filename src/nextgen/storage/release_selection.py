@@ -42,7 +42,7 @@ def select(db, *, plan_id, episode, identity, result, release, policy=None):
     except ValueError: raise SelectionConflict() from None
     plan = db.execute(
         "SELECT anidb_id,tvdb_series_id,anchor_episode,"
-        "backfill_count,following_count FROM trial_plans "
+        "backfill_count,following_count FROM user_evaluation_plans "
         "WHERE plan_id=? AND tvdb_order='official'", (plan_id,)
     ).fetchone()
     if plan is None or plan[1] != identity.tvdb_series_id:
@@ -75,7 +75,7 @@ def select(db, *, plan_id, episode, identity, result, release, policy=None):
             if conflicting is not None:
                 raise SelectionConflict()
     previous = db.execute(
-        "SELECT tvdb_season,tvdb_episode,tvdb_episode_id,info_hash FROM sonarr_episode_selections "
+        "SELECT tvdb_season,tvdb_episode,tvdb_episode_id,info_hash FROM episode_release_selections "
         "WHERE plan_id=? AND anidb_episode_number=?", (plan_id, episode)
     ).fetchone()
     if previous is not None:
@@ -99,11 +99,11 @@ def select(db, *, plan_id, episode, identity, result, release, policy=None):
             for table in ("episode_reservations", "batch_episode_reservations"):
                 if db.execute(f"SELECT 1 FROM {table} WHERE state='ACTIVE' AND anidb_episode_id=? LIMIT 1", anidb_eid).fetchone():
                     raise SelectionConflict()
-    if db.execute("SELECT 1 FROM sonarr_episode_selections WHERE plan_id=? AND info_hash=?",
+    if db.execute("SELECT 1 FROM episode_release_selections WHERE plan_id=? AND info_hash=?",
                   (plan_id,digest)).fetchone():
         raise SelectionConflict()
     db.execute(
-        "INSERT INTO sonarr_episode_selections "
+        "INSERT INTO episode_release_selections "
         "(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms) "
         "VALUES(?,?,?,?,?,?,?)",
         (plan_id,episode,identity.tvdb_season,identity.tvdb_episode,
@@ -132,10 +132,10 @@ def require_verified_delivery(db, verified):
         "SELECT p.anidb_id,p.tvdb_series_id,s.tvdb_season,"
         "s.tvdb_episode,s.tvdb_episode_id,s.anidb_episode_number "
         "FROM jobs j JOIN jobs parent ON parent.job_id=j.created_by_job_id "
-        "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
-        "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
+        "JOIN user_evaluation_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
+        "JOIN episode_release_selections s ON s.plan_id=p.plan_id "
         "WHERE j.event_id=? AND j.kind='VERIFY_RELEASE' "
-        "AND parent.kind='DISCOVER_SONARR_BACKFILL' AND s.info_hash=?",
+        "AND parent.kind='DISCOVER_EPISODE_RELEASES' AND s.info_hash=?",
         (source.event_id,digest)).fetchall()
     # The selected AniDB episode and its own placement must both be what
     # VERIFY_RELEASE independently resolved for this delivery.
@@ -164,12 +164,12 @@ def acquisition_identity(database, source):
             "FROM incoming_events e "
             "JOIN jobs j ON j.event_id=e.event_id AND j.kind='VERIFY_RELEASE' "
             "JOIN jobs parent ON parent.job_id=j.created_by_job_id "
-            "JOIN trial_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
-            "JOIN sonarr_episode_selections s ON s.plan_id=p.plan_id "
-            "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+            "JOIN user_evaluation_plans p ON p.plan_id=json_extract(parent.payload_json,'$.plan_id') "
+            "JOIN episode_release_selections s ON s.plan_id=p.plan_id "
+            "JOIN episode_release_candidates c ON c.plan_id=s.plan_id "
             " AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
-            "WHERE e.event_id=? AND e.source='sonarr-discovery' "
-            "AND parent.kind='DISCOVER_SONARR_BACKFILL' "
+            "WHERE e.event_id=? AND e.source='release-discovery' "
+            "AND parent.kind='DISCOVER_EPISODE_RELEASES' "
             "AND s.anidb_episode_number=? AND s.tvdb_season=? AND s.tvdb_episode=? "
             "AND s.info_hash=? AND c.state='ACTIVE'",
             (source.event_id,source.anidb_episode_number,source.tvdb_season,

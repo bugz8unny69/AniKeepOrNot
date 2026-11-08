@@ -33,6 +33,8 @@ class ServiceStatusMigrationTests(unittest.TestCase):
 
     def test_fresh_schema_matches_sequential_upgrade(self):
         self.db.executescript(SCRIPT_62)
+        for name in SCRIPTS[62:]:  # Later versions build on v62.
+            self.db.executescript((SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         try:
             initialize(fresh)

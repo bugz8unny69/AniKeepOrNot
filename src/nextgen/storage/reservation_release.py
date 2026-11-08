@@ -40,7 +40,7 @@ def release_cancelled(db,operation_id,job_id,now,*,component):
     batch_rows=db.execute(f"SELECT reservation_id FROM batch_episode_reservations WHERE owner_job_id IN ({members}) AND state='ACTIVE'",(operation_id,)).fetchall()
     db.execute(f"UPDATE batch_episode_reservations SET state='RELEASED',ended_at_ms=?,ended_by_job_id=? "
                f"WHERE owner_job_id IN ({members}) AND state='ACTIVE'",(now,job_id,operation_id))
-    db.execute(f"UPDATE sonarr_magnet_intents SET state='RELEASED',updated_at_ms=? WHERE job_id IN ({members}) AND state<>'RELEASED'",(now,operation_id))
+    db.execute(f"UPDATE magnet_intents SET state='RELEASED',updated_at_ms=? WHERE job_id IN ({members}) AND state<>'RELEASED'",(now,operation_id))
     db.execute(f"UPDATE batch_metadata_admissions SET state='RELEASED',updated_at_ms=? WHERE verification_job_id IN ({members}) "
                "AND state NOT IN ('RELEASED','EXTERNAL','ADOPTED')",(now,operation_id))
     if not rows and not batch_rows:return woken

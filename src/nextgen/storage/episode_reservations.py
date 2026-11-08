@@ -17,10 +17,10 @@ def _facts(db,evaluation_job_id,event_id):
         "r.anidb_episode_id,r.tvdb_series_id,r.tvdb_season,r.tvdb_episode,r.tvdb_episode_id,"
         "r.identity_result_id,r.release_sha256,p.anidb_id,p.tvdb_series_id,p.tvdb_season,p.tvdb_order,"
         "p.anchor_episode,p.backfill_count,p.following_count,p.anchor_verification_id "
-        "FROM trial_evaluations t JOIN jobs j ON j.job_id=t.job_id "
+        "FROM user_evaluation_checks t JOIN jobs j ON j.job_id=t.job_id "
         "JOIN release_verifications r ON r.verification_id=t.verification_id "
-        "JOIN trial_plans p ON p.plan_id=t.plan_id "
-        "WHERE t.job_id=? AND j.event_id=? AND j.kind='EVALUATE_TRIAL' AND j.state='DONE'",
+        "JOIN user_evaluation_plans p ON p.plan_id=t.plan_id "
+        "WHERE t.job_id=? AND j.event_id=? AND j.kind='SELECT_USER_EVALUATION' AND j.state='DONE'",
         (evaluation_job_id,event_id)).fetchone()
     if row is None:raise ReservationConflict()
     (verification,plan,selected,reason,release_job,aid,eid,tid,season,episode,tveid,
@@ -244,7 +244,7 @@ def _resume_unreserved_waiters(db, now, limit=32):
             "SELECT 1 FROM jobs j "
             "JOIN job_operation_members m USING(job_id) "
             "JOIN job_operations o USING(operation_id) "
-            "JOIN trial_evaluations t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
+            "JOIN user_evaluation_checks t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
             "JOIN release_verifications v ON v.verification_id=t.verification_id "
             "WHERE j.kind='RESERVE_EPISODE' AND j.state IN ('PENDING','RUNNING','RETRY_WAIT') "
             f"AND o.state='ACTIVE' AND t.selected=1 "

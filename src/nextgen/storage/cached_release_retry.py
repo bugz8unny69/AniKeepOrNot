@@ -26,17 +26,17 @@ def _cached(db, plan_id, episode, english, now=None):
     if now is None:
         now = time.time_ns() // 1000000
     rows = db.execute(
-        "SELECT c.info_hash,e.raw_body FROM sonarr_episode_candidates c "
-        "JOIN sonarr_magnet_intents i ON i.plan_id=c.plan_id "
+        "SELECT c.info_hash,e.raw_body FROM episode_release_candidates c "
+        "JOIN magnet_intents i ON i.plan_id=c.plan_id "
         "AND i.anidb_episode_number=c.anidb_episode_number AND i.info_hash=c.info_hash "
-        "JOIN incoming_events e ON e.event_id=i.event_id AND e.source='sonarr-discovery' "
+        "JOIN incoming_events e ON e.event_id=i.event_id AND e.source='release-discovery' "
         "JOIN job_operation_members m ON m.job_id=i.job_id "
         "JOIN job_operations o ON o.operation_id=m.operation_id "
         "WHERE c.plan_id=? AND c.anidb_episode_number=? AND c.state='FAILED' "
         "AND c.reason_code='TORRENT_METADATA_TIMEOUT' AND i.state='RELEASED' "
         "AND o.state='CANCELED' AND o.cleanup_state='COMPLETE' "
         "AND i.created_at_ms>=? "
-        "AND (SELECT count(*) FROM sonarr_magnet_intents previous "
+        "AND (SELECT count(*) FROM magnet_intents previous "
         "WHERE previous.plan_id=i.plan_id AND previous.anidb_episode_number=i.anidb_episode_number "
         "AND previous.info_hash=i.info_hash)=1 "
         "ORDER BY c.rank,i.event_id", (plan_id, episode, now-RETENTION_MS)
@@ -73,12 +73,12 @@ def _scrub(db, condition, args):
     return db.execute(
         "UPDATE incoming_events SET raw_body=CAST(json_remove(CAST(raw_body AS TEXT),"
         "'$.magnet_uri') AS BLOB) WHERE event_id IN ("
-        "SELECT i.event_id FROM sonarr_magnet_intents i "
+        "SELECT i.event_id FROM magnet_intents i "
         "JOIN job_operation_members m ON m.job_id=i.job_id "
         "JOIN job_operations o ON o.operation_id=m.operation_id "
         "WHERE i.state='RELEASED' AND o.state='CANCELED' "
         "AND o.cleanup_state='COMPLETE' AND " + condition + ") "
-        "AND source='sonarr-discovery' AND json_valid(CAST(raw_body AS TEXT)) "
+        "AND source='release-discovery' AND json_valid(CAST(raw_body AS TEXT)) "
         "AND json_type(CAST(raw_body AS TEXT),'$.magnet_uri')='text'",
         args).rowcount
 
@@ -98,7 +98,7 @@ def persist_cached(db,claim,plan,episode,expected,english):
     from src.nextgen.storage.release_dispatch import dispatch_cached
     from src.nextgen.episode_identity import VerifiedEpisode
     if (not db.in_transaction or type(plan) is not BackfillBatch
-            or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
+            or claim.kind!='DISCOVER_EPISODE_RELEASES' or claim.event_id is None
             or episode not in plan.numbers or type(expected) is not CachedTorrent):
         raise BackfillConflict()
     frozen=_plan(db,plan.plan_id,plan.start)
@@ -109,14 +109,14 @@ def persist_cached(db,claim,plan,episode,expected,english):
         raise BackfillConflict()
     current=db.execute(
         "SELECT s.tvdb_episode_id,s.info_hash,c.state,s.tvdb_season,s.tvdb_episode "
-        "FROM sonarr_episode_selections s "
-        "JOIN sonarr_episode_candidates c ON c.plan_id=s.plan_id "
+        "FROM episode_release_selections s "
+        "JOIN episode_release_candidates c ON c.plan_id=s.plan_id "
         "AND c.anidb_episode_number=s.anidb_episode_number AND c.info_hash=s.info_hash "
         "WHERE s.plan_id=? AND s.anidb_episode_number=?",(plan.plan_id,episode)).fetchone()
     if current is None or current[2]!='FAILED':
         raise BackfillConflict()
     if db.execute(
-        "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? AND anidb_episode_number=? "
+        "SELECT 1 FROM episode_release_candidates WHERE plan_id=? AND anidb_episode_number=? "
         "AND state IN ('READY','ACTIVE','SUCCEEDED') LIMIT 1",
         (plan.plan_id,episode)).fetchone():
         raise BackfillConflict()
@@ -127,14 +127,14 @@ def persist_cached(db,claim,plan,episode,expected,english):
             (plan.tvdb_series_id,current[3],current[4])).fetchone():
             raise BackfillConflict()
     change=db.execute(
-        "UPDATE sonarr_episode_candidates SET state='ACTIVE',reason_code=NULL "
+        "UPDATE episode_release_candidates SET state='ACTIVE',reason_code=NULL "
         "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=? "
         "AND state='FAILED' AND reason_code='TORRENT_METADATA_TIMEOUT'",
         (plan.plan_id,episode,expected.info_hash))
     if change.rowcount!=1:
         raise BackfillConflict()
     change=db.execute(
-        "UPDATE sonarr_episode_selections SET info_hash=?,selected_at_ms=? "
+        "UPDATE episode_release_selections SET info_hash=?,selected_at_ms=? "
         "WHERE plan_id=? AND anidb_episode_number=? AND info_hash=?",
         (expected.info_hash,time.time_ns()//1000000,plan.plan_id,episode,current[1]))
     if change.rowcount!=1:

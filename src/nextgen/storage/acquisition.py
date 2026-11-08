@@ -88,7 +88,7 @@ def validate_declaration(source,manifest):
 def _admit_size(db,value,job_id,now):
     source=value.source
     plan=db.execute('SELECT plan_id FROM episode_reservations WHERE reservation_id=?',(source.reservation_id,)).fetchone()[0]
-    row=db.execute('SELECT max_episode_bytes,max_plan_bytes FROM acquisition_budgets WHERE trial_plan_id=?',(plan,)).fetchone()
+    row=db.execute('SELECT max_episode_bytes,max_plan_bytes FROM acquisition_budgets WHERE user_evaluation_plan_id=?',(plan,)).fetchone()
     limits=value.limits if row is None else SizeLimits(row[0]//1000000,row[1]//1000000)
     prior=db.execute('SELECT p.job_id,p.selected_size_bytes FROM acquisition_plans p JOIN episode_reservations r '
                      "ON r.reservation_id=p.reservation_id WHERE r.plan_id=? AND r.state='ACTIVE' AND p.state='PREPARED'",(plan,)).fetchall()
@@ -113,13 +113,13 @@ def persist_acquisition(db,claim,value):
         from src.nextgen.storage.magnet_intake import _prior, _verified_candidate
         _verified_candidate(db,source)
         admission=_prior(db,source.event_id)
-        inventory=db.execute('SELECT inventory_json FROM sonarr_magnet_intents WHERE event_id=?',
+        inventory=db.execute('SELECT inventory_json FROM magnet_intents WHERE event_id=?',
                              (source.event_id,)).fetchone()
         if (admission is None or admission.job_id!=claim.job_id
                 or admission.info_hash!=source.info_hash or admission.state!='OWNED_STOPPED'
                 or inventory!=(manifest.json(),)):
             raise AcquisitionConflict()
-    elif db.execute('SELECT 1 FROM sonarr_magnet_intents WHERE event_id=?',
+    elif db.execute('SELECT 1 FROM magnet_intents WHERE event_id=?',
                     (source.event_id,)).fetchone():
         # Existing admission must be reconciled, never superseded by a new send.
         raise AcquisitionConflict()

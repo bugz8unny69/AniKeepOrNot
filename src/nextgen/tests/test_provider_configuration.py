@@ -235,7 +235,7 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         db=connect(self.database)
         try:
             self.assertEqual(db.execute('SELECT kind,state,event_id,created_by_job_id FROM jobs ORDER BY job_id').fetchall(),
-                             [('IDENTIFY_ANIME','DONE',self.event,None),('VERIFY_RELEASE','DONE',self.event,self.job),('EVALUATE_TRIAL','PENDING',self.event,self.job+1)])
+                             [('IDENTIFY_ANIME','DONE',self.event,None),('VERIFY_RELEASE','DONE',self.event,self.job),('SELECT_USER_EVALUATION','PENDING',self.event,self.job+1)])
             self.assertEqual(db.execute('SELECT verification_scope FROM release_verifications').fetchall(),[('DECLARED_SINGLE_EPISODE',)])
             self.assertEqual(db.execute('SELECT count(*) FROM jobs').fetchone()[0],3)
         finally:db.close()
@@ -244,7 +244,7 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         db=connect(self.database)
         try:
             self.assertEqual(db.execute('SELECT kind,state FROM jobs ORDER BY job_id').fetchall(),
-                             [('IDENTIFY_ANIME','DONE'),('VERIFY_RELEASE','DONE'),('EVALUATE_TRIAL','DONE'),('RESERVE_EPISODE','DONE'),('PREPARE_ACQUISITION','PENDING')])
+                             [('IDENTIFY_ANIME','DONE'),('VERIFY_RELEASE','DONE'),('SELECT_USER_EVALUATION','DONE'),('RESERVE_EPISODE','DONE'),('PREPARE_ACQUISITION','PENDING')])
             self.assertEqual(db.execute('SELECT tvdb_season,tvdb_episode FROM episode_reservations').fetchall(),[(0,1)])
         finally:db.close()
         await worker.attempt()  # No torrent hash: preparation needs review.
@@ -252,7 +252,7 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         try:
             self.assertEqual(db.execute("SELECT state FROM jobs WHERE kind='PREPARE_ACQUISITION'").fetchall(),
                              [('NEEDS_REVIEW',)])
-            self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL'").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES'").fetchone()[0],0)
         finally:db.close()
 
     async def test_default_batch_acquisition_chain(self):
@@ -280,7 +280,7 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         # Batch staging and Keep/Reject are not implemented: do not route
         # the last step into the unrelated single-episode staging pipeline.
         self.assertEqual(enabled.registry.entries['STAGE_BATCH_EPISODE'].successor_kinds,())
-        self.assertIn('STAGE_TRIAL_MEDIA',enabled.registry.entries)
+        self.assertIn('STAGE_USER_EVALUATION_MEDIA',enabled.registry.entries)
 
     async def test_metadata_preparation_is_installed_by_default_with_trusted_override(self):
         self.secrets.initialize('private-key')
@@ -290,7 +290,7 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('SUBMIT_TORRENT',worker.registry.entries)
         self.assertIn('DOWNLOAD_TORRENT',worker.registry.entries)
         self.assertIn('VERIFY_MEDIA',worker.registry.entries)
-        self.assertIn('STAGE_TRIAL_MEDIA',worker.registry.entries)
+        self.assertIn('STAGE_USER_EVALUATION_MEDIA',worker.registry.entries)
         self.assertIn('CLEANUP_CANCELED_OPERATION',worker.registry.entries)
         self.assertIn('KEEP_MEDIA',worker.registry.entries)
         self.assertIn('REJECT_SERIES',worker.registry.entries)
@@ -306,5 +306,5 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('DOWNLOAD_TORRENT',composed.registry.entries)
         self.assertEqual(composed.registry.entries['SUBMIT_TORRENT'].successor_kinds,('DOWNLOAD_TORRENT',))
         self.assertEqual(composed.registry.entries['DOWNLOAD_TORRENT'].successor_kinds,('VERIFY_MEDIA',))
-        self.assertEqual(composed.registry.entries['VERIFY_MEDIA'].successor_kinds,('STAGE_TRIAL_MEDIA',))
+        self.assertEqual(composed.registry.entries['VERIFY_MEDIA'].successor_kinds,('STAGE_USER_EVALUATION_MEDIA',))
         self.assertEqual(composed.registry.entries['RESERVE_EPISODE'].successor_kinds,('PREPARE_ACQUISITION',))

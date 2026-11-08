@@ -31,7 +31,7 @@ def batch_publications(db,operation_id):
     if not rows or len(rows)>32 or len({r[0] for r in rows})!=1:
         raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:33 batch_publications COUNT_INVALID')
     count=db.execute(
-        'SELECT count(*) FROM batch_trial_files WHERE plan_id=?',
+        'SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?',
         (rows[0][0],)).fetchone()[0]
     if len(rows)!=count:
         raise KeepReview(failed_check='src/nextgen/storage/batch_keep_imports.py:37 batch_publications MISMATCH_COUNT')

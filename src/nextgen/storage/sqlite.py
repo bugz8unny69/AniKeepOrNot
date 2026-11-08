@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS recognized_episodes (
 );
 CREATE INDEX IF NOT EXISTS idx_recognized_episodes_season ON recognized_episodes(tvdb_series_id,tvdb_season);
 
-CREATE TABLE IF NOT EXISTS trial_plans (
+CREATE TABLE IF NOT EXISTS user_evaluation_plans (
  plan_id INTEGER PRIMARY KEY,
  anidb_id INTEGER NOT NULL UNIQUE REFERENCES identified_anime(anidb_id),
  tvdb_series_id INTEGER NOT NULL CHECK(tvdb_series_id>0),
@@ -232,11 +232,11 @@ CREATE TABLE IF NOT EXISTS trial_plans (
  CHECK(backfill_count>0 OR following_count>0),
  CHECK(following_count=0 OR anchor_episode<=9223372036854775807-following_count+1)
 );
-CREATE TABLE IF NOT EXISTS trial_evaluations (
+CREATE TABLE IF NOT EXISTS user_evaluation_checks (
  evaluation_id INTEGER PRIMARY KEY,
  job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(job_id),
  verification_id INTEGER NOT NULL REFERENCES release_verifications(verification_id),
- plan_id INTEGER REFERENCES trial_plans(plan_id),
+ plan_id INTEGER REFERENCES user_evaluation_plans(plan_id),
  selected INTEGER NOT NULL CHECK(selected IN (0,1)),
  reason_code TEXT NOT NULL CHECK(reason_code IN ('TRIAL_SELECTED','TRIAL_OUTSIDE_WINDOW','TRIAL_DISABLED')),
  evaluated_at_ms INTEGER NOT NULL CHECK(evaluated_at_ms>=0),
@@ -244,14 +244,14 @@ CREATE TABLE IF NOT EXISTS trial_evaluations (
        (plan_id IS NOT NULL AND ((selected=1 AND reason_code='TRIAL_SELECTED') OR
                                 (selected=0 AND reason_code='TRIAL_OUTSIDE_WINDOW'))))
 );
-CREATE INDEX IF NOT EXISTS idx_trial_evaluations_plan ON trial_evaluations(plan_id);
+CREATE INDEX IF NOT EXISTS idx_user_evaluation_checks_plan ON user_evaluation_checks(plan_id);
 
 CREATE TABLE IF NOT EXISTS episode_reservations (
  reservation_id INTEGER PRIMARY KEY,
  owner_job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(job_id),
  evaluation_job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  verification_id INTEGER NOT NULL REFERENCES release_verifications(verification_id),
- plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
+ plan_id INTEGER NOT NULL REFERENCES user_evaluation_plans(plan_id),
  anidb_id INTEGER NOT NULL REFERENCES identified_anime(anidb_id),
  anidb_episode_id INTEGER NOT NULL REFERENCES identified_episodes(anidb_episode_id),
  tvdb_series_id INTEGER NOT NULL CHECK(tvdb_series_id>0),
@@ -288,7 +288,7 @@ CREATE TABLE IF NOT EXISTS acquisition_plans (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_acquisition_active_hash ON acquisition_plans(info_hash) WHERE state='PREPARED';
 
 CREATE TABLE IF NOT EXISTS acquisition_budgets (
- trial_plan_id INTEGER PRIMARY KEY REFERENCES trial_plans(plan_id),
+ user_evaluation_plan_id INTEGER PRIMARY KEY REFERENCES user_evaluation_plans(plan_id),
  max_episode_bytes INTEGER NOT NULL CHECK(max_episode_bytes BETWEEN 1000000 AND 1000000000000 AND max_episode_bytes%1000000=0),
  max_plan_bytes INTEGER NOT NULL CHECK(max_plan_bytes BETWEEN 1000000 AND 1000000000000 AND max_plan_bytes%1000000=0),
  configuration_revision INTEGER NOT NULL CHECK(configuration_revision>0),
@@ -482,7 +482,7 @@ CREATE TABLE IF NOT EXISTS batch_verified_files (
  UNIQUE(batch_id,tvdb_episode_id)
 );
 CREATE INDEX IF NOT EXISTS idx_batch_files_episode ON batch_verified_files(batch_id,tvdb_season,tvdb_episode);
-CREATE TABLE IF NOT EXISTS batch_trial_plans (
+CREATE TABLE IF NOT EXISTS batch_user_evaluation_plans (
  plan_id INTEGER PRIMARY KEY,
  batch_id INTEGER NOT NULL UNIQUE REFERENCES batch_verifications(batch_id),
  evaluation_job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(job_id),
@@ -496,18 +496,18 @@ CREATE TABLE IF NOT EXISTS batch_trial_plans (
  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
  CHECK(backfill_count>0 OR following_count>0)
 );
-CREATE TABLE IF NOT EXISTS batch_trial_files (
- plan_id INTEGER NOT NULL REFERENCES batch_trial_plans(plan_id),
+CREATE TABLE IF NOT EXISTS batch_user_evaluation_files (
+ plan_id INTEGER NOT NULL REFERENCES batch_user_evaluation_plans(plan_id),
  file_index INTEGER NOT NULL CHECK(file_index>=0),
  tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode>0),
  selected_size_bytes INTEGER NOT NULL CHECK(selected_size_bytes>0),
  PRIMARY KEY(plan_id,file_index),
  UNIQUE(plan_id,tvdb_episode)
 );
-CREATE INDEX IF NOT EXISTS idx_batch_trial_by_episode ON batch_trial_files(plan_id,tvdb_episode);
+CREATE INDEX IF NOT EXISTS idx_batch_user_evaluation_by_episode ON batch_user_evaluation_files(plan_id,tvdb_episode);
 CREATE TABLE IF NOT EXISTS batch_episode_reservations (
  reservation_id INTEGER PRIMARY KEY,
- plan_id INTEGER NOT NULL REFERENCES batch_trial_plans(plan_id),
+ plan_id INTEGER NOT NULL REFERENCES batch_user_evaluation_plans(plan_id),
  owner_job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  file_index INTEGER NOT NULL CHECK(file_index>=0),
  anidb_id INTEGER NOT NULL REFERENCES identified_anime(anidb_id),
@@ -522,7 +522,7 @@ CREATE TABLE IF NOT EXISTS batch_episode_reservations (
  ended_by_job_id INTEGER REFERENCES jobs(job_id),
  UNIQUE(plan_id,file_index),
  UNIQUE(plan_id,tvdb_episode),
- FOREIGN KEY(plan_id,file_index) REFERENCES batch_trial_files(plan_id,file_index),
+ FOREIGN KEY(plan_id,file_index) REFERENCES batch_user_evaluation_files(plan_id,file_index),
  CHECK((state='ACTIVE' AND ended_at_ms IS NULL AND ended_by_job_id IS NULL) OR
        (state='RELEASED' AND ended_at_ms>=reserved_at_ms AND ended_by_job_id IS NOT NULL))
 );
@@ -531,7 +531,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_active_tvdb ON batch_episode_reserva
 CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_active_placement ON batch_episode_reservations(tvdb_series_id,tvdb_season,tvdb_episode) WHERE state='ACTIVE';
 CREATE INDEX IF NOT EXISTS idx_batch_owner ON batch_episode_reservations(owner_job_id,state);
 CREATE TABLE IF NOT EXISTS batch_torrent_submissions (
- plan_id INTEGER PRIMARY KEY REFERENCES batch_trial_plans(plan_id),
+ plan_id INTEGER PRIMARY KEY REFERENCES batch_user_evaluation_plans(plan_id),
  reservation_job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  first_job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  first_attempt INTEGER NOT NULL CHECK(first_attempt>0),
@@ -630,7 +630,7 @@ CREATE TABLE IF NOT EXISTS batch_episode_media (
  evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json) AND length(CAST(evidence_json AS BLOB))<=65536),
  verified_at_ms INTEGER NOT NULL CHECK(verified_at_ms>=0),
  PRIMARY KEY(plan_id,file_index),
- FOREIGN KEY(plan_id,file_index) REFERENCES batch_trial_files(plan_id,file_index),
+ FOREIGN KEY(plan_id,file_index) REFERENCES batch_user_evaluation_files(plan_id,file_index),
  FOREIGN KEY(plan_id) REFERENCES batch_torrent_unlocks(plan_id)
 );
 
@@ -692,8 +692,8 @@ CREATE TABLE IF NOT EXISTS batch_cancellation_cleanup (
  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=created_at_ms)
 );
-CREATE TABLE IF NOT EXISTS sonarr_backfill_results (
- plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
+CREATE TABLE IF NOT EXISTS episode_discovery_results (
+ plan_id INTEGER NOT NULL REFERENCES user_evaluation_plans(plan_id),
  anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  job_id INTEGER NOT NULL REFERENCES jobs(job_id),
  sonarr_episode_id INTEGER CHECK(sonarr_episode_id>0),
@@ -705,8 +705,8 @@ CREATE TABLE IF NOT EXISTS sonarr_backfill_results (
  observed_at_ms INTEGER NOT NULL CHECK(observed_at_ms>=0),
  PRIMARY KEY(plan_id,anidb_episode_number)
 );
-CREATE TABLE IF NOT EXISTS sonarr_episode_selections (
- plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
+CREATE TABLE IF NOT EXISTS episode_release_selections (
+ plan_id INTEGER NOT NULL REFERENCES user_evaluation_plans(plan_id),
  anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  tvdb_season INTEGER CHECK(tvdb_season IS NULL OR tvdb_season>=0),
  tvdb_episode INTEGER CHECK(tvdb_episode IS NULL OR tvdb_episode>0),
@@ -719,8 +719,8 @@ CREATE TABLE IF NOT EXISTS sonarr_episode_selections (
        (tvdb_season IS NOT NULL AND tvdb_episode IS NOT NULL AND tvdb_episode_id IS NOT NULL))
 );
 
-CREATE TABLE IF NOT EXISTS sonarr_episode_candidates (
- plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
+CREATE TABLE IF NOT EXISTS episode_release_candidates (
+ plan_id INTEGER NOT NULL REFERENCES user_evaluation_plans(plan_id),
  anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  rank INTEGER NOT NULL CHECK(rank>0 AND rank<=1000),
  info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
@@ -730,10 +730,10 @@ CREATE TABLE IF NOT EXISTS sonarr_episode_candidates (
  UNIQUE(plan_id,anidb_episode_number,info_hash)
 );
 
-CREATE TABLE IF NOT EXISTS sonarr_magnet_intents (
+CREATE TABLE IF NOT EXISTS magnet_intents (
  event_id INTEGER PRIMARY KEY REFERENCES incoming_events(event_id),
  job_id INTEGER NOT NULL REFERENCES jobs(job_id),
- plan_id INTEGER NOT NULL REFERENCES trial_plans(plan_id),
+ plan_id INTEGER NOT NULL REFERENCES user_evaluation_plans(plan_id),
  anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^0-9a-f]*'),
  marker TEXT NOT NULL UNIQUE CHECK(length(marker)=32 AND marker NOT GLOB '*[^0-9a-f]*'),
@@ -747,7 +747,7 @@ CREATE TABLE IF NOT EXISTS sonarr_magnet_intents (
  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=0)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_magnet_active_hash ON sonarr_magnet_intents(info_hash) WHERE state<>'RELEASED';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_magnet_active_hash ON magnet_intents(info_hash) WHERE state<>'RELEASED';
 
 CREATE TABLE IF NOT EXISTS prowlarr_search_snapshots (
  snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,

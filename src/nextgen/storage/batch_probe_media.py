@@ -12,7 +12,7 @@ def _proof_source(db,claim,verified):
         "m.operation_id,b.plan_id "
         "FROM jobs download "
         "JOIN batch_torrent_submissions b ON b.first_job_id=download.created_by_job_id "
-        "JOIN batch_trial_plans p ON p.plan_id=b.plan_id "
+        "JOIN batch_user_evaluation_plans p ON p.plan_id=b.plan_id "
         "JOIN job_operation_members m ON m.job_id=download.job_id "
         "JOIN job_operation_members vm ON vm.job_id=? AND vm.operation_id=m.operation_id "
         "WHERE download.job_id=?",
@@ -31,8 +31,8 @@ def _proof_source(db,claim,verified):
     candidate_file=db.execute(
         'SELECT f.file_index,f.file_path,f.file_size_bytes '
         'FROM batch_verified_files f '
-        'JOIN batch_trial_plans p ON p.batch_id=f.batch_id '
-        'JOIN batch_trial_files t ON t.plan_id=p.plan_id AND t.file_index=f.file_index '
+        'JOIN batch_user_evaluation_plans p ON p.batch_id=f.batch_id '
+        'JOIN batch_user_evaluation_files t ON t.plan_id=p.plan_id AND t.file_index=f.file_index '
         'WHERE p.plan_id=? AND t.tvdb_episode=p.anchor_episode',
         (verified.plan_id,)).fetchone()
     if (candidate_file is None or candidate_file[1]!=verified.relative_path

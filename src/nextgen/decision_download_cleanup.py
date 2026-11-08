@@ -47,7 +47,7 @@ def staging_status(db,stage_job):
 
 
 def enqueue_after_staging(db,claim):
-    """Inside STAGE_TRIAL_MEDIA's completion transaction, exactly once."""
+    """Inside STAGE_USER_EVALUATION_MEDIA's completion transaction, exactly once."""
     if staging_status(db,claim.job_id):raise CancellationError()
     import time
     # A short pause lets the staging completion (and any Jellyfin scan request)
@@ -83,7 +83,7 @@ class Service(OwnedCleanup):
     def _staged_facts(self,db):
         """The staging job that published this download's video."""
         row=db.execute('SELECT kind,state,event_id FROM jobs WHERE job_id=?',(self.stage_job,)).fetchone()
-        if row!=('STAGE_TRIAL_MEDIA','DONE',self.claim.event_id):raise CancellationError()
+        if row!=('STAGE_USER_EVALUATION_MEDIA','DONE',self.claim.event_id):raise CancellationError()
         op=operation(db,self.stage_job)
         if op[1]!='STAGED' or operation(db,self.claim.job_id)[0]==op[0]:raise CancellationError()
         origin=db.execute('SELECT created_by_job_id,event_id FROM jobs WHERE job_id=?',(self.claim.job_id,)).fetchone()
@@ -172,7 +172,7 @@ class Service(OwnedCleanup):
 
 
 def _persist(db,claim,value):
-    if type(value) is tuple:   # ('staging', STAGE_TRIAL_MEDIA job)
+    if type(value) is tuple:   # ('staging', STAGE_USER_EVALUATION_MEDIA job)
         row=db.execute('SELECT c.phase FROM cancellation_cleanup c JOIN staging_publications s USING(plan_id) '
             'WHERE s.job_id=?',(value[1],)).fetchall()
         if row!=[('COMPLETE',)]:raise CompletionRejected(Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW'))

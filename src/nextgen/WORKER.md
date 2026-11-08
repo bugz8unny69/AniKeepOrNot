@@ -179,7 +179,7 @@ inventing a provider retry. The generic Worker remains usable for other trusted
 job registries; no HTTP management transport or supervisor is added here.
 
 
-The concrete composition also registers EVALUATE_TRIAL after VERIFY_RELEASE.
+The concrete composition also registers SELECT_USER_EVALUATION after VERIFY_RELEASE.
 Feature-owned completion adapters atomically freeze trial windows and decisions;
 the generic worker remains concerned only with execution, fencing and auditing.
 TRIAL_EVALUATED receipts are logged only after commit. No acquisition handler or
@@ -220,7 +220,7 @@ No staging successor is installed yet; verification success does not mean staged
 
 ## Verified-video staging
 
-The default composition now also installs STAGE_TRIAL_MEDIA and routes successful
+The default composition now also installs STAGE_USER_EVALUATION_MEDIA and routes successful
 VERIFY_MEDIA completion into it atomically. See
 [jobs/STAGE_USER_EVALUATION_MEDIA.md](jobs/STAGE_USER_EVALUATION_MEDIA.md). Use a non-root worker and an
 accessible existing staging folder. SQLite v20 upgrades explicitly; Keep and

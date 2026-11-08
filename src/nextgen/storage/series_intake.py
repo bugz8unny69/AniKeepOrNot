@@ -21,7 +21,7 @@ def _waiting_for_dub(db, plan_id):
     """episode -> (job_id, attempt) of held 'Waiting for dub' backfill jobs."""
     rows = db.execute(
         "SELECT json_extract(payload_json,'$.exhausted_episode'),job_id,attempt_count FROM jobs "
-        "WHERE kind='DISCOVER_SONARR_BACKFILL' AND state='ON_HOLD' AND last_reason_code=? "
+        "WHERE kind='DISCOVER_EPISODE_RELEASES' AND state='ON_HOLD' AND last_reason_code=? "
         "AND json_extract(payload_json,'$.plan_id')=?", (WAITING_FOR_DUB, plan_id)).fetchall()
     return {episode: (job, attempt) for episode, job, attempt in rows if type(episode) is int}
 
@@ -39,7 +39,7 @@ def _placements(db, anidb_id, plan_id):
             "WHERE anidb_id=? UNION "
             "SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM release_verifications "
             "WHERE anidb_id=? AND tvdb_order='official' UNION "
-            "SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM sonarr_episode_selections "
+            "SELECT anidb_episode_number,tvdb_season,tvdb_episode FROM episode_release_selections "
             "WHERE plan_id=?", (anidb_id, anidb_id, plan_id)).fetchall():
         found.setdefault(number, set()).add((season, episode))
     return {number: places.pop() for number, places in found.items() if len(places) == 1}
@@ -90,7 +90,7 @@ def _active_episode(db, anidb_id, season, episode, anidb_episode_id=None):
         "SELECT j.job_id FROM jobs j "
         "JOIN job_operation_members m ON m.job_id=j.job_id "
         "JOIN job_operations o ON o.operation_id=m.operation_id "
-        "JOIN trial_evaluations t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
+        "JOIN user_evaluation_checks t ON t.job_id=json_extract(j.payload_json,'$.evaluation_job_id') "
         "JOIN release_verifications v ON v.verification_id=t.verification_id "
         "WHERE j.kind='RESERVE_EPISODE' AND j.state='ON_HOLD' "
         "AND j.last_reason_code='EPISODE_RESERVED' AND o.state='ACTIVE' "
@@ -231,11 +231,11 @@ def detail(db, anidb_id, language='english'):
     # One plan per AniDB anime; its window is in AniDB episode numbers.
     plans = db.execute(
         'SELECT plan_id,anchor_episode,backfill_count,following_count '
-        'FROM trial_plans WHERE anidb_id=?', (anidb_id,)
+        'FROM user_evaluation_plans WHERE anidb_id=?', (anidb_id,)
     ).fetchall()
     for plan_id, anchor, backfill, following in plans:
         observed = dict(db.execute(
-            'SELECT anidb_episode_number,status FROM sonarr_backfill_results WHERE plan_id=?',
+            'SELECT anidb_episode_number,status FROM episode_discovery_results WHERE plan_id=?',
             (plan_id,)).fetchall())
         waiting = _waiting_for_dub(db, plan_id)
         placements = _placements(db, anidb_id, plan_id)
@@ -431,7 +431,7 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
     with queue.connection() as db, transaction(db):
         row = db.execute(
             "SELECT p.plan_id,p.anchor_episode,p.backfill_count,p.following_count,"
-            " j.event_id,j.job_id FROM trial_plans p "
+            " j.event_id,j.job_id FROM user_evaluation_plans p "
             "JOIN release_verifications v ON v.verification_id=p.anchor_verification_id "
             "JOIN jobs j ON j.job_id=v.job_id "
             "WHERE p.anidb_id=?",
@@ -447,7 +447,7 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
         held = _waiting_for_dub(db, plan_id).get(episode)
         # A repeated click must not enqueue another worker while retry is pending.
         active_retry = db.execute(
-            "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
+            "SELECT job_id FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES' "
             "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
             "AND json_extract(payload_json,'$.plan_id')=? "
             "AND (json_extract(payload_json,'$.exhausted_episode')=? "
@@ -456,7 +456,7 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
         if active_retry:
             return {'job_id':active_retry[0], 'reused':True}
         prior = db.execute(
-            'SELECT status FROM sonarr_backfill_results WHERE plan_id=? AND anidb_episode_number=?',
+            'SELECT status FROM episode_discovery_results WHERE plan_id=? AND anidb_episode_number=?',
             (plan_id, episode)).fetchone()
         if held is None and prior and prior[0] not in ('NO_RESULTS', 'NOT_AIRED',
                                                          'MAPPING_MISSING', WAITING_FOR_DUB):
@@ -471,7 +471,7 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
         if held is None:
             if prior and prior[0] == WAITING_FOR_DUB:
                 has_candidates = db.execute(
-                    "SELECT 1 FROM sonarr_episode_candidates WHERE plan_id=? AND anidb_episode_number=? LIMIT 1",
+                    "SELECT 1 FROM episode_release_candidates WHERE plan_id=? AND anidb_episode_number=? LIMIT 1",
                     (plan_id, episode)).fetchone() is not None
                 if has_candidates:
                     return _search_episode(db, plan_id, numbers, episode, event_id, parent_job,
@@ -495,7 +495,7 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
 
 def _search_episode(db, plan_id, numbers, episode, event_id, parent_job, *, exhausted=False, delete_cache=True):
     pending = db.execute(
-        "SELECT job_id FROM jobs WHERE kind='DISCOVER_SONARR_BACKFILL' "
+        "SELECT job_id FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES' "
         "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
         "AND json_extract(payload_json,'$.plan_id')=? "
         "AND (json_extract(payload_json,'$.retry_episode')=? "
@@ -512,7 +512,7 @@ def _search_episode(db, plan_id, numbers, episode, event_id, parent_job, *, exha
     else:
         payload['retry_episode'] = episode
     job, _ = enqueue_job_with_receipt(
-        db, kind='DISCOVER_SONARR_BACKFILL',
+        db, kind='DISCOVER_EPISODE_RELEASES',
         payload=payload,
         event_id=event_id, created_by_job_id=parent_job, component='api'
     )

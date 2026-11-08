@@ -150,7 +150,7 @@ class IntakeAudioSearchTests(unittest.IsolatedAsyncioTestCase):
                     "tvdb_episode,tvdb_episode_id,verified_at_ms) "
                     "VALUES(?,?,123,?,'DECLARED_SINGLE_EPISODE',?,?,456,1,?,?,1)",
                     (release_job, identity, 'a'*64, episode, eid, episode, eid+100000))
-                enqueue_job(db, kind='EVALUATE_TRIAL', payload={'verification_job_id': release_job},
+                enqueue_job(db, kind='SELECT_USER_EVALUATION', payload={'verification_job_id': release_job},
                             component='worker', event_id=event, created_by_job_id=release_job,
                             available_at_ms=0)
         finally:

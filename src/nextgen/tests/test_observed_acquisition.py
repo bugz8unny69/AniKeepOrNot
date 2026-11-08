@@ -31,7 +31,7 @@ class ObservedAcquisitionTests(unittest.IsolatedAsyncioTestCase):
                 with transaction(db):
                     plan=db.execute('SELECT plan_id FROM episode_reservations WHERE reservation_id=?',
                                     (source.reservation_id,)).fetchone()[0]
-                    db.execute('INSERT INTO sonarr_magnet_intents '
+                    db.execute('INSERT INTO magnet_intents '
                         '(event_id,job_id,plan_id,anidb_episode_number,info_hash,marker,api_major,base_url,'
                         'save_path,category,timeout_seconds,inventory_json,state,created_at_ms,updated_at_ms) '
                         'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',

@@ -55,6 +55,7 @@ class AniDBFirstMigrationTests(unittest.TestCase):
         self.db.executescript((SQL_DIR / '060_batch_candidate_operations.sql').read_text())
         self.db.executescript((SQL_DIR / '061_batch_candidate_stops.sql').read_text())
         self.db.executescript((SQL_DIR / '062_service_status.sql').read_text())
+        self.db.executescript((SQL_DIR / '063_renamed_stored_names.sql').read_text())
         return self.db
 
     def test_runner_applies_the_step_with_validation(self):
@@ -87,14 +88,14 @@ class AniDBFirstMigrationTests(unittest.TestCase):
                         "'DONE',0,0,0)", (json.dumps({'plan_id': 1, 'start': 1, 'retry_episode': 4}),))
         db = self.migrate()
         self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (LATEST_VERSION,))
-        self.assertEqual(db.execute('SELECT tvdb_season,anchor_episode FROM trial_plans').fetchall(),
+        self.assertEqual(db.execute('SELECT tvdb_season,anchor_episode FROM user_evaluation_plans').fetchall(),
                          [(2, 1000)])
-        self.assertEqual(db.execute('SELECT anidb_episode_number,status FROM sonarr_backfill_results').fetchall(),
+        self.assertEqual(db.execute('SELECT anidb_episode_number,status FROM episode_discovery_results').fetchall(),
                          [(1000, 'CANDIDATES')])
         self.assertEqual(db.execute('SELECT anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,'
-                                    'info_hash FROM sonarr_episode_selections').fetchall(),
+                                    'info_hash FROM episode_release_selections').fetchall(),
                          [(1000, 2, 1, 9001, HASH)])
-        self.assertEqual(db.execute('SELECT anidb_episode_number FROM sonarr_episode_candidates').fetchall(),
+        self.assertEqual(db.execute('SELECT anidb_episode_number FROM episode_release_candidates').fetchall(),
                          [(1000,)])
         self.assertEqual(json.loads(db.execute('SELECT payload_json FROM jobs WHERE job_id=4').fetchone()[0]),
                          {'plan_id': 1, 'start': 1, 'exhausted_episode': 1000})

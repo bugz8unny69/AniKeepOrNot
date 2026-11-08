@@ -855,16 +855,16 @@ async function openCoverage(jobId) {
     const heading = matchingSection(body, ev.kind === 'batch' ? 'Verified regular episodes (batch)' : 'Verified episode');
     heading.appendChild(node('p', `${ev.episode_count} episode(s) verified in TVDB season ${ev.tvdb_season}. This does not mean media was downloaded or staged.`, 'muted'));
     if (ev.kind === 'batch') {
-      const message = ev.trial_plan_ready
-        ? `${ev.planned_episode_count} episode(s) planned for the trial. Planned size: ${ev.planned_size_bytes} bytes. No downloads are authorized by this plan.`
-        : 'No trial plan has been committed for this pack.';
+      const message = ev.user_evaluation_plan_ready
+        ? `${ev.planned_episode_count} episode(s) picked for your evaluation. Planned size: ${ev.planned_size_bytes} bytes. No downloads are authorized by this plan.`
+        : 'No episodes have been picked for evaluation from this pack yet.';
       heading.appendChild(node('p', message, 'muted'));
     }
     const grid = node('div', null, 'trace-grid'); heading.appendChild(grid);
     for (const ep of ev.episodes || []) {
       const label = `TVDB S${String(ev.tvdb_season).padStart(2, '0')}E${String(ep.tvdb_episode).padStart(2, '0')}`;
       const detail = `AniDB episode ${ep.anidb_episode}${ep.file_index == null ? '' : ' · File #' + ep.file_index}`
-        + (ev.kind === 'batch' && ev.trial_plan_ready ? (ep.planned ? ' · Trial planned' : ' · Outside trial') : '');
+        + (ev.kind === 'batch' && ev.user_evaluation_plan_ready ? (ep.planned ? ' · Picked for evaluation' : ' · Not picked') : '');
       matchingCard(grid, label, detail);
       if (ep.path) grid.appendChild(node('small', ep.path, 'muted'));
     }

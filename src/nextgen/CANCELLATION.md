@@ -137,7 +137,7 @@ staging_artifacts.py and storage/cancellation.py:
 2. Before publishing, publication() records PUBLISH_UNCERTAIN. Only after actual
    verified durable publication may publication(confirmed=True) record PUBLISHED.
 3. In the fenced completion transaction, mark_staged() closes the operation only
-   for STAGE_TRIAL_MEDIA with current lease, all recorded artifacts PUBLISHED and
+   for STAGE_USER_EVALUATION_MEDIA with current lease, all recorded artifacts PUBLISHED and
    every other member job DONE.
    It must represent completion of the entire operation's intended staging.
 

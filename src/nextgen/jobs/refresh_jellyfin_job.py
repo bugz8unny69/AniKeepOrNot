@@ -31,7 +31,7 @@ def registration(secrets,*,refresh=request_refresh):
             try:
                 row=db.execute('SELECT kind,state,event_id FROM jobs WHERE job_id=?',(source,)).fetchone()
                 origin=db.execute('SELECT created_by_job_id FROM jobs WHERE job_id=?',(context.claim.job_id,)).fetchone()
-                if (not row or row[0] not in ('STAGE_TRIAL_MEDIA','STAGE_BATCH_EPISODE','KEEP_MEDIA','KEEP_BATCH','CLEANUP_KEPT_MEDIA','CLEANUP_BATCH_KEPT_MEDIA') or row[1]!='DONE'
+                if (not row or row[0] not in ('STAGE_USER_EVALUATION_MEDIA','STAGE_BATCH_EPISODE','KEEP_MEDIA','KEEP_BATCH','CLEANUP_KEPT_MEDIA','CLEANUP_BATCH_KEPT_MEDIA') or row[1]!='DONE'
                         or row[2]!=context.claim.event_id or origin!=(source,)):raise ValueError()
             finally:db.close()
             if context.cancelled.is_set():return

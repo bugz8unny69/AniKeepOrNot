@@ -20,6 +20,24 @@ from src.nextgen.tests.test_torrent_submission import Secrets
 from src.nextgen.worker import Worker
 
 
+# The reverse of 063_renamed_stored_names.sql: back to the v62 names.
+UNDO_V63 = """BEGIN IMMEDIATE;
+ALTER TABLE episode_discovery_results RENAME TO sonarr_backfill_results;
+ALTER TABLE episode_release_candidates RENAME TO sonarr_episode_candidates;
+ALTER TABLE episode_release_selections RENAME TO sonarr_episode_selections;
+ALTER TABLE magnet_intents RENAME TO sonarr_magnet_intents;
+ALTER TABLE user_evaluation_plans RENAME TO trial_plans;
+ALTER TABLE user_evaluation_checks RENAME TO trial_evaluations;
+ALTER TABLE batch_user_evaluation_plans RENAME TO batch_trial_plans;
+ALTER TABLE batch_user_evaluation_files RENAME TO batch_trial_files;
+ALTER TABLE acquisition_budgets RENAME COLUMN user_evaluation_plan_id TO trial_plan_id;
+DROP INDEX idx_user_evaluation_checks_plan;
+CREATE INDEX idx_trial_evaluations_plan ON trial_evaluations(plan_id);
+DROP INDEX idx_batch_user_evaluation_by_episode;
+CREATE INDEX idx_batch_trial_by_episode ON batch_trial_files(plan_id,tvdb_episode);
+PRAGMA user_version=62;
+COMMIT;"""
+
 class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp=webhook_fixture.AutobrrWebhookAcquisitionTests.asyncSetUp
     rows=webhook_fixture.AutobrrWebhookAcquisitionTests.rows
@@ -53,12 +71,14 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(4):await worker.attempt()
         self.assertEqual(state['removed'],1)
         self.assertEqual(self.rows('SELECT state FROM episode_reservations'),[('RELEASED',)])
-        self.assertEqual(self.rows('SELECT state FROM sonarr_magnet_intents'),[('RELEASED',)])
-        old_marker=self.rows('SELECT marker FROM sonarr_magnet_intents')[0][0]
+        self.assertEqual(self.rows('SELECT state FROM magnet_intents'),[('RELEASED',)])
+        old_marker=self.rows('SELECT marker FROM magnet_intents')[0][0]
         # Reproduce a cleanup completed by the old worker: its journal was retained as REVIEW.
         db=connect(self.database)
         try:
-            with transaction(db):db.execute("UPDATE sonarr_magnet_intents SET state='REVIEW'")
+            with transaction(db):db.execute("UPDATE magnet_intents SET state='REVIEW'")
+            # Undo v63 (renamed tables) so the hand-built older shapes below use their own names.
+            db.executescript(UNDO_V63)
             # Undo v56 (AniDB-keyed trial tables) so the v46 shape below is exact.
             reference=sqlite3.connect(':memory:')
             for name in SCRIPTS[:55]:reference.executescript((SQL_DIR/name).read_text())
@@ -114,22 +134,23 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'060_batch_candidate_operations.sql').read_text())
             db.executescript((SQL_DIR/'061_batch_candidate_stops.sql').read_text())
             db.executescript((SQL_DIR/'062_service_status.sql').read_text())
-            self.assertEqual(db.execute('SELECT * FROM sonarr_magnet_intents').fetchall(),before)
+            db.executescript((SQL_DIR/'063_renamed_stored_names.sql').read_text())
+            self.assertEqual(db.execute('SELECT * FROM magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()
         self.store.update({'acquisition':{'max_episode_mb':2}},expected_revision=2)
         second,_=self.autobrr_event({'release_name':'[Group] Test Anime - 10','torrentHash':self.digest})
         for _ in range(4):await worker.attempt()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE event_id=? AND kind='SUBMIT_TORRENT'",(second,)),[('DONE',)])
-        self.assertEqual(self.rows('SELECT event_id,state FROM sonarr_magnet_intents ORDER BY event_id'),
+        self.assertEqual(self.rows('SELECT event_id,state FROM magnet_intents ORDER BY event_id'),
                          [(first,'RELEASED'),(second,'OWNED_STOPPED')])
-        self.assertEqual(self.rows('SELECT marker FROM sonarr_magnet_intents WHERE event_id=?',(first,)),[(old_marker,)])
+        self.assertEqual(self.rows('SELECT marker FROM magnet_intents WHERE event_id=?',(first,)),[(old_marker,)])
         self.assertEqual(len(state['added']),2)
-        self.assertEqual(len(set(r[0] for r in self.rows('SELECT marker FROM sonarr_magnet_intents'))),2)
+        self.assertEqual(len(set(r[0] for r in self.rows('SELECT marker FROM magnet_intents'))),2)
         db=connect(self.database)
         try:
             with self.assertRaises(sqlite3.IntegrityError),transaction(db):
-                db.execute("UPDATE sonarr_magnet_intents SET state='UNCERTAIN' WHERE event_id=?",(first,))
+                db.execute("UPDATE magnet_intents SET state='UNCERTAIN' WHERE event_id=?",(first,))
         finally:db.close()
 
 

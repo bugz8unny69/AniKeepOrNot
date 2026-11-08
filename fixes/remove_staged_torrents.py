@@ -35,7 +35,7 @@ SELECT s.job_id, j.event_id, o.operation_id,
   EXISTS(SELECT 1 FROM jobs x WHERE x.kind=?
          AND json_extract(x.payload_json,'$.staging_job_id')=s.job_id)
 FROM staging_publications s
-JOIN jobs j ON j.job_id=s.job_id AND j.kind='STAGE_TRIAL_MEDIA' AND j.state='DONE'
+JOIN jobs j ON j.job_id=s.job_id AND j.kind='STAGE_USER_EVALUATION_MEDIA' AND j.state='DONE'
 JOIN job_operation_members m ON m.job_id=s.job_id
 JOIN job_operations o ON o.operation_id=m.operation_id AND o.state='STAGED'
 WHERE s.state='PUBLISHED'

@@ -31,8 +31,8 @@ class RejectedSeriesTests(unittest.TestCase):
                 anidb_id INTEGER,owner_job_id INTEGER);
             INSERT INTO jobs VALUES(900,'REJECT_SERIES','RUNNING',NULL,
                 '{"anidb_id":10,"operation_ids":[11,12]}');
-            INSERT INTO jobs VALUES(101,'STAGE_TRIAL_MEDIA','DONE',1,'{}');
-            INSERT INTO jobs VALUES(102,'STAGE_TRIAL_MEDIA','DONE',2,'{}');
+            INSERT INTO jobs VALUES(101,'STAGE_USER_EVALUATION_MEDIA','DONE',1,'{}');
+            INSERT INTO jobs VALUES(102,'STAGE_USER_EVALUATION_MEDIA','DONE',2,'{}');
             INSERT INTO anime_review_decisions VALUES(10,900,'REJECT','PENDING');
             INSERT INTO job_operations VALUES(11,'STAGED'),(12,'STAGED');
             INSERT INTO job_operation_members VALUES(11,101),(12,102);

@@ -39,7 +39,7 @@ Latest fresh SQLite version: **17**. The version stored in `PRAGMA user_version`
 | 16 | `016_torrent_transfers.sql` | Fixed file selection, one-shot start and selected-file progress |
 | 17 | `017_cancellation.sql` | Explicit cancellation scopes, cleanup intents and staging temporary receipts |
 
-**Current tables:** `incoming_events`, `event_history`, `identified_anime`, `identified_episodes`, `identity_results`, `result_episode_links`, `jobs`, `job_history`, `provider_limits`, `provider_public_cache`, `release_verifications`, `trial_plans`, `trial_evaluations`, `episode_reservations`, `acquisition_plans`, `acquisition_budgets`, `torrent_submissions`, `torrent_transfers`, `job_operations`, `job_operation_members`, `cancellation_cleanup`, `staging_cleanup_artifacts`.
+**Current tables:** `incoming_events`, `event_history`, `identified_anime`, `identified_episodes`, `identity_results`, `result_episode_links`, `jobs`, `job_history`, `provider_limits`, `provider_public_cache`, `release_verifications`, `user_evaluation_plans`, `user_evaluation_checks`, `episode_reservations`, `acquisition_plans`, `acquisition_budgets`, `torrent_submissions`, `torrent_transfers`, `job_operations`, `job_operation_members`, `cancellation_cleanup`, `staging_cleanup_artifacts`.
 
 - `incoming_events`: durable inbound delivery record. An incoming event is not a notification and need not originate from a webhook. Do not deduplicate accepted deliveries by GUID, release title or payload.
 - `event_history`: event-specific timeline and reasons.
@@ -265,17 +265,17 @@ The existing AnimeSeries snapshot is preserved and no job/state redesign occurs.
 
 ## Trial selection intents (v11)
 
-trial_plans has one immutable plan per AniDB anime, TVDB series, verified official
+user_evaluation_plans has one immutable plan per AniDB anime, TVDB series, verified official
 season/order. Required fields bind its anchor verification/episode, bounded
 backfill/following counts (0–1000 with at least one nonzero), configuration revision
 and creation time. Anchors/count arithmetic is checked against signed-integer
 bounds. Helpers cross-check the anchor and current verification source identities.
 The unique scope makes first committed plan creation safe under concurrency.
 
-trial_evaluations records one decision per job, with source verification, selected
+user_evaluation_checks records one decision per job, with source verification, selected
 boolean, readable allowlisted reason and timestamp. plan_id is nullable only for
 TRIAL_DISABLED with selected=0; other decisions reference a plan and have matching
-selected/reason semantics. idx_trial_evaluations_plan supports plan history.
+selected/reason semantics. idx_user_evaluation_checks_plan supports plan history.
 Neither table grants an acquisition lease or proves file/provider availability.
 Backfill/following numbers are requested season positions, not invented episode IDs.
 
