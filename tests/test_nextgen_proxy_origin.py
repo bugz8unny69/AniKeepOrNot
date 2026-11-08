@@ -1,7 +1,7 @@
 """Regression tests for browser origin validation behind a reverse proxy."""
 import unittest
 
-from src.nextgen.api.auth import ApiError, check_origin
+from src.anime.api.auth import ApiError, check_origin
 
 
 class BrowserOriginTests(unittest.TestCase):

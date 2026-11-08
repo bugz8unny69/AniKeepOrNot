@@ -14,7 +14,7 @@ the qBittorrent adapter (including 4.2.x metadata handling), recovery without
 duplicate submission, automatic cleanup after terminal candidate failure, and
 ranked fallback after cleanup and reservation release.
 
-The normal `python -m src.nextgen worker --config-dir ...` startup
+The normal `python -m src.anime worker --config-dir ...` startup
 already enables Sonarr backfill, selection and acquisition. The sample systemd
 unit uses this command without a feature flag. The obsolete hidden
 `--sonarr-acquire` switch has been removed in this PR. The implementation

@@ -11,12 +11,12 @@ from pathlib import Path
 import uuid
 import xml.etree.ElementTree as ET
 
-from src.nextgen.acquisition.cleanup import directory, parent
-from src.nextgen.acquisition.media import signature
-from src.nextgen.acquisition.metadata import safe_path
-from src.nextgen.anime_titles import preferred_title
-from src.nextgen.staging import encoded
-from src.nextgen.storage.sqlite import transaction
+from src.anime.acquisition.cleanup import directory, parent
+from src.anime.acquisition.media import signature
+from src.anime.acquisition.metadata import safe_path
+from src.anime.anime_titles import preferred_title
+from src.anime.staging import encoded
+from src.anime.storage.sqlite import transaction
 
 
 PUBLICATIONS = """

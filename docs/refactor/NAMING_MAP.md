@@ -31,7 +31,7 @@ These names describe what each piece does and avoid naming any provider, so they
 
 ## 3. Code-only identifiers (RF-005)
 
-These names are not stored anywhere. Changing them affects only imports, so they can be renamed directly, with no compatibility aliases. Every importer has to be updated, **including `fixes/` and `src/nextgen/tests/`**.
+These names are not stored anywhere. Changing them affects only imports, so they can be renamed directly, with no compatibility aliases. Every importer has to be updated, **including `fixes/` and `src/anime/tests/`**.
 
 ### 3.1 Modules
 
@@ -48,7 +48,7 @@ These names are not stored anywhere. Changing them affects only imports, so they
 | `storage/sonarr_magnet_intake.py` | `storage/magnet_intake.py` | 7 | Admits both backfill-selected and webhook magnets, so the module is not discovery-only. |
 | `sonarr_episode.py` | **split** (see §3.2) | 14 | |
 
-\* Importing files at the time of writing, counted across `src/nextgen` and `fixes/`.
+\* Importing files at the time of writing, counted across `src/anime` and `fixes/`.
 
 `acquisition/legacy_magnet.py` keeps its name. "Legacy" there means the magnet format (no BEP3 manifest), not a Sonarr dependency.
 
@@ -153,9 +153,9 @@ There are no changes. The v10 configuration upgrade already moved `sonarr.discov
 
 | File | Action (RF-008) |
 |---|---|
-| `docs/BACKFILL_BEHAVIOR.md`, `src/nextgen/architecture/*`, `src/nextgen/schema/README.md`, `src/nextgen/storage/MIGRATIONS.md` | Update to the new names. Mention the old names once, as the historical identifiers in the migration. |
+| `docs/BACKFILL_BEHAVIOR.md`, `src/anime/architecture/*`, `src/anime/schema/README.md`, `src/anime/storage/MIGRATIONS.md` | Update to the new names. Mention the old names once, as the historical identifiers in the migration. |
 | `docs/nextgen-sonarr-acquisition-status.md`, `docs/sonarr-qbittorrent-handoff-completion.md`, `docs/INTEGRATION_ROLLOUT.md` | **Historical.** Preserve them as they are and add a one-line banner saying discovery now uses Prowlarr. |
-| `src/nextgen/KEEP_SONARR.md`, `POST_KEEP_CLEANUP.md`, `SECRETS.md`, `CONFIGURATION.md`, `SERVICE_SETUP.md` | Unchanged; these cover the genuine Sonarr integration. |
+| `src/anime/KEEP_SONARR.md`, `POST_KEEP_CLEANUP.md`, `SECRETS.md`, `CONFIGURATION.md`, `SERVICE_SETUP.md` | Unchanged; these cover the genuine Sonarr integration. |
 | `docs/refactor/*` | Keep the old names; these are records. |
 
 ## 6. Ordering and risks

@@ -42,7 +42,7 @@ Each database upgrade first saves a copy beside the database (`anime-discovery.s
 sudo anime-discovery-install --rollback
 ```
 
-Switches `current` back to the previous version, restores its unit files and restarts the services that were running. First the previous version checks the database and settings itself (`python -m src.nextgen check`). If an upgrade moved them beyond what that version understands, the rollback refuses and says why; nothing is changed. Nothing is deleted: the newer version becomes the previous one, and the next upgrade replaces it.
+Switches `current` back to the previous version, restores its unit files and restarts the services that were running. First the previous version checks the database and settings itself (`python -m src.anime check`). If an upgrade moved them beyond what that version understands, the rollback refuses and says why; nothing is changed. Nothing is deleted: the newer version becomes the previous one, and the next upgrade replaces it.
 
 ## The installer updates itself
 
@@ -83,7 +83,7 @@ The API itself serves the restricted `/run/anime-discovery/admin.sock`. ADM uses
 The dashboard uses password sessions and same-origin `/api/v1` requests. Configure the exact public origin and proxy both dashboard pages and the API to the loopback listener. Configure providers in the dashboard, run worker readiness, then start/enable the worker:
 
 ```sh
-sudo -u anime-discovery /opt/anime-discovery/current/.venv/bin/python -m src.nextgen check --config-dir /etc/anime-discovery --worker
+sudo -u anime-discovery /opt/anime-discovery/current/.venv/bin/python -m src.anime check --config-dir /etc/anime-discovery --worker
 sudo systemctl enable --now anime-discovery-worker.service
 ```
 
@@ -91,7 +91,7 @@ sudo systemctl enable --now anime-discovery-worker.service
 
 If setup or activation fails, Anime Discovery remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; rollback is never automatic (see Rollback).
 
-No live installation has been performed by the implementation tests. Follow `src/nextgen/SERVICE_SETUP.md` for host validation: password setup/login, verified webhook intake appearing in Recognized Names, worker crash isolation, API recovery followed by worker restart, mount access, and provider connectivity.
+No live installation has been performed by the implementation tests. Follow `src/anime/SERVICE_SETUP.md` for host validation: password setup/login, verified webhook intake appearing in Recognized Names, worker crash isolation, API recovery followed by worker restart, mount access, and provider connectivity.
 
 The installer prints a readable completion summary and service instructions by default. Use `--json --yes` for automation; progress messages go to stderr and the JSON result goes to stdout. 
 

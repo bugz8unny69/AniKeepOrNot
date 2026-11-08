@@ -3,10 +3,10 @@
 Status: incremental implementation and source inspection, not deployment verification (2026-10-24).
 
 ## Existing NextGen dashboard
-- `src/nextgen/dashboard/assets.py` allowlists `/`, `/jobs`, `/settings`, and static CSS/JS assets.
-- `src/nextgen/dashboard/static/index.html` contains Intake, Jobs, Settings, login, and job-history panels.
-- `src/nextgen/dashboard/static/dashboard.js` implements job polling/actions, history, settings and private credential updates using `/api/v1/`.
-- `src/nextgen/api/app.py` serves these assets through the ASGI API, and implements management routes.
+- `src/anime/dashboard/assets.py` allowlists `/`, `/jobs`, `/settings`, and static CSS/JS assets.
+- `src/anime/dashboard/static/index.html` contains Intake, Jobs, Settings, login, and job-history panels.
+- `src/anime/dashboard/static/dashboard.js` implements job polling/actions, history, settings and private credential updates using `/api/v1/`.
+- `src/anime/api/app.py` serves these assets through the ASGI API, and implements management routes.
 
 ## Gaps before declaring dashboard feature-complete
 1. Replace management access-key login with password login, retaining cookie-session and CSRF boundaries.

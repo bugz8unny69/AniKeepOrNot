@@ -5,8 +5,8 @@ import unittest
 
 from unittest.mock import patch
 
-from src.nextgen.decision_download_cleanup import KIND
-from src.nextgen.tests.test_decision_download_cleanup import DecisionDownloadCleanupTests as Base
+from src.anime.decision_download_cleanup import KIND
+from src.anime.tests.test_decision_download_cleanup import DecisionDownloadCleanupTests as Base
 
 spec = importlib.util.spec_from_file_location('remove_staged_torrents',
                                               Path(__file__).with_name('remove_staged_torrents.py'))
@@ -23,7 +23,7 @@ class RemoveStagedTorrentsTests(unittest.IsolatedAsyncioTestCase):
 
     async def old_staged_episode(self):
         """A video staged before #204: no staging cleanup was queued."""
-        with patch('src.nextgen.decision_download_cleanup.enqueue_after_staging'):
+        with patch('src.anime.decision_download_cleanup.enqueue_after_staging'):
             return await self.staged()
 
     async def test_preview_then_apply_queues_one_removal_per_old_staged_episode(self):
@@ -48,7 +48,7 @@ class RemoveStagedTorrentsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(list(staging.rglob('*.mkv'))), 1)
 
     async def test_decided_episodes_are_left_alone(self):
-        from src.nextgen.storage.management_actions import ManagementActions
+        from src.anime.storage.management_actions import ManagementActions
         worker, _, stage_job = await self.old_staged_episode()
         ManagementActions(self.database).submit(stage_job, 'reject')
         report = fix.execute(self.database)

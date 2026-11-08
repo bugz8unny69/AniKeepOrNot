@@ -3,7 +3,7 @@
 This change removes confirmed dead code identified in [DEAD_CODE_AUDIT.md](DEAD_CODE_AUDIT.md). It does not change behavior. Every removal below points to its audit entry.
 
 **Base:** `refactor` at `54889b96`, which includes NextGen `304a76f1`.
-**Source size** (`src/nextgen`, excluding tests): 27,854 → **27,763 lines (−91)**. 115 lines were deleted and 24 lines were re-wrapped as shorter import statements, across 34 files.
+**Source size** (`src/anime`, excluding tests): 27,854 → **27,763 lines (−91)**. 115 lines were deleted and 24 lines were re-wrapped as shorter import statements, across 34 files.
 
 ## Removed definitions
 
@@ -55,8 +55,8 @@ These need NextGen behavior changes or owner decisions, so none of them were cha
 
 | Check | Result |
 |---|---|
-| `python -m src.nextgen.tests.run_batches` | 31/31 batches, **1,506 tests passed**, 0 failed. That is the previous 1,508 minus the 2 removed `audio_tagged` tests. |
-| `python -m compileall -q src/nextgen fixes` | passed |
+| `python -m src.anime.tests.run_batches` | 31/31 batches, **1,506 tests passed**, 0 failed. That is the previous 1,508 minus the 2 removed `audio_tagged` tests. |
+| `python -m compileall -q src/anime fixes` | passed |
 | `node --check …/dashboard.js` and `node --test …/dashboard_browser.test.cjs` | passed, 25/25 |
-| `python -m src.nextgen --help` and `python -m src.nextgen.api --help` | Both entrypoints import cleanly. |
+| `python -m src.anime --help` and `python -m src.anime.api --help` | Both entrypoints import cleanly. |
 | `fixes/` tests | 22/23. The one error is the pre-existing follow-up 5 above, which also fails on NextGen. |

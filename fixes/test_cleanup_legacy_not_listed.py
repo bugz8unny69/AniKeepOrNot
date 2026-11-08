@@ -16,7 +16,7 @@ class BackfillCleanupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.path = Path(self.temp.name) / 'nextgen.sqlite'
+        self.path = Path(self.temp.name) / 'anime.sqlite'
         with closing(sqlite3.connect(self.path)) as db:
             db.executescript('''
                 CREATE TABLE user_evaluation_plans(plan_id INTEGER, tvdb_series_id INTEGER, tvdb_season INTEGER);

@@ -1,6 +1,6 @@
 # Anime Discovery — NextGen development handoff
 
-> **Authoritative architecture decision: 2026-10-22.** NextGen is built fresh in `src/nextgen/`. There is **no migration**, compatibility bridge, legacy SQLite reader or transitional data assembler. Legacy `src/legacy/` is reference material for domain lessons and regression tests only.
+> **Authoritative architecture decision: 2026-10-22.** NextGen is built fresh in `src/anime/`. There is **no migration**, compatibility bridge, legacy SQLite reader or transitional data assembler. Legacy `src/legacy/` is reference material for domain lessons and regression tests only.
 >
 > **Operational guardrails:** Draft work on branches/PRs; do not merge, deploy, restart services, change production databases, acquire/delete torrents, or touch user media without explicit authorization. Use `NextGen` as the PR target for new NextGen work. Keep `develop` for the existing legacy application. Current authorization (2026-10-24): merge the completed NextGen stack, run offline tests and CI across it, and fix failures. Keep deployment and live media operations separate. Test policy (2026-11-04): offline tests run locally for every work item before commit/push/PR; GitHub Actions is not relied on (see "NextGen tests" below).
 
@@ -26,13 +26,13 @@ or Sonarr mapping changes. The dashboard exposes optional status/private keys
 and retry without reimport. Config v10 converts explicitly from v9; secrets v6
 remains backward-readable. SQLite remains v23 with earlier SQL untouched.
 
-`python -m src.nextgen` now provides fresh init, local check, worker run and
+`python -m src.anime` now provides fresh init, local check, worker run and
 explicit config/database preview/apply commands. Fresh init never replaces old
 files. Failed database apply retains maintenance; plan tokens pin schema/scripts.
 API startup also checks local readiness. Add dedicated non-root systemd unit
 examples, mount/path controls and a fresh-install/upgrade/lab-validation guide.
-See [Shoko metadata](src/nextgen/SHOKO_METADATA.md) and
-[Service setup](src/nextgen/SERVICE_SETUP.md).
+See [Shoko metadata](src/anime/SHOKO_METADATA.md) and
+[Service setup](src/anime/SERVICE_SETUP.md).
 
 The source work is ready for review, not runtime-proven completion. Tests/CI,
 service installation, SQLite upgrades, client calls and media operations remain
@@ -54,7 +54,7 @@ Historical source ownership is checked without bypassing acquisition's Reject
 fence. Require drained terminal acquisition work, no external consumer, original
 download root identity, exact client marker/path/inventory and captured remaining
 file identities. Reuse the existing cleanup table; v23/v9/v5 unchanged. No
-historical automatic backfill. See [Download cleanup](src/nextgen/DECISION_DOWNLOAD_CLEANUP.md).
+historical automatic backfill. See [Download cleanup](src/anime/DECISION_DOWNLOAD_CLEANUP.md).
 
 Source checks only; offline cases authored but tests/CI remain unrun. No live
 clients, SQL/migration execution, media operations or deployment. This draft
@@ -75,7 +75,7 @@ SQLite v23 adds state/provenance and active-only uniqueness via an explicit
 table rebuild. Historical SQL 001–022 stays unchanged. Config v9/secrets v5 stay.
 Source syntax and matching fresh/migration table definitions checked; offline
 migration/lifecycle cases authored but unrun. No SQL, tests/CI, live cleanup,
-merge or deployment performed. See [Reservation release](src/nextgen/RESERVATION_RELEASE.md).
+merge or deployment performed. See [Reservation release](src/anime/RESERVATION_RELEASE.md).
 
 PR #135 provides staged-source cleanup after Keep. Download/torrent cleanup
 after Keep/Reject, optional Shoko, service setup and lab validation remain.
@@ -121,7 +121,7 @@ jobs. A failed refresh does not undo completed media work. Settings and private
 API-key entry are exposed through the existing API/dashboard; blank address
 keeps automatic refresh disabled. A successful job means scan accepted, not
 confirmed episode visibility. Configuration v9, backward-readable secrets v5,
-SQLite unchanged at v22. See [Jellyfin refresh](src/nextgen/JELLYFIN_REFRESH.md).
+SQLite unchanged at v22. See [Jellyfin refresh](src/anime/JELLYFIN_REFRESH.md).
 Offline cases authored/unrun; source checks only. No live requests or deployment.
 Cleanup, optional Shoko and missing-episode search remain separate work.
 
@@ -137,7 +137,7 @@ Settings/API/dashboard now expose Sonarr address, profile, path mappings and
 private credential replacement. Keep is available on staged work; readable job
 receipts and a durable Kept result drive the dashboard. Configuration v8,
 secrets v4 and SQLite v22 are explicit upgrades. Older SQL migrations stay intact.
-See [Keep through Sonarr](src/nextgen/KEEP_SONARR.md). Tests/CI remain unrun;
+See [Keep through Sonarr](src/anime/KEEP_SONARR.md). Tests/CI remain unrun;
 source checks only. No live imports, migrations, media changes or deployment.
 
 
@@ -168,7 +168,7 @@ Admission records the AniDB-anime decision and queued control job together;
 duplicate clicks reuse it. Future Intake selection/reservation stops for that
 anime. Cleanup removes only the selected staged video and episode NFO, preserving
 other episodes, shared series metadata and permanent files. A cleanup problem
-does not undo the decision. See [the Reject contract](src/nextgen/jobs/REJECT_MEDIA.md).
+does not undo the decision. See [the Reject contract](src/anime/jobs/REJECT_MEDIA.md).
 SQLite v21 explicitly upgrades action vocabulary and decision storage.
 
 Keep/Sonarr execution remains the next missing functional part. Reconsideration,
@@ -187,7 +187,7 @@ protected. All files must be revalidated before the same worker transaction
 records the manifest, STAGED milestone and DONE. Keep remains unavailable.
 
 SQLite v20 adds staging_publications through an explicit maintenance upgrade;
-configuration stays v7. See [the staging contract](src/nextgen/jobs/STAGE_USER_EVALUATION_MEDIA.md)
+configuration stays v7. See [the staging contract](src/anime/jobs/STAGE_USER_EVALUATION_MEDIA.md)
 for layout, fixed initial permission policy, non-root/shared-path requirements,
 recovery, cancellation and deferred viewer integration. No Jellyfin refresh or
 live media changes were performed. Offline tests and CI are authored/unrun.
@@ -200,7 +200,7 @@ size/inode/timestamps, record SHA-256, and use bounded local ffprobe metadata fo
 one video plus Japanese/English audio. Evidence and job completion commit under
 existing lease/cancellation fencing. SQLite v19 adds media_verifications with an
 explicit maintenance upgrade; configuration remains v7. See
-[the verification contract](src/nextgen/jobs/VERIFY_MEDIA.md) for exact guarantees,
+[the verification contract](src/anime/jobs/VERIFY_MEDIA.md) for exact guarantees,
 shared-path/executable requirements and limitations. No full decode or semantic
 episode proof is claimed. Verification does not mark STAGED or authorize Keep.
 
@@ -219,7 +219,7 @@ Configuration v7 explicitly adds metadata source/timeout settings, rendered by
 the dashboard, while preserving historical converter shapes. SQLite stays v18;
 secrets stay v3. Retrieval is bounded, cancellation-drained and redirect/proxy-free.
 It persists no raw metainfo and creates no temporary client entries. See
-[the metadata source contract](src/nextgen/acquisition/METAINFO_SOURCE.md).
+[the metadata source contract](src/anime/acquisition/METAINFO_SOURCE.md).
 Video verification and staging remain next. Offline tests and CI are unexecuted;
 no live services, migrations, media operations or deployment.
 
@@ -234,7 +234,7 @@ catalog explanations. Keep remains visibly unavailable for execution.
 
 Settings and credential replacements use revision-checked API updates. No legacy
 runtime/data bridge, old action endpoints, saved-credential reveal, extra server
-or frontend dependency is introduced. Read [the dashboard contract](src/nextgen/dashboard/README.md)
+or frontend dependency is introduced. Read [the dashboard contract](src/anime/dashboard/README.md)
 for scope, source attribution and deployment paths. No media pipeline step is
 implemented by this UI. Offline Python/UI cases are authored but unexecuted;
 syntax/source checks only, with no CI, live listener or deployment.
@@ -263,7 +263,7 @@ transactional claims, token/expiry/attempt fencing, heartbeat renewal, expired
 lease recovery, typed outcomes and atomic result/successor/history completion.
 Normal deferred waits are separate from failure retries. Pause/stop drain active
 work; forced cancellation waits for blocking threads before releasing admission.
-See [WORKER.md](src/nextgen/WORKER.md). SQLite remains v8; jobs is unchanged.
+See [WORKER.md](src/anime/WORKER.md). SQLite remains v8; jobs is unchanged.
 
 No business/provider/trial/Keep handlers are installed: an empty registry fails
 readiness. run_worker is the service entry point for trusted registrations; no
@@ -288,9 +288,9 @@ Identity/acquisition/staging/Keep handlers remain focused feature PRs.
 ## Pipeline architecture drafts — 2026-10-22
 
 Before implementing the worker/business handlers, review the two separate
-[architecture documents](src/nextgen/architecture/README.md):
-[intake through the configured trial folder](src/nextgen/architecture/INTAKE_TO_USER_EVALUATION.md)
-and [Keep through the permanent library](src/nextgen/architecture/KEEP_TO_LIBRARY.md).
+[architecture documents](src/anime/architecture/README.md):
+[intake through the configured trial folder](src/anime/architecture/INTAKE_TO_USER_EVALUATION.md)
+and [Keep through the permanent library](src/anime/architecture/KEEP_TO_LIBRARY.md).
 They contain ownership/pipeline graphs, proposed handler boundaries, safety and
 recovery contracts, legacy references and explicit open decisions. They do not
 claim the illustrated components or proposed settings/storage already exist.
@@ -320,7 +320,7 @@ HANDLER_COMPLETED and HANDLER_FAILED have static readable catalog messages;
 trusted handler registrations supply static labels and translation keys.
 All attempts/calls remain tied to the existing job_id. Historical rows retain
 NULL metadata. Published 001–007 are unchanged. Details and worker transaction/
-lease-fencing requirements: [JOB_HANDLERS.md](src/nextgen/JOB_HANDLERS.md).
+lease-fencing requirements: [JOB_HANDLERS.md](src/anime/JOB_HANDLERS.md).
 No jobs columns, state policies, API or worker execution loop change here.
 Tests are included but unexecuted; source/AST/diff checks only.
 
@@ -331,13 +331,13 @@ were confirmed merged into NextGen on 2026-10-22 with explicit authorization.
 The canonical job process name is now **worker**, replacing coordinator.
 The separate management API remains responsible for management requests.
 Job handler modules use the `_job.py` suffix; see
-[JOB_HANDLERS.md](src/nextgen/JOB_HANDLERS.md) for the naming convention.
+[JOB_HANDLERS.md](src/anime/JOB_HANDLERS.md) for the naming convention.
 
 Implemented libraries: version-aware SQLite upgrade preview/apply, verified
 backup, per-step rollback, durable maintenance admission and current-database
 connections. The naming follow-up adds SQLite v7 (007_worker_component.sql)
 and configuration schema v2. Published SQL 001–006 remain unchanged. See
-[the migration/maintenance contract](src/nextgen/storage/MIGRATIONS.md).
+[the migration/maintenance contract](src/anime/storage/MIGRATIONS.md).
 
 All future runtime DB users and entire job attempts must participate in the gate.
 A request blocks new work while admitted work finishes; queued job states are
@@ -360,10 +360,10 @@ Existing settings/logging and reason registry are reused. Logging now resolves
 static English copy, derives correlation from IDs, and emits bounded safe
 exception summaries. Runtime-only OPERATION_FAILED does not add a job state.
 
-Mandatory policy: [every diagnostic marker/error needs human-readable copy](src/nextgen/HUMAN_READABLE_MESSAGES.md).
-Job states/activity: [JOB_STATUSES.md](src/nextgen/JOB_STATUSES.md).
-Contract/API: [DIAGNOSTIC_CONTRACT.md](src/nextgen/DIAGNOSTIC_CONTRACT.md).
-Schema/version authority: [SCHEMA_POLICY.md](src/nextgen/storage/SCHEMA_POLICY.md).
+Mandatory policy: [every diagnostic marker/error needs human-readable copy](src/anime/HUMAN_READABLE_MESSAGES.md).
+Job states/activity: [JOB_STATUSES.md](src/anime/JOB_STATUSES.md).
+Contract/API: [DIAGNOSTIC_CONTRACT.md](src/anime/DIAGNOSTIC_CONTRACT.md).
+Schema/version authority: [SCHEMA_POLICY.md](src/anime/storage/SCHEMA_POLICY.md).
 These documents supersede older planning snapshots below where status differs.
 Use GitHub as the authority for PR #100 publication/merge status. Source review and AST
 syntax checks only; offline tests are included but unexecuted, with no CI runs.
@@ -388,7 +388,7 @@ schema migrations as ordinary jobs. Supervisor owns process management later.
 Configuration follow-up: configuration_schema.py and configuration.py implement
 an explicit v0→v1→v2 NextGen configuration conversion, validated versioned snapshots,
 revision-checked atomic service-owned persistence and migration preview/backups.
-See [CONFIGURATION.md](src/nextgen/CONFIGURATION.md) for the API/library contract.
+See [CONFIGURATION.md](src/anime/CONFIGURATION.md) for the API/library contract.
 Fields explicitly declare next_operation or restart behavior. Each new job
 attempt/API request reads current settings once; running operations keep their
 snapshot. Restart fields stay pinned to process startup values. Process-level
@@ -413,13 +413,13 @@ not extensions that silently enlarge the diagnostics implementation.
 
 ## NextGen settings and diagnostics foundation — 2026-10-22
 
-Work in branch `nextgen/config-diagnostics-20261022`. Before developing `worker`, use the independent `src/nextgen/settings.py` and `src/nextgen/diagnostics.py` foundation. Defaults: logging INFO; supported levels TRACE, DEBUG, INFO, WARNING, ERROR and CRITICAL. Optional validated component overrides for supervisor, intake, worker, identity and acquisition. TRACE is custom level 5; higher verbosity NEVER relaxes redaction. The standard library logger writes sanitized, bounded correlation records to stderr/journald, with event/job IDs, attempt, elapsed time and reason code when available. SQLite `event_history` and `job_history` remain separate durable state histories, and worker code must persist transitions atomically when implemented.
+Work in branch `nextgen/config-diagnostics-20261022`. Before developing `worker`, use the independent `src/anime/settings.py` and `src/anime/diagnostics.py` foundation. Defaults: logging INFO; supported levels TRACE, DEBUG, INFO, WARNING, ERROR and CRITICAL. Optional validated component overrides for supervisor, intake, worker, identity and acquisition. TRACE is custom level 5; higher verbosity NEVER relaxes redaction. The standard library logger writes sanitized, bounded correlation records to stderr/journald, with event/job IDs, attempt, elapsed time and reason code when available. SQLite `event_history` and `job_history` remain separate durable state histories, and worker code must persist transitions atomically when implemented.
 
 Configuration currently loads strict JSON into immutable settings wrappers; hot reload, supervisor distribution, dashboard UI, external services, live workers and persistence of configuration are NOT implemented. Unknown keys and unsupported levels fail validation. Never log raw webhook bodies, provider responses, torrent secrets or credentials. Legacy diagnostics (merged PR #67) and legacy settings schema inform this fresh NextGen module only; no dependency on `src/legacy`. Offline tests are committed but deliberately not run yet, and CI remains disabled. Do not merge/deploy without explicit instruction.
 
 ## What is canonical
 
-**Series schema, not processing state.** NextGen uses one versioned `AnimeSeries v2` schema (`src/nextgen/schema/anime_series.py`; detailed RFC at `src/nextgen/schema/README.md`). The series describes **the anime and its episodes**. It MUST NOT include webhook notification IDs, traces, GUIDs, source release names, job IDs, retries, acquisition, staging, evaluation, or export status. That information lives in independent durable operational records connected to the series after identification.
+**Series schema, not processing state.** NextGen uses one versioned `AnimeSeries v2` schema (`src/anime/schema/anime_series.py`; detailed RFC at `src/anime/schema/README.md`). The series describes **the anime and its episodes**. It MUST NOT include webhook notification IDs, traces, GUIDs, source release names, job IDs, retries, acquisition, staging, evaluation, or export status. That information lives in independent durable operational records connected to the series after identification.
 
 The identified series's required fields are:
 - `anime.anidb_id`: positive AniDB anime ID (anime and sequel/cour identity).
@@ -454,11 +454,11 @@ Every published series MUST satisfy a uniform, machine-checkable schema; optiona
 
 **Incremental compatibility:** PR #94's `webhook_events` includes historical work-state fields and `save_identity` operates on them. This follow-up adds dedicated `jobs` storage; removing old event-state coupling and implementing real workers is distinct later work. Do not mistake the existence of a jobs table for a functioning worker.
 
-**Scope:** SQLite schema, basic persistence helpers, documentation, isolated tests in `src/nextgen/tests/`. No intake HTTP service, no daemon, no acquisition, no migration from legacy, no production deployment. Leave automatic paid CI disabled; tests remain tracked, with offline comprehensive testing planned later per user decision. Do not claim unrun tests have passed. No merge/deployment without fresh authorization.
+**Scope:** SQLite schema, basic persistence helpers, documentation, isolated tests in `src/anime/tests/`. No intake HTTP service, no daemon, no acquisition, no migration from legacy, no production deployment. Leave automatic paid CI disabled; tests remain tracked, with offline comprehensive testing planned later per user decision. Do not claim unrun tests have passed. No merge/deployment without fresh authorization.
 
 ## Versioned SQLite SQL files — PR #95
 
-The future **NextGen-only** migration component will read ordered scripts from `src/nextgen/storage/sql/`:
+The future **NextGen-only** migration component will read ordered scripts from `src/anime/storage/sql/`:
 
 - `001_foundation.sql` creates exactly the initial six-table NextGen foundation and sets `PRAGMA user_version=1`. Use this only on an empty NextGen database.
 - `002_independent_jobs.sql` adds the independent `jobs` and append-only `job_history` tables and their indexes and sets `PRAGMA user_version=2`. Apply this to a version-1 NextGen database. It does not recreate the six existing tables or alter their rows.
@@ -480,13 +480,13 @@ The worker owns bounded durable scheduling, not business-logic decisions. Loggin
 
 ## NextGen tests: fresh, local batches, no automatic GitHub checks
 
-The clean-slate code uses its **own** tests in `src/nextgen/tests/`. The legacy tests in `src/legacy/` are preserved for history and regression behavior, but MUST NOT gate or be imported by NextGen implementation. The legacy tests need not inherently fail; they simply validate a different runtime.
+The clean-slate code uses its **own** tests in `src/anime/tests/`. The legacy tests in `src/legacy/` are preserved for history and regression behavior, but MUST NOT gate or be imported by NextGen implementation. The legacy tests need not inherently fail; they simply validate a different runtime.
 
 The automatic GitHub Actions **Python test workflow has been removed** on this draft PR branch. Do not automatically run legacy or NextGen tests on pushes or pull requests. Keep the separate manually invoked archive publishing workflow unchanged. If branch protection requires a deleted check, resolve that repository rule explicitly before merging; do not silently bypass it.
 
-Use `python -m src.nextgen.tests.run_batches --match schema` for focused schema work, or `python -m src.nextgen.tests.run_batches` for all NextGen tests, executed in separate groups of up to five test files. Use `--batch-size N`, `--match <filename-part>`, and `--list` as needed. This needs Python 3.12+ and runs **locally**, never against live services. See `src/nextgen/tests/README.md`. Each new NextGen component gets its own isolated offline tests and sample data in the existing `fixtures/` folder.
+Use `python -m src.anime.tests.run_batches --match schema` for focused schema work, or `python -m src.anime.tests.run_batches` for all NextGen tests, executed in separate groups of up to five test files. Use `--batch-size N`, `--match <filename-part>`, and `--list` as needed. This needs Python 3.12+ and runs **locally**, never against live services. See `src/anime/tests/README.md`. Each new NextGen component gets its own isolated offline tests and sample data in the existing `fixtures/` folder.
 
-**Current test policy (2026-11-04):** tests are no longer deferred. GitHub Actions is avoided for routine verification; instead, every completed work item runs the full local batch suite (`python -m src.nextgen.tests.run_batches`), fixes failures as they appear, and only then commits, pushes and opens a PR. PR descriptions report the local result. A failure that cannot be fixed confidently is documented in the PR rather than guessed at. Earlier "authored/unrun" notes in this file describe the previous deferral policy and are historical.
+**Current test policy (2026-11-04):** tests are no longer deferred. GitHub Actions is avoided for routine verification; instead, every completed work item runs the full local batch suite (`python -m src.anime.tests.run_batches`), fixes failures as they appear, and only then commits, pushes and opens a PR. PR descriptions report the local result. A failure that cannot be fixed confidently is documented in the PR rather than guessed at. Earlier "authored/unrun" notes in this file describe the previous deferral policy and are historical.
 
 ## Next PR: delivery and worker reliability (TCP-like, application-level)
 

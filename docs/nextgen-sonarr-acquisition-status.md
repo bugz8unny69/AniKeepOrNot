@@ -42,7 +42,7 @@ feature, and PR #168 targets `NextGen` for review and automated CI.
 - Regression tests for the upgrade path, isolated operations and fallback
   scheduling/selection have been written but deliberately **not executed**.
 
-- The installed `python -m src.nextgen worker` entry point now accepts
+- The installed `python -m src.anime worker` entry point now accepts
   `--sonarr-acquire`. It enables the existing backfill, source selection,
   and acquisition registrations together. The example NextGen systemd worker
   unit now passes the flag so a deployed worker activates that existing path.

@@ -2,7 +2,7 @@
 
 Run from the repository root:
     python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md
-Reads the catalog from src/nextgen (reasons.py, messages.py) for the old
+Reads the catalog from src/anime (reasons.py, messages.py) for the old
 wording and usage counts, so it renders correctly only on a tree from before
 RF-006b applied the audit (refactor 8da06cd2 or earlier). Data only; nothing at
 runtime imports this.
@@ -14,14 +14,14 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from src.nextgen.reasons import REGISTRY  # noqa: E402
-import src.nextgen.messages as messages  # noqa: E402
+from src.anime.reasons import REGISTRY  # noqa: E402
+import src.anime.messages as messages  # noqa: E402
 
 data = runpy.run_path(str(ROOT / 'docs/refactor/reason_code_proposals.py'))
 R, E, X, U = data['REASONS'], data['EVENTS'], data['REMOVED'], data['UNREGISTERED']
 T, N = data['RETIRED'], data['NEW']
 
-src = ROOT / 'src/nextgen'
+src = ROOT / 'src/anime'
 pool = [p for p in src.rglob('*.py') if 'tests' not in p.parts and p.name not in ('reasons.py', 'messages.py')]
 pool += list((ROOT / 'fixes').glob('*.py')) + list(src.rglob('*.js')) + list(src.rglob('*.sql'))
 text = '\n'.join(p.read_text() for p in pool)
@@ -81,7 +81,7 @@ P = out.append
 P('# Reason and event code audit')
 P('')
 P('**Base:** `refactor` at `8c1d25a0` (NextGen `29fce109`, with `services` merged). First written against `9fdb64eb` (NextGen `9071be2e`); §0 lists the codes added since. This is a review document: it changes no code.')
-P('**Kept current by** `src/nextgen/tests/test_reason_code_audit.py`: it fails when a registered code has no proposal here, so a NextGen sync that adds a code cannot slip past the audit.')
+P('**Kept current by** `src/anime/tests/test_reason_code_audit.py`: it fails when a registered code has no proposal here, so a NextGen sync that adds a code cannot slip past the audit.')
 P('**Data:** [`reason_code_proposals.py`](reason_code_proposals.py) is the machine-readable source. Rebuild this page with `python docs/refactor/render_reason_code_audit.py > docs/refactor/REASON_CODE_AUDIT.md`. RF-006 applies the data.')
 P('')
 P('## Decisions this audit implements')
