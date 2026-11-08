@@ -51,9 +51,19 @@ on the spot:
 | Not identifiable (no AniDB/TVDB match, ambiguous match) | **rejected**, with the reason (`IDENTITY_INCOMPLETE`) |
 | Conflicting identity (AniDB and TVDB disagree) | **rejected**, with the reason (`IDENTITY_CONFLICT`) |
 | Unsupported release type (movie, specials) | **rejected**, with the reason (`RELEASE_TYPE_UNSUPPORTED`) |
-| Series already rejected by you | **rejected**, with the reason |
+| Series already rejected by you (e.g. autobrr sends it again) | **rejected** (`ANIME_REJECTED`). No job is created |
 | An identity service is down (AniDB, TVDB) | **waits** for the service (service health layer), then identifies; this is not a rejection |
 
+* **Repeat sends of a rejected series.** Autobrr can keep sending releases of
+  a series you rejected. Each one is identified at intake, matched to your
+  rejection and rejected: no job, no hold and no review. The Intake page
+  doesn't list each one separately. The rejected series shows a count and the
+  last time, e.g. "rejected · autobrr sent 7 more releases, last 18:40".
+  Each one is still recorded in that release's History.
+
+  Today the same re-send runs Identify, Verify release and Select as jobs,
+  then stops `ON_HOLD · ANIME_REJECTED` at Reserve (or Evaluate/Reserve for
+  batches), leaving held jobs behind on every send.
 * Intake **never** produces Needs review. Today `IDENTITY_INCOMPLETE` and
   `IDENTITY_CONFLICT` go to Needs review; on `refactor` they become intake
   rejections (a behaviour change, to be listed in the PR).
@@ -149,8 +159,10 @@ or torrent at once (today's reservations, with one clear owner).
 ## Phases (each a PR, tests local only)
 
 0. **JD-0 Intake rejects.** Identification at intake; identity failures
-   become rejections and never go to review; outages wait. Test: each row of
-   the intake table above.
+   become rejections and never go to review; outages wait; re-sends of a
+   rejected series are rejected without a job. Test: each row of the intake
+   table above, and the same rejected series sent five times (no job, one
+   series entry, count 5).
 1. **JD-1 Activities.** Each handler's work becomes an activity function, called by
    today's job wrappers. No behaviour change yet.
 2. **JD-2 Episode duty.** The worker assigns `EPISODE`, and one job runs every
