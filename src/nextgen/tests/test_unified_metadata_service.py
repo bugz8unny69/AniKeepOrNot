@@ -26,7 +26,7 @@ from src.nextgen.storage.batch_metadata_admission import (
     BatchMetadataJournal, EarlyBatchIntent, EarlyBatchPermit,
 )
 from src.nextgen.storage.job_queue import Claim, JobQueue
-from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent, MagnetPermit
+from src.nextgen.storage.magnet_intake import MagnetIntent, MagnetPermit
 from src.nextgen.storage.sqlite import initialize, transaction, enqueue_job
 from src.nextgen.tests.test_acquisition_metadata import metadata
 
@@ -200,7 +200,7 @@ class UnifiedMetadataTimeoutAndRestartTests(unittest.IsolatedAsyncioTestCase):
         """WI-03: Single episode legacy bootstrap returns TORRENT_METADATA_TIMEOUT after deadline."""
         marker = 'd' * 32
         options = DownloadOptions('http://localhost:8080', '/downloads/ad-' + marker, 'anime', 10)
-        from src.nextgen.storage.sonarr_magnet_intake import _fingerprint
+        from src.nextgen.storage.magnet_intake import _fingerprint
         intent = MagnetIntent(1, 1, HASH, marker, options, 4, 'UNCERTAIN',
                               _fingerprint(1, HASH, marker, options, 4))
         probe = Mock(major=4, metadata_strategy='guarded_export')
@@ -263,7 +263,7 @@ class UnifiedMetadataTimeoutAndRestartTests(unittest.IsolatedAsyncioTestCase):
         async def mock_timeout_verify(source, configuration, cancelled, claim=None):
             raise MetadataSourceTimeout()
 
-        reg = release_registration(mock_timeout_verify, trial_kind='EVALUATE_EPISODE', batch_kind='EVALUATE_BATCH')
+        reg = release_registration(mock_timeout_verify, user_evaluation_kind='EVALUATE_EPISODE', batch_kind='EVALUATE_BATCH')
         context = SimpleNamespace(
             claim=Claim(1, 1, RELEASE_KIND, '{"anidb_id": 16999}', 1, 'lease'),
             configuration=self.config,

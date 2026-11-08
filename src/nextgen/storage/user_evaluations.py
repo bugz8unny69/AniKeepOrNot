@@ -6,7 +6,7 @@ import time
 from src.nextgen.history import integer, append_job_history
 from src.nextgen.storage.job_queue import QueueUnavailable
 from src.nextgen.storage.migrations import LATEST_VERSION, MigrationError, _open
-from src.nextgen.trial_policy import TrialSource, TrialProposal, TrialConflict, Window
+from src.nextgen.user_evaluation_policy import UserEvaluationSource, UserEvaluationProposal, UserEvaluationConflict, Window
 
 
 def _source(db,verification_job_id,event_id):
@@ -17,14 +17,14 @@ def _source(db,verification_job_id,event_id):
                    "WHERE r.job_id=? AND j.event_id=? AND j.state='DONE' AND j.kind='VERIFY_RELEASE' AND e.state='IDENTIFIED' "
                    "AND r.verification_scope='DECLARED_SINGLE_EPISODE' AND r.tvdb_order='official' "
                    "AND a.tvdb_series_id=r.tvdb_series_id",(verification_job_id,event_id)).fetchone()
-    if row is None:raise TrialConflict()
-    return TrialSource(*row)
+    if row is None:raise UserEvaluationConflict()
+    return UserEvaluationSource(*row)
 
 
 def _delivery(db,event_id):
     """(source, release title) of the delivery; title is untrusted, a hint only."""
     row=db.execute("SELECT source,raw_body FROM incoming_events WHERE event_id=?",(event_id,)).fetchone()
-    if row is None:raise TrialConflict()
+    if row is None:raise UserEvaluationConflict()
     try:
         body=json.loads(row[1])
         title=body.get('release_name') if type(body) is dict else None
@@ -32,7 +32,7 @@ def _delivery(db,event_id):
     return row[0],title if type(title) is str else ''
 
 
-def load_trial_source(database,verification_job_id,event_id,*,with_delivery=False):
+def load_user_evaluation_source(database,verification_job_id,event_id,*,with_delivery=False):
     integer(verification_job_id,positive=True)
     integer(event_id,positive=True)
     db=None
@@ -47,18 +47,18 @@ def load_trial_source(database,verification_job_id,event_id,*,with_delivery=Fals
         if db is not None:db.close()
 
 
-def persist_trial(db,claim,proposal):
+def persist_user_evaluation(db,claim,proposal):
     """Caller owns fenced transaction. First committed plan fixes the anchor."""
-    if not db.in_transaction or type(proposal) is not TrialProposal:raise ValueError('trial transaction and facts required')
+    if not db.in_transaction or type(proposal) is not UserEvaluationProposal:raise ValueError('trial transaction and facts required')
     source=proposal.source
     if source.event_id!=claim.event_id or _source(db,source.verification_job_id,claim.event_id)!=source:
-        raise TrialConflict()
+        raise UserEvaluationConflict()
     # One frozen plan per AniDB anime; later deliveries reuse it in any TVDB season.
     row=db.execute("SELECT plan_id,anchor_episode,backfill_count,following_count,anchor_verification_id FROM trial_plans "
                    "WHERE anidb_id=? AND tvdb_order='official'",(source.anidb_id,)).fetchone()
     if row is not None:
         anchor=db.execute("SELECT anidb_id,tvdb_series_id,anidb_episode_number,tvdb_order FROM release_verifications WHERE verification_id=?",(row[4],)).fetchone()
-        if anchor!=(source.anidb_id,source.tvdb_series_id,row[1],'official'):raise TrialConflict()
+        if anchor!=(source.anidb_id,source.tvdb_series_id,row[1],'official'):raise UserEvaluationConflict()
         row=row[:4]
     now=integer(time.time_ns()//1000000)
     if row is None and (proposal.window.backfill_count or proposal.window.following_count):
@@ -70,7 +70,7 @@ def persist_trial(db,claim,proposal):
                          proposal.window.backfill_count,proposal.window.following_count,proposal.configuration_revision,now)).lastrowid
         row=(plan,source.anidb_episode_number,proposal.window.backfill_count,proposal.window.following_count)
     if row is None:
-        raise TrialConflict()
+        raise UserEvaluationConflict()
     else:
         plan,anchor,backfill,following=row
         selected=source.anidb_episode_number in Window(backfill,following).anidb_episodes(anchor)

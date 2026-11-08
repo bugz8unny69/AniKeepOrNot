@@ -72,7 +72,7 @@ class ReleaseMappingTests(unittest.TestCase):
             with self.subTest(title=title), self.assertRaises(ReleaseNotReady):
                 declared_episode(title)
 
-    def test_single_declarations_do_not_apply_legacy_trial_window_or_season_one_rule(self):
+    def test_single_declarations_do_not_apply_legacy_user_evaluation_window_or_season_one_rule(self):
         self.assertEqual(declared_episode('[Group] Test - 12 [1080p]'),('anidb',None,12))
         self.assertEqual(declared_episode('Test S02E13'),('tvdb',2,13))
         self.assertEqual(declared_episode('Test S00E01'),('tvdb',0,1))

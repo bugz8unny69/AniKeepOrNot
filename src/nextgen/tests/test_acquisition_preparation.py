@@ -12,7 +12,7 @@ from src.nextgen.acquisition.contracts import AcquisitionProposal
 from src.nextgen.acquisition.metadata import MetadataInvalid, ObservedInventory, parse_metainfo
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Policy, Registry, Successor
-from src.nextgen.jobs.evaluate_trial_job import registration as evaluate
+from src.nextgen.jobs.select_user_evaluation_job import registration as evaluate
 from src.nextgen.jobs.reserve_episode_job import registration as reserve
 from src.nextgen.jobs.prepare_acquisition_job import registration as prepare
 from src.nextgen.storage.acquisition import load_acquisition_input, validate_declaration

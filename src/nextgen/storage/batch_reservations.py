@@ -10,10 +10,10 @@ import time
 
 from src.nextgen.episode_reservations import ReservationConflict, EpisodeReserved
 from src.nextgen.history import integer, append_job_history
-from src.nextgen.storage.batch_trials import _source as trial_source
+from src.nextgen.storage.batch_user_evaluations import _source as user_evaluation_source
 from src.nextgen.storage.job_queue import QueueUnavailable
 from src.nextgen.storage.migrations import LATEST_VERSION, MigrationError, _open
-from src.nextgen.trial_policy import TrialConflict
+from src.nextgen.user_evaluation_policy import UserEvaluationConflict
 
 
 @dataclass(frozen=True)
@@ -60,13 +60,13 @@ def _facts(db,evaluation_job_id,event_id):
         "AND j.kind='EVALUATE_BATCH'",(evaluation_job_id,event_id)).fetchone()
     if row is None:raise ReservationConflict()
     plan_id,batch_id,aid,tid,season,verification_job,anchor,backfill,following,planned_size=row
-    try:source=trial_source(db,verification_job,event_id)
-    except TrialConflict:raise ReservationConflict() from None
+    try:source=user_evaluation_source(db,verification_job,event_id)
+    except UserEvaluationConflict:raise ReservationConflict() from None
     if (source.batch_id,source.anidb_id,source.tvdb_series_id,source.season)!=(batch_id,aid,tid,season):
         raise ReservationConflict()
-    from src.nextgen.trial_policy import Window
+    from src.nextgen.user_evaluation_policy import Window
     try:allowed=set(Window(backfill,following).episodes(anchor))
-    except (ValueError,TrialConflict):raise ReservationConflict() from None
+    except (ValueError,UserEvaluationConflict):raise ReservationConflict() from None
     selected=db.execute(
         "SELECT f.file_index,f.anidb_episode_id,f.tvdb_episode,f.tvdb_episode_id,"
         "f.file_size_bytes,t.selected_size_bytes "

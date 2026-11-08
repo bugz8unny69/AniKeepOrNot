@@ -97,7 +97,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
     )
 
     # Resolve plan IDs: single trial plan vs batch plan handled separately
-    trial_plan_id = None
+    user_evaluation_plan_id = None
     batch_plan_id = None
 
     if target_job_id:
@@ -110,7 +110,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             (target_job_id,)
         ).fetchone()
         if row is not None:
-            trial_plan_id = row[0]
+            user_evaluation_plan_id = row[0]
         else:
             # Check if this target_job_id belongs to batch staging publications
             batch_row = db.execute(
@@ -120,7 +120,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             if batch_row is not None:
                 batch_plan_id = batch_row[0]
 
-    if trial_plan_id is None and batch_plan_id is None:
+    if user_evaluation_plan_id is None and batch_plan_id is None:
         # Fall back to active reservations for this exact episode
         res_row = db.execute(
             "SELECT plan_id FROM episode_reservations "
@@ -128,7 +128,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             (aid, eid)
         ).fetchone()
         if res_row is not None and res_row[0] is not None:
-            trial_plan_id = res_row[0]
+            user_evaluation_plan_id = res_row[0]
         else:
             batch_res_row = db.execute(
                 "SELECT plan_id FROM batch_episode_reservations "
@@ -138,20 +138,20 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             if batch_res_row is not None and batch_res_row[0] is not None:
                 batch_plan_id = batch_res_row[0]
 
-    if trial_plan_id is None and batch_plan_id is None:
+    if user_evaluation_plan_id is None and batch_plan_id is None:
         raise KeepReview(failed_check='src/nextgen/keep_resolution.py:125 resolve_tvdb_placement UNRESOLVED_PLAN')
 
     # Commit placement to active reservations and selections for the resolved plan type
-    if trial_plan_id is not None:
+    if user_evaluation_plan_id is not None:
         db.execute(
             "UPDATE episode_reservations SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
             "WHERE plan_id=? AND anidb_id=? AND anidb_episode_id=? AND state='ACTIVE' AND tvdb_episode_id IS NULL",
-            (target_season, target_episode, tvdb_eid, trial_plan_id, aid, eid)
+            (target_season, target_episode, tvdb_eid, user_evaluation_plan_id, aid, eid)
         )
         existing_sel = db.execute(
             "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM sonarr_episode_selections "
             "WHERE plan_id=? AND anidb_episode_number=?",
-            (trial_plan_id, anidb_number)
+            (user_evaluation_plan_id, anidb_number)
         ).fetchone()
         if existing_sel is not None:
             curr_s, curr_ep, curr_eid = existing_sel
@@ -160,7 +160,7 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
         db.execute(
             "UPDATE sonarr_episode_selections SET tvdb_season=?, tvdb_episode=?, tvdb_episode_id=? "
             "WHERE plan_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NULL",
-            (target_season, target_episode, tvdb_eid, trial_plan_id, anidb_number)
+            (target_season, target_episode, tvdb_eid, user_evaluation_plan_id, anidb_number)
         )
 
     if batch_plan_id is not None:

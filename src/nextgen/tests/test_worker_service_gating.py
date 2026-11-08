@@ -47,13 +47,13 @@ def real_service_kinds():
     from src.nextgen import decision_download_cleanup, post_keep_cleanup
     from src.nextgen.jobs import (
         cleanup_batch_download_job, cleanup_batch_kept_media_job, cleanup_canceled_operation_job,
-        discover_sonarr_backfill_job, download_torrent_job, enrich_shoko_job, keep_batch_job,
+        discover_episode_releases_job, download_torrent_job, enrich_shoko_job, keep_batch_job,
         keep_media_job, prepare_acquisition_job, refresh_jellyfin_job, submit_batch_job,
         submit_torrent_job, transfer_batch_job, unlock_batch_job,
     )
     modules = (prepare_acquisition_job, submit_torrent_job, download_torrent_job, submit_batch_job,
                transfer_batch_job, unlock_batch_job, cleanup_batch_download_job,
-               cleanup_canceled_operation_job, decision_download_cleanup, discover_sonarr_backfill_job,
+               cleanup_canceled_operation_job, decision_download_cleanup, discover_episode_releases_job,
                keep_media_job, keep_batch_job, post_keep_cleanup, cleanup_batch_kept_media_job,
                refresh_jellyfin_job, enrich_shoko_job)
     return {m.KIND: m.SERVICES for m in modules}

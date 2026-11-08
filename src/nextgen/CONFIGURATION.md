@@ -243,7 +243,7 @@ make the inclusive following count explicit for the future dashboard.
 v4→v5 explicitly adds these fields and advances revision. Published older steps
 keep their historical outputs. Fields use next_operation metadata: each new
 plan uses fresh settings, while an established plan retains its original anchor,
-counts and revision. See TRIAL_POLICY.md for examples and immutable-plan behavior.
+counts and revision. See USER_EVALUATION_POLICY.md for examples and immutable-plan behavior.
 
 The exact-episode reservation foundation uses SQLite v12; these settings remain
 configuration v5. No new setting or secret is needed for the local episode gate.

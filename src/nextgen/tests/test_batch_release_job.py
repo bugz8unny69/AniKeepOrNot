@@ -53,7 +53,7 @@ class BatchReleaseJobTests(unittest.IsolatedAsyncioTestCase):
         try:return db.execute(sql).fetchall()
         finally:db.close()
 
-    async def test_worker_persists_fenced_batch_but_creates_no_single_episode_trial(self):
+    async def test_worker_persists_fenced_batch_but_creates_no_single_episode_user_evaluation(self):
         async def verify(source,*args):
             return BatchVerificationCompletion(source,self.inventory,self.verified)
         worker=Worker(self.store,self.startup,Registry((registration(verify),)),

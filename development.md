@@ -187,7 +187,7 @@ protected. All files must be revalidated before the same worker transaction
 records the manifest, STAGED milestone and DONE. Keep remains unavailable.
 
 SQLite v20 adds staging_publications through an explicit maintenance upgrade;
-configuration stays v7. See [the staging contract](src/nextgen/jobs/STAGE_TRIAL_MEDIA.md)
+configuration stays v7. See [the staging contract](src/nextgen/jobs/STAGE_USER_EVALUATION_MEDIA.md)
 for layout, fixed initial permission policy, non-root/shared-path requirements,
 recovery, cancellation and deferred viewer integration. No Jellyfin refresh or
 live media changes were performed. Offline tests and CI are authored/unrun.
@@ -289,7 +289,7 @@ Identity/acquisition/staging/Keep handlers remain focused feature PRs.
 
 Before implementing the worker/business handlers, review the two separate
 [architecture documents](src/nextgen/architecture/README.md):
-[intake through the configured trial folder](src/nextgen/architecture/INTAKE_TO_TRIAL.md)
+[intake through the configured trial folder](src/nextgen/architecture/INTAKE_TO_USER_EVALUATION.md)
 and [Keep through the permanent library](src/nextgen/architecture/KEEP_TO_LIBRARY.md).
 They contain ownership/pipeline graphs, proposed handler boundaries, safety and
 recovery contracts, legacy references and explicit open decisions. They do not

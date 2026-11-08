@@ -1,32 +1,9 @@
-"""Pure TVDB-to-Sonarr episode matching shared by discovery and Keep."""
-from dataclasses import dataclass
+"""Match a verified TVDB episode to its Sonarr series and episode IDs (Keep)."""
+from src.nextgen.episode_identity import EpisodeIdentityInvalid, _positive
 
 
-class SonarrEpisodeMismatch(ValueError):
+class SonarrEpisodeMismatch(EpisodeIdentityInvalid):
     """Sonarr does not uniquely identify the verified TVDB episode."""
-
-
-def _positive(value):
-    return type(value) is int and value > 0
-
-
-@dataclass(frozen=True)
-class VerifiedEpisode:
-    tvdb_series_id: int
-    tvdb_episode_id: int | None = None
-    tvdb_season: int | None = None
-    tvdb_episode: int | None = None
-
-    def __post_init__(self):
-        if not _positive(self.tvdb_series_id):
-            raise SonarrEpisodeMismatch("Verified TVDB episode identity is invalid.")
-        has_placement = (self.tvdb_episode_id is not None or self.tvdb_season is not None
-                         or self.tvdb_episode is not None)
-        if has_placement:
-            if (not _positive(self.tvdb_episode_id)
-                    or type(self.tvdb_season) is not int or self.tvdb_season < 0
-                    or not _positive(self.tvdb_episode)):
-                raise SonarrEpisodeMismatch("Verified TVDB episode identity is invalid.")
 
 
 def resolve_episode(identity, series, episodes):

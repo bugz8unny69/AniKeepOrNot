@@ -5,11 +5,11 @@ import unittest
 from src.nextgen.acquisition.audio import dual_audio_tagged, required_languages, wants_english
 from src.nextgen.acquisition.media import AudioMissing, parse_probe
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release
-from src.nextgen.jobs.evaluate_trial_job import (
-    EvaluationCompletion, registration as trial_registration,
+from src.nextgen.jobs.select_user_evaluation_job import (
+    EvaluationCompletion, registration as user_evaluation_registration,
 )
-from src.nextgen.jobs.discover_sonarr_backfill_job import KIND as DISCOVER_KIND
-from src.nextgen.storage.sonarr_backfill import window
+from src.nextgen.jobs.discover_episode_releases_job import KIND as DISCOVER_KIND
+from src.nextgen.storage.episode_discovery import window
 from src.nextgen.storage.sqlite import (
     accept_event_and_job, connect, enqueue_job, save_identity, transaction,
 )
@@ -119,7 +119,7 @@ class AnchorWindowTests(unittest.TestCase):
         self.assertEqual(window(10, 6, 1), (4, 5, 6, 7, 8, 9))
 
     def test_untagged_delivery_does_not_route_to_reservation(self):
-        spec = trial_registration(reservation_kind='RESERVE_EPISODE', discovery_kind=DISCOVER_KIND)
+        spec = user_evaluation_registration(reservation_kind='RESERVE_EPISODE', discovery_kind=DISCOVER_KIND)
         skipped = EvaluationCompletion(None, 1, True)
         kept = EvaluationCompletion(None, 1, False)
         self.assertEqual(spec.route(skipped), ())

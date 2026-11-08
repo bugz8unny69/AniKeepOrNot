@@ -5,15 +5,15 @@ import unittest
 
 from src.nextgen.configuration import ConfigurationStore
 from src.nextgen.job_contracts import Registry, Policy
-from src.nextgen.jobs.evaluate_trial_job import registration as trial_registration
-from src.nextgen.jobs.discover_sonarr_backfill_job import (
+from src.nextgen.jobs.select_user_evaluation_job import registration as user_evaluation_registration
+from src.nextgen.jobs.discover_episode_releases_job import (
     registration as discovery_registration, KIND as DISCOVER_KIND,
 )
 from src.nextgen.acquisition.prowlarr_search import BackfillObservation, SearchUnavailable
 from src.nextgen.storage.sqlite import transaction
 from src.nextgen.storage.migrations import SQL_DIR, SCRIPTS, LATEST_VERSION, _structure
 from src.nextgen.storage.sqlite import connect, initialize
-from src.nextgen.tests.test_trial_policy import TrialEvaluationTests
+from src.nextgen.tests.test_user_evaluation_policy import UserEvaluationCheckTests
 from src.nextgen.worker import Worker
 
 
@@ -34,13 +34,13 @@ class FakeDiscovery:
 
 
 class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = TrialEvaluationTests.asyncSetUp
-    rows = TrialEvaluationTests.rows
-    source = TrialEvaluationTests.source
+    asyncSetUp = UserEvaluationCheckTests.asyncSetUp
+    rows = UserEvaluationCheckTests.rows
+    source = UserEvaluationCheckTests.source
 
     def worker(self, fake, *, enabled=True):
-        trial = trial_registration(discovery_kind=DISCOVER_KIND if enabled else None)
-        registrations = [trial]
+        user_evaluation = user_evaluation_registration(discovery_kind=DISCOVER_KIND if enabled else None)
+        registrations = [user_evaluation]
         if enabled:
             registrations.append(discovery_registration(None,
                 client_factory=lambda config, secrets: fake))
@@ -87,7 +87,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run_recognized_candidate(self, acquire=False, recognized=True):
         from src.nextgen.acquisition.prowlarr_search import CandidateSelection, Release, SearchResult, DiscoveryPolicy
-        from src.nextgen.sonarr_episode import VerifiedEpisode
+        from src.nextgen.episode_identity import VerifiedEpisode
 
         self.source(7)
         _, release_job, _ = self.source(1)
@@ -123,8 +123,8 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
                                        SearchResult(456,111001,(release,)),release,DiscoveryPolicy()))
                 return tuple(result)
 
-        trial = trial_registration(discovery_kind=DISCOVER_KIND)
-        registry = Registry((trial, discovery_registration(None,
+        user_evaluation = user_evaluation_registration(discovery_kind=DISCOVER_KIND)
+        registry = Registry((user_evaluation, discovery_registration(None,
             client_factory=lambda config,secrets:VerifiedFake(),select_candidates=True,
             acquire_candidates=acquire)))
         worker = Worker(self.store,self.startup,registry,policy=Policy(lease_ms=30000))
@@ -421,7 +421,7 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[('ON_HOLD',)])
 
     async def test_plan_window_preserves_immutable_stored_results_across_anchor_shift(self):
-        from src.nextgen.storage.sonarr_backfill import plan_window, _plan
+        from src.nextgen.storage.episode_discovery import plan_window, _plan
         self.source(1157)
         worker = self.worker(FakeDiscovery())
         await worker.attempt()  # EVALUATE_TRIAL -> creates plan 1

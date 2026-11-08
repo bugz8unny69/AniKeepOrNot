@@ -9,7 +9,7 @@ from src.nextgen.acquisition.metadata import BatchInventory
 from pathlib import PurePosixPath
 from src.nextgen.batch.verification import VerifiedBatch
 from src.nextgen.batch.selection import BatchPlanningError, VIDEO, file_episode_number
-from src.nextgen.trial_policy import Window
+from src.nextgen.user_evaluation_policy import Window
 from src.nextgen.history import integer
 
 
@@ -24,7 +24,7 @@ class BatchWindowPlan:
     skipped_indices: tuple[int, ...]
 
 
-def plan_batch_trial_window(inventory, verified, *, window, anchor_episode):
+def plan_batch_user_evaluation_window(inventory, verified, *, window, anchor_episode):
     """Intersect trusted mapped episodes with current configured trial window.
 
     Unlike the older fixed E01-E06 planner, this handles backfill_count and

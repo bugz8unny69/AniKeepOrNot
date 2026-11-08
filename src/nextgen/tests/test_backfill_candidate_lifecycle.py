@@ -2,7 +2,7 @@
 import sqlite3
 import unittest
 
-from src.nextgen.storage.sonarr_candidates import (
+from src.nextgen.storage.release_candidates import (
     CandidateConflict, activate_candidate, fail_candidate, next_candidate,
     succeed_candidate, mark_published,
 )
@@ -91,7 +91,7 @@ class FallbackWiringTests(unittest.TestCase):
     tearDown=CandidateStateTests.tearDown
     def test_cleanup_failure_schedules_existing_discovery_job_once(self):
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.release_candidates import schedule_after_cleanup
         self.db.executescript("""
             CREATE TABLE job_history(history_id INTEGER,job_id INTEGER,
                 event_code TEXT,reason_code TEXT);
@@ -146,7 +146,7 @@ class FallbackWiringTests(unittest.TestCase):
     def test_oversized_webhook_release_enqueues_existing_cleanup(self):
         from types import SimpleNamespace
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_candidates import auto_cleanup_oversized
+        from src.nextgen.storage.release_candidates import auto_cleanup_oversized
         self.db.executescript("""
             CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
             CREATE TABLE jobs(job_id INTEGER,event_id INTEGER,kind TEXT,last_reason_code TEXT);
@@ -156,7 +156,7 @@ class FallbackWiringTests(unittest.TestCase):
             INSERT INTO jobs VALUES(13,25,'PREPARE_ACQUISITION','ACQUISITION_METADATA_INVALID');
             INSERT INTO jobs VALUES(14,26,'PREPARE_ACQUISITION','ACQUISITION_SIZE_LIMIT');
         """)
-        with patch('src.nextgen.storage.sonarr_candidates.request_automatic_cleanup',
+        with patch('src.nextgen.storage.release_candidates.request_automatic_cleanup',
                    return_value=('cleanup',)) as cleanup:
             with self.db:
                 self.db.execute('BEGIN IMMEDIATE')
@@ -171,7 +171,7 @@ class FallbackWiringTests(unittest.TestCase):
     def test_failed_sonarr_job_enqueues_existing_cleanup_automatically(self):
         from types import SimpleNamespace
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_candidates import auto_cleanup_failed_candidate
+        from src.nextgen.storage.release_candidates import auto_cleanup_failed_candidate
         self.db.executescript("""
             CREATE TABLE incoming_events(event_id INTEGER,source TEXT,raw_body TEXT);
             CREATE TABLE jobs(job_id INTEGER,event_id INTEGER,kind TEXT,
@@ -225,7 +225,7 @@ class FallbackWiringTests(unittest.TestCase):
             self.assertEqual(enqueue.call_count,1)
 
     def test_manual_cancel_never_advances_to_candidate_b(self):
-        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.release_candidates import schedule_after_cleanup
         self.db.executescript("""
             CREATE TABLE management_actions(operation_id INTEGER,action TEXT,
                 target_job_id INTEGER,job_id INTEGER,created_at_ms INTEGER);
@@ -269,7 +269,7 @@ class FallbackWiringTests(unittest.TestCase):
 
     def test_exhausted_rank_schedules_visible_needs_review(self):
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.release_candidates import schedule_after_cleanup
         self.db.executescript("""
             CREATE TABLE job_history(history_id INTEGER,job_id INTEGER,
                 event_code TEXT,reason_code TEXT);
@@ -318,10 +318,10 @@ class FallbackWiringTests(unittest.TestCase):
     def test_withdrawn_release_skips_b_and_tries_c_without_download(self):
         from types import SimpleNamespace
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_backfill import (
+        from src.nextgen.storage.episode_discovery import (
             BackfillBatch,FallbackTarget,FallbackMissing,
             persist_fallback_missing)
-        from src.nextgen.sonarr_episode import VerifiedEpisode
+        from src.nextgen.episode_identity import VerifiedEpisode
         third='c'*40
         self.db.executescript("""
             CREATE TABLE trial_plans(plan_id INTEGER,tvdb_series_id INTEGER,
@@ -347,9 +347,9 @@ class FallbackWiringTests(unittest.TestCase):
         value=FallbackMissing(plan,2,FallbackTarget(identity,FIRST,SECOND))
         claim=SimpleNamespace(kind='DISCOVER_SONARR_BACKFILL',
                               event_id=9,job_id=30)
-        with patch('src.nextgen.storage.sonarr_backfill._plan',
+        with patch('src.nextgen.storage.episode_discovery._plan',
                    return_value=plan), patch(
-                   'src.nextgen.storage.sonarr_backfill.enqueue_job_with_receipt',
+                   'src.nextgen.storage.episode_discovery.enqueue_job_with_receipt',
                    return_value=(99,'receipt')) as enqueue:
             with self.db:
                 self.db.execute('BEGIN IMMEDIATE')
@@ -364,12 +364,12 @@ class FallbackWiringTests(unittest.TestCase):
     def test_fallback_reselects_next_rank_and_uses_existing_dispatch(self):
         from types import SimpleNamespace
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_backfill import (
+        from src.nextgen.storage.episode_discovery import (
             BackfillBatch,FallbackTarget,FallbackCompletion,persist_fallback,
             BackfillConflict)
         from src.nextgen.acquisition.prowlarr_search import (
             CandidateSelection,Release,SearchResult,DiscoveryPolicy)
-        from src.nextgen.sonarr_episode import VerifiedEpisode
+        from src.nextgen.episode_identity import VerifiedEpisode
         self.db.executescript("""
             CREATE TABLE sonarr_episode_selections(plan_id INTEGER,
                 anidb_episode_number INTEGER,tvdb_episode_id INTEGER,
@@ -400,11 +400,11 @@ class FallbackWiringTests(unittest.TestCase):
                                  choice)
         claim=SimpleNamespace(kind='DISCOVER_SONARR_BACKFILL',event_id=9,
                               job_id=30,attempt=1)
-        with patch('src.nextgen.storage.sonarr_backfill._plan',
+        with patch('src.nextgen.storage.episode_discovery._plan',
                    return_value=plan), patch(
-                   'src.nextgen.storage.sonarr_dispatch.dispatch',
+                   'src.nextgen.storage.release_dispatch.dispatch',
                    return_value=()) as dispatch, patch(
-                   'src.nextgen.storage.sonarr_backfill.append_job_history',
+                   'src.nextgen.storage.episode_discovery.append_job_history',
                    return_value=None):
             with self.db:
                 self.db.execute('BEGIN IMMEDIATE')
@@ -424,7 +424,7 @@ class FallbackWiringTests(unittest.TestCase):
     def test_metadata_timeout_failure_isolation_and_fallback(self):
         """Proves TORRENT_METADATA_TIMEOUT on Candidate 1 isolates the failure and activates Candidate 2."""
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.release_candidates import schedule_after_cleanup
         self.db.executescript("""
             CREATE TABLE job_history(history_id INTEGER,job_id INTEGER,
                 event_code TEXT,reason_code TEXT);
@@ -475,7 +475,7 @@ class FallbackWiringTests(unittest.TestCase):
     def test_size_limit_rejection_failure_isolation_and_fallback(self):
         """Proves ACQUISITION_SIZE_LIMIT on Candidate 1 isolates the failure and activates Candidate 2."""
         from unittest.mock import patch
-        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.release_candidates import schedule_after_cleanup
         self.db.executescript("""
             CREATE TABLE job_history(history_id INTEGER,job_id INTEGER,
                 event_code TEXT,reason_code TEXT);

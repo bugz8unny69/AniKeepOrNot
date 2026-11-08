@@ -208,7 +208,7 @@ def request_review_retry(database, job_id, *, expected_attempt, expected_reason,
             raise RetryStale('job changed while requesting retry')
         facts = {'attempt': attempt, 'cause_reason_code': reason}
         if delete_cache is not None:
-            from src.nextgen.storage.sonarr_cached_retry import clear_cached, expire_cached
+            from src.nextgen.storage.cached_release_retry import clear_cached, expire_cached
             expire_cached(db, now)
             facts['delete_cache'] = delete_cache
             if delete_cache:

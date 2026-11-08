@@ -94,9 +94,9 @@ def expire_cached(db,now):
 
 def persist_cached(db,claim,plan,episode,expected,english):
     """Fenced, new verification operation; the old job remains historical."""
-    from src.nextgen.storage.sonarr_backfill import BackfillBatch, BackfillConflict, _plan
-    from src.nextgen.storage.sonarr_dispatch import dispatch_cached
-    from src.nextgen.sonarr_episode import VerifiedEpisode
+    from src.nextgen.storage.episode_discovery import BackfillBatch, BackfillConflict, _plan
+    from src.nextgen.storage.release_dispatch import dispatch_cached
+    from src.nextgen.episode_identity import VerifiedEpisode
     if (not db.in_transaction or type(plan) is not BackfillBatch
             or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
             or episode not in plan.numbers or type(expected) is not CachedTorrent):

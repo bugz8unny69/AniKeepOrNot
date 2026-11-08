@@ -10,7 +10,7 @@ from src.nextgen.acquisition.prowlarr_search import CandidateSelection
 from src.nextgen.history import append_event_history
 from src.nextgen.job_contracts import parse_payload
 from src.nextgen.storage.sqlite import enqueue_job_with_receipt, persist_identity
-from src.nextgen.storage.sonarr_selection import SelectionConflict
+from src.nextgen.storage.release_selection import SelectionConflict
 
 
 def dispatch(db, claim, plan, choice):
@@ -31,7 +31,7 @@ def dispatch(db, claim, plan, choice):
 
 def dispatch_cached(db, claim, plan, identity, source):
     """Replay a verified historical source as a NEW internal delivery."""
-    from src.nextgen.storage.sonarr_cached_retry import CachedTorrent
+    from src.nextgen.storage.cached_release_retry import CachedTorrent
     if (type(source) is not CachedTorrent or not db.in_transaction
             or claim.kind!='DISCOVER_SONARR_BACKFILL' or claim.event_id is None
             or identity.tvdb_series_id!=plan.tvdb_series_id):

@@ -37,7 +37,7 @@ def _persist(db,claim,value,*,discovery_kind=None):
         if intent is None or intent.state!='OWNED_STOPPED':raise AcquisitionConflict()
         if discovery_kind is not None and value.search:
             from src.nextgen.storage.episode_reservations import _facts
-            from src.nextgen.storage.sonarr_backfill import schedule_first
+            from src.nextgen.storage.episode_discovery import schedule_first
             source=_facts(db,plan.evaluation_job_id,claim.event_id)
             return schedule_first(db,claim,source,kind=discovery_kind)
     except (ValueError,TypeError) as exc:

@@ -58,7 +58,7 @@ def cleanup_completed(db,operation_id,job_id,now,*,component,previous_cleanup_st
     """
     records=tuple(release_cancelled(db,operation_id,job_id,now,component=component))
     if previous_cleanup_state!='COMPLETE':
-        from src.nextgen.storage.sonarr_candidates import schedule_after_cleanup
+        from src.nextgen.storage.release_candidates import schedule_after_cleanup
         from src.nextgen.storage.batch_candidates import schedule_after_cleanup_batch
         records+=tuple(schedule_after_cleanup(db,operation_id))
         records+=tuple(schedule_after_cleanup_batch(db,operation_id))

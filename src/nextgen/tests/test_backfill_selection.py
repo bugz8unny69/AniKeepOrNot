@@ -3,8 +3,8 @@ import sqlite3
 import unittest
 
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
-from src.nextgen.sonarr_episode import VerifiedEpisode
-from src.nextgen.storage.sonarr_selection import SelectionConflict, select
+from src.nextgen.episode_identity import VerifiedEpisode
+from src.nextgen.storage.release_selection import SelectionConflict, select
 
 HASH = 'a' * 40
 OTHER = 'b' * 40

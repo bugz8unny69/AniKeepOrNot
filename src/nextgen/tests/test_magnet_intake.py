@@ -11,7 +11,7 @@ from src.nextgen.acquisition.metadata import TorrentFile, ObservedInventory, Acq
 from src.nextgen.acquisition.settings import DownloadOptions
 from src.nextgen.acquisition.submission import Observation, ClientInvalid
 from src.nextgen.storage.job_queue import Claim
-from src.nextgen.storage.sonarr_magnet_intake import (
+from src.nextgen.storage.magnet_intake import (
     MagnetJournal, MagnetPermit, _fingerprint,
 )
 
@@ -51,11 +51,11 @@ class MagnetJournalTests(unittest.TestCase):
         self.journal.queue=SimpleNamespace(
             connection=connection,now=lambda:123,
             _owns=lambda db,claim,now:None)
-        patcher1=patch('src.nextgen.storage.sonarr_magnet_intake._source',
+        patcher1=patch('src.nextgen.storage.magnet_intake._source',
                        return_value=self.source)
-        patcher2=patch('src.nextgen.storage.sonarr_magnet_intake._verified_candidate',
+        patcher2=patch('src.nextgen.storage.magnet_intake._verified_candidate',
                        return_value=(12,10))
-        patcher3=patch('src.nextgen.storage.sonarr_magnet_intake.append_job_history',
+        patcher3=patch('src.nextgen.storage.magnet_intake.append_job_history',
                        return_value=None)
         for p in (patcher1,patcher2,patcher3):
             p.start()
@@ -95,7 +95,7 @@ class MagnetJournalTests(unittest.TestCase):
         for state,cleanup in (('ACTIVE','NONE'),('CANCELED','PENDING'),('CANCELED','REVIEW')):
             self.db.execute('UPDATE job_operations SET state=?,cleanup_state=?',(state,cleanup));self.db.commit()
             with self.subTest(state=state,cleanup=cleanup), \
-                 patch('src.nextgen.storage.sonarr_magnet_intake._source',return_value=source), \
+                 patch('src.nextgen.storage.magnet_intake._source',return_value=source), \
                  self.assertRaises(AcquisitionConflict):
                 self.journal.authorize(claim,source,self.options,4,False)
             self.assertEqual(self.db.execute('SELECT event_id,marker FROM sonarr_magnet_intents').fetchall(),
@@ -107,7 +107,7 @@ class MagnetJournalTests(unittest.TestCase):
         self.db.execute("INSERT INTO episode_reservations VALUES(21,'ACTIVE')");self.db.commit()
         source=replace(self.source,event_id=5)
         claim=replace(self.claim,event_id=5,job_id=31)
-        with patch('src.nextgen.storage.sonarr_magnet_intake._source',return_value=source), \
+        with patch('src.nextgen.storage.magnet_intake._source',return_value=source), \
              self.assertRaises(AcquisitionConflict):
             self.journal.authorize(claim,source,self.options,4,False)
         self.assertEqual(self.db.execute('SELECT state FROM sonarr_magnet_intents').fetchall(),[('UNCERTAIN',)])

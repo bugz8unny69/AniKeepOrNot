@@ -26,7 +26,8 @@ class KeepSelectionTests(unittest.TestCase):
 
 class KeepEpisodeMappingTests(unittest.TestCase):
     def test_keep_reuses_identical_verified_episode_mapping(self):
-        from src.nextgen.sonarr_episode import VerifiedEpisode, resolve_episode
+        from src.nextgen.episode_identity import VerifiedEpisode
+        from src.nextgen.sonarr_episode import resolve_episode
         identity = VerifiedEpisode(100, 200, 1, 10)
         selection = KeepSelection(1, 2, 100, 200, 1, 10, 1, '/tmp/staging', 'episode.mkv')
         series = {'id': 11, 'tvdbId': 100}
@@ -36,3 +37,20 @@ class KeepEpisodeMappingTests(unittest.TestCase):
                          selection.match_sonarr_episode(series, episodes))
         with self.assertRaises(KeepSelectionInvalid):
             selection.match_sonarr_episode(series, [])
+
+    def test_an_invalid_verified_identity_is_a_keep_selection_error(self):
+        # VerifiedEpisode moved to episode_identity and raises EpisodeIdentityInvalid;
+        # Keep still turns it into KeepSelectionInvalid, as it did before the split.
+        from src.nextgen.episode_identity import EpisodeIdentityInvalid
+        from src.nextgen.sonarr_episode import SonarrEpisodeMismatch
+        self.assertTrue(issubclass(SonarrEpisodeMismatch, EpisodeIdentityInvalid))
+        self.assertTrue(issubclass(EpisodeIdentityInvalid, ValueError))
+        series = {'id': 11, 'tvdbId': 100}
+        episodes = [{'id': 22, 'seriesId': 11, 'seasonNumber': 1, 'episodeNumber': 10, 'tvdbId': 200}]
+        # KeepSelection checks these fields itself, so force one past it to reach the
+        # identity check inside match_sonarr_episode.
+        for field, bad in (('tvdb_series_id', 0), ('tvdb_episode_id', 0), ('tvdb_season', -1), ('tvdb_episode', 0)):
+            selection = KeepSelection(1, 2, 100, 200, 1, 10, 1, '/tmp/staging', 'episode.mkv')
+            object.__setattr__(selection, field, bad)
+            with self.subTest(field=field), self.assertRaises(KeepSelectionInvalid):
+                selection.match_sonarr_episode(series, episodes)

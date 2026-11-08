@@ -34,8 +34,8 @@ class ReasonTests(unittest.TestCase):
 
     def test_conflict_errors_carry_registered_codes(self):
         from src.nextgen.storage.batch_candidates import BatchCandidateConflict as BatchConflict
-        from src.nextgen.storage.sonarr_candidates import CandidateConflict as SonarrConflict
-        from src.nextgen.storage.sonarr_selection import SelectionConflict
+        from src.nextgen.storage.release_candidates import CandidateConflict as SonarrConflict
+        from src.nextgen.storage.release_selection import SelectionConflict
         for error in (BatchConflict, SonarrConflict, SelectionConflict):
             with self.subTest(error=error.__module__):
                 self.assertIsNotNone(get_reason(error.reason_code))

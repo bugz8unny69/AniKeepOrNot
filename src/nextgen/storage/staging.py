@@ -157,7 +157,7 @@ def persist(db,claim,value):
     db.execute("UPDATE staging_publications SET state='PUBLISHED',receipts_json=?,published_at_ms=? WHERE plan_id=?",
                (encoded(receipts),__import__('time').time_ns()//1000000,intent.plan.plan_id))
     mark_staged(db,claim)
-    from src.nextgen.storage.sonarr_candidates import mark_published
+    from src.nextgen.storage.release_candidates import mark_published
     mark_published(db,event_id=claim.event_id,info_hash=intent.plan.manifest.info_hash)
     from src.nextgen.storage.episode_reservations import cancel_staged_waiters
     return cancel_staged_waiters(db,intent.plan.plan_id,__import__('time').time_ns()//1000000)

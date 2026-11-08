@@ -5,7 +5,7 @@ import unittest
 
 from src.nextgen.acquisition.media import verify_file
 from src.nextgen.jobs.verify_media_job import registration as verify_registration
-from src.nextgen.jobs.stage_trial_media_job import registration as stage_registration
+from src.nextgen.jobs.stage_user_evaluation_media_job import registration as stage_registration
 from src.nextgen.staging import Publisher
 from src.nextgen.storage.cancellation import CancellationStore
 from src.nextgen.jobs.cleanup_canceled_operation_job import registration as cleanup_registration
@@ -113,7 +113,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
                 return super()._copy(plan,entry,fd)
         worker=self.worker(partial(FailMetadata,allow_root=True))
         await self.staged_ready(worker);await self.held_contender(worker);self.stage_due()
-        with patch('src.nextgen.jobs.stage_trial_media_job.exception') as diagnostic:
+        with patch('src.nextgen.jobs.stage_user_evaluation_media_job.exception') as diagnostic:
             await worker.attempt()
         self.assertEqual(diagnostic.call_args.kwargs['reason_code'],'STAGING_UNAVAILABLE')
         self.assertEqual(diagnostic.call_args.args[1],'OPERATION_FAILED')

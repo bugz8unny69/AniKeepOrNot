@@ -8,7 +8,7 @@ import time
 
 from src.nextgen.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
 from src.nextgen.acquisition.metadata import infohash
-from src.nextgen.sonarr_episode import VerifiedEpisode
+from src.nextgen.episode_identity import VerifiedEpisode
 
 
 class SelectionConflict(ValueError):
@@ -48,7 +48,7 @@ def select(db, *, plan_id, episode, identity, result, release, policy=None):
     if plan is None or plan[1] != identity.tvdb_series_id:
         raise SelectionConflict()
     aid, _, anchor, backfill, following = plan
-    from src.nextgen.storage.sonarr_backfill import plan_window
+    from src.nextgen.storage.episode_discovery import plan_window
     allowed = set(plan_window(db, plan_id, anchor, backfill, following))
     if episode not in allowed:
         raise SelectionConflict()

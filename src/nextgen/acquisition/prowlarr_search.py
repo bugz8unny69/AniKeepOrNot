@@ -16,7 +16,7 @@ import urllib.request
 from src.nextgen.acquisition.qbittorrent import _NoRedirect, _json
 from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
 from src.nextgen.acquisition.settings import endpoint
-from src.nextgen.sonarr_episode import VerifiedEpisode
+from src.nextgen.episode_identity import VerifiedEpisode
 
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_RELEASES = 1000

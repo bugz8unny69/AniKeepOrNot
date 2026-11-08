@@ -11,7 +11,7 @@ from src.nextgen.keep_service import Service
 from src.nextgen.providers.backfill_catalog import build_catalog, make_catalog_factory
 from src.nextgen.secrets import Credentials
 from src.nextgen.storage.sqlite import initialize
-from src.nextgen.storage.sonarr_backfill import load_batch, _plan
+from src.nextgen.storage.episode_discovery import load_batch, _plan
 
 
 class FakeProviders:
@@ -55,7 +55,7 @@ class KeepResolutionTests(unittest.TestCase):
         self.db.close()
 
     def _seed_staged_unmapped(self, db, *, aid=50, tid=100, ep_num=1, eid=5001,
-                              trial_plan_id=1, acq_plan_id=1, res_id=1,
+                              user_evaluation_plan_id=1, acq_plan_id=1, res_id=1,
                               verification_id=1, stage_job_id=14, op_id=20):
         d64 = f"{verification_id:064x}"
         a40 = f"{acq_plan_id:040x}"
@@ -76,14 +76,14 @@ class KeepResolutionTests(unittest.TestCase):
               VALUES({verification_id},{job_base + 10},{verification_id},{aid},'{d64}','DECLARED_SINGLE_EPISODE',{ep_num},{eid},{tid},NULL,NULL,NULL,1);
             INSERT INTO trial_plans(plan_id,anidb_id,tvdb_series_id,tvdb_season,tvdb_order,anchor_verification_id,anchor_episode,
               backfill_count,following_count,configuration_revision,created_at_ms)
-              VALUES({trial_plan_id},{aid},{tid},1,'official',{verification_id},{ep_num},6,3,1,1);
+              VALUES({user_evaluation_plan_id},{aid},{tid},1,'official',{verification_id},{ep_num},6,3,1,1);
             INSERT OR IGNORE INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,created_at_ms,updated_at_ms)
               VALUES({job_base + 11},1,'RESERVE_EPISODE','{{}}','DONE',0,0,0);
             INSERT INTO episode_reservations(reservation_id,owner_job_id,evaluation_job_id,verification_id,
               plan_id,anidb_id,anidb_episode_id,tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,
-              reserved_at_ms) VALUES({res_id},{job_base + 11},2,{verification_id},{trial_plan_id},{aid},{eid},{tid},NULL,NULL,NULL,1);
+              reserved_at_ms) VALUES({res_id},{job_base + 11},2,{verification_id},{user_evaluation_plan_id},{aid},{eid},{tid},NULL,NULL,NULL,1);
             INSERT INTO sonarr_episode_selections(plan_id,anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,info_hash,selected_at_ms)
-              VALUES({trial_plan_id},{ep_num},NULL,NULL,NULL,'{a40}',1);
+              VALUES({user_evaluation_plan_id},{ep_num},NULL,NULL,NULL,'{a40}',1);
             INSERT INTO acquisition_plans(plan_id,job_id,reservation_id,info_hash,info_sha256,manifest_json,
               submission_marker,state,configuration_revision,prepared_at_ms)
               VALUES({acq_plan_id},{job_base + 11},{res_id},'{a40}','{b64}','{{}}','{c32}','PREPARED',1,1);
@@ -397,13 +397,13 @@ class KeepResolutionTests(unittest.TestCase):
         """
         # Anime A (aid=50, tid=100): trial_plan_id=10, acq_plan_id=30, res_id=20, verification_id=1, stage_job_id=14, op_id=20
         self._seed_staged_unmapped(self.db, aid=50, tid=100, ep_num=1, eid=5001,
-                                   trial_plan_id=10, acq_plan_id=30, res_id=20,
+                                   user_evaluation_plan_id=10, acq_plan_id=30, res_id=20,
                                    verification_id=1, stage_job_id=14, op_id=20)
 
         # Unrelated Anime B (aid=60, tid=200): trial_plan_id=30 (matches Anime A's acq_plan_id!),
         # acq_plan_id=35, res_id=25, verification_id=2, stage_job_id=24, op_id=22
         self._seed_staged_unmapped(self.db, aid=60, tid=200, ep_num=1, eid=6001,
-                                   trial_plan_id=30, acq_plan_id=35, res_id=25,
+                                   user_evaluation_plan_id=30, acq_plan_id=35, res_id=25,
                                    verification_id=2, stage_job_id=24, op_id=22)
 
         # Batch Plan for Anime C (aid=70, tid=300): batch_plan_id=40, res_id=50, stage_job_id=15

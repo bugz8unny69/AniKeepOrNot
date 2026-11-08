@@ -5,7 +5,7 @@ from src.nextgen.storage.migrations import SQL_DIR, SCRIPTS, _structure
 from src.nextgen.storage.sqlite import initialize
 
 
-class TrialMigrationTests(unittest.TestCase):
+class UserEvaluationMigrationTests(unittest.TestCase):
     def test_upgrade_matches_fresh_and_preserves_old_rows(self):
         db=sqlite3.connect(':memory:')
         fresh=sqlite3.connect(':memory:')

@@ -69,7 +69,7 @@ class BatchOptionalHandlersTests(unittest.TestCase):
             self.assertTrue(callable(stages[index].execute))
             self.assertTrue(callable(stages[index].persist))
 
-    def test_reservation_routes_its_own_job_id_not_trial_evaluation_id(self):
+    def test_reservation_routes_its_own_job_id_not_user_evaluation_check_id(self):
         spec=reserve_batch(submission_kind='SUBMIT_BATCH')
         receipt=BatchReservationCompletion(source=None,reservation_job_id=789)
         routed=spec.route(receipt)

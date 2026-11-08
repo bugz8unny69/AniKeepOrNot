@@ -37,7 +37,7 @@ def window(anchor, backfill, following, include_anchor=False):
     and its reservation may not exist yet when this search runs. include_anchor
     is for a delivery that was not downloaded (no Dual/Multi Audio tag).
     """
-    from src.nextgen.trial_policy import Window
+    from src.nextgen.user_evaluation_policy import Window
     numbers = set(Window(backfill, following).anidb_episodes(anchor))
     if include_anchor: numbers.add(anchor)
     else: numbers.discard(anchor)
@@ -225,7 +225,7 @@ class FallbackMissing:
 
 def persist_fallback_missing(db,claim,value):
     """Skip one withdrawn release and schedule the same existing worker."""
-    from src.nextgen.storage.sonarr_candidates import (
+    from src.nextgen.storage.release_candidates import (
         activate_candidate,fail_candidate,next_candidate,CandidateConflict)
     if (not db.in_transaction or claim.kind!='DISCOVER_SONARR_BACKFILL'
             or claim.event_id is None or type(value) is not FallbackMissing):
@@ -266,7 +266,7 @@ def persist_fallback_missing(db,claim,value):
 
 def _selected(db,plan_id,episode):
     """(VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
-    from src.nextgen.sonarr_episode import VerifiedEpisode
+    from src.nextgen.episode_identity import VerifiedEpisode
     row=db.execute(
         "SELECT p.tvdb_series_id,s.tvdb_episode_id,s.tvdb_season,s.tvdb_episode,s.info_hash "
         "FROM trial_plans p JOIN sonarr_episode_selections s USING(plan_id) "
@@ -276,8 +276,8 @@ def _selected(db,plan_id,episode):
 
 def load_fallback(database,plan_id,episode):
     """Read the next candidate without changing any selection or sending."""
-    from src.nextgen.sonarr_episode import VerifiedEpisode
-    from src.nextgen.storage.sonarr_candidates import next_candidate
+    from src.nextgen.episode_identity import VerifiedEpisode
+    from src.nextgen.storage.release_candidates import next_candidate
     db=None
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
@@ -302,11 +302,11 @@ def load_fallback(database,plan_id,episode):
 
 def persist_fallback(db,claim,value):
     """Replace a failed current choice only after operation cleanup is complete."""
-    from src.nextgen.storage.sonarr_candidates import (
+    from src.nextgen.storage.release_candidates import (
         CandidateConflict,activate_candidate,next_candidate)
     from src.nextgen.acquisition.prowlarr_search import _magnet_hash
-    from src.nextgen.storage.sonarr_dispatch import dispatch as dispatch_source
-    from src.nextgen.storage.sonarr_selection import SelectionConflict
+    from src.nextgen.storage.release_dispatch import dispatch as dispatch_source
+    from src.nextgen.storage.release_selection import SelectionConflict
     if (not db.in_transaction or type(value) is not FallbackCompletion
             or claim.kind!='DISCOVER_SONARR_BACKFILL'
             or claim.event_id is None):
@@ -406,8 +406,8 @@ def persist_observations(db, claim, value, *, dispatch=False):
     now = integer(time.time_ns() // 1000000)
     # Selection is an opt-in side effect of the same fenced worker completion.
     # Keep source URLs out of SQLite and reject stale/unverified identity facts.
-    from src.nextgen.storage.sonarr_selection import select, SelectionConflict
-    from src.nextgen.storage.sonarr_candidates import (save_candidates, activate_candidate,
+    from src.nextgen.storage.release_selection import select, SelectionConflict
+    from src.nextgen.storage.release_candidates import (save_candidates, activate_candidate,
                                                         CandidateConflict)
     routed=[]
     for item in value.observations:
@@ -426,7 +426,7 @@ def persist_observations(db, claim, value, *, dispatch=False):
                 if inserted and dispatch:
                     activate_candidate(db,plan_id=plan.plan_id,episode=item.number,
                                        info_hash=choice.release.info_hash)
-                    from src.nextgen.storage.sonarr_dispatch import dispatch as dispatch_source
+                    from src.nextgen.storage.release_dispatch import dispatch as dispatch_source
                     routed.extend(dispatch_source(db,claim,plan,choice))
             except (SelectionConflict,CandidateConflict):
                 raise BackfillConflict() from None
@@ -527,7 +527,7 @@ def load_tried_hashes(database, plan_id, numbers):
 
 def load_dub_search(database, plan_id, episode):
     """The episode identity and tried hashes, or None if not an audio-only exhaustion."""
-    from src.nextgen.sonarr_episode import VerifiedEpisode
+    from src.nextgen.episode_identity import VerifiedEpisode
     db = None
     try:
         db = _open(database, readonly=True, timeout_ms=5000)

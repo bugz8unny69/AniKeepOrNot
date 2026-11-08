@@ -13,14 +13,14 @@ from src.nextgen.history import append_job_history
 from src.nextgen.job_report import main as report_main
 from src.nextgen.matching import MatchingTrace
 from src.nextgen.storage.sqlite import accept_event_and_job, connect, enqueue_job, initialize, transaction
-from src.nextgen.tests.test_trial_policy import TrialEvaluationTests as _TrialEvaluationTests
+from src.nextgen.tests.test_user_evaluation_policy import UserEvaluationCheckTests as _UserEvaluationCheckTests
 
-_TrialEvaluationTests.__test__ = False
+_UserEvaluationCheckTests.__test__ = False
 
 
 class IdentityMatchingReportTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = _TrialEvaluationTests.asyncSetUp
-    rows = _TrialEvaluationTests.rows
+    asyncSetUp = _UserEvaluationCheckTests.asyncSetUp
+    rows = _UserEvaluationCheckTests.rows
 
     def run_report_capture(self, *argv):
         out = io.StringIO()

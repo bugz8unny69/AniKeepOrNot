@@ -122,7 +122,7 @@ failures are displayed. Keep/Reject scope, rejection persistence and post-decisi
 retention/cleanup need their own explicit design. This naming decision does not
 authorize deletion or silently settle those policies.
 
-The pipeline architecture remains in [intake to the trial folder](INTAKE_TO_TRIAL.md)
+The pipeline architecture remains in [intake to the trial folder](INTAKE_TO_USER_EVALUATION.md)
 and [Keep to the permanent library](KEEP_TO_LIBRARY.md). Those existing technical
 filenames remain stable; this document supersedes their trial/preview wording
 for the user-facing Intake and Staging flow.

@@ -11,10 +11,10 @@ from src.nextgen.release_contracts import ReleaseInput, VerifiedRelease
 from src.nextgen.staging import specification, nfo
 from src.nextgen.storage.migrations import SQL_DIR, SCRIPTS, _structure, LATEST_VERSION, _apply_step
 from src.nextgen.storage.sqlite import initialize
-from src.nextgen.storage.trials import persist_trial
+from src.nextgen.storage.user_evaluations import persist_user_evaluation
 from src.nextgen.storage.episode_reservations import persist_reservation
 from src.nextgen.storage.releases import persist_release
-from src.nextgen.trial_policy import TrialSource, TrialProposal, Window
+from src.nextgen.user_evaluation_policy import UserEvaluationSource, UserEvaluationProposal, Window
 from src.nextgen.episode_reservations import ReservationInput
 from types import SimpleNamespace
 

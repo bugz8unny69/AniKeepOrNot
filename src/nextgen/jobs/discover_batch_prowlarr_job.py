@@ -18,7 +18,7 @@ from src.nextgen.storage.batch_candidates import (
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.sqlite import transaction
 from src.nextgen.diagnostics import log_history
-from src.nextgen.storage.sonarr_backfill import AUTOMATIC_RETRY_MS, automatic_retry_used
+from src.nextgen.storage.episode_discovery import AUTOMATIC_RETRY_MS, automatic_retry_used
 from src.nextgen.worker import blocking
 
 DEFINITION = HandlerDefinition(KIND, 'Search Prowlarr for batch season pack candidates')

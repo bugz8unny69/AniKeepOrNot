@@ -272,7 +272,7 @@ class Client:
         A durable Sonarr magnet journal must issue the permit before this
         call. Never invoke add again on an uncertain or recovered intent.
         """
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent, MagnetPermit
+        from src.nextgen.storage.magnet_intake import MagnetIntent, MagnetPermit
         from src.nextgen.acquisition.prowlarr_search import _magnet_hash
         if (not self._sid or self.protocol is None):
             raise ClientAuthenticationFailed()
@@ -300,7 +300,7 @@ class Client:
         NEW bounded metadata window, but cannot re-submit the magnet.
         """
         import time
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         from src.nextgen.storage.batch_metadata_admission import EarlyBatchIntent
         if (type(intent) not in (MagnetIntent,EarlyBatchIntent) or intent.state!='UNCERTAIN'
                 or intent.options!=self.options
@@ -366,7 +366,7 @@ class Client:
 
     def stop_legacy_metadata(self,intent):
         """Stop a journal-owned magnet before any file inventory is accepted."""
-        from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent
+        from src.nextgen.storage.magnet_intake import MagnetIntent
         from src.nextgen.storage.batch_metadata_admission import EarlyBatchIntent
         if (type(intent) not in (MagnetIntent,EarlyBatchIntent) or intent.options!=self.options
                 or intent.state not in ('UNCERTAIN','OWNED_STOPPED')

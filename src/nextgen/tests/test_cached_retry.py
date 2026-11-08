@@ -4,7 +4,7 @@ import sqlite3
 import time
 import unittest
 
-from src.nextgen.storage.sonarr_cached_retry import (
+from src.nextgen.storage.cached_release_retry import (
     _cached, clear_cached, expire_cached, RETENTION_MS,
 )
 

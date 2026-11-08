@@ -10,7 +10,7 @@ from src.nextgen.history import integer, append_job_history
 from src.nextgen.storage.cancellation import CancellationStore, can_cancel_operation
 from src.nextgen.storage.job_queue import JobQueue
 from src.nextgen.storage.sqlite import transaction, enqueue_job_with_receipt
-from src.nextgen.storage.sonarr_backfill import PAGE_SIZE, WAITING_FOR_DUB, plan_window
+from src.nextgen.storage.episode_discovery import PAGE_SIZE, WAITING_FOR_DUB, plan_window
 
 
 class IntakeUnavailable(ValueError):
@@ -477,7 +477,7 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
                     return _search_episode(db, plan_id, numbers, episode, event_id, parent_job,
                                            exhausted=True, delete_cache=delete_cache)
             elif prior and prior[0] == 'NO_RESULTS' and not delete_cache:
-                from src.nextgen.storage.sonarr_cached_retry import load_cached
+                from src.nextgen.storage.cached_release_retry import load_cached
                 if load_cached(database, plan_id, episode, False) is not None:
                     return _search_episode(db, plan_id, numbers, episode, event_id, parent_job,
                                            exhausted=True, delete_cache=False)

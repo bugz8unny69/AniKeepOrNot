@@ -12,8 +12,8 @@ from src.nextgen.acquisition.submission import Observation
 from src.nextgen.job_contracts import Outcome
 from src.nextgen.jobs.prepare_acquisition_job import registration
 from src.nextgen.storage.job_queue import Claim
-from src.nextgen.storage.sonarr_magnet_intake import MagnetIntent, MagnetPermit
-from src.nextgen.sonarr_episode import VerifiedEpisode
+from src.nextgen.storage.magnet_intake import MagnetIntent, MagnetPermit
+from src.nextgen.episode_identity import VerifiedEpisode
 
 HASH='a'*40
 MAGNET='magnet:?xt=urn:btih:'+HASH
@@ -86,7 +86,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         """Autobrr intake: no .torrent URL; Legacy magnet admission."""
         root='/downloads/ad-'+'d'*32
         options=DownloadOptions('http://localhost:8080',root,'anime',10)
-        from src.nextgen.storage.sonarr_magnet_intake import _fingerprint
+        from src.nextgen.storage.magnet_intake import _fingerprint
         intent=MagnetIntent(4,21,HASH,'d'*32,options,4,'UNCERTAIN',
                             _fingerprint(4,HASH,'d'*32,options,4))
         probe=Mock(major=4,metadata_strategy='guarded_export')
@@ -148,7 +148,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         probe.add_legacy_magnet.assert_not_called()
 
     async def test_existing_torrent_reports_duplicate_without_another_add(self):
-        from src.nextgen.storage.sonarr_magnet_intake import _fingerprint
+        from src.nextgen.storage.magnet_intake import _fingerprint
         from src.nextgen.reasons import get_reason
         options=DownloadOptions('http://localhost:8080','/downloads/ad-'+'c'*32,'anime',10)
         for recovered in (False,True):
@@ -182,7 +182,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         journal.authorize.assert_not_called()
 
     async def test_restart_recovers_admitted_torrent_without_new_search(self):
-        from src.nextgen.storage.sonarr_magnet_intake import _fingerprint
+        from src.nextgen.storage.magnet_intake import _fingerprint
         root='/downloads/ad-'+'c'*32
         options=DownloadOptions('http://localhost:8080',root,'anime',10)
         intent=MagnetIntent(4,21,HASH,'c'*32,options,4,'UNCERTAIN',
@@ -208,7 +208,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         owned.poll_legacy_metadata.assert_called_once()
 
     async def test_upgrade_to_52_recovers_original_magnet_before_fetch(self):
-        from src.nextgen.storage.sonarr_magnet_intake import _fingerprint
+        from src.nextgen.storage.magnet_intake import _fingerprint
         root='/downloads/ad-'+'c'*32
         options=DownloadOptions('http://localhost:8080',root,'anime',10)
         intent=MagnetIntent(4,21,HASH,'c'*32,options,4,'UNCERTAIN',
@@ -234,7 +234,7 @@ class LegacyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         owned.add_legacy_magnet.assert_not_called()
 
     async def test_42_owned_metadata_defers_without_false_manifest(self):
-        from src.nextgen.storage.sonarr_magnet_intake import _fingerprint
+        from src.nextgen.storage.magnet_intake import _fingerprint
         root='/downloads/ad-'+'c'*32
         options=DownloadOptions('http://localhost:8080',root,'anime',10)
         intent=MagnetIntent(4,21,HASH,'c'*32,options,4,'UNCERTAIN',

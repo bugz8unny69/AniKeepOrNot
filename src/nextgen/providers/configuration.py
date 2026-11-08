@@ -6,8 +6,8 @@ from src.nextgen.configuration_schema import ConfigurationError
 from src.nextgen.job_contracts import Policy, Registry
 from src.nextgen.jobs.identify_anime_job import registration
 from src.nextgen.jobs.verify_release_job import KIND as RELEASE_KIND, registration as release_registration
-from src.nextgen.jobs.evaluate_trial_job import KIND as TRIAL_KIND, registration as trial_registration
-from src.nextgen.jobs.discover_sonarr_backfill_job import KIND as BACKFILL_KIND, registration as backfill_registration
+from src.nextgen.jobs.select_user_evaluation_job import KIND as USER_EVALUATION_KIND, registration as user_evaluation_registration
+from src.nextgen.jobs.discover_episode_releases_job import KIND as BACKFILL_KIND, registration as backfill_registration
 from src.nextgen.jobs.evaluate_batch_job import KIND as BATCH_KIND, registration as batch_registration
 from src.nextgen.jobs.reserve_batch_job import KIND as BATCH_RESERVE_KIND, registration as batch_reserve_registration
 from src.nextgen.jobs.submit_batch_job import KIND as BATCH_SUBMIT_KIND, registration as batch_submit_registration
@@ -22,7 +22,7 @@ from src.nextgen.jobs.prepare_acquisition_job import KIND as PREPARE_KIND, regis
 from src.nextgen.jobs.submit_torrent_job import KIND as SUBMIT_KIND, registration as submit_registration
 from src.nextgen.jobs.download_torrent_job import KIND as DOWNLOAD_KIND, registration as download_registration
 from src.nextgen.jobs.verify_media_job import KIND as MEDIA_KIND, registration as media_registration
-from src.nextgen.jobs.stage_trial_media_job import KIND as STAGE_KIND, registration as stage_registration
+from src.nextgen.jobs.stage_user_evaluation_media_job import KIND as STAGE_KIND, registration as stage_registration
 from src.nextgen.jobs.management import registrations as management_registrations
 from src.nextgen.acquisition.metainfo_source import make_reader, make_batch_reader
 from src.nextgen.acquisition.legacy_magnet import make_bootstrap
@@ -119,9 +119,9 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
         batch_prowlarr_registration(secrets),
     )
     registry = Registry((registration(resolve,release_kind=RELEASE_KIND if release_kind is None else release_kind),
-                         release_registration(verify,trial_kind=TRIAL_KIND,batch_kind=BATCH_KIND),
+                         release_registration(verify,user_evaluation_kind=USER_EVALUATION_KIND,batch_kind=BATCH_KIND),
                          batch_registration(reservation_kind=BATCH_RESERVE_KIND),
-                         trial_registration(reservation_kind=RESERVE_KIND),
+                         user_evaluation_registration(reservation_kind=RESERVE_KIND),
                          reserve_registration(preparation_kind=PREPARE_KIND),
                          *((backfill_registration(secrets,
                               catalog_factory=make_catalog_factory(options_from_configuration,

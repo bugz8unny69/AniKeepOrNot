@@ -41,11 +41,12 @@ class KeepSelection:
 
     def match_sonarr_episode(self,series,episodes):
         """TVDB mapping is authoritative; titles/AniDB/Shoko do not pick a series."""
-        from src.nextgen.sonarr_episode import VerifiedEpisode, resolve_episode, SonarrEpisodeMismatch
+        from src.nextgen.episode_identity import EpisodeIdentityInvalid, VerifiedEpisode
+        from src.nextgen.sonarr_episode import resolve_episode
         try:
             verified=VerifiedEpisode(self.tvdb_series_id,self.tvdb_episode_id,self.tvdb_season,self.tvdb_episode)
             return resolve_episode(verified,series,episodes)
-        except SonarrEpisodeMismatch:
+        except EpisodeIdentityInvalid:  # Also covers SonarrEpisodeMismatch.
             raise KeepSelectionInvalid() from None
 
 

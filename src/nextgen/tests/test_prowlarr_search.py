@@ -13,7 +13,7 @@ from src.nextgen.acquisition.prowlarr_search import (
 )
 from src.nextgen.providers.backfill_catalog import build_catalog
 from src.nextgen.providers.parsing import episode_airdates
-from src.nextgen.sonarr_episode import VerifiedEpisode
+from src.nextgen.episode_identity import VerifiedEpisode
 
 A, B, C = 'a' * 40, 'b' * 40, 'c' * 40
 TITLES = ('Kusuriya no Hitorigoto', 'The Apothecary Diaries', '薬屋のひとりごと')

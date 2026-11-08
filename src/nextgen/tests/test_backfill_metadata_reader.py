@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from src.nextgen.acquisition.metainfo_source import (
     MetadataClientUnsupported, MetadataSourceWaiting, make_reader,
 )
-from src.nextgen.sonarr_episode import VerifiedEpisode
+from src.nextgen.episode_identity import VerifiedEpisode
 
 HASH='a'*40
 MAGNET='magnet:?xt=urn:btih:'+HASH
@@ -31,7 +31,7 @@ class BackfillMetadataReaderTests(unittest.IsolatedAsyncioTestCase):
         self.qb.metadata_strategy='fetch'
         self.qb.fetch_metadata.return_value=(object(),b'metainfo')
         self.patches=[
-            patch('src.nextgen.storage.sonarr_selection.acquisition_identity',
+            patch('src.nextgen.storage.release_selection.acquisition_identity',
                   return_value=self.identity),
             # A backfill delivery carries its own sanitized magnet.
             patch('src.nextgen.storage.acquisition.source_magnet',return_value=MAGNET),
@@ -72,8 +72,8 @@ class BackfillMetadataReaderTests(unittest.IsolatedAsyncioTestCase):
                          b'metainfo')
 
     async def test_webhook_event_without_torrent_source_fetches_its_own_magnet(self):
-        from src.nextgen.storage import sonarr_selection
-        with patch.object(sonarr_selection,'acquisition_identity',return_value=None):
+        from src.nextgen.storage import release_selection
+        with patch.object(release_selection,'acquisition_identity',return_value=None):
             reader=make_reader(secrets=self.secrets,client_factory=lambda *_:self.qb)
             self.assertEqual(await reader(self.source,self.configuration,asyncio.Event()),
                              b'metainfo')

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from src.nextgen.acquisition.settings import SizeLimits
 from src.nextgen.history import integer
-from src.nextgen.trial_policy import Window, TrialConflict
+from src.nextgen.user_evaluation_policy import Window, UserEvaluationConflict
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,7 @@ class BatchEpisodeFact:
 
 
 @dataclass(frozen=True)
-class BatchTrialSource:
+class BatchUserEvaluationSource:
     verification_job_id: int
     event_id: int
     batch_id: int
@@ -40,18 +40,18 @@ class BatchTrialSource:
                       self.anidb_id,self.tvdb_series_id,self.season):
             integer(value,positive=True)
         if type(self.episodes) is not tuple or not self.episodes or len(self.episodes)>10000:
-            raise TrialConflict()
+            raise UserEvaluationConflict()
         if any(type(x) is not BatchEpisodeFact for x in self.episodes):
-            raise TrialConflict()
+            raise UserEvaluationConflict()
         if any(len({getattr(x,field) for x in self.episodes})!=len(self.episodes)
                for field in ('file_index','release_episode','anidb_episode_id',
                              'tvdb_episode','tvdb_episode_id')):
-            raise TrialConflict()
+            raise UserEvaluationConflict()
 
 
 @dataclass(frozen=True)
-class BatchTrialProposal:
-    source: BatchTrialSource
+class BatchUserEvaluationProposal:
+    source: BatchUserEvaluationSource
     window: Window
     limits: SizeLimits
     configuration_revision: int
@@ -59,28 +59,28 @@ class BatchTrialProposal:
     selected: tuple[BatchEpisodeFact,...]
 
     def __post_init__(self):
-        if type(self.source) is not BatchTrialSource or type(self.window) is not Window or type(self.limits) is not SizeLimits:
-            raise TrialConflict()
+        if type(self.source) is not BatchUserEvaluationSource or type(self.window) is not Window or type(self.limits) is not SizeLimits:
+            raise UserEvaluationConflict()
         integer(self.configuration_revision,positive=True)
         integer(self.anchor_episode,positive=True)
         allowed=set(self.window.episodes(self.anchor_episode))
         expected=tuple(sorted((x for x in self.source.episodes if x.tvdb_episode in allowed),
                               key=lambda x:(x.tvdb_episode,x.file_index)))
         if not expected or expected != self.selected:
-            raise TrialConflict()
+            raise UserEvaluationConflict()
         total=0
         for item in self.selected:
             self.limits.admit(item.size_bytes,total)
             total+=item.size_bytes
 
 
-def propose_batch_trial(source,window,limits,revision):
+def propose_batch_user_evaluation(source,window,limits,revision):
     """The season pack has no webhook episode anchor: require E01 explicitly."""
-    if type(source) is not BatchTrialSource:
-        raise TrialConflict()
+    if type(source) is not BatchUserEvaluationSource:
+        raise UserEvaluationConflict()
     if 1 not in {x.tvdb_episode for x in source.episodes}:
-        raise TrialConflict()
+        raise UserEvaluationConflict()
     selected=tuple(sorted((x for x in source.episodes
                            if x.tvdb_episode in set(window.episodes(1))),
                           key=lambda x:(x.tvdb_episode,x.file_index)))
-    return BatchTrialProposal(source,window,limits,revision,1,selected)
+    return BatchUserEvaluationProposal(source,window,limits,revision,1,selected)

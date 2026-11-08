@@ -183,7 +183,7 @@ The concrete composition also registers EVALUATE_TRIAL after VERIFY_RELEASE.
 Feature-owned completion adapters atomically freeze trial windows and decisions;
 the generic worker remains concerned only with execution, fencing and auditing.
 TRIAL_EVALUATED receipts are logged only after commit. No acquisition handler or
-resource lease is supplied by numeric selection policy. See TRIAL_POLICY.md.
+resource lease is supplied by numeric selection policy. See USER_EVALUATION_POLICY.md.
 
 The default provider composition now includes RESERVE_EPISODE after evaluation.
 Its feature adapter reserves one exact verified episode inside the ordinary
@@ -222,7 +222,7 @@ No staging successor is installed yet; verification success does not mean staged
 
 The default composition now also installs STAGE_TRIAL_MEDIA and routes successful
 VERIFY_MEDIA completion into it atomically. See
-[jobs/STAGE_TRIAL_MEDIA.md](jobs/STAGE_TRIAL_MEDIA.md). Use a non-root worker and an
+[jobs/STAGE_USER_EVALUATION_MEDIA.md](jobs/STAGE_USER_EVALUATION_MEDIA.md). Use a non-root worker and an
 accessible existing staging folder. SQLite v20 upgrades explicitly; Keep and
 viewer refresh remain separate, unimplemented integrations.
 
