@@ -26,7 +26,7 @@ class DashboardParityTests(unittest.TestCase):
         # The submit form refuses another episode's release before sending it;
         # it must never refuse a title the server would accept.
         from pathlib import Path
-        from src.nextgen.acquisition.release_titles import EXPLICIT
+        from src.nextgen.release_names import EXPLICIT
         script=(Path(__file__).parents[1]/'dashboard'/'static'/'dashboard.js').read_text()
         self.assertIn(f'const RELEASE_EPISODE = /{EXPLICIT.pattern}/gi;',script)
         self.assertEqual(EXPLICIT.flags & 2, 2)  # re.IGNORECASE, matching the JS 'i' flag

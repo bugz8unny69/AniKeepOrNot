@@ -4,8 +4,8 @@ These are explicit manual choices, not provider-verified episode mappings.
 The existing release-verification job still owns episode placement.
 """
 import json
-from src.nextgen.providers.parsing import release_title
-from src.nextgen.providers.parsing import norm
+from src.nextgen.release_names import release_title
+from src.nextgen.release_names import norm
 from src.nextgen.batch.recognition import release_scope_hint
 from src.nextgen.storage.job_queue import JobQueue, QueueUnavailable
 from src.nextgen.storage.sqlite import transaction

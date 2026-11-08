@@ -1,153 +1,12 @@
-"""Read one episode release title the way different release groups write it.
+"""Match a read release against the anime's catalog titles, and build searches.
 
-Covers the common styles seen on anime indexers, for example:
-
-    [SubsPlease] Title - 05 (1080p) [ABCD1234].mkv
-    [Erai-raws] Title 2nd Season - 05 [1080p CR WEB-DL AVC AAC][MultiSub]
-    [Judas] Title - S02E05 [1080p][HEVC x265 10bit]
-    Title S02E05 1080p CR WEB-DL AAC2.0 H 264-VARYG
-    The.Title.S02E05.1080p.WEB.h264-GROUP
-    [Group] Title S2 - 05 / Title Season 2 - 05 / Title II - 05
-    [Group] Romaji Title | English Title - 05 (1080p)
-
-Batch/range declarations and non-episode media are rejected.
-An explicit Season 0 declaration still needs a verified AniDB-to-TVDB episode
-mapping; a torrent title alone never authorizes acquisition.
+Reading the release name itself lives in src/nextgen/release_names.py. This
+module decides whether a read title is this anime and season, and which
+Prowlarr queries to send. A title alone never authorizes acquisition.
 """
 from dataclasses import dataclass
 import re
-
-from src.nextgen.providers.parsing import norm
-
-LEADING_TAGS = re.compile(r'^\s*(?:[\[【][^\]】]*[\]】]\s*)+')
-EXTENSION = re.compile(r'\.(?:mkv|mp4|avi|webm)$', re.I)
-EXPLICIT = re.compile(r'(?<![A-Za-z0-9])S(\d{1,2})\s?E(\d{1,4})(?:v\d{1,2})?(?![0-9A-Za-z])', re.I)
-DASHED = re.compile(r'\s[-–—]\s+(?:(?:Episode|Ep\.?|E)\s*)?(\d{1,4})(?:v\d{1,2})?(?=$|[\s\[\(【])', re.I)
-WORDED = re.compile(r'(?<![A-Za-z0-9])(?:Episode|Ep\.?|E)\s*(\d{1,4})(?:v\d{1,2})?(?![0-9A-Za-z])', re.I)
-SEASON_ONLY = re.compile(r'(?<![A-Za-z0-9])S\d{1,2}(?![0-9A-Za-z])|Season\s*\d', re.I)
-# Bare numbers only when zero-padded ("Title 05 [1080p]"); "Mob Psycho 100" is a name.
-TRAILING = re.compile(r'\s(\d{2})(?:v\d{1,2})?\s*(?=[\[\(【]|$)')
-MULTI = re.compile(r'^\s*(?:v\d+\s*)?(?:[-~&+,]|to)\s*(?:S\d+\s?)?(?:E|EP)?\s*\d', re.I)
-NOT_ONE_EPISODE = re.compile(
-    r'(?<![A-Za-z])(?:batch|complete|ova|oad|ona|movie|specials?|sp\d*|ncop|nced|pv|cm|'
-    r'trailer|recap|preview|extras?|bonus|menu)(?![A-Za-z])', re.I)
-YEAR = re.compile(r'\(\s*(?:19|20)\d{2}\s*\)')
-ORDINAL_WORDS = {'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5, 'sixth': 6}
-MARKERS = (
-    re.compile(r'(?<![A-Za-z0-9])S(\d{1,2})(?![A-Za-z0-9])', re.I),
-    re.compile(r'(?<![A-Za-z])Season\s*(\d{1,2})(?![0-9])', re.I),
-    re.compile(r'(?<![A-Za-z0-9])(\d{1,2})(?:st|nd|rd|th)\s+Season(?![A-Za-z])', re.I),
-    re.compile(r'(?<![A-Za-z])(second|third|fourth|fifth|sixth)\s+Season(?![A-Za-z])', re.I),
-    re.compile(r'\s(II|III|IV|V|VI)\s*$'),
-)
-ROMAN = {'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6}
-
-
-def season_marker(text, *, roman=True):
-    """(text without its season marker, season number or None).
-
-    Roman numerals ("II") are only read when roman=True: in identity lookup
-    they are usually part of the AniDB title itself.
-    """
-    for pattern in (MARKERS if roman else MARKERS[:-1]):
-        match = pattern.search(text)
-        if match is None: continue
-        token = match.group(1)
-        number = (int(token) if token.isdigit() else ORDINAL_WORDS.get(token.lower())
-                  or ROMAN.get(token))
-        if not number: continue
-        rest = (text[:match.start()] + ' ' + text[match.end():])
-        rest = re.sub(r'\(\s*\)', ' ', rest)
-        return re.sub(r'\s+', ' ', rest).strip(' -:,'), number
-    return text.strip(), None
-
-
-@dataclass(frozen=True)
-class ParsedRelease:
-    titles: tuple[str, ...]          # title alternatives, as written
-    season: int | None               # explicit SxxEyy season
-    episode: int
-    text: str = ''                   # the normalized title that was read
-
-
-UNCLEAR, UNSUPPORTED = 'RELEASE_TITLE_UNCLEAR', 'RELEASE_TYPE_UNSUPPORTED'
-
-
-def _type_words(text):
-    """Batch/special words in tags and short parentheses; long ones are alternate names."""
-    tags = re.findall(r'\[([^\]]*)\]', text)
-    tags += [inner for inner in re.findall(r'\(([^()]*)\)', text) if len(inner.split()) <= 3]
-    bare = re.sub(r'\([^()]*\)', ' ', text)
-    return bool(NOT_ONE_EPISODE.search(' '.join(tags)) or NOT_ONE_EPISODE.search(bare))
-
-
-def read_release(title):
-    """(ParsedRelease, None) for exactly one episode, else (None, reason code)."""
-    if type(title) is not str or not 1 <= len(title) <= 2048: return None, UNCLEAR
-    if any(ord(c) < 32 or ord(c) == 127 for c in title): return None, UNCLEAR
-    text = EXTENSION.sub('', title.strip()).replace('_', ' ')
-    if text.count(' ') < 2 and text.count('.') >= 3:
-        text = re.sub(r'\.(?!\d)', ' ', text)    # scene style: dots between words
-    text = LEADING_TAGS.sub('', text).strip()
-    season = None
-    match = EXPLICIT.search(text)
-    if match:
-        season, episode = int(match.group(1)), int(match.group(2))
-    else:
-        match = DASHED.search(text) or WORDED.search(text) or TRAILING.search(text)
-        if match is None:
-            return None, UNSUPPORTED if _type_words(text) or SEASON_ONLY.search(text) else UNCLEAR
-        episode = int(match.group(1))
-    base, tail = text[:match.start()], text[match.end():]
-    if MULTI.match(tail) or EXPLICIT.search(tail) or re.match(r'^\s*-?\s*(?:EP|E)\d', tail, re.I):
-        return None, UNSUPPORTED                        # ranges and S01E01E02
-    if re.match(r'^\.\d{1,2}(?![0-9pP])', tail) or episode < 1: return None, UNCLEAR
-    # A named "Special Part 1" may be the official title of a complete
-    # TVDB S00 episode. The exact provider mapping decides, not the words.
-    # "Special" may be part of a show's literal name: "Should Be Special".
-    # Keep standalone qualifiers and tags as release-type evidence.
-    if season != 0 and re.search(r'(?i)(?:^|[-–—]\s+)specials?\s*$', base):
-        return None, UNSUPPORTED
-    if season != 0 and re.search(r'(?i)\[(?:specials?)\]|\((?:specials?)\)', base):
-        return None, UNSUPPORTED
-    kind_base = re.sub(r'(?i)\bspecials?\b', ' ', base)
-    kind_tail = tail
-    if season == 0:
-        # TVDB S00 is explicitly a special; packs and movies still fail.
-        kind_base = re.sub(r'(?i)\b(?:ova|oad|ona)\b', ' ', kind_base)
-        kind_tail = re.sub(r'(?i)\b(?:specials?|ova|oad|ona)\b', ' ', kind_tail)
-    if _type_words(kind_base + ' ' + kind_tail): return None, UNSUPPORTED
-    base = re.sub(r'[\[【][^\]】]*[\]】]', ' ', base)
-    base = re.sub(r'\s+', ' ', base).strip(' -–—:')
-    if not base: return None, UNCLEAR
-    alternatives = [part.strip(' -:') for part in re.split(r'\s+[|/]\s+', base)]
-    for inner in re.findall(r'\(([^()]+)\)', base):
-        if not YEAR.fullmatch('(' + inner + ')') and season_marker(inner)[1] is None:
-            alternatives.append(inner.strip())
-    stripped = [re.sub(r'\s*\((?!\s*(?:19|20)\d{2}\s*\))[^()]*\)', ' ', alt) for alt in alternatives]
-    found = []
-    for alt in alternatives + stripped:
-        alt = re.sub(r'\s+', ' ', alt).strip(' -:')
-        if alt and alt not in found: found.append(alt)
-    return ParsedRelease(tuple(found), season, episode, text), None
-
-
-def parse_release(title):
-    """One-episode release, or None when it is a batch, range, special or unclear."""
-    return read_release(title)[0]
-
-
-def marker_seasons(text, *, roman=False):
-    """Every season number written as a marker (S2, Season 2, 2nd Season...)."""
-    found = set()
-    patterns = MARKERS if roman else MARKERS[:-1]
-    for pattern in patterns:
-        for match in pattern.finditer(text):
-            token = match.group(1)
-            number = (int(token) if token.isdigit() else ORDINAL_WORDS.get(token.lower())
-                      or ROMAN.get(token))
-            if number: found.add(number)
-    return found
+from src.nextgen.release_names import YEAR_TAG, norm, season_marker
 
 
 @dataclass(frozen=True)
@@ -168,11 +27,11 @@ class AnimeTitles:
             base, number = season_marker(title)
             if number is not None and norm(base):
                 marked.add((norm(base), number))
-            elif tvdb_season > 1 and YEAR.search(title):
+            elif tvdb_season > 1 and YEAR_TAG.search(title):
                 # A catalog title may contain a year that torrent releases omit.
                 # Treat the yearless name as a franchise alias: require a season
                 # marker (or absolute episode number), not a bare sequel episode.
-                plain = norm(YEAR.sub(' ', title))
+                plain = norm(YEAR_TAG.sub(' ', title))
                 if plain:
                     marked.add((plain, tvdb_season))
         seasons = {number for _, number in marked}
@@ -187,7 +46,7 @@ class AnimeTitles:
         """'exact', 'season', 'franchise' or None for one written title alternative."""
         full = norm(written)
         base, number = season_marker(written)
-        unyeared = norm(YEAR.sub(' ', base))
+        unyeared = norm(YEAR_TAG.sub(' ', base))
         if full in self.exact and full not in self.franchise:
             return 'exact', number
         if number is not None and number in self.seasons and (
@@ -227,7 +86,7 @@ def matches(parsed, titles, target, tvdb_season):
 def search_queries(catalog_titles, titles, target, *, season=None, english_title=None, prefer_audio=False):
     """A few indexer queries that together reach common naming styles while bounded at 6."""
     from src.nextgen.acquisition.prowlarr_search import search_aliases
-    aliases = tuple(re.sub(r'\s+', ' ', YEAR.sub(' ', alias)).strip()
+    aliases = tuple(re.sub(r'\s+', ' ', YEAR_TAG.sub(' ', alias)).strip()
                     for alias in search_aliases(catalog_titles, english_title=english_title))
     if not aliases:
         return ()
@@ -256,7 +115,7 @@ def search_queries(catalog_titles, titles, target, *, season=None, english_title
     # English only when AniDB gave one; a second romanized alias is just a synonym.
     eng = None
     if type(english_title) is str and english_title.strip():
-        wanted = norm(YEAR.sub(' ', english_title))
+        wanted = norm(YEAR_TAG.sub(' ', english_title))
         eng = next((alias for alias in aliases[1:] if norm(alias) == wanted), None)
     has_english = eng is not None
     synonyms = tuple(alias for alias in aliases[1:] if alias != eng)
@@ -334,7 +193,7 @@ def season_bases(catalog_titles):
 def batch_search_queries(catalog_titles, season, *, english_title=None, prefer_audio=False):
     """Bounded search queries for season packs (WI-05)."""
     from src.nextgen.acquisition.prowlarr_search import search_aliases
-    aliases = tuple(re.sub(r'\s+', ' ', YEAR.sub(' ', alias)).strip()
+    aliases = tuple(re.sub(r'\s+', ' ', YEAR_TAG.sub(' ', alias)).strip()
                     for alias in search_aliases(catalog_titles, english_title=english_title))
     if not aliases:
         return ()
@@ -347,7 +206,7 @@ def batch_search_queries(catalog_titles, season, *, english_title=None, prefer_a
 
     eng = None
     if type(english_title) is str and english_title.strip():
-        wanted = norm(YEAR.sub(' ', english_title))
+        wanted = norm(YEAR_TAG.sub(' ', english_title))
         eng = next((alias for alias in aliases[1:] if norm(alias) == wanted), None)
     has_english = eng is not None
     eng_base = None

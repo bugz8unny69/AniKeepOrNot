@@ -3,7 +3,7 @@
 Only a successfully persisted, exact episode verification can seed identity
 memory. Aliases are hints for identity reuse, never episode authorization.
 """
-from src.nextgen.providers.parsing import norm, release_title
+from src.nextgen.release_names import norm, release_title
 from src.nextgen.providers.http import json_object
 from src.nextgen.providers.errors import ProviderInvalidResponse
 

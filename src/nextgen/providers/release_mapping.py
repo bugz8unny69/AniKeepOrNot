@@ -16,7 +16,7 @@ def declared_episode(title):
     Shares the release-group title reader with backfill search
     (acquisition.release_titles), so intake and backfill read titles alike.
     """
-    from src.nextgen.acquisition.release_titles import EXPLICIT, marker_seasons, read_release
+    from src.nextgen.release_names import EXPLICIT, marker_seasons, read_release
     parsed, reason = read_release(title)
     if parsed is None: raise ReleaseNotReady(reason)
     if parsed.season is not None:
