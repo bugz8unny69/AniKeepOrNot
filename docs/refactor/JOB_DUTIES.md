@@ -17,9 +17,11 @@ changes that improve things land on `refactor` and are listed in the PR.
 4. **No loops, no stale jobs.** A job never repeats itself. The worker
    supervises every job; a job that has done nothing since the last check is
    fired.
-5. **Cleanup deletes what we created.** The database records every path and
-   hash we created, so cleanup removes exactly those. No extra "prove we own
-   it" check, no leftovers.
+5. **One interface for files and torrents.** Every job creates, moves and
+   deletes files, folders and torrents through the same interface. It records
+   everything it did, so it can show the work done on each file and clean it up.
+   Jobs don't keep their own records or their own cleanup code. No extra "prove
+   we own it" check, no leftovers.
 6. **Waits are defined and gentle.** A download is followed in qBittorrent
    while it downloads, without stressing qBittorrent's API.
 7. **Logging is cheap and respects the configured level.** Writing a log or
@@ -97,7 +99,7 @@ cleanup or a bug report, and **the work keeps moving**:
 | `SERVICE_SETUP_INVALID`, `SERVICE_RESPONSE_INVALID` | service setup | **wait** for the service (one service alert, not N stuck jobs) |
 | size limit, missing audio, `RELEASE_CONFLICT`, `TORRENT_ALREADY_PRESENT`, identity | unusable release | **reject that release** and try the next candidate; the episode keeps going |
 | `EPISODE_RESERVATION_CONFLICT`, plan conflicts, `TORRENT_OWNERSHIP_CONFLICT`, `TORRENT_TRANSFER_CONFLICT` | our own jobs clashing | **wait** for the owning job, or end as a duplicate |
-| `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `POST_KEEP_CLEANUP_REVIEW`, `REJECT_CLEANUP_REVIEW`, `KEEP_IMPORT_REVIEW`, `STAGING_REVIEW` | cleanup "ownership proof" | **removed.** Cleanup deletes the paths and torrent hashes the database recorded when we created them (section 5). Already gone counts as done |
+| `CANCELLATION_REVIEW`, `DECISION_DOWNLOAD_CLEANUP_REVIEW`, `POST_KEEP_CLEANUP_REVIEW`, `REJECT_CLEANUP_REVIEW`, `KEEP_IMPORT_REVIEW`, `STAGING_REVIEW` | cleanup "ownership proof" | **removed.** The `resources` interface cleans up what it recorded (section 5). Already gone counts as done |
 | `MEDIA_SERVER_REFRESH_REVIEW` | Jellyfin | retry later; never blocks |
 | `JOB_PAYLOAD_INVALID`, `JOB_STATE_INVALID`, `UNSUPPORTED_JOB_KIND` | our bugs | a **bug report** with the failed check; the episode goes back to searching |
 
@@ -157,21 +159,75 @@ unfinished job "what have you done since my last check?"
   its lease expires, and if no progress was recorded, the job is fired instead
   of being started again.
 
-## 5. Cleanup deletes what we created
+## 5. One interface for files and torrents: `resources`
 
-Every file, folder and torrent a job creates is recorded **when it is
-created**: the path and size of each staged or downloaded file, and the torrent
-hash with its save path. Cleanup removes exactly those records:
+### Today
 
-* a torrent: removed from qBittorrent by its recorded hash, with its data;
-* a file or folder: deleted at its recorded path;
-* already gone: counts as cleaned up, not as an error.
+**17 modules** have their own staging and cleanup logic (`cancel_cleanup`,
+`decision_download_cleanup`, `post_keep_cleanup`, `batch_decision_cleanup`,
+`keep_cleanup_proof`, `staging_artifacts`, …). **21 tables** record created
+things, kept separately for single episodes and batches:
+- `staging_publications` / `batch_staging_publications`;
+- `keep_imports` / `batch_keep_imports`;
+- `cancellation_cleanup` / `batch_cancellation_cleanup`;
+- `batch_download_cleanup`, `batch_keep_cleanup`, `torrent_submissions`,
+  `torrent_transfers`, …
 
-The "can we prove we own it" checks are removed. These are the inode/size
-re-verification, torrent-moved detection and unowned-file review that today end
-in `CANCELLATION_REVIEW` and similar. One guard stays: cleanup only deletes
-inside the configured download, staging and library folders. A recorded path
-outside them is a bug report, not a deletion.
+Each has its own rules and its own ways to get stuck.
+
+### On `refactor`
+
+Every job goes through **one interface**, `resources.py`, for anything it does to
+a file, folder or torrent:
+
+```python
+res = resources.for_job(job)
+torrent = res.add_torrent(magnet, save_path)          # recorded: hash, save path
+video   = res.downloaded_file(torrent, index)          # recorded: path, size
+staged  = res.link(video, staging_path)                # recorded: hardlink staging → download
+nfo     = res.write_file(staging_dir / "S01E03.nfo", data)
+kept    = res.import_to_library(staged, library_path)  # recorded: library copy, owned by you now
+res.cleanup()                                          # undo what this job did (rules below)
+```
+
+* **It records everything as it happens.** There is one table, `resources`
+  (what: file, folder, torrent or library import; path or hash; size; which
+  job; which resource it came from; current state). A second table,
+  `resource_operations`, holds every operation on it (created, linked,
+  moved, imported, deleted), with time and job.
+* **It shows the work.** The job's report and the dashboard list, per file,
+  what was done to it: *downloaded → linked to staging → imported to library →
+  download removed*.
+* **It cleans up.** `cleanup()` walks the job's own records in reverse and
+  undoes them. The rules are the same for every duty, episode or batch:
+
+  | Job ending | Torrent and download | Staging files | Library import |
+  |---|---|---|---|
+  | DONE, kept | removed (with data) | removed | **kept** (it's yours) |
+  | DONE, you rejected it | removed (with data) | removed | n/a |
+  | REJECTED, FAILED, FIRED, CANCELED | removed (with data) | removed | n/a |
+  | Reset of an episode | removed (with data) | removed | n/a, then search again |
+
+* **Already gone counts as done.** A file someone deleted by hand, or a
+  torrent removed in qBittorrent, is not an error.
+* **One guard stays:** the interface only creates or deletes inside the
+  configured download, staging and library folders. A path outside them is a
+  bug report, and nothing is touched.
+* **Only the interface touches the disk or qBittorrent.** A test scans the
+  code: no module except `resources.py` (and its qBittorrent client) may call
+  `os.unlink`, `os.link`, `shutil`, `mkdir`, or qBittorrent add/delete. A new job
+  can't quietly invent its own cleanup again.
+* **Two jobs never own the same thing.** A resource belongs to exactly one job.
+  A second job that needs the same torrent (e.g. a season pack already being
+  downloaded) uses it through the interface. It is recorded as a *user* of that
+  resource, and cleanup removes it only when its last user is done.
+
+### What happens to the 17 modules and 21 tables
+
+Their logic becomes the interface's rules above, and their tables migrate into
+`resources` / `resource_operations` (one migration, history included, as with
+the earlier renames). The modules and tables are then removed, with ledger
+entries in `removed.json`.
 
 ## 6. Quiet, level-respecting logging
 
@@ -202,8 +258,10 @@ On `refactor`:
 0. **JD-0 Measure and map.** Rank today's review, hold and fail reasons with
    counts from the server; map every review path to section 3; fix the logging
    level bugs (startup-only level, override visibility). Bug fixes go to NextGen too.
-1. **JD-1 `release_names.py` and activities.** Parsing in one module; each
-   handler becomes an activity function. No behaviour change yet.
+1. **JD-1 `release_names.py`, `resources.py` and activities.** Parsing in one
+   module. The resources interface, with today's file and torrent operations moved
+   behind it and the scan test. Each handler becomes an activity function. No
+   behaviour change yet, except that every file and torrent operation is now recorded.
 2. **JD-2 Episode duty.** Job created on accept, Identifying as its first
    activity, `REJECTED` as a normal ending, saved progress, deadlines,
    repeat counting and change-only History. Test: one release end to end as
@@ -213,7 +271,9 @@ On `refactor`:
    release (with the next candidate), a plain cleanup or a bug report.
    Defined waits, progress records, firing, and the shared qBittorrent poller.
 4. **JD-4 Season-pack and batch duties.**
-5. **JD-5 Reset and cleanup duties**, with no cross-job waiting.
+5. **JD-5 Reset and cleanup through `resources`.** The cleanup rules table
+   replaces the 17 cleanup modules; the 21 tables migrate into `resources`. No
+   cross-job waiting.
 6. **JD-6 Switch-over, dashboard and report**: episodes moving, waiting and
    done; bug reports. The old kinds and review states are removed
    (ledger entries).
