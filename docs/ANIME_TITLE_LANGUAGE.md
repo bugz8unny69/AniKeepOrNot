@@ -39,8 +39,8 @@ recognition mappings, or downloads are changed. No new job engine is involved.
 
 Focused offline tests:
 ```sh
-python3 -m unittest src.nextgen.tests.test_anime_title_language src.nextgen.tests.test_series_intake src.nextgen.tests.test_configuration_schema
-node --check src/nextgen/dashboard/static/dashboard.js
+python3 -m unittest src.anime.tests.test_anime_title_language src.anime.tests.test_series_intake src.anime.tests.test_configuration_schema
+node --check src/anime/dashboard/static/dashboard.js
 ```
 
 CI validation is performed by the NextGen GitHub Actions workflow on PR #222 before merge.

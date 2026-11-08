@@ -18,7 +18,7 @@ Environment=ANIME_DISCOVERY_ADMIN_SOCKET=/run/anime-discovery/admin.sock
 RuntimeDirectory=anime-discovery
 RuntimeDirectoryMode=0700
 # Replace the origin with the exact HTTPS dashboard origin before installing.
-ExecStart=/opt/anime-discovery/.venv/bin/python -m src.nextgen.api serve --config-dir /etc/anime-discovery --public-origin https://anime.example.invalid
+ExecStart=/opt/anime-discovery/.venv/bin/python -m src.anime.api serve --config-dir /etc/anime-discovery --public-origin https://anime.example.invalid
 Restart=on-failure
 RestartSec=10
 KillMode=mixed

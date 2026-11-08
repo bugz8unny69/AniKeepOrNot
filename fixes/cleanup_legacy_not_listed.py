@@ -18,7 +18,7 @@ import uuid
 SERVICES = ('anime-discovery-api.service', 'anime-discovery-worker.service')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # The release's own schema version: the fix ships with, and is run from, that release.
-from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
+from src.anime.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
 
 # Each result is historical/observational. Do not reset a result if another
 # record suggests the episode has already been selected or acquired.

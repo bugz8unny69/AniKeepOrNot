@@ -214,8 +214,17 @@ def extract_checkout(source,release,revision,execute=run):
     archive.unlink();return sha
 
 
+def package(release):
+    """The Python package a release ships: "anime" on refactor, the older
+    "nextgen" package on NextGen releases. Rollback and branch switches run an
+    older release's code, so each release is run with its own package."""
+    for name in ('anime','next'+'gen'):
+        if (Path(release)/'src'/name/'__main__.py').is_file():return 'src.'+name
+    return 'src.anime'
+
+
 def service_call(release,options,command,payload,execute=run):
-    result=execute(['runuser','-u',options['user'],'--',release/'.venv/bin/python','-m','src.nextgen.install_support',command,
+    result=execute(['runuser','-u',options['user'],'--',release/'.venv/bin/python','-m',package(release)+'.install_support',command,
         '--config-dir',options['config_dir']],cwd=release,input=json.dumps(payload))
     return json.loads(result.stdout)
 
@@ -312,7 +321,7 @@ def apply(options,args,execute=run):
         os.rename(incoming,release)
         atomic_file(release/RELEASE_INFO,(json.dumps({'revision':revision,'ref':options['ref'],
             'installed_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},sort_keys=True)+'\n').encode(),0o644)
-        for required in ('src/nextgen/__main__.py','src/nextgen/install_support.py','bin/anime-discovery-install','bin/adm'):
+        for required in ('src/anime/__main__.py','src/anime/install_support.py','bin/anime-discovery-install','bin/adm'):
             if not (release/required).is_file():raise ValueError('Selected source does not contain the Anime Discovery installer.')
         execute([options['python'],'-m','venv',str(release/'.venv')])
         execute([str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
@@ -373,7 +382,7 @@ def apply(options,args,execute=run):
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):raise ValueError('Expected a password file.')
                 password=stream.read(1026)
             execute(['runuser','-u',options['user'],'--',release/'.venv/bin/python','-m',
-                'src.nextgen.api.adm','set-password','--if-unset','--password-stdin'],cwd=release,input=password)
+                package(release)+'.api.adm','set-password','--if-unset','--password-stdin'],cwd=release,input=password)
         destination=Path(options['destination']);destination.parent.mkdir(parents=True,exist_ok=True)
         atomic_file(destination,(release/'bin/anime-discovery-install').read_bytes(),0o755)
         adm_command=destination.parent/'adm'
@@ -414,7 +423,7 @@ def rollback(options,args,execute=run):
     """Switch current back to the previous release, if it can still run.
 
     The previous release checks the database and settings itself (its own
-    `python -m src.nextgen check`): a database or settings file that was
+    `python -m src.anime check`): a database or settings file that was
     upgraded beyond what it understands refuses the rollback. Nothing is
     deleted; the newer release becomes the previous one.
     """
@@ -435,7 +444,7 @@ def rollback(options,args,execute=run):
     lock=os.open(metadata/'.installer.lock',os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
     try:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        check=execute(['runuser','-u',options['user'],'--',previous/'.venv/bin/python','-m','src.nextgen','check',
+        check=execute(['runuser','-u',options['user'],'--',previous/'.venv/bin/python','-m',package(previous),'check',
                        '--config-dir',options['config_dir']],cwd=previous,check=False)
         if check.returncode:
             reason=' '.join((check.stderr or check.stdout or '').split())[:400] or 'status '+str(check.returncode)

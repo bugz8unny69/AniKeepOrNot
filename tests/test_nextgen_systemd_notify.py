@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from src.nextgen.systemd_notify import notify, watchdog_interval
+from src.anime.systemd_notify import notify, watchdog_interval
 
 
 class SystemdNotifyTests(unittest.TestCase):

@@ -1,23 +1,23 @@
 # Dead-code and duplication audit (RF-002)
 
 **Base:** `NextGen` `99dd30ef` (see [BASELINE.md](BASELINE.md))
-**Scope:** `src/nextgen` excluding tests (167 files, 27,589 lines), plus entrypoints `bin/adm`, `bin/anime-discovery-install`, `deploy/nextgen/*.service`, the operator repair scripts in `fixes/`, dashboard JS and SQL.
+**Scope:** `src/anime` excluding tests (167 files, 27,589 lines), plus entrypoints `bin/adm`, `bin/anime-discovery-install`, `deploy/nextgen/*.service`, the operator repair scripts in `fixes/`, dashboard JS and SQL.
 
 > **Correction (RF-003):** the first version of this audit did not scan `fixes/`. As a result `audio_exhausted` (formerly D4) was wrongly listed as dead: `fixes/requeue_waiting_for_dub.py` imports it. The full suite caught this when it was removed, and the removal was reverted. Every other removed name and every P-item was then rechecked against `fixes/`, `bin/` and `deploy/`, and no other references were found.
 **Production behavior changed:** none. This is an audit only.
 
 ## Method
 
-1. **AST definition scan.** Every top-level function, class and constant, and every public method, was checked against word-boundary references in all NextGen Python, dashboard JS/CJS, SQL, `bin/` and `deploy/`. A definition counts as *unreferenced* when its name appears only at the definition. It counts as *test-only* when every other reference is in `src/nextgen/tests/`.
+1. **AST definition scan.** Every top-level function, class and constant, and every public method, was checked against word-boundary references in all NextGen Python, dashboard JS/CJS, SQL, `bin/` and `deploy/`. A definition counts as *unreferenced* when its name appears only at the definition. It counts as *test-only* when every other reference is in `src/anime/tests/`.
 2. **Module scan.** Every module stem was checked for references outside its own file. **No module is unreferenced or test-only.**
 3. **Import scan.** For every imported name not used in its file, the check also looked for indirect use: re-export (`from <module> import name` elsewhere), `module.name` attribute access, and `mock.patch` target strings.
-4. **Dynamic contracts.** Every job `KIND` (29) was traced to its `registration()` and its enqueue sites. All entrypoints were checked: `python -m src.nextgen worker` → `providers/configuration.py` → `serve_worker`, and `python -m src.nextgen.api serve`. Persisted identifiers in `storage/sql/` were checked, as were dashboard handler names in `dashboard/presentation.py`.
+4. **Dynamic contracts.** Every job `KIND` (29) was traced to its `registration()` and its enqueue sites. All entrypoints were checked: `python -m src.anime worker` → `providers/configuration.py` → `serve_worker`, and `python -m src.anime.api serve`. Persisted identifiers in `storage/sql/` were checked, as were dashboard handler names in `dashboard/presentation.py`.
 5. **History.** For each candidate, `git log -S` / `-G` found the commit that removed its last caller. That commit is the evidence for the classification.
 6. **Duplication.** AST-normalized function bodies were hashed to find exact duplicates, and helper names repeated across modules were listed.
 
 Passing tests were not taken as proof that code is used. Several test-only items below are classified *potentially dead* rather than *confirmed dead* because of that.
 
-Historical migration scripts (`src/nextgen/storage/sql/`, `storage/migrations.py`) are excluded from deletion.
+Historical migration scripts (`src/anime/storage/sql/`, `storage/migrations.py`) are excluded from deletion.
 
 ---
 
@@ -25,11 +25,11 @@ Historical migration scripts (`src/nextgen/storage/sql/`, `storage/migrations.py
 
 | # | Location | Item | Evidence |
 |---|---|---|---|
-| D1 | `src/nextgen/sonarr.py:139` | `Client.add_payload()` | Its only caller (`check_source(data);payload=client.add_payload(selection)`) was removed in `b0ca9e37`. Keep now requires the series to exist already and fails with `SERIES_MISSING` (`keep_service.py:45`). No production or test references remain. This was the last piece of the superseded Sonarr "add series" acquisition path. |
-| D2 | `src/nextgen/acquisition/prowlarr_search.py:281` | `_release()` | Its row-filtering logic was inlined into `Client._search()` (`prowlarr_search.py:551`) for the explainable matching report in `45e1876a`. Zero references. |
-| D3 | `src/nextgen/acquisition/audio.py:68` | `audio_tagged()` and its `_TAG` regex, if `_TAG` turns out to be used only there | `dual_audio_tagged()` replaced it in `c9c14c35` ("gate English acquisitions on dual-audio hints"), which removed both production callers. Only its own unit assertions in `tests/test_audio_check.py:28,34` remain. Those assertions go with it. |
-| D5 | `src/nextgen/acquisition/audio.py:11` | `MODES` | Zero references. Configuration validates audio modes on its own. |
-| D6 | `src/nextgen/storage/prowlarr_snapshots.py:12` | `MAX_INDEXER_LEN` | Zero references. Removing an unused constant changes no bounds. |
+| D1 | `src/anime/sonarr.py:139` | `Client.add_payload()` | Its only caller (`check_source(data);payload=client.add_payload(selection)`) was removed in `b0ca9e37`. Keep now requires the series to exist already and fails with `SERIES_MISSING` (`keep_service.py:45`). No production or test references remain. This was the last piece of the superseded Sonarr "add series" acquisition path. |
+| D2 | `src/anime/acquisition/prowlarr_search.py:281` | `_release()` | Its row-filtering logic was inlined into `Client._search()` (`prowlarr_search.py:551`) for the explainable matching report in `45e1876a`. Zero references. |
+| D3 | `src/anime/acquisition/audio.py:68` | `audio_tagged()` and its `_TAG` regex, if `_TAG` turns out to be used only there | `dual_audio_tagged()` replaced it in `c9c14c35` ("gate English acquisitions on dual-audio hints"), which removed both production callers. Only its own unit assertions in `tests/test_audio_check.py:28,34` remain. Those assertions go with it. |
+| D5 | `src/anime/acquisition/audio.py:11` | `MODES` | Zero references. Configuration validates audio modes on its own. |
+| D6 | `src/anime/storage/prowlarr_snapshots.py:12` | `MAX_INDEXER_LEN` | Zero references. Removing an unused constant changes no bounds. |
 | D7 | (list below) | Unused imports | Not used in their file, not re-exported, not a patch target. |
 
 ### D7 — unused imports
@@ -98,7 +98,7 @@ These are production definitions referenced **only by tests**. Deleting them wou
 
 | Location | Item | Class | Notes |
 |---|---|---|---|
-| `dashboard/assets.py:28` | `address_mismatch()` | Confirmed dead | Its last (unused) import in `api/app.py` was removed in RF-003. No references remain in `src/nextgen`, `fixes/`, `bin/` or `deploy/`. |
+| `dashboard/assets.py:28` | `address_mismatch()` | Confirmed dead | Its last (unused) import in `api/app.py` was removed in RF-003. No references remain in `src/anime`, `fixes/`, `bin/` or `deploy/`. |
 | `providers/scoring.py:13` *(#267)* | `import unicodedata` | Confirmed dead import | |
 | `tools/evaluate_historical_identities.py:10,16,404` *(#267)* | `dataclass`, `CandidateMatch`, local `re` | Confirmed dead imports | |
 | `providers/parsing.py:22` *(#267)* | `METADATA_ONLY` | Potentially dead | No references. It may be an intended parse-mode constant, so check before removing. |

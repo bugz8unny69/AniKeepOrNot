@@ -23,10 +23,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fixes.cleanup_legacy_not_listed import backup, configured_database, open_database  # noqa: E402
-from src.nextgen.acquisition.audio import wants_english  # noqa: E402
-from src.nextgen.configuration_schema import FIELDS  # noqa: E402
-from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
-from src.nextgen.storage.episode_discovery import audio_exhausted  # noqa: E402
+from src.anime.acquisition.audio import wants_english  # noqa: E402
+from src.anime.configuration_schema import FIELDS  # noqa: E402
+from src.anime.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
+from src.anime.storage.episode_discovery import audio_exhausted  # noqa: E402
 
 REASON = 'RELEASE_CANDIDATES_EXHAUSTED'
 ROWS = """
@@ -54,7 +54,7 @@ def inspect(db):
 
 
 def execute(path, audio, apply=False):
-    from src.nextgen.storage.review_retry import request_review_retry, RetryNotAllowed, RetryStale
+    from src.anime.storage.review_retry import request_review_retry, RetryNotAllowed, RetryStale
     path = Path(path)
     with closing(open_database(path, readonly=not apply)) as db:
         eligible, other = inspect(db)

@@ -14,17 +14,17 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.nextgen.configuration import ConfigurationStore
-from src.nextgen.jellyfin import request_refresh, RefreshConfiguration, RefreshUnavailable, RefreshReview
-from src.nextgen.secrets import SecretStore, SecretStorageError
+from src.anime.configuration import ConfigurationStore
+from src.anime.jellyfin import request_refresh, RefreshConfiguration, RefreshUnavailable, RefreshReview
+from src.anime.secrets import SecretStore, SecretStorageError
 from fixes.nfo_title_repair import repair
-from src.nextgen.maintenance import MaintenanceGate
-from src.nextgen.providers.errors import (
+from src.anime.maintenance import MaintenanceGate
+from src.anime.providers.errors import (
     ProviderDeferred, ProviderInvalidResponse, ProviderUnavailable,
 )
-from src.nextgen.providers.http import Clients, Options
-from src.nextgen.storage.job_queue import JobQueue
-from src.nextgen.storage.sqlite import transaction, upsert_anime_titles
+from src.anime.providers.http import Clients, Options
+from src.anime.storage.job_queue import JobQueue
+from src.anime.storage.sqlite import transaction, upsert_anime_titles
 
 
 IDENTIFIED_ANIME = """

@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fixes.cleanup_legacy_not_listed import backup, configured_database, open_database  # noqa: E402
 
 # The release's own schema version: the fix ships with, and is run from, that release.
-from src.nextgen.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
+from src.anime.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
 KIND = 'CLEANUP_DECIDED_DOWNLOAD'
 
 ROWS = """
@@ -54,7 +54,7 @@ def inspect(db):
 
 
 def execute(path, apply=False):
-    from src.nextgen.storage.sqlite import enqueue_job
+    from src.anime.storage.sqlite import enqueue_job
     path = Path(path)
     with closing(open_database(path, readonly=not apply)) as db:
         eligible, skipped = inspect(db)

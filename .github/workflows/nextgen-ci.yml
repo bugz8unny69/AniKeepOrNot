@@ -28,15 +28,15 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Check source syntax
         run: |
-          python -m compileall -q src/nextgen
+          python -m compileall -q src/anime
           python -m py_compile bin/anime-discovery-install
-          node --test src/nextgen/tests/dashboard_browser.test.cjs
-          node --check src/nextgen/dashboard/static/dashboard.js
+          node --test src/anime/tests/dashboard_browser.test.cjs
+          node --check src/anime/dashboard/static/dashboard.js
       - name: Run the complete NextGen offline stack
         shell: bash
         run: |
           set -o pipefail
-          python -m src.nextgen.tests.run_batches 2>&1 | tee nextgen-tests.log
+          python -m src.anime.tests.run_batches 2>&1 | tee nextgen-tests.log
       - name: Preserve test output
         if: always()
         uses: actions/upload-artifact@v7.0.2

@@ -15,8 +15,8 @@ import sys
 import tempfile
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from src.nextgen.configuration_schema import ConfigurationSnapshot, decode, encode
-from src.nextgen.secrets import _value, _download_values, _access_values
+from src.anime.configuration_schema import ConfigurationSnapshot, decode, encode
+from src.anime.secrets import _value, _download_values, _access_values
 
 MAPPINGS={
     'daemon.concurrency':'worker.concurrency','web.port':'api.port',
@@ -158,8 +158,8 @@ def fix_in_place(directory, *, uid=None, gid=None):
             pending.unlink()
         _,settings=read_object(directory/'settings.json')
         if 'schema_version' in settings:
-            from src.nextgen.configuration import ConfigurationStore
-            from src.nextgen.secrets import SecretStore
+            from src.anime.configuration import ConfigurationStore
+            from src.anime.secrets import SecretStore
             ConfigurationStore(directory).read()
             SecretStore(directory).status()
             return {'changed':False,'message':'Settings are already converted.'}

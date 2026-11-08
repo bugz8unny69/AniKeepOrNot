@@ -27,7 +27,7 @@ $$\text{Release Title} \longrightarrow \text{Variant Extraction} \longrightarrow
 
 ## 2. Release Title Parsing & Multi-Variant Discovery
 
-The parser in `src/nextgen/providers/scoring.py` and `src/nextgen/providers/parsing.py` extracts all legitimate title variants from a release string while preserving provenance.
+The parser in `src/anime/providers/scoring.py` and `src/anime/providers/parsing.py` extracts all legitimate title variants from a release string while preserving provenance.
 
 ### Title Variant Provenance
 
@@ -60,7 +60,7 @@ A critical distinction is maintained:
 
 ## 3. Scoring & Best-Candidate Ranking Model
 
-Candidate evaluation is implemented in `src/nextgen/providers/scoring.py`.
+Candidate evaluation is implemented in `src/anime/providers/scoring.py`.
 
 ### 1. Title Similarity (Eligibility Floor)
 
@@ -220,7 +220,7 @@ To override an identification:
 
 ## 6. Historical Regression Evaluation (32 Cases)
 
-The offline evaluation tool `src/nextgen/tools/evaluate_historical_identities.py` compares the baseline exact-string matcher against the improved candidate ranking model across 32 historical `IDENTIFY_ANIME` failure cases.
+The offline evaluation tool `src/anime/tools/evaluate_historical_identities.py` compares the baseline exact-string matcher against the improved candidate ranking model across 32 historical `IDENTIFY_ANIME` failure cases.
 
 ### Summary Metrics
 

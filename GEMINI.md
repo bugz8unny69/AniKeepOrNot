@@ -9,9 +9,9 @@
 - Solve the current requirement completely without over-engineering for hypothetical future requirements.
 
 ### 2. Code Reuse
-- Always inspect existing modules in `src/nextgen/` before authoring new utilities, models, helpers, or contracts.
+- Always inspect existing modules in `src/anime/` before authoring new utilities, models, helpers, or contracts.
 - Reuse established project patterns, services, cleanup routines, job handlers, and database contracts.
-- Reuse test fixtures, factories, and helpers from `src/nextgen/tests/` rather than reinventing test setups.
+- Reuse test fixtures, factories, and helpers from `src/anime/tests/` rather than reinventing test setups.
 - Eliminate duplicate or parallel implementations across the codebase.
 
 ### 3. Avoid Excessive Complexity
@@ -23,15 +23,15 @@
 
 ## Architecture & Project Boundaries
 
-- **NextGen Focus**: Active development belongs exclusively in `src/nextgen/`. Legacy code in `src/legacy/` is reference-only for domain rules and regression scenarios.
+- **NextGen Focus**: Active development belongs exclusively in `src/anime/`. Legacy code in `src/legacy/` is reference-only for domain rules and regression scenarios.
 - **Media Servers & Staging**: The staging area is designed for viewing via media servers (Jellyfin, Plex, Emby) prior to permanent Keep import into Sonarr. Staged media and NFO metadata (`tvshow.nfo`, `<episodedetails>` `.nfo`) must adhere to standard Kodi/Jellyfin/Plex local media parsing conventions.
-- **Database & Schemas**: Follow existing SQLite migration and schema patterns (`src/nextgen/`). Keep schema changes clean, immutable, and explicit.
+- **Database & Schemas**: Follow existing SQLite migration and schema patterns (`src/anime/`). Keep schema changes clean, immutable, and explicit.
 - **Testing**: Maintain high test reliability with `pytest`. Ensure tests run deterministically and exercise failure/cleanup paths.
 
 ---
 
 ## Operational Guardrails & Git Rules
 
-- **Branching & PR Workflow**: Always create a new branch before starting work. Run batch tests locally (`PYTHONPATH=. pytest src/nextgen/tests/`) and fix issues as they appear. Create a PR, commit, and push.
+- **Branching & PR Workflow**: Always create a new branch before starting work. Run batch tests locally (`PYTHONPATH=. pytest src/anime/tests/`) and fix issues as they appear. Create a PR, commit, and push.
 - **CI Runs**: Always include `[skip ci]` in commit messages and PR descriptions to avoid triggering automated CI workflows.
 - **Safety**: Never deploy, restart production services, alter production databases, or mutate/delete user media or torrents without explicit authorization.

@@ -6,7 +6,7 @@ Later retries for releases with the same normalized title and season can reuse t
 
 Storage: schema v49 adds manual_identity_matches. The API endpoint POST /api/v1/jobs/{id}/manual-match requires a signed-in session, CSRF protection, and a reviewed identification job. Conflicting edits are rejected rather than silently replacing existing matches.
 
-This feature does not query AniDB or TVDB when accepting a manual match: the operator is explicitly supplying the series identity. It does not provide a title lookup UI. Failed retries remain reviewable through the existing job history. Local tests: python -m unittest src.nextgen.tests.test_manual_identity src.nextgen.tests.test_matching_details (not executed in this environment). No CI run requested.
+This feature does not query AniDB or TVDB when accepting a manual match: the operator is explicitly supplying the series identity. It does not provide a title lookup UI. Failed retries remain reviewable through the existing job history. Local tests: python -m unittest src.anime.tests.test_manual_identity src.anime.tests.test_matching_details (not executed in this environment). No CI run requested.
 
 ## Specials and OVAs
 

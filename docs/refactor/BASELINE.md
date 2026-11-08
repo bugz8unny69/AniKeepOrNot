@@ -32,21 +32,21 @@ All commands ran from the repository root, offline, with no live services.
 
 | Check | Command | Result |
 |---|---|---|
-| Complete Python suite | `python -m src.nextgen.tests.run_batches` | **30/30 batches passed. 1,483 tests, 0 failures, 0 errors, 0 skipped.** Wall time 2m41s |
-| Test inventory | `python -m src.nextgen.tests.run_batches --list` | 146 test modules |
-| Python syntax | `python -m compileall -q src/nextgen` | Passed (exit 0) |
-| Dashboard JS syntax | `node --check src/nextgen/dashboard/static/dashboard.js` | Passed (exit 0) |
-| Dashboard offline tests | `node --test src/nextgen/tests/dashboard_browser.test.cjs` | **25/25 passed**, 0 failed |
+| Complete Python suite | `python -m src.anime.tests.run_batches` | **30/30 batches passed. 1,483 tests, 0 failures, 0 errors, 0 skipped.** Wall time 2m41s |
+| Test inventory | `python -m src.anime.tests.run_batches --list` | 146 test modules |
+| Python syntax | `python -m compileall -q src/anime` | Passed (exit 0) |
+| Dashboard JS syntax | `node --check src/anime/dashboard/static/dashboard.js` | Passed (exit 0) |
+| Dashboard offline tests | `node --test src/anime/tests/dashboard_browser.test.cjs` | **25/25 passed**, 0 failed |
 
 The baseline has no known failures. A failure seen later in the refactor is a regression, unless it can be reproduced on the base commit.
 
 ## Source size at baseline
 
-`src/nextgen`, excluding tests: 167 Python files, 27,589 lines. RF-003 and RF-008 report reductions against these figures.
+`src/anime`, excluding tests: 167 Python files, 27,589 lines. RF-003 and RF-008 report reductions against these figures.
 
 ## Test policy
 
-Tests are no longer deferred. Every work item runs the complete local suite and fixes failures before it is committed, pushed and opened as a PR. GitHub Actions is not used for routine verification. `development.md` and `src/nextgen/tests/README.md` were updated to say this. The CI workflow file itself was left unchanged on purpose.
+Tests are no longer deferred. Every work item runs the complete local suite and fixes failures before it is committed, pushed and opened as a PR. GitHub Actions is not used for routine verification. `development.md` and `src/anime/tests/README.md` were updated to say this. The CI workflow file itself was left unchanged on purpose.
 
 ## Recurring upstream synchronization (RF-009)
 

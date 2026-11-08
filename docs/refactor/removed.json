@@ -1,199 +1,199 @@
 {
-  "about": "What the refactor removed or renamed, so a NextGen merge cannot quietly bring it back. Enforced by src/nextgen/tests/test_refactor_ledger.py; see docs/refactor/LEDGER.md. Add an entry in the same PR that removes or renames something.",
+  "about": "What the refactor removed or renamed, so a NextGen merge cannot quietly bring it back. Enforced by src/anime/tests/test_refactor_ledger.py; see docs/refactor/LEDGER.md. Add an entry in the same PR that removes or renames something.",
   "removed": [
     {
       "id": "RF-003 D1",
       "kind": "method",
-      "module": "src.nextgen.sonarr",
+      "module": "src.anime.sonarr",
       "name": "Client.add_payload",
       "why": "The superseded Sonarr add-series path; Keep requires the series to exist already."
     },
     {
       "id": "RF-003 D2",
       "kind": "function",
-      "module": "src.nextgen.acquisition.prowlarr_search",
+      "module": "src.anime.acquisition.prowlarr_search",
       "name": "_release",
       "why": "Inlined into Client._search() for the explainable matching report."
     },
     {
       "id": "RF-003 D3",
       "kind": "function",
-      "module": "src.nextgen.acquisition.audio",
+      "module": "src.anime.acquisition.audio",
       "name": "audio_tagged",
       "why": "Replaced by dual_audio_tagged()."
     },
     {
       "id": "RF-003 D3",
       "kind": "constant",
-      "module": "src.nextgen.acquisition.audio",
+      "module": "src.anime.acquisition.audio",
       "name": "_TAG",
       "why": "Used only by audio_tagged()."
     },
     {
       "id": "RF-003 D5",
       "kind": "constant",
-      "module": "src.nextgen.acquisition.audio",
+      "module": "src.anime.acquisition.audio",
       "name": "MODES",
       "why": "Nothing referenced it; configuration validates audio modes itself."
     },
     {
       "id": "RF-003 D6",
       "kind": "constant",
-      "module": "src.nextgen.storage.prowlarr_snapshots",
+      "module": "src.anime.storage.prowlarr_snapshots",
       "name": "MAX_INDEXER_LEN",
       "why": "Nothing referenced it."
     },
     {
       "id": "1c785beb A1",
       "kind": "constant",
-      "module": "src.nextgen.acquisition.metadata_service",
+      "module": "src.anime.acquisition.metadata_service",
       "name": "METADATA_TIMEOUT_SECONDS",
       "why": "METADATA_TIMEOUT_MS is the one used."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.jobs.discover_sonarr_backfill_job",
-      "name": "src.nextgen.jobs.discover_episode_releases_job",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.jobs.discover_episode_releases_job."
+      "module": "src.anime.jobs.discover_sonarr_backfill_job",
+      "name": "src.anime.jobs.discover_episode_releases_job",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.jobs.discover_episode_releases_job."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.sonarr_backfill",
-      "name": "src.nextgen.storage.episode_discovery",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.storage.episode_discovery."
+      "module": "src.anime.storage.sonarr_backfill",
+      "name": "src.anime.storage.episode_discovery",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.storage.episode_discovery."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.sonarr_candidates",
-      "name": "src.nextgen.storage.release_candidates",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.storage.release_candidates."
+      "module": "src.anime.storage.sonarr_candidates",
+      "name": "src.anime.storage.release_candidates",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.storage.release_candidates."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.sonarr_selection",
-      "name": "src.nextgen.storage.release_selection",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.storage.release_selection."
+      "module": "src.anime.storage.sonarr_selection",
+      "name": "src.anime.storage.release_selection",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.storage.release_selection."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.sonarr_dispatch",
-      "name": "src.nextgen.storage.release_dispatch",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.storage.release_dispatch."
+      "module": "src.anime.storage.sonarr_dispatch",
+      "name": "src.anime.storage.release_dispatch",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.storage.release_dispatch."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.sonarr_cached_retry",
-      "name": "src.nextgen.storage.cached_release_retry",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.storage.cached_release_retry."
+      "module": "src.anime.storage.sonarr_cached_retry",
+      "name": "src.anime.storage.cached_release_retry",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.storage.cached_release_retry."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.sonarr_magnet_intake",
-      "name": "src.nextgen.storage.magnet_intake",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.storage.magnet_intake."
+      "module": "src.anime.storage.sonarr_magnet_intake",
+      "name": "src.anime.storage.magnet_intake",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.storage.magnet_intake."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.trial_policy",
-      "name": "src.nextgen.user_evaluation_policy",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.user_evaluation_policy."
+      "module": "src.anime.trial_policy",
+      "name": "src.anime.user_evaluation_policy",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.user_evaluation_policy."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.trials",
-      "name": "src.nextgen.storage.user_evaluations",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.storage.user_evaluations."
+      "module": "src.anime.storage.trials",
+      "name": "src.anime.storage.user_evaluations",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.storage.user_evaluations."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.storage.batch_trials",
-      "name": "src.nextgen.storage.batch_user_evaluations",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.storage.batch_user_evaluations."
+      "module": "src.anime.storage.batch_trials",
+      "name": "src.anime.storage.batch_user_evaluations",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.storage.batch_user_evaluations."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.batch.durable_trial",
-      "name": "src.nextgen.batch.user_evaluation",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.batch.user_evaluation."
+      "module": "src.anime.batch.durable_trial",
+      "name": "src.anime.batch.user_evaluation",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.batch.user_evaluation."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.jobs.evaluate_trial_job",
-      "name": "src.nextgen.jobs.select_user_evaluation_job",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.jobs.select_user_evaluation_job."
+      "module": "src.anime.jobs.evaluate_trial_job",
+      "name": "src.anime.jobs.select_user_evaluation_job",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.jobs.select_user_evaluation_job."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.jobs.stage_trial_media_job",
-      "name": "src.nextgen.jobs.stage_user_evaluation_media_job",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.jobs.stage_user_evaluation_media_job."
+      "module": "src.anime.jobs.stage_trial_media_job",
+      "name": "src.anime.jobs.stage_user_evaluation_media_job",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.jobs.stage_user_evaluation_media_job."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.tests.test_sonarr_magnet_intake",
-      "name": "src.nextgen.tests.test_magnet_intake",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.tests.test_magnet_intake."
+      "module": "src.anime.tests.test_sonarr_magnet_intake",
+      "name": "src.anime.tests.test_magnet_intake",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.tests.test_magnet_intake."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.tests.test_sonarr_magnet_cancellation",
-      "name": "src.nextgen.tests.test_magnet_intake_cancellation",
-      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.nextgen.tests.test_magnet_intake_cancellation."
+      "module": "src.anime.tests.test_sonarr_magnet_cancellation",
+      "name": "src.anime.tests.test_magnet_intake_cancellation",
+      "why": "Episode discovery searches Prowlarr; the module is not Sonarr-specific. Renamed to src.anime.tests.test_magnet_intake_cancellation."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.tests.test_trial_policy",
-      "name": "src.nextgen.tests.test_user_evaluation_policy",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.tests.test_user_evaluation_policy."
+      "module": "src.anime.tests.test_trial_policy",
+      "name": "src.anime.tests.test_user_evaluation_policy",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.tests.test_user_evaluation_policy."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.tests.test_trial_migration",
-      "name": "src.nextgen.tests.test_user_evaluation_migration",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.tests.test_user_evaluation_migration."
+      "module": "src.anime.tests.test_trial_migration",
+      "name": "src.anime.tests.test_user_evaluation_migration",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.tests.test_user_evaluation_migration."
     },
     {
       "id": "RF-005",
       "kind": "module",
-      "module": "src.nextgen.tests.test_batch_trial_job",
-      "name": "src.nextgen.tests.test_batch_user_evaluation_job",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.nextgen.tests.test_batch_user_evaluation_job."
+      "module": "src.anime.tests.test_batch_trial_job",
+      "name": "src.anime.tests.test_batch_user_evaluation_job",
+      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04). Renamed to src.anime.tests.test_batch_user_evaluation_job."
     },
     {
       "id": "RF-005",
       "kind": "class",
-      "module": "src.nextgen.sonarr_episode",
+      "module": "src.anime.sonarr_episode",
       "name": "VerifiedEpisode",
-      "why": "Moved to src.nextgen.episode_identity: a verified TVDB episode is not Sonarr-specific. sonarr_episode keeps only the Sonarr matching for Keep."
+      "why": "Moved to src.anime.episode_identity: a verified TVDB episode is not Sonarr-specific. sonarr_episode keeps only the Sonarr matching for Keep."
     },
     {
       "id": "JD-1b",
       "kind": "module",
-      "module": "src.nextgen.acquisition.qbittorrent",
+      "module": "src.anime.acquisition.qbittorrent",
       "name": "qbittorrent",
-      "why": "The qBittorrent client moved to src.nextgen.torrent_client.qbittorrent (torrent client adapters, JD-1b)."
+      "why": "The qBittorrent client moved to src.anime.torrent_client.qbittorrent (torrent client adapters, JD-1b)."
     },
     {
       "id": "JD-1b",
       "kind": "class",
-      "module": "src.nextgen.torrent_client.qbittorrent",
+      "module": "src.anime.torrent_client.qbittorrent",
       "name": "_Protocol",
       "why": "Replaced by the version adapters in torrent_client/qbittorrent_versions.py (select_adapter); same rules."
     }
@@ -202,7 +202,7 @@
     {
       "id": "1c785beb A5",
       "kind": "class",
-      "module": "src.nextgen.storage.batch_candidates",
+      "module": "src.anime.storage.batch_candidates",
       "old": "CandidateConflict",
       "new": "BatchCandidateConflict",
       "why": "storage/sonarr_candidates.py has its own, different CandidateConflict."
@@ -210,7 +210,7 @@
     {
       "id": "RF-005",
       "kind": "class",
-      "module": "src.nextgen.user_evaluation_policy",
+      "module": "src.anime.user_evaluation_policy",
       "old": "TrialConflict",
       "new": "UserEvaluationConflict",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -218,7 +218,7 @@
     {
       "id": "RF-005",
       "kind": "class",
-      "module": "src.nextgen.user_evaluation_policy",
+      "module": "src.anime.user_evaluation_policy",
       "old": "TrialProposal",
       "new": "UserEvaluationProposal",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -226,7 +226,7 @@
     {
       "id": "RF-005",
       "kind": "class",
-      "module": "src.nextgen.user_evaluation_policy",
+      "module": "src.anime.user_evaluation_policy",
       "old": "TrialSource",
       "new": "UserEvaluationSource",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -234,7 +234,7 @@
     {
       "id": "RF-005",
       "kind": "class",
-      "module": "src.nextgen.batch.user_evaluation",
+      "module": "src.anime.batch.user_evaluation",
       "old": "BatchTrialSource",
       "new": "BatchUserEvaluationSource",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -242,7 +242,7 @@
     {
       "id": "RF-005",
       "kind": "class",
-      "module": "src.nextgen.batch.user_evaluation",
+      "module": "src.anime.batch.user_evaluation",
       "old": "BatchTrialProposal",
       "new": "BatchUserEvaluationProposal",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -250,7 +250,7 @@
     {
       "id": "RF-005",
       "kind": "function",
-      "module": "src.nextgen.batch.user_evaluation",
+      "module": "src.anime.batch.user_evaluation",
       "old": "propose_batch_trial",
       "new": "propose_batch_user_evaluation",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -258,7 +258,7 @@
     {
       "id": "RF-005",
       "kind": "function",
-      "module": "src.nextgen.storage.user_evaluations",
+      "module": "src.anime.storage.user_evaluations",
       "old": "persist_trial",
       "new": "persist_user_evaluation",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -266,7 +266,7 @@
     {
       "id": "RF-005",
       "kind": "function",
-      "module": "src.nextgen.storage.user_evaluations",
+      "module": "src.anime.storage.user_evaluations",
       "old": "load_trial_source",
       "new": "load_user_evaluation_source",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -274,7 +274,7 @@
     {
       "id": "RF-005",
       "kind": "function",
-      "module": "src.nextgen.storage.batch_user_evaluations",
+      "module": "src.anime.storage.batch_user_evaluations",
       "old": "persist_batch_trial",
       "new": "persist_batch_user_evaluation",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -282,7 +282,7 @@
     {
       "id": "RF-005",
       "kind": "function",
-      "module": "src.nextgen.storage.batch_user_evaluations",
+      "module": "src.anime.storage.batch_user_evaluations",
       "old": "load_batch_trial_source",
       "new": "load_batch_user_evaluation_source",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -290,7 +290,7 @@
     {
       "id": "RF-005",
       "kind": "function",
-      "module": "src.nextgen.batch.window",
+      "module": "src.anime.batch.window",
       "old": "plan_batch_trial_window",
       "new": "plan_batch_user_evaluation_window",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
@@ -302,7 +302,7 @@
       "rule": "only_in",
       "pattern": "['\"](?:paused|stopped)(?:DL|UP)['\"]",
       "files": [
-        "src/nextgen/acquisition/metadata_service.py"
+        "src/anime/acquisition/metadata_service.py"
       ],
       "why": "qBittorrent's stopped states have one definition: import STOPPED from acquisition.metadata_service."
     },
@@ -311,7 +311,7 @@
       "rule": "not_in",
       "pattern": "sqlite_master",
       "files": [
-        "src/nextgen/storage/batch_candidates.py"
+        "src/anime/storage/batch_candidates.py"
       ],
       "why": "Connections have passed the schema-version check, so the batch tables exist; a probe only hides a broken database."
     },
@@ -341,7 +341,7 @@
       "rule": "only_in",
       "pattern": "['\"](trial\\.(backfill_count|following_count)|storage\\.trial_root|trial_root)['\"]",
       "files": [
-        "src/nextgen/configuration_schema.py",
+        "src/anime/configuration_schema.py",
         "fixes/migrate_legacy_settings.py"
       ],
       "why": "Settings version 15 renamed the \"trial\" settings to user_evaluation.* and storage.user_evaluation_root. Only the upgrade code for published v14 and older, and the legacy-settings import, read the old names."
@@ -351,36 +351,46 @@
       "rule": "only_in",
       "pattern": "^(?:def|class) (?:ParsedRelease|_type_words|clean_metadata|detect_explicit_sequel_marker|marker_seasons|norm|parse_release|read_release|release_title|season_marker)\\b",
       "files": [
-        "src/nextgen/release_names.py"
+        "src/anime/release_names.py"
       ],
-      "why": "Release-name parsing has one home (JD-1a): import it from src.nextgen.release_names."
+      "why": "Release-name parsing has one home (JD-1a): import it from src.anime.release_names."
     },
     {
       "id": "JD-1a",
       "rule": "only_in",
       "pattern": "^(?:AUDIO_TAGS|DASHED|EP|EXPLICIT|EXTENSION|FOUR_DIGIT_YEAR|LEADING_TAGS|METADATA_ONLY|METADATA_ONLY_INNER|META_GROUP|META_PARENS|MULTI|NOT_ONE_EPISODE|PACKAGING_TAGS|PREFIX|RELEASE_TECH|SEASON_ONLY|SEASON_TOKEN|SEASON_WORD|SPECIAL_WORDS|TITLE_END_TECH|TRAIL|TRAILING|VERSION_TOKEN|WORDED|YEAR_TAG|YEAR) = re\\.compile|^(?:ORDINAL_WORDS|ROMAN|MARKERS|SEQUEL_PATTERNS) = |^UNCLEAR, UNSUPPORTED = ",
       "files": [
-        "src/nextgen/release_names.py"
+        "src/anime/release_names.py"
       ],
-      "why": "Release-name patterns have one home (JD-1a): import them from src.nextgen.release_names."
+      "why": "Release-name patterns have one home (JD-1a): import them from src.anime.release_names."
     },
     {
       "id": "JD-1c",
       "rule": "only_in",
       "pattern": "(?:INSERT INTO|UPDATE|DELETE FROM) resource(?:s|_operations)\\b",
       "files": [
-        "src/nextgen/resources.py"
+        "src/anime/resources.py"
       ],
       "why": "Only the resources interface writes the resources records (JD-1c)."
     },
     {
       "id": "JD-1d",
       "rule": "only_in",
-      "pattern": "failed_check['\"]?\\s*[:=]\\s*f?['\"]src/nextgen/",
+      "pattern": "failed_check['\"]?\\s*[:=]\\s*f?['\"]src/anime/",
       "files": [
-        "src/nextgen/checks.py"
+        "src/anime/checks.py"
       ],
       "why": "Write failed checks with checks.here('NAME') or require(): a hand-written 'file.py:LINE' drifts from the real line (JD-1d)."
+    },
+    {
+      "id": "PKG",
+      "rule": "only_in",
+      "pattern": "\\bsrc[./]nextgen\\b",
+      "files": [
+        "docs/refactor/rename_package.py",
+        "src/anime/storage/sql/067_package_paths.sql"
+      ],
+      "why": "The package is src/anime on refactor (owner decision, 2026-11-08). After a NextGen sync, run python -I docs/refactor/rename_package.py."
     }
   ]
 }

@@ -8,7 +8,7 @@ imports  imported names a file never uses (UNUSED), or that another module
          imports from it (REEXPORT)
 modules  modules nothing else references
 
-Pass the repository root, not src/nextgen. References are counted in NextGen,
+Pass the repository root, not src/anime. References are counted in NextGen,
 its tests, fixes/, bin/, deploy/, dashboard JS and SQL. A hit is a candidate,
 not proof: check git history and dynamic uses before removing anything, and
 record each removal in docs/refactor/removed.json (see LEDGER.md).
@@ -20,7 +20,7 @@ from collections import defaultdict
 from pathlib import Path
 
 root = Path(sys.argv[1])
-src = root / "src" / "nextgen"
+src = root / "src" / "anime"
 prod_files = [p for p in src.rglob("*.py") if "/tests/" not in str(p) and "__pycache__" not in str(p)]
 test_files = [p for p in (src / "tests").rglob("*.py")]
 other_files = [p for p in list((root / "bin").rglob("*")) + list((root / "deploy").rglob("*")) +

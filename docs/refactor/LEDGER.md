@@ -10,7 +10,7 @@ The refactor deletes unused code and renames things, while `NextGen` keeps the o
 
   The rest of the suite misses these whenever no test runs that code path.
 
-`src/nextgen/tests/test_refactor_ledger.py` catches both. It runs in `run_batches` like every other test, so it runs after every sync. It reads source files and imports nothing.
+`src/anime/tests/test_refactor_ledger.py` catches both. It runs in `run_batches` like every other test, so it runs after every sync. It reads source files and imports nothing.
 
 ## What it checks
 
@@ -20,17 +20,28 @@ The refactor deletes unused code and renames things, while `NextGen` keeps the o
 | Renamed names stay renamed | The old name of a `renamed` entry defined again in its module. |
 | Text rules | `only_in`: a pattern found outside the files listed (one home for a definition). `not_in`: a pattern back in a file it was removed from. Tests are exempt from `only_in`. |
 | Every name a module uses is defined | NextGen code using an import that was removed as unused, or a name that was deleted or renamed in the same module. |
-| Every internal import resolves | `from src.nextgen... import X` and `import src.nextgen...` where the module or `X` no longer exists, including imports inside functions. |
-| Module attributes resolve | `module.X` through an imported `src.nextgen` module where `X` no longer exists. |
-| Patch targets resolve | `mock.patch('src.nextgen....X')` strings pointing at something that no longer exists. |
+| Every internal import resolves | `from src.anime... import X` and `import src.anime...` where the module or `X` no longer exists, including imports inside functions. |
+| Module attributes resolve | `module.X` through an imported `src.anime` module where `X` no longer exists. |
+| Patch targets resolve | `mock.patch('src.anime....X')` strings pointing at something that no longer exists. |
 
-It scans `src/nextgen` (tests included), `fixes/` and the Python scripts in `bin/`.
+It scans `src/anime` (tests included), `fixes/` and the Python scripts in `bin/`.
 
 Replaying the `1c785beb` sync with every conflict resolved in NextGen's favour, the test reported:
 - `audio_tagged()` and `prowlarr_search._release()` defined again;
 - `audio.py` using `_TAG`, which the restored `audio_tagged()` needs but which stayed deleted.
 
 The rest of the suite would have missed that last one, because the tests of `audio_tagged()` were removed with it.
+
+## The package name after a sync
+
+On `refactor` the package is `src/anime` (owner decision, 2026-11-08); NextGen
+keeps `src/nextgen`. Git's directory-rename detection puts NextGen's changed and
+new files under `src/anime/`, but the lines NextGen adds still say
+`src.nextgen`. After every sync merge, before running the tests:
+
+    python -I docs/refactor/rename_package.py
+
+It is safe to run again. The ledger rule `PKG` fails until it has run.
 
 ## When it fails after a sync
 
@@ -46,7 +57,7 @@ Record the decision in the sync PR and in the `BASELINE.md` table.
 Add an entry in the same PR that removes or renames something:
 
 ```json
-{"id": "RF-008 P3", "kind": "function", "module": "src.nextgen.example", "name": "old_helper", "why": "..."}
+{"id": "RF-008 P3", "kind": "function", "module": "src.anime.example", "name": "old_helper", "why": "..."}
 ```
 
 | Section | Fields | Notes |
