@@ -103,8 +103,8 @@ class Outcome:
         if self.search_snapshots is not None and not isinstance(self.search_snapshots, (list, tuple)):
             raise ValueError("invalid outcome search snapshots")
         if self.facts is not None and (type(self.facts) is not dict or self.kind not in ("review", "hold", "blocked", "retry", "defer", "cancel", "fail")
-                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code", "service", "service_detail"}
-                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code", "service", "service_detail") else (type(v) is not int or v < 0)
+                or set(self.facts) - {"video_mb", "limit_mb", "plan_used_mb", "failed_check", "failed_path", "observed_audio", "missing_audio", "blocking_job_id", "operation_id", "cause_reason_code", "service", "service_detail", "service_status"}
+                or any((type(v) is not str) if k in ("failed_check", "failed_path", "observed_audio", "missing_audio", "cause_reason_code", "service", "service_detail", "service_status") else (type(v) is not int or v < 0)
                        for k, v in self.facts.items())):
             raise ValueError("invalid outcome facts")
         if type(self.kind) is not str or self.kind not in _STATES:
@@ -219,5 +219,14 @@ def failure_facts(exc):
             facts["failed_check"] = check
     if path and isinstance(path, str) and path.startswith("/"):
         facts["failed_path"] = path
+    # A generic SERVICE_* code names its service (and setup status) in the details.
+    if getattr(exc, "reason_code", None) in ("SERVICE_UNAVAILABLE", "SERVICE_SETUP_INVALID", "SERVICE_RESPONSE_INVALID"):
+        from src.nextgen.services.base import SETUP_STATUSES, valid_name
+        service = getattr(exc, "service", None)
+        if valid_name(service):
+            facts["service"] = service
+            status = getattr(exc, "service_status", None)
+            if status in SETUP_STATUSES:
+                facts["service_status"] = status
     return facts or None
 

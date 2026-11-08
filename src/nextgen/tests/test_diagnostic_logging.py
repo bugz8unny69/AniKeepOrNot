@@ -34,7 +34,7 @@ class DiagnosticLoggingTests(unittest.TestCase):
 
     def test_correlation_is_derived_and_untrusted_fields_are_dropped(self):
         logger, stream = self.make_logger()
-        event(logger, TRACE, "RETRY_SCHEDULED", reason_code="PROVIDER_UNAVAILABLE",
+        event(logger, TRACE, "RETRY_SCHEDULED", reason_code="SERVICE_UNAVAILABLE",
               event_id=4, job_id=8, created_by_job_id=3, attempt=2,
               trace_id="arbitrary-secret", raw_body="private-body", error_type="private-class",
               component="worker", retryable=True, outcome="RETRY_WAIT")
@@ -51,9 +51,9 @@ class DiagnosticLoggingTests(unittest.TestCase):
     def test_exhaustion_retains_a_readable_underlying_cause(self):
         logger, stream = self.make_logger()
         event(logger, logging.ERROR, "NEEDS_REVIEW", reason_code="JOB_RETRY_EXHAUSTED",
-              cause_reason_code="PROVIDER_UNAVAILABLE", job_id=8)
+              cause_reason_code="SERVICE_UNAVAILABLE", job_id=8)
         self.assertIn("Automatic retries stopped.", stream.getvalue())
-        self.assertIn("An information provider is temporarily unavailable.", stream.getvalue())
+        self.assertIn("Waiting for a service to come back.", stream.getvalue())
         with self.assertRaises(ValueError):
             event(logger, logging.ERROR, "NEEDS_REVIEW", reason_code="JOB_RETRY_EXHAUSTED",
                   cause_reason_code="unregistered")

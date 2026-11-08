@@ -137,7 +137,7 @@ Historical intermediate names (`*_v43`, `*_v48`, `*_v53`, `*_v56`, `*_v57`, `son
 
 ### 4.6 Reason and event codes
 
-**Done in RF-006b** (migration `064`): renames, removed codes and the new wording. The retired per-service codes follow in RF-006c (migration `065`).
+**Done in RF-006b** (migration `064`): renames, removed codes and the new wording. The retired per-service codes were retired in RF-006c (migration `065`).
 
 **Decided (2026-11-04): rename and migrate; old names removed.** The full audit of every reason and event code is in [REASON_CODE_AUDIT.md](REASON_CODE_AUDIT.md), with the data in [reason_code_proposals.py](reason_code_proposals.py). It covers the renamed codes, the removed codes and the code each one migrates to, and new human-readable wording for every code.
 

@@ -106,7 +106,7 @@ that endpoint are not solved by schema validation.
 
 ProviderDeferred maps to JOB_WAITING without spending failure retry budget.
 ProviderUnavailable and ProviderInvalidResponse produce reason-coded retries;
-authentication/authorization failure produces review with PROVIDER_AUTH_FAILED.
+authentication/authorization failure produces review with SERVICE_SETUP_INVALID.
 Storage failures retain the infrastructure-error path. No HTTP response body,
 URL, credentials, token or exception text is logged or saved in diagnostic history.
 Existing catalog messages/actions are reused and new reasons are translation-ready.

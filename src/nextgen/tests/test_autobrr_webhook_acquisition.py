@@ -3,7 +3,7 @@
 Real SQLite, real webhook normalization, real EVALUATE/RESERVE/PREPARE/SUBMIT
 handlers, real magnet bootstrap and journal. Only the qBittorrent HTTP client
 is replaced. No torrent_metadata.base_url is configured, which previously
-ended every ordinary webhook in TORRENT_METADATA_CONFIGURATION_INVALID.
+ended every ordinary webhook in SERVICE_SETUP_INVALID.
 """
 import hashlib
 import json
@@ -139,7 +139,7 @@ class AutobrrWebhookAcquisitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT marker,state FROM magnet_intents'),
                          [(marker,'OWNED_STOPPED')])
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE reason_code="
-                                   "'TORRENT_METADATA_CONFIGURATION_INVALID'"),[(0,)])
+                                   "'SERVICE_SETUP_INVALID'"),[(0,)])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE state NOT IN ('DONE')"),[(0,)])
 
     async def test_declared_magnet_with_trackers_is_what_qbittorrent_receives(self):

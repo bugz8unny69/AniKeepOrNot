@@ -134,7 +134,7 @@ class SearchOutcomeTests(unittest.TestCase):
         with self.assertRaises(SearchUnavailable):
             client.search_batch(['Cyberpunk Edgerunners'], 1)
         self.assertEqual(client.snapshots[0]['status'], 'FAILED')
-        self.assertTrue(all(q['status'] == 'PROWLARR_UNAVAILABLE' for q in client.snapshots[0]['queries']))
+        self.assertTrue(all(q['status'] == 'SERVICE_UNAVAILABLE' for q in client.snapshots[0]['queries']))
 
     def test_a_successful_empty_search_is_complete(self):
         result = search_client([[]] * 10).search_batch(['Cyberpunk Edgerunners'], 1)
@@ -145,10 +145,10 @@ class SearchOutcomeTests(unittest.TestCase):
         result = client.search_batch(['Cyberpunk Edgerunners'], 1)
         self.assertEqual([r.info_hash for r in result.releases], [NEW])
         self.assertFalse(result.complete)
-        self.assertEqual(result.failed[0][1], 'PROWLARR_UNAVAILABLE')
+        self.assertEqual(result.failed[0][1], 'SERVICE_UNAVAILABLE')
         snapshot = client.snapshots[0]
         self.assertEqual(snapshot['status'], 'PARTIAL')
-        self.assertEqual([q['status'] for q in snapshot['queries']][:2], ['PROWLARR_UNAVAILABLE', 'SUCCESS'])
+        self.assertEqual([q['status'] for q in snapshot['queries']][:2], ['SERVICE_UNAVAILABLE', 'SUCCESS'])
 
     def test_a_rejected_api_key_is_not_swallowed(self):
         with self.assertRaises(SearchUnauthorized):
@@ -176,9 +176,18 @@ class DiscoveryJobTests(Base):
     def scope_state(self):
         return self.rows("SELECT state FROM batch_candidate_scopes")[0][0]
 
-    async def test_unavailable_prowlarr_waits_once_and_never_exhausts(self):
+    async def test_unavailable_prowlarr_is_a_service_wait_and_never_exhausts(self):
+        # An outage is reported for Prowlarr; the worker turns it into the standard
+        # service wait (no retry spent, resumes when Prowlarr is back).
         outcome, _ = await self.run_job(SearchUnavailable())
-        self.assertEqual((outcome.kind, outcome.reason_code), ('defer', 'PROWLARR_UNAVAILABLE'))
+        self.assertEqual((outcome.kind, outcome.reason_code, outcome.facts),
+                         ('retry', 'SERVICE_UNAVAILABLE', {'service': 'prowlarr'}))
+        self.assertEqual(self.scope_state(), 'ACTIVE')
+
+    async def test_a_timeout_waits_once_and_never_exhausts(self):
+        from src.nextgen.acquisition.prowlarr_search import SearchTimeout
+        outcome, _ = await self.run_job(SearchTimeout())
+        self.assertEqual((outcome.kind, outcome.reason_code), ('defer', 'RELEASE_SEARCH_TIMEOUT'))
         self.assertEqual(self.scope_state(), 'ACTIVE')
 
     async def test_partial_failure_with_nothing_found_waits(self):

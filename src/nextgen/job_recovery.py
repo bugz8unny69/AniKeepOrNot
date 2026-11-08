@@ -60,9 +60,9 @@ RECOVERY_MATRIX = {
         'description': 'AnimeSeries schema attributes validation fixed; retrying proceeds.',
         'action': 'retry',
     },
-    'PROWLARR_SEARCH_REVIEW': {
+    'SERVICE_RESPONSE_INVALID': {
         'category': 'AUTONOMOUS_RETRY',
-        'description': 'Search failure classified; retrying searches again.',
+        'description': 'A service sent a response that could not be read; retrying asks again.',
         'action': 'retry',
     },
     'RELEASE_CANDIDATES_EXHAUSTED': {
@@ -110,9 +110,9 @@ RECOVERY_MATRIX = {
         'description': 'Download cleanup stopped; inspect via: adm report job --id N',
         'action': 'inspect_report',
     },
-    'TORRENT_METADATA_CONFIGURATION_INVALID': {
+    'SERVICE_SETUP_INVALID': {
         'category': 'MANUAL_ACTION',
-        'description': 'Torrent metadata or indexer configuration invalid; verify provider credentials.',
+        'description': 'A service is not set up correctly (the details name it); fix its settings, then retry.',
         'action': 'check_configuration',
     },
 }

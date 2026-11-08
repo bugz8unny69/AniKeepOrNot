@@ -76,7 +76,7 @@ def registration(read_batch_metainfo,*,source_factory=BatchEpisodeSource,
         except MetadataSourceWaiting as exc:
             return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms)
         except MetadataSourceUnavailable as exc:
-            return Outcome('retry',exc.reason_code)
+            return Outcome('retry',exc.reason_code,facts=failure_facts(exc))
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except (MediaUnavailable,ProbeUnavailable):

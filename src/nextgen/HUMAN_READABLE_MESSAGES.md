@@ -58,7 +58,7 @@ spelling. State labels also need readable text, but they are not errors.
 | event | CLAIMED | Job started. | event.CLAIMED.message |
 | event | RETRY_SCHEDULED | Another attempt is scheduled. | event.RETRY_SCHEDULED.message |
 | event | NEEDS_REVIEW | Stopped; needs review. | event.NEEDS_REVIEW.message |
-| reason | PROVIDER_UNAVAILABLE | An information provider is temporarily unavailable. | reason.PROVIDER_UNAVAILABLE.message |
+| reason | SERVICE_UNAVAILABLE | Waiting for a service to come back. | reason.SERVICE_UNAVAILABLE.message |
 | reason | JOB_LEASE_EXPIRED | Processing was interrupted. | reason.JOB_LEASE_EXPIRED.message |
 | state.job | NEEDS_REVIEW | Needs review | state.job.NEEDS_REVIEW.label |
 | state.job | RETRY_WAIT | Waiting for another attempt | state.job.RETRY_WAIT.label |
@@ -71,7 +71,7 @@ maintained runtime dictionary.
 Illustrative journal entry (not a captured runtime log):
 
 ```text
-event_code=RETRY_SCHEDULED message="Another attempt is scheduled." reason_code=PROVIDER_UNAVAILABLE reason_message="An information provider is temporarily unavailable." trace_id=AD-42 job_id=73 attempt=2
+event_code=RETRY_SCHEDULED message="Another attempt is scheduled." reason_code=SERVICE_UNAVAILABLE reason_message="Waiting for a service to come back." trace_id=AD-42 job_id=73 attempt=2
 ```
 
 A provider-unavailable reason by itself must not claim a retry will happen.

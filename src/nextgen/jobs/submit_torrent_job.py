@@ -15,6 +15,7 @@ from src.nextgen.acquisition.metainfo_source import (MetadataSourceWaiting, Meta
     MetadataSourceConfigurationError, MetadataSourceDenied)
 from src.nextgen.storage.submissions import SubmissionJournal, target_options, _plan, _intent
 from src.nextgen.worker import blocking
+from src.nextgen.services.base import service_facts
 
 KIND='SUBMIT_TORRENT'
 SERVICES=('qbittorrent',)  # External services this job needs; see services/README.md.
@@ -99,9 +100,9 @@ def registration(read_metainfo,secrets,*,client_factory=Client,journal_factory=S
             if state=='OWNED_STOPPED':return Outcome(value=done)
             if state in ('EXTERNAL','REVIEW'):return Outcome('review',reason)
             return Outcome('defer',reason,delay_ms=60000)
-        except ClientUnavailable:return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
+        except ClientUnavailable:return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('qbittorrent'))
         except MetadataSourceWaiting as exc:return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms)
-        except MetadataSourceUnavailable as exc:return Outcome('retry',exc.reason_code)
+        except MetadataSourceUnavailable as exc:return Outcome('retry',exc.reason_code,facts=failure_facts(exc))
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except ProviderDeferred as exc:return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)

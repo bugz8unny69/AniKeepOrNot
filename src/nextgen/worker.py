@@ -217,13 +217,24 @@ class Worker:
             details["cause_reason_code"] = cause
         return Outcome("defer", "SERVICE_UNAVAILABLE", delay_ms=self.policy.service_wait_ms, facts=details)
 
+    @staticmethod
+    def _outcome_service(spec, outcome):
+        """The service a generic SERVICE_* outcome is about, when its details name
+        one this job uses. Never guessed: a job that declares Prowlarr also calls
+        AniDB and TVDB, whose errors must not mark Prowlarr."""
+        named = (outcome.facts or {}).get("service")
+        return named if named in spec.services else None
+
     def _service_wait(self, spec, outcome):
         """A retry caused by an unavailable service becomes a wait instead."""
         health = self._service_health
         if (health is None or spec is None or not spec.services or outcome.kind != "retry"
                 or outcome.reason_code is None):
             return outcome
-        from src.nextgen.services import DOWN
+        from src.nextgen.services import DOWN, SERVICE_UNAVAILABLE
+        if outcome.reason_code == SERVICE_UNAVAILABLE:
+            service = self._outcome_service(spec, outcome)
+            return outcome if service is None else self._waiting_outcome(service, None, outcome.facts)
         for service in spec.services:
             if health.registry.get(service).status_for_reason(outcome.reason_code) == DOWN:
                 return self._waiting_outcome(service, outcome.reason_code, outcome.facts)
@@ -246,11 +257,17 @@ class Worker:
         health = self._service_health
         if health is None or spec is None or not spec.services:
             return
+        from src.nextgen.services import SERVICE_CODES
         changes = []
-        for service in spec.services:
+        # A generic SERVICE_* code is about one named service; others may concern any of them.
+        services = spec.services
+        if outcome.reason_code in SERVICE_CODES:
+            named = self._outcome_service(spec, outcome)
+            services = () if named is None else (named,)
+        for service in services:
             change = None
             if outcome.reason_code is not None:
-                change = health.mark_reason(service, outcome.reason_code,
+                change = health.mark_reason(service, outcome.reason_code, facts=outcome.facts,
                                             detail=f'a {spec.kind} job reported {outcome.reason_code}')
             elif outcome.kind == "complete":
                 change = health.mark_succeeded(service)

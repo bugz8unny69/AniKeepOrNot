@@ -27,6 +27,7 @@ from src.nextgen.history import integer
 from src.nextgen.job_contracts import CompletionRejected, Outcome, Registration, Successor, failure_facts
 from src.nextgen.storage.batch_unlock_journal import BatchUnlockJournal
 from src.nextgen.worker import blocking
+from src.nextgen.services.base import service_facts
 
 
 KIND='UNLOCK_BATCH'
@@ -180,11 +181,11 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
         except SnapshotChanged:
             return wait('TORRENT_SNAPSHOT_CHANGED')
         except ClientUnavailable:
-            return Outcome('retry','DOWNLOAD_CLIENT_UNAVAILABLE')
+            return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('qbittorrent'))
         except MetadataSourceWaiting as exc:
             return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms)
         except MetadataSourceUnavailable as exc:
-            return Outcome('retry',exc.reason_code)
+            return Outcome('retry',exc.reason_code,facts=failure_facts(exc))
         except (MetadataSourceConfigurationError,MetadataSourceDenied) as exc:
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
         except (AcquisitionConflict,MetadataInvalid,ClientInvalid,

@@ -137,10 +137,14 @@ class ArrAdapterTests(unittest.TestCase):
         from src.nextgen.reasons import get_reason
         from src.nextgen.services import default_registry
         registry = default_registry()
-        self.assertEqual(registry.get('qbittorrent').status_for_reason('DOWNLOAD_CLIENT_UNAVAILABLE'), DOWN)
-        self.assertEqual(registry.get('qbittorrent').status_for_reason('DOWNLOAD_CLIENT_AUTH_FAILED'), AUTH_FAILED)
+        self.assertEqual(registry.get('qbittorrent').status_for_reason('SERVICE_UNAVAILABLE'), DOWN)
+        # A setup problem's status comes from the outcome details; without one it is "not set up".
+        self.assertEqual(registry.get('qbittorrent').status_for_reason(
+            'SERVICE_SETUP_INVALID', {'service': 'qbittorrent', 'service_status': AUTH_FAILED}), AUTH_FAILED)
+        self.assertEqual(registry.get('qbittorrent').status_for_reason('SERVICE_SETUP_INVALID'), NOT_CONFIGURED)
+        self.assertIsNone(registry.get('qbittorrent').status_for_reason('SERVICE_RESPONSE_INVALID'))
         self.assertEqual(registry.get('prowlarr').status_for_reason('RELEASE_SEARCH_TIMEOUT'), DOWN)
-        self.assertEqual(registry.get('sonarr').status_for_reason('KEEP_SERVICE_UNAVAILABLE'), DOWN)
+        self.assertEqual(registry.get('sonarr').status_for_reason('SERVICE_UNAVAILABLE'), DOWN)
         self.assertIsNone(registry.get('sonarr').status_for_reason('KEEP_IMPORT_REVIEW'))
         # Every mapped code is a real, registered reason.
         for adapter in registry:
@@ -289,3 +293,19 @@ class MetadataAdapterTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GenericServiceCodeHistoryTests(unittest.TestCase):
+    """A generic SERVICE_* code's message does not name the service; History does."""
+
+    def test_history_names_the_service_and_its_problem(self):
+        from src.nextgen.api.app import failed_detail
+        self.assertEqual(failed_detail({'service': 'prowlarr', 'service_status': 'AUTH_FAILED'}),
+                         'Prowlarr rejected the login or API key.')
+        self.assertEqual(failed_detail({'service': 'qbittorrent', 'service_status': 'UNSUPPORTED'}),
+                         'This qBittorrent version is not supported.')
+        self.assertEqual(failed_detail({'service': 'shoko'}), 'Service: Shoko.')
+        # A recorded outage line still wins, and a provider error without a service adds nothing.
+        self.assertEqual(failed_detail({'service': 'sonarr', 'service_detail': 'Sonarr is unavailable: HTTP 503'}),
+                         'Sonarr is unavailable: HTTP 503')
+        self.assertIsNone(failed_detail({'service_status': 'AUTH_FAILED'}))

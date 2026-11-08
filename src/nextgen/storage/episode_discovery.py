@@ -136,7 +136,8 @@ def _plan(db, plan_id, start, retry_episode=None):
 
 
 AUTOMATIC_RETRY_MS = 30 * 60 * 1000
-SEARCH_FAILURES = ('RELEASE_SEARCH_TIMEOUT', 'PROWLARR_UNAVAILABLE')
+# Prowlarr timeouts get one delayed retry; an outage is a service wait (SERVICE_UNAVAILABLE).
+SEARCH_FAILURES = ('RELEASE_SEARCH_TIMEOUT',)
 
 
 def automatic_retry_used(database, job_id):
@@ -146,7 +147,7 @@ def automatic_retry_used(database, job_id):
         db = _open(database, readonly=True, timeout_ms=5000)
         return db.execute(
             "SELECT 1 FROM job_history WHERE job_id=? AND event_code='DEFERRED' "
-            "AND reason_code IN (?,?) AND history_id>COALESCE((SELECT max(history_id) "
+            "AND reason_code IN (" + ",".join("?" * len(SEARCH_FAILURES)) + ") AND history_id>COALESCE((SELECT max(history_id) "
             "FROM job_history WHERE job_id=? AND event_code='RETRY_REQUESTED'),0) LIMIT 1",
             (job_id, *SEARCH_FAILURES, job_id)).fetchone() is not None
     except (sqlite3.Error, OSError, MigrationError):

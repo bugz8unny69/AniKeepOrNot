@@ -10,7 +10,7 @@ class JellyfinAdapter(KeyedServiceAdapter):
     key_getter = 'jellyfin_api_key'
     key_header = 'X-Emby-Token'
     version_keys = ('Version',)
-    reasons = {'JELLYFIN_UNAVAILABLE': DOWN, 'JELLYFIN_CONFIGURATION_INVALID': NOT_CONFIGURED}
+    reasons = {}  # SERVICE_* codes naming 'jellyfin' are handled by the base class.
 
     def classify(self, exc):
         from src.nextgen.jellyfin import RefreshConfiguration, RefreshUnavailable
@@ -28,7 +28,7 @@ class ShokoAdapter(KeyedServiceAdapter):
     key_getter = 'shoko_api_key'
     key_header = 'apikey'
     version_keys = ('Version', 'version')
-    reasons = {'SHOKO_UNAVAILABLE': DOWN, 'SHOKO_CONFIGURATION_INVALID': NOT_CONFIGURED}
+    reasons = {}  # SERVICE_* codes naming 'shoko' are handled by the base class.
 
     def classify(self, exc):
         from src.nextgen.shoko import ShokoConfiguration, ShokoUnavailable

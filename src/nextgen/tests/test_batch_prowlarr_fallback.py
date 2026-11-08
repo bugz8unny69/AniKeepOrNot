@@ -218,7 +218,7 @@ class BatchProwlarrFallbackExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_an_incomplete_search_never_exhausts(self):
         """WI-15: some queries failed and nothing was found: the season stays open."""
         scope = self.exhausted_scope()
-        self.ingest(scope, BatchSearchResult((), complete=False, failed=(('q', 'PROWLARR_UNAVAILABLE'),)))
+        self.ingest(scope, BatchSearchResult((), complete=False, failed=(('q', 'SERVICE_UNAVAILABLE'),)))
         with self.connect() as db:
             self.assertEqual(get_or_create_scope(db, 16999, 393400, 1).state, 'ACTIVE')
 

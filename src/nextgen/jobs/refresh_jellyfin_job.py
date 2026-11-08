@@ -6,6 +6,7 @@ from src.nextgen.job_contracts import Outcome, Registration
 from src.nextgen.jellyfin import request_refresh, RefreshConfiguration, RefreshUnavailable, RefreshReview
 from src.nextgen.secrets import SecretStorageError
 from src.nextgen.storage.sqlite import connect, enqueue_job
+from src.nextgen.services.base import service_facts
 
 KIND='REFRESH_JELLYFIN'
 SERVICES=('jellyfin',)  # External services this job needs; see services/README.md.
@@ -37,8 +38,8 @@ def registration(secrets,*,refresh=request_refresh):
             if context.cancelled.is_set():return
             refresh(context.configuration,secrets)
         try:await blocking(run)
-        except RefreshConfiguration:return Outcome('review','JELLYFIN_CONFIGURATION_INVALID')
-        except (RefreshUnavailable,SecretStorageError):return Outcome('retry','JELLYFIN_UNAVAILABLE')
+        except RefreshConfiguration:return Outcome('review','SERVICE_SETUP_INVALID',facts=service_facts('jellyfin','NOT_CONFIGURED'))
+        except (RefreshUnavailable,SecretStorageError):return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('jellyfin'))
         except RefreshReview:return Outcome('review','MEDIA_SERVER_REFRESH_REVIEW')
         except (ValueError,TypeError):return Outcome('review','JOB_PAYLOAD_INVALID')
         return Outcome()

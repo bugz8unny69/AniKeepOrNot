@@ -30,7 +30,8 @@ class KeepConfiguration(KeepReview):
 
 
 class KeepUnavailable(RuntimeError):
-    reason_code='KEEP_SERVICE_UNAVAILABLE'
+    reason_code = 'SERVICE_UNAVAILABLE'
+    service = 'sonarr'
     def __init__(self):super().__init__('Sonarr is temporarily unavailable.')
 
 

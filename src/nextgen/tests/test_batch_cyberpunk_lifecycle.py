@@ -297,7 +297,7 @@ class CyberpunkProwlarrFallbackTests(CyberpunkLifecycle):
             # Prowlarr was unavailable: the season is NOT exhausted, the search waits.
             self.assertEqual(self.sql("SELECT state FROM batch_candidate_scopes"), [('ACTIVE',)])
             self.assertEqual(self.sql("SELECT state,last_reason_code FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR'"),
-                             [('RETRY_WAIT', 'PROWLARR_UNAVAILABLE')])
+                             [('RETRY_WAIT', 'SERVICE_UNAVAILABLE')])
             # Restarts never add a second search.
             self.assertIsNone(await self.drain(self.worker()))
             self.assertEqual(self.sql("SELECT count(*) FROM jobs WHERE kind='DISCOVER_BATCH_PROWLARR'"), [(1,)])

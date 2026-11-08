@@ -227,9 +227,9 @@ class PolicyTests(unittest.TestCase):
 
     def test_a_turned_off_service_is_not_marked_down_by_a_leftover_job(self):
         adapter = Fixed('prowlarr', DISABLED)
-        adapter.reasons = {'PROWLARR_CONFIGURATION_INVALID': NOT_CONFIGURED}
+        adapter.reasons = {'SERVICE_SETUP_INVALID': NOT_CONFIGURED}
         health = self.health(adapter)
-        self.assertIsNone(health.mark_reason('prowlarr', 'PROWLARR_CONFIGURATION_INVALID'))
+        self.assertIsNone(health.mark_reason('prowlarr', 'SERVICE_SETUP_INVALID'))
         self.assertIsNone(health.mark_failed('prowlarr', ConnectionError()))
         self.assertEqual(health.state('prowlarr').status, DISABLED)
 

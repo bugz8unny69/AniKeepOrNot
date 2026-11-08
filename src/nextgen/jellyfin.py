@@ -8,12 +8,15 @@ from src.nextgen.acquisition.qbittorrent import _NoRedirect
 
 
 class RefreshConfiguration(ValueError):
-    reason_code='JELLYFIN_CONFIGURATION_INVALID'
+    reason_code = 'SERVICE_SETUP_INVALID'
+    service = 'jellyfin'
+    service_status = 'NOT_CONFIGURED'
     def __init__(self):super().__init__('Configure Jellyfin address and API key.')
 
 
 class RefreshUnavailable(RuntimeError):
-    reason_code='JELLYFIN_UNAVAILABLE'
+    reason_code = 'SERVICE_UNAVAILABLE'
+    service = 'jellyfin'
     def __init__(self):super().__init__('Jellyfin refresh is temporarily unavailable.')
 
 

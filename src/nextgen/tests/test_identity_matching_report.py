@@ -340,14 +340,14 @@ class IdentityMatchingReportTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("UPDATE jobs SET state='NEEDS_REVIEW', attempt_count=1 WHERE job_id=?", (job_id,))
                 append_job_history(
                     db, job_id=job_id, event_code="RETRY_SCHEDULED",
-                    reason_code="PROVIDER_AUTH_FAILED", component="worker",
+                    reason_code="SERVICE_SETUP_INVALID", component="worker",
                     occurred_at_ms=1000,
                     details={"attempt": 1, "matching": trace1.data}
                 )
-                db.execute("UPDATE jobs SET state='NEEDS_REVIEW', last_reason_code='PROVIDER_AUTH_FAILED', attempt_count=2 WHERE job_id=?", (job_id,))
+                db.execute("UPDATE jobs SET state='NEEDS_REVIEW', last_reason_code='SERVICE_SETUP_INVALID', attempt_count=2 WHERE job_id=?", (job_id,))
                 append_job_history(
                     db, job_id=job_id, event_code="NEEDS_REVIEW",
-                    reason_code="PROVIDER_AUTH_FAILED", component="worker",
+                    reason_code="SERVICE_SETUP_INVALID", component="worker",
                     occurred_at_ms=2000,
                     details={"attempt": 2, "matching": trace2.data}
                 )

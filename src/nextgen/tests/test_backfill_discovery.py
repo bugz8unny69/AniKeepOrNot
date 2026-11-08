@@ -307,19 +307,28 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()   # fails again -> BLOCKED
         return worker
 
-    async def test_unavailable_prowlarr_stops_without_persisting_a_partial_page(self):
+    async def test_unavailable_prowlarr_is_a_service_outage_and_persists_no_partial_page(self):
+        # An outage is SERVICE_UNAVAILABLE naming Prowlarr. With service health (as in
+        # production) the worker makes it a wait; here, without it, an ordinary retry.
+        # It is never BLOCKED for a manual Retry, unlike a timeout.
         self.source(7)
         fake = FakeDiscovery()
         fake.error = True
-        await self.fail_twice(fake)
+        worker = self.worker(fake)
+        await worker.attempt()   # SELECT_USER_EVALUATION
+        await worker.attempt()   # search fails
         self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(0,)])
         self.assertEqual(self.rows(
             "SELECT state,last_reason_code FROM jobs WHERE kind=?",(DISCOVER_KIND,)),
-            [('BLOCKED','PROWLARR_UNAVAILABLE')])
+            [('RETRY_WAIT','SERVICE_UNAVAILABLE')])
+        event, details = self.rows(
+            "SELECT event_code,json_extract(details_json,'$.service') FROM job_history "
+            "WHERE reason_code='SERVICE_UNAVAILABLE' ORDER BY history_id DESC LIMIT 1")[0]
+        self.assertEqual((event, details), ('RETRY_SCHEDULED', 'prowlarr'))
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[(1,)])
-        self.assertEqual(len(fake.calls),2)
+        self.assertEqual(len(fake.calls),1)
 
-    async def test_a_slow_prowlarr_recovers_on_the_delayed_retry(self):
+    async def test_a_prowlarr_outage_recovers_on_the_next_attempt(self):
         self.source(7)
         fake = FakeDiscovery()
         fake.error = True
@@ -354,18 +363,20 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await worker.attempt())
 
     async def test_blocked_backfill_can_retry_the_same_job_manually(self):
+        from src.nextgen.acquisition.prowlarr_search import SearchTimeout
         from src.nextgen.storage.review_retry import capability, request_review_retry
         self.source(7)
         fake = FakeDiscovery()
-        fake.error = True
+        def timeout(*args, **kwargs): raise SearchTimeout()
+        fake.backfill = timeout
         worker = await self.fail_twice(fake)
         job, attempt = self.rows("SELECT job_id,attempt_count FROM jobs WHERE kind=?",(DISCOVER_KIND,))[0]
         db = connect(self.database)
         try: self.assertTrue(capability(db, job)['enabled'])
         finally: db.close()
         request_review_retry(self.database, job, expected_attempt=attempt,
-                             expected_reason='PROWLARR_UNAVAILABLE')
-        fake.error = False
+                             expected_reason='RELEASE_SEARCH_TIMEOUT')
+        del fake.backfill  # Prowlarr answers again
         await worker.attempt()
         self.assertEqual(self.rows("SELECT state,attempt_count FROM jobs WHERE job_id=?",(job,)),[('DONE',3)])
         self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(4,)])
@@ -397,12 +408,12 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         job, attempt = self.rows("SELECT job_id,attempt_count FROM jobs WHERE kind=?",(DISCOVER_KIND,))[0]
         self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),
-                         [('NEEDS_REVIEW','PROWLARR_CONFIGURATION_INVALID')])
+                         [('NEEDS_REVIEW','SERVICE_SETUP_INVALID')])
         db = connect(self.database)
         try: self.assertTrue(capability(db, job)['enabled'])
         finally: db.close()
         request_review_retry(self.database, job, expected_attempt=attempt,
-                             expected_reason='PROWLARR_CONFIGURATION_INVALID')
+                             expected_reason='SERVICE_SETUP_INVALID')
         del fake.backfill  # settings fixed: the real fake search answers again
         await worker.attempt()
         self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(4,)])

@@ -152,7 +152,7 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_provider_wait_and_failure_have_distinct_retry_histories(self):
         for error,reason,marker in ((ProviderDeferred(2000),"JOB_WAITING","DEFERRED"),
-                                    (ProviderUnavailable(),"PROVIDER_UNAVAILABLE","RETRY_SCHEDULED")):
+                                    (ProviderUnavailable(),"SERVICE_UNAVAILABLE","RETRY_SCHEDULED")):
             async def resolve(*args): raise error
             _,job = self.enqueue()
             worker = self.worker(registration(resolve))

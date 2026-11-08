@@ -11,6 +11,7 @@ from src.nextgen.sonarr import KeepReview, KeepUnavailable
 from src.nextgen.staging import StagingReview, StagingBusy
 from src.nextgen.keep_selection import KeepSelectionInvalid
 from src.nextgen.acquisition.media import MediaInvalid
+from src.nextgen.services.base import service_facts
 
 
 async def execute_keep(context, secrets, *, service_factory, journals=None, shoko=False):
@@ -44,7 +45,7 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
     except StagingBusy:
         return Outcome('defer', 'KEEP_IMPORT_WAITING', delay_ms=30000)
     except KeepUnavailable:
-        return Outcome('retry', 'KEEP_SERVICE_UNAVAILABLE')
+        return Outcome('retry', 'SERVICE_UNAVAILABLE', facts=service_facts('sonarr'))
     except KeepReview as exc:
         facts = None
         if getattr(exc, 'failed_check', None):
@@ -59,4 +60,4 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
         facts = failure_facts(exc)
         return Outcome('review', 'KEEP_IMPORT_REVIEW', facts=facts)
     except OSError:
-        return Outcome('retry', 'KEEP_SERVICE_UNAVAILABLE')
+        return Outcome('retry', 'SERVICE_UNAVAILABLE', facts=service_facts('sonarr'))

@@ -109,7 +109,12 @@ What the worker does:
 
 When a real request fails, the service is marked at once, without an extra network call:
 
-- **From a job's result:** each adapter lists the job reason codes that mean "this service failed" (`reasons`; for example qBittorrent: `DOWNLOAD_CLIENT_UNAVAILABLE` → `DOWN`, `DOWNLOAD_CLIENT_AUTH_FAILED` → `AUTH_FAILED`). When a job that declares the service returns one of them, the worker marks the service. Other jobs that need it then wait instead of failing. A job that completes marks its services `UP`.
+- **From a job's result:** a job reports a service problem with a generic code and names the service in the outcome details (`service_facts('qbittorrent', ...)`). Codes never name a product, so a service can be replaced without renaming codes:
+  - `SERVICE_UNAVAILABLE` marks the named service `DOWN`;
+  - `SERVICE_SETUP_INVALID` marks it with the `service_status` in the details (`NOT_CONFIGURED`, `AUTH_FAILED` or `UNSUPPORTED`);
+  - `SERVICE_RESPONSE_INVALID` (an unreadable answer) does not change its status.
+
+  Only a service the outcome **names**, and the job declares, is marked. The service is never guessed: a job that declares Prowlarr also calls AniDB and TVDB, and their errors must not mark Prowlarr. Adapters also map a few role codes (`reasons`; for example Prowlarr: `RELEASE_SEARCH_TIMEOUT` → `DOWN`). Other jobs that need a marked service then wait instead of failing. A job that completes marks its services `UP`.
 - **From an exception:** `ServiceHealth.mark_failed(service, exc)` uses the adapter's `classify(exc)` to turn the client's own exception into a status.
 
 Expected waits, such as a planned AniDB pacing delay, return `NOT_A_FAILURE` and never mark a service down. Each status change is returned once as a `Transition`, so it is logged once instead of on every attempt.
@@ -118,15 +123,15 @@ Expected waits, such as a planned AniDB pacing delay, return `NOT_A_FAILURE` and
 
 When a job hits an unavailable service, it **waits** with the reason `SERVICE_UNAVAILABLE` instead of failing:
 
-- **What converts:** a `retry` whose reason the job's service adapter maps to `DOWN` (for example `DOWNLOAD_CLIENT_UNAVAILABLE`), or an uncaught client error that the adapter's `classify()` reports as `DOWN`. The job is deferred for `Policy.service_wait_ms` (60 s) and **spends no retry**. While the service stays down, claim gating keeps it waiting.
+- **What converts:** a `retry` with `SERVICE_UNAVAILABLE` that names one of the job's services, a `retry` whose role code the adapter maps to `DOWN`, or an uncaught client error that the adapter's `classify()` reports as `DOWN`. The job is deferred for `Policy.service_wait_ms` (60 s) and **spends no retry**. While the service stays down, claim gating keeps it waiting.
 - **What the history shows:**
   - `service` (for example `prowlarr`);
   - `service_detail` (`Prowlarr is unavailable: HTTP 503 at …`), which the dashboard and `adm report` display;
-  - the original per-service code as `cause_reason_code`;
+  - for a role code such as `RELEASE_SEARCH_TIMEOUT`, that code as `cause_reason_code`;
   - any `failed_check`;
   - `waiting_since_ms`.
 - **Giving up:** once a job has kept running into the outage for `Policy.service_give_up_ms` (**72 hours**), it goes to `NEEDS_REVIEW` with `SERVICE_UNAVAILABLE`. The clock counts the current run of service waits, and a manual retry or any unrelated outcome starts a new run. `adm recover` treats `SERVICE_UNAVAILABLE` as safe to retry once the service is back.
-- **What does not convert:** configuration and credential problems (`NOT_CONFIGURED`, `AUTH_FAILED`, `UNSUPPORTED`) keep their own review codes, because waiting would not fix them. The startup check catches them for required services. Codes that also cover local disk failures, such as `DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE`, are not mapped to a service, so a disk problem is never reported as an outage.
+- **What does not convert:** configuration and credential problems (`SERVICE_SETUP_INVALID`, with status `NOT_CONFIGURED`, `AUTH_FAILED` or `UNSUPPORTED`) stop for review, because waiting would not fix them. History names the service, for example "Prowlarr rejected the login or API key." A `SERVICE_UNAVAILABLE` that names no service (an AniDB or TVDB outage inside a Prowlarr job) is an ordinary retry. The startup check catches them for required services. Codes that also cover local disk failures, such as `DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE`, are not mapped to a service, so a disk problem is never reported as an outage.
 
 ## Adding a service
 
@@ -156,6 +161,6 @@ When a job hits an unavailable service, it **waits** with the reason `SERVICE_UN
 
 1. **Done:** adapters, registry, monitor and `adm services check`.
 2. **Done:** jobs declare which services they need, the worker skips jobs whose services are down, and job results mark services passively. This replaced `QbittorrentReadiness` and `ACQUISITION_KINDS`.
-3. **Done:** an outage means waiting, not failing, with `SERVICE_UNAVAILABLE` naming the service and a 72-hour give-up. Handlers still report their per-service code, which is kept as the `cause_reason_code`. Retiring those codes from the handlers and migrating stored rows is part of the code-rename migration (RF-006).
+3. **Done:** an outage means waiting, not failing, with `SERVICE_UNAVAILABLE` naming the service and a 72-hour give-up. The per-service codes were retired in refactor RF-006c (migration 065): handlers report the generic codes with the service in the details. Episode and season-pack discovery now wait through a Prowlarr outage like every other job. Timeouts (`RELEASE_SEARCH_TIMEOUT`) keep their one delayed retry, then a manual Retry.
 4. **Done:** the worker does not start while qBittorrent, AniDB or TVDB is misconfigured (exit 78, no restart loop); Prowlarr and Sonarr are optional; the dashboard shows a status bar, and Keep is refused with the reason while Sonarr cannot work.
 5. **Later:** declare AniDB, TVDB and Anime-Lists on the identification and verification jobs, so they also wait through claim gating.

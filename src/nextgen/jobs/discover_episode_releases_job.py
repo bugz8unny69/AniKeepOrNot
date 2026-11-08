@@ -5,7 +5,7 @@ The job kind keeps its historical name so existing jobs and history stay valid.
 from src.nextgen.acquisition.audio import dual_audio_tagged, wants_english
 from src.nextgen.acquisition.prowlarr_search import (
     Client, CandidateSelection, SearchConfiguration, SearchUnauthorized, SearchReview,
-    SearchUnavailable, _magnet_hash,
+    SearchTimeout, SearchUnavailable, _magnet_hash,
 )
 from src.nextgen.handlers import HandlerDefinition
 from src.nextgen.history import integer
@@ -27,6 +27,7 @@ from src.nextgen.storage.episode_discovery import (
 )
 from src.nextgen.storage.cached_release_retry import CachedTorrent, load_cached, persist_cached
 from src.nextgen.worker import blocking
+from src.nextgen.services.base import service_facts
 
 KIND = 'DISCOVER_EPISODE_RELEASES'
 SERVICES=('prowlarr',)  # External services this job needs; see services/README.md.
@@ -174,31 +175,40 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
         except BackfillConflict:
             return Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')
         except SearchUnavailable as exc:   # includes SearchTimeout
-            # The client already tried three times. Wait 30 minutes once, then
+            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
+            if not isinstance(exc, SearchTimeout):
+                # Prowlarr is unavailable: wait for it like every service outage
+                # (no retry spent, resumes when it is back, review after 72 hours).
+                return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('prowlarr'),
+                               search_snapshots=snapshots)
+            # Timed out three times in the client: wait 30 minutes once, then
             # stop for a manual Retry; nothing is published for this page.
             reason = exc.reason_code
             used = await blocking(automatic_retry_used,
                 context.configuration.value('storage.database_path'),context.claim.job_id)
-            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
             if used: return Outcome('blocked',reason,search_snapshots=snapshots)
             log.warning('Backfill search will run again in %s minutes: %s',
                         AUTOMATIC_RETRY_MS//60000, reason)
             return Outcome('defer',reason,delay_ms=AUTOMATIC_RETRY_MS,search_snapshots=snapshots)
         except SearchUnauthorized:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','PROWLARR_AUTH_FAILED',search_snapshots=snapshots)
+            return Outcome('review','SERVICE_SETUP_INVALID',facts=service_facts('prowlarr','AUTH_FAILED'),
+                           search_snapshots=snapshots)
         except SearchConfiguration:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','PROWLARR_CONFIGURATION_INVALID',search_snapshots=snapshots)
+            return Outcome('review','SERVICE_SETUP_INVALID',facts=service_facts('prowlarr','NOT_CONFIGURED'),
+                           search_snapshots=snapshots)
         except SearchReview:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','PROWLARR_SEARCH_REVIEW',search_snapshots=snapshots)
+            return Outcome('review','SERVICE_RESPONSE_INVALID',facts=service_facts('prowlarr'),
+                           search_snapshots=snapshots)
         except ProviderDeferred as exc:
             return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)
         except (ProviderUnavailable,ProviderInvalidResponse) as exc:
             return Outcome('retry',exc.reason_code)
-        except ProviderAuthenticationFailed:
-            return Outcome('review','PROVIDER_AUTH_FAILED')
+        except ProviderAuthenticationFailed as exc:
+            # AniDB or TVDB, not Prowlarr: no service is named, so Prowlarr is not marked.
+            return Outcome('review',exc.reason_code,facts={'service_status':'AUTH_FAILED'})
         except (ReleaseNotReady,ReleaseConflict) as exc:
             return Outcome('review',exc.reason_code)
 

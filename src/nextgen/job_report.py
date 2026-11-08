@@ -806,8 +806,8 @@ def explain_identity_stop(failed_checks, reason_code=None, job_state=None, check
         return 'Resolved identity failed AnimeSeries validation.'
     if reason_code == 'IDENTITY_CONFLICT':
         return 'Resolved identity conflicts with existing stored identity.'
-    if reason_code == 'PROVIDER_AUTH_FAILED':
-        return 'Provider authentication failed.'
+    if reason_code == 'SERVICE_SETUP_INVALID':
+        return 'A metadata provider is not set up correctly or rejected the login.'
     if reason_code:
         return f'Identification stopped: {reason_text(reason_code)}'
     return 'Identification stopped.'

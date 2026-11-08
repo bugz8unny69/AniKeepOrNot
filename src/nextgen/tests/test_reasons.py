@@ -10,7 +10,7 @@ from src.nextgen.reasons import REGISTRY, display_reason, get_reason, safe_detai
 class ReasonTests(unittest.TestCase):
     def test_catalog_is_consistent_and_immutable(self):
         self.assertTrue({"IDENTITY_INCOMPLETE", "IDENTITY_INVALID", "IDENTITY_CONFLICT",
-                         "PROVIDER_UNAVAILABLE", "JOB_LEASE_EXPIRED", "JOB_HANDLER_FAILED",
+                         "SERVICE_UNAVAILABLE", "JOB_LEASE_EXPIRED", "JOB_HANDLER_FAILED",
                          "JOB_RETRY_EXHAUSTED", "STORAGE_UNAVAILABLE", "UNSUPPORTED_JOB_KIND",
                          "CONFIGURATION_INVALID", "CONFIGURATION_CONFLICT",
                          "CONFIGURATION_MIGRATION_REQUIRED", "CONFIGURATION_STORAGE_FAILED",
@@ -43,7 +43,7 @@ class ReasonTests(unittest.TestCase):
     def test_retry_classification_is_not_a_decision(self):
         for code in ("IDENTITY_INCOMPLETE", "JOB_HANDLER_FAILED", "STORAGE_UNAVAILABLE"):
             self.assertIsNone(get_reason(code).retryable)
-        self.assertIs(get_reason("PROVIDER_UNAVAILABLE").retryable, True)
+        self.assertIs(get_reason("SERVICE_UNAVAILABLE").retryable, True)
         self.assertIs(get_reason("JOB_RETRY_EXHAUSTED").retryable, False)
         self.assertNotIn("safely retry", get_reason("JOB_LEASE_EXPIRED").action)
 
@@ -66,13 +66,13 @@ class ReasonTests(unittest.TestCase):
         result = safe_details(missing_fields=missing,
                               invalid_fields=["schema_version"],
                               retry_at_ms=1234, attempt=2, max_attempts=3,
-                              cause_reason_code="PROVIDER_UNAVAILABLE")
+                              cause_reason_code="SERVICE_UNAVAILABLE")
         missing.clear()
         self.assertEqual(result, {
             "missing_fields": ["anime.anidb_id", "anime.title"],
             "invalid_fields": ["schema_version"], "retry_at_ms": 1234,
             "attempt": 2, "max_attempts": 3,
-            "cause_reason_code": "PROVIDER_UNAVAILABLE",
+            "cause_reason_code": "SERVICE_UNAVAILABLE",
         })
         self.assertEqual(json.loads(json.dumps(result, allow_nan=False)), result)
         self.assertEqual(safe_details(), {})
