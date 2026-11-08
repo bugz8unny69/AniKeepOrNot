@@ -35,7 +35,7 @@ class BackfillMetadataReaderTests(unittest.IsolatedAsyncioTestCase):
                   return_value=self.identity),
             # A backfill delivery carries its own sanitized magnet.
             patch('src.nextgen.storage.acquisition.source_magnet',return_value=MAGNET),
-            patch('src.nextgen.acquisition.qbittorrent.Client',return_value=self.qb),
+            patch('src.nextgen.torrent_client.qbittorrent.Client',return_value=self.qb),
         ]
         for item in self.patches:
             item.start()

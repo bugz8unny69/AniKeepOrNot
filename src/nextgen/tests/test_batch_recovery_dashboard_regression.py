@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.nextgen.acquisition.metadata import infohash
-from src.nextgen.acquisition.qbittorrent import DownloadCredentials, Observation, TorrentFile
+from src.nextgen.torrent_client.qbittorrent import DownloadCredentials, Observation, TorrentFile
 from src.nextgen.api.app import Application
 from src.nextgen.batch.backlog_audit import apply_batch_consolidation, audit_batch_backlog
 from src.nextgen.configuration import ConfigurationSnapshot

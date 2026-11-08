@@ -71,7 +71,7 @@ def make_existing_observer(secrets, *, client_factory=None):
         wanted = tuple(dict.fromkeys(infohash(d) for d in digests))[:MAX_OBSERVATIONS]
         if not wanted:
             return {}
-        from src.nextgen.acquisition.qbittorrent import Client
+        from src.nextgen.torrent_client.qbittorrent import Client
         from src.nextgen.acquisition.settings import download_options
         client = (client_factory or Client)(download_options(configuration), secrets.qbittorrent_credentials())
         client.login()

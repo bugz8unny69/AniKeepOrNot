@@ -22,7 +22,7 @@ class QbittorrentAdapter(ServiceAdapter):
     def _factory(self):
         if self.client_factory is not None:
             return self.client_factory
-        from src.nextgen.acquisition.qbittorrent import Client
+        from src.nextgen.torrent_client.qbittorrent import Client
         return Client
 
     def probe(self, configuration, secrets, *, now_ms=0):

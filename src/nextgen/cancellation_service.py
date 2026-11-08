@@ -5,7 +5,7 @@ may invoke cleanup under existing maintenance admission, with a lease guard.
 Cleanup always requires exclusive drain protection for the target operation.
 """
 from contextlib import nullcontext
-from src.nextgen.acquisition.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent import Client
 from src.nextgen.acquisition.submission import ClientUnavailable, ClientInvalid, ClientAuthenticationFailed, ClientUnsupported
 from src.nextgen.cancellation import CancellationError, CleanupBusy, OperationGate
 from src.nextgen.diagnostics import log_history

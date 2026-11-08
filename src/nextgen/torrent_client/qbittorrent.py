@@ -1,4 +1,8 @@
-"""Bounded session-local qBittorrent 4.5+ and 5.x transport. No automatic retries."""
+"""Bounded session-local qBittorrent 4.5+ and 5.x client. No automatic retries.
+
+Version differences live in qbittorrent_versions.py (picked at login). This
+module never touches files; files() and changes() report them uniformly.
+"""
 from http.cookies import SimpleCookie
 import json
 import re
@@ -10,6 +14,8 @@ import uuid
 from src.nextgen.acquisition.metadata import TorrentFile, parse_metainfo
 from src.nextgen.acquisition.metadata_service import STOPPED
 from src.nextgen.acquisition.settings import DownloadOptions, DownloadCredentials
+from src.nextgen.torrent_client.contract import Changes, ClientFile, TorrentChange
+from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
 from src.nextgen.acquisition.submission import (Observation, SendPermit, ClientUnavailable, ClientInvalid,
                                                ClientAuthenticationFailed, ClientUnsupported)
 
@@ -35,43 +41,6 @@ def _text(value,limit):
     return value
 
 
-class _Protocol:
-    """Small version-specific API contract; no transport or acquisition policy."""
-    def __init__(self,major,api_version):
-        if (major not in (4,5) or type(api_version) is not tuple
-                or len(api_version)!=3 or not (2,8,14) <= api_version < (3,0,0)):
-            raise ClientUnsupported()
-        self.major,self.api_version=major,api_version
-
-    @property
-    def metadata_strategy(self):
-        if self.major == 5 and self.api_version >= (2,11,9):
-            return 'fetch'
-        return 'guarded_export'
-
-    @property
-    def stopped_parameter(self):
-        return 'stopped' if self.api_version >= (2,11,0) else 'paused'
-
-    @property
-    def start_endpoint(self):
-        return 'torrents/start' if self.api_version >= (2,11,0) else 'torrents/resume'
-
-    @property
-    def stop_endpoint(self):
-        return 'torrents/stop' if self.api_version >= (2,11,0) else 'torrents/pause'
-
-    def add_fields(self,stopped):
-        fields={self.stopped_parameter:'true' if stopped else 'false',
-                'autoTMM':'false'}
-        fields['contentLayout']='Original'
-        fields['useDownloadPath']='false'
-        return fields
-
-    def label_fields(self,marker):
-        return {'tags':'ad-'+marker}
-
-
 class Client:
     def __init__(self,options,credentials,*,transport=None):
         if type(options) is not DownloadOptions or type(credentials) is not DownloadCredentials:raise ValueError('validated client context required')
@@ -84,7 +53,7 @@ class Client:
         self._transport=transport or (lambda request,timeout:opener.open(request,timeout=timeout))
 
     def _request(self,path,*,query=None,form=None,body=None,content_type=None,limit=3145728):
-        if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export'):raise ValueError('unsupported client operation')
+        if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export','sync/maindata'):raise ValueError('unsupported client operation')
         url=self.options.base_url+'/api/v2/'+path
         if query:url+='?'+urllib.parse.urlencode(query)
         headers={'User-Agent':'AnimeDiscoveryNextGen/1','Referer':self.options.base_url+'/','Accept':'application/json'}
@@ -149,7 +118,7 @@ class Client:
             api_parts=api.decode().strip().split('.')
             self.api_version=tuple(int(part) for part in api_parts[:3])
             self.api_version+=(0,)*(3-len(self.api_version))
-            self.protocol=_Protocol(self.major,self.api_version)
+            self.protocol=select_adapter(self.major,self.api_version)
         except UnicodeError:raise ClientUnsupported() from None
 
     @property
@@ -509,3 +478,75 @@ class Client:
             # Staging is already committed; qBittorrent deletes its original
             # payload. The owned ad-* folder is removed separately if needed.
             self._request('torrents/delete',form={'hashes':intent.plan.manifest.info_hash,'deleteFiles':'true'},limit=4096)
+
+    # Uniform reports (JD-1b). The same shape for every supported version, so
+    # `resources` can track a torrent's files without knowing the client.
+
+    def files(self,expected_hash):
+        """Every file of the torrent as ClientFile (absolute path), or None if absent."""
+        if not self._sid or self.major is None:raise ClientAuthenticationFailed()
+        from src.nextgen.acquisition.metadata import infohash
+        expected_hash=infohash(expected_hash)
+        raw,_=self._request('torrents/info',query={'hashes':expected_hash,'limit':2})
+        rows=_json(raw)
+        if type(rows) is not list or len(rows)>1:raise ClientInvalid()
+        if not rows:return None
+        row=rows[0]
+        if type(row) is not dict or row.get('hash')!=expected_hash:raise ClientInvalid()
+        save_path=_text(row.get('save_path'),4096).rstrip('/')
+        if not save_path.startswith('/'):raise ClientInvalid()
+        raw,_=self._request('torrents/files',query={'hash':expected_hash})
+        items=_json(raw)
+        if type(items) is not list or len(items)>10000:raise ClientInvalid()
+        result=[]
+        for item in items:
+            if type(item) is not dict:raise ClientInvalid()
+            index,name,size=item.get('index'),item.get('name'),item.get('size')
+            progress,priority=item.get('progress'),item.get('priority')
+            if (type(index) is not int or index<0 or type(size) is not int or size<0
+                    or type(priority) is not int or priority<0
+                    or type(progress) not in (int,float) or not 0<=progress<=1):raise ClientInvalid()
+            name=_text(name,4096)
+            if not name or name.startswith('/') or '\x00' in name or any(part in ('','.','..') for part in name.split('/')):
+                raise ClientInvalid()
+            result.append(ClientFile(index,save_path+'/'+name,size,float(progress),priority>0))
+        result.sort(key=lambda f:f.index)
+        if [f.index for f in result]!=list(range(len(result))):raise ClientInvalid()
+        return tuple(result)
+
+    _CHANGE_FIELDS={'state':str,'progress':float,'downloaded':int,'size':int,
+                    'save_path':str,'category':str,'tags':str}
+
+    def changes(self,rid=0):
+        """One incremental update for all torrents (sync/maindata): what changed since rid.
+
+        One request covers every torrent, so following many downloads costs one
+        call per poll, not one per torrent.
+        """
+        if not self._sid or self.major is None:raise ClientAuthenticationFailed()
+        if type(rid) is not int or rid<0:raise ClientInvalid()
+        raw,_=self._request('sync/maindata',query={'rid':rid},limit=33554432)
+        data=_json(raw)
+        if type(data) is not dict or type(data.get('rid')) is not int or data['rid']<0:raise ClientInvalid()
+        full=data.get('full_update',False)
+        if type(full) is not bool:raise ClientInvalid()
+        torrents={}
+        for digest,fields in (data.get('torrents') or {}).items():
+            if type(digest) is not str or type(fields) is not dict:raise ClientInvalid()
+            if not re.fullmatch('[0-9a-f]{40}',digest):continue     # v2-only hashes are not ours
+            seen={}
+            for key,kind in self._CHANGE_FIELDS.items():
+                if key not in fields:continue
+                value=fields[key]
+                if kind is float:
+                    if type(value) not in (int,float) or not 0<=value<=1:raise ClientInvalid()
+                    value=float(value)
+                elif kind is int:
+                    if type(value) is not int or value<0:raise ClientInvalid()
+                else:
+                    value=_text(value,4096)
+                seen[key]=value
+            torrents[digest]=TorrentChange(**seen)
+        removed=data.get('torrents_removed') or []
+        if type(removed) is not list or any(type(h) is not str for h in removed):raise ClientInvalid()
+        return Changes(data['rid'],full,torrents,tuple(h for h in removed if re.fullmatch('[0-9a-f]{40}',h)))

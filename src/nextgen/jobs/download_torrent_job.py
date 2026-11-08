@@ -2,7 +2,7 @@
 from src.nextgen.acquisition.metadata import AcquisitionConflict, MetadataInvalid, SourceMissing
 from src.nextgen.acquisition.settings import DownloadConfigurationError, SizeEvidenceMissing
 from src.nextgen.acquisition.submission import ClientUnavailable, ClientInvalid, ClientAuthenticationFailed, ClientUnsupported
-from src.nextgen.acquisition.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent import Client
 from src.nextgen.acquisition.transfers import (TransferConflict, PieceOverlap, SnapshotChanged, CHECKING,
                                              verify_snapshot)
 from src.nextgen.diagnostics import log_history

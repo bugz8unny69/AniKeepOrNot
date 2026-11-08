@@ -3,7 +3,8 @@ from dataclasses import replace
 import unittest
 from unittest.mock import Mock
 from src.nextgen.acquisition.cleanup import CleanupPermit
-from src.nextgen.acquisition.qbittorrent import Client, _Protocol
+from src.nextgen.torrent_client.qbittorrent import Client
+from src.nextgen.torrent_client.qbittorrent_versions import select_adapter
 from src.nextgen.acquisition.settings import DownloadCredentials
 from src.nextgen.acquisition.submission import ClientInvalid
 from src.nextgen.cancellation import CancellationError
@@ -18,7 +19,7 @@ class CleanupTransportTests(unittest.TestCase):
                                    (5,(2,11,0),'torrents/stop')):
             client=Client(intent.options,DownloadCredentials('user','pass'))
             client.major=major;client._sid='offline-session'
-            client.protocol=_Protocol(major,api)
+            client.protocol=select_adapter(major,api)
             client.inspect=Mock(return_value=snapshot.observation)
             client._request=Mock(return_value=(b'',None))
             permit=CleanupPermit(intent.fingerprint,'stop')

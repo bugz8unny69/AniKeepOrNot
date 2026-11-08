@@ -12,7 +12,7 @@ import urllib.request
 
 from src.nextgen.acquisition.settings import endpoint
 from src.nextgen.acquisition.metadata import safe_path
-from src.nextgen.acquisition.qbittorrent import _NoRedirect, _json
+from src.nextgen.torrent_client.qbittorrent import _NoRedirect, _json
 from src.nextgen.acquisition.cleanup import directory, parent
 
 

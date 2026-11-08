@@ -285,7 +285,7 @@ def _qbittorrent(config_dir, configuration, digests, *, client_factory=None):
     changes a torrent.
     """
     try:
-        from src.nextgen.acquisition.qbittorrent import Client
+        from src.nextgen.torrent_client.qbittorrent import Client
         from src.nextgen.acquisition.settings import download_options
         from src.nextgen.secrets import SecretStore
         client = (client_factory or Client)(download_options(configuration),
