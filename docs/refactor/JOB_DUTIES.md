@@ -174,12 +174,11 @@ things, kept separately for single episodes and batches:
 - `batch_download_cleanup`, `batch_keep_cleanup`, `torrent_submissions`,
   `torrent_transfers`, …
 
-There are also **three qBittorrent clients**:
-- `acquisition/qbittorrent.py` (single episodes);
-- `batch/qb_client.py` (batches);
-- `services/adapters/qbittorrent.py` (health).
-
-Each has its own version handling.
+There was one qBittorrent client, `acquisition/qbittorrent.py`. The batch session
+(`batch/qb_client.py`) extends it and the health check (`services/adapters/qbittorrent.py`)
+wraps it. JD-1b moved it to `torrent_client/qbittorrent.py`, with the version
+handling in `torrent_client/qbittorrent_versions.py`. The batch session moves
+into `torrent_client/` with the batch duty (JD-4).
 
 ### Torrent client adapters
 
@@ -207,8 +206,7 @@ class TorrentClient:                       # services/adapters/torrent_client.py
   `TorrentFile(index, path, size, progress, selected)`, with `path` absolute
   (save path + content path), whatever the version returns.
 * The adapter is picked once at connect time from `app/version` and
-  `app/webapiVersion`. One client replaces the three above, and the health
-  check uses the same adapter.
+  `app/webapiVersion`. The batch session and the health check use the same adapter.
 * The shared poller (section 4) is `changes()`: one call for all torrents.
 * Adding qBittorrent 5.3, or another client later, means adding one adapter.
   No job changes.
@@ -269,7 +267,7 @@ res.cleanup(client)                                     # undo what this job did
 * The 17 modules' logic becomes the rules above, and their 21 tables migrate into
   `resources` / `resource_operations` (one migration, history included, as
   with the earlier renames).
-* The three qBittorrent clients become the adapters.
+* The qBittorrent client and its batch session become the adapters (JD-1b, JD-4).
 * The old modules, tables and clients are removed, with ledger entries in
   `removed.json`.
 
@@ -323,7 +321,7 @@ On `refactor`:
    level bugs (startup-only level, override visibility). Bug fixes go to NextGen too.
 1. **JD-1 `release_names.py`, torrent adapters, `resources.py` and activities.**
    - Parsing in one module.
-   - The three qBittorrent clients become version adapters behind one contract.
+   - The qBittorrent client becomes version adapters behind one contract (done in JD-1b).
    - The resources interface, with today's file operations moved behind it, and
      the scan test.
    - Each handler becomes an activity function.

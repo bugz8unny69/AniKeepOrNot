@@ -8,7 +8,9 @@ git's directory-rename detection puts its files under src/anime/. The ledger
 rule "PKG" fails the tests until this script has run.
 
 Not rewritten: SQL migrations (they describe history; 067 rewrites stored
-paths in the database), and this script.
+paths in the database), this script, and any line containing the marker
+"rename_package: keep" (text that must name the old package, such as test
+fixtures of old History rows).
 """
 import pathlib
 import re
@@ -16,12 +18,13 @@ import subprocess
 
 OLD, NEW = 'nextgen', 'anime'
 SKIP = ('docs/refactor/rename_package.py',)
+KEEP = 'rename_package: keep'
 SKIP_PREFIX = ('src/anime/storage/sql/', 'src/nextgen/storage/sql/')
 
 RULES = (
     (re.compile(r'\bsrc\.nextgen\b'), 'src.anime'),                       # imports, python -m, patch targets
     (re.compile(r'\bsrc/nextgen\b'), 'src/anime'),                        # paths, failed checks
-    (re.compile(r'''(["'])nextgen\.(?=[a-z])'''), r'\1anime.'),          # logger names "nextgen.worker"
+    (re.compile(r'''(["'])nextgen\.(?=[a-z]|\1)'''), r'\1anime.'),      # logger names "nextgen.worker", "nextgen." + x
     (re.compile(r'''== "nextgen" or safe_record\.name\.startswith\("nextgen\."\)'''),
      '== "anime" or safe_record.name.startswith("anime.")'),
     (re.compile(r'''safe_record\.name\[len\("nextgen"\): \]'''), 'safe_record.name[len("anime"): ]'),
@@ -58,9 +61,13 @@ def main():
             text = path.read_text()
         except (UnicodeDecodeError, OSError):
             continue
-        new = text
-        for pattern, replacement in RULES:
-            new = pattern.sub(replacement, new)
+        lines = []
+        for line in text.splitlines(keepends=True):
+            if KEEP not in line:
+                for pattern, replacement in RULES:
+                    line = pattern.sub(replacement, line)
+            lines.append(line)
+        new = ''.join(lines)
         if new != text:
             path.write_text(new)
             changed += 1

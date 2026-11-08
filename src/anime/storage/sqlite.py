@@ -972,7 +972,7 @@ def _delivery(source, raw_body):
 
 
 def _log(record):
-    log_history(logging.getLogger("nextgen." + record.component), record)
+    log_history(logging.getLogger("anime." + record.component), record)
 
 
 def accept_event(db, source, raw_body, received_at_ms=None):

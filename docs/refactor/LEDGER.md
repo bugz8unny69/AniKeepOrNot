@@ -35,9 +35,9 @@ The rest of the suite would have missed that last one, because the tests of `aud
 ## The package name after a sync
 
 On `refactor` the package is `src/anime` (owner decision, 2026-11-08); NextGen
-keeps `src/nextgen`. Git's directory-rename detection puts NextGen's changed and
+keeps `src/nextgen`. Git's directory-rename detection puts NextGen's changed and <!-- rename_package: keep -->
 new files under `src/anime/`, but the lines NextGen adds still say
-`src.nextgen`. After every sync merge, before running the tests:
+`src.nextgen`. After every sync merge, before running the tests: <!-- rename_package: keep -->
 
     python -I docs/refactor/rename_package.py
 

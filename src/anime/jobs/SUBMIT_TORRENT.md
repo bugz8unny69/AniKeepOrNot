@@ -17,7 +17,7 @@ ends at reservation. This is static library composition, not a hook/enable flag.
 Client configuration and credentials are checked at point of use, not imposed
 on unrelated identity jobs. Constructing a worker performs no client login/read.
 
-The bounded acquisition/qbittorrent.py transport supports stable qBittorrent
+The bounded torrent_client/qbittorrent.py client (version adapters in torrent_client/qbittorrent_versions.py) supports stable qBittorrent
 4.5/4.6 and 5.x with WebAPI 2.8+. Login uses the central username/password and an
 in-memory SID, then checks application/API versions. It sends fixed API paths,
 uses configured request timeouts, verifies TLS normally, disables redirects and
