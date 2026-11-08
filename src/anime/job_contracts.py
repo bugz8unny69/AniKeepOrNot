@@ -207,7 +207,8 @@ def failure_facts(exc):
             rel = "src/anime/" + filename.split("src/anime/")[-1]
             func = last_frame.f_code.co_name
             line = last_frame.f_lineno
-            tag = exc.__class__.__name__[:32].upper()
+            # Not a named check: an error raised here. RAISED_ tells reports so.
+            tag = ("RAISED_" + exc.__class__.__name__.upper())[:32]
             candidate = f"{rel}:{line} {func} {tag}"
             from src.anime.reasons import _CHECK
             if _CHECK.fullmatch(candidate):

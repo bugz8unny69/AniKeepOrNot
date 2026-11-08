@@ -68,14 +68,46 @@ def paths_in(value, found):
         for item in value: paths_in(item, found)
 
 
+def locate(check):
+    """Where a recorded check is in THIS installed release (file, line, note).
+
+    The check name is the identifier; the recorded line is only a hint. Code
+    changes move lines, so a named check is found by its name in the current
+    file (names are unique per file). A check without a name, or one that no
+    longer exists, falls back to the recorded line with a note saying so.
+    """
+    import re
+    match = re.fullmatch(r'(\S+\.py):(\d+) (\S+)(?: ([A-Z0-9_]+))?', check or '')
+    if not match:
+        return None
+    file, recorded, function, name = match.group(1), int(match.group(2)), match.group(3), match.group(4)
+    path = ROOT / file
+    if not path.is_file():
+        return file, recorded, 'this file is not in the installed release'
+    if name and name.startswith('RAISED_'):
+        return file, recorded, (f'an unexpected {name[7:].lower()} raised in {function}(); '
+                                'located by its recorded line, which may have moved since')
+    if name:
+        quoted = re.compile(r"""(?:here|check|require)\(\s*(?:[^,()]*,\s*)?['"]""" + re.escape(name) + r"""['"]""")
+        lines = path.read_text().splitlines()
+        found = [number for number, text in enumerate(lines, 1) if quoted.search(text)]
+        if len(found) == 1:
+            now = found[0]
+            note = None if now == recorded else f'recorded at line {recorded}; the code has moved'
+            return file, now, note
+        if not found:
+            return file, recorded, (f'check {name} is not in the installed release '
+                                    '(renamed or removed); showing the recorded line')
+    return file, recorded, 'located by its recorded line, which may have moved since'
+
+
 def source(check):
     """The code around a failed check, read from this installed release."""
-    try:
-        location = check.split(' ')[0]
-        file, line = location.rsplit(':', 1); line = int(line)
-    except ValueError:
+    place = locate(check)
+    if place is None:
         return []
-    out = []
+    file, line, note = place
+    out = [f'   {note}'] if note else []
     for number in range(max(1, line - 4), line + 2):
         text = linecache.getline(str(ROOT / file), number).rstrip()
         if text: out.append(('>> ' if number == line else '   ') + f'{number:5} {text}')
@@ -184,7 +216,7 @@ def report(db, job_id, out=print):
                 f'resumed={observation["resumed"]}')
     if failed:
         out('\n=== Code of the last failed check')
-        out('  This excerpt comes from the CURRENT installed source, not necessarily the revision that failed.')
+        out('  Found by its check name in the installed release; the line can differ from the recorded one.')
         for text in source(failed[-1]): out(text)
     elif job['state'] in ('NEEDS_REVIEW', 'BLOCKED'):
         out('\n(No failed check was recorded; this stop happened before check recording existed. '
