@@ -89,7 +89,7 @@ class WorkerWaitingTests(Base):
             if self.behaviour == 'outage':
                 return Outcome('retry', 'SERVICE_UNAVAILABLE',
                                facts={'service': 'qbittorrent',
-                                      'failed_check': 'src/anime/acquisition/qbittorrent.py:122 login CLIENTUNAVAILABLE'})
+                                      'failed_check': 'src/anime/acquisition/qbittorrent.py:122 login RAISED_CLIENTUNAVAILABLE'})
             if self.behaviour == 'unnamed':
                 # For example an AniDB or TVDB outage inside a job that declares another service.
                 return Outcome('retry', 'SERVICE_UNAVAILABLE')

@@ -126,3 +126,58 @@ class LogContextTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CheckNamesAreStableTests(unittest.TestCase):
+    """The check name identifies a check; the recorded line is only a hint (code moves)."""
+
+    def test_check_names_are_unique_within_each_file(self):
+        import ast, collections, pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        duplicates = []
+        for path in root.rglob('*.py'):
+            if 'tests' in path.relative_to(root).parts:
+                continue
+            names = collections.Counter()
+            tree = ast.parse(path.read_text())
+            helpers = {alias.asname or alias.name for node in ast.walk(tree)
+                       if isinstance(node, ast.ImportFrom) and node.module == 'src.anime.checks'
+                       for alias in node.names}                 # only the shared check helpers
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id in helpers & {'here', 'check', 'require'}):
+                    continue
+                position = 0 if node.func.id == 'here' else 1
+                if len(node.args) > position and isinstance(node.args[position], ast.Constant):
+                    names[node.args[position].value] += 1
+            duplicates += [f'{path.relative_to(root)}: {name} ×{count}' for name, count in names.items() if count > 1]
+        self.assertEqual(duplicates, [])
+
+    def test_the_report_finds_a_check_by_name_after_the_code_moved(self):
+        import pathlib
+        from src.anime.job_report import locate, source
+        lines = pathlib.Path('src/anime/keep_service.py').read_text().splitlines()
+        real = next(n for n, text in enumerate(lines, 1) if "here('SERIES_MISSING')" in text)
+        self.assertEqual(locate(f'src/anime/keep_service.py:{real} _run SERIES_MISSING'),
+                         ('src/anime/keep_service.py', real, None))
+        moved = locate('src/anime/keep_service.py:3 _run SERIES_MISSING')      # recorded before an update
+        self.assertEqual(moved[:2], ('src/anime/keep_service.py', real))
+        self.assertIn('recorded at line 3; the code has moved', moved[2])
+        self.assertTrue(any(text.startswith('>>') and "here('SERIES_MISSING')" in text
+                            for text in source('src/anime/keep_service.py:3 _run SERIES_MISSING')))
+
+    def test_a_removed_check_or_an_unexpected_error_says_so(self):
+        from src.anime.job_report import locate
+        self.assertIn('is not in the installed release',
+                      locate('src/anime/keep_service.py:40 _run NO_SUCH_CHECK')[2])
+        self.assertIn('an unexpected valueerror raised in _invoke()',
+                      locate('src/anime/worker.py:300 _invoke RAISED_VALUEERROR')[2])
+        self.assertIn('not in the installed release', locate('src/anime/gone.py:1 f SOME_CHECK')[2])
+
+    def test_unexpected_errors_are_labelled_raised(self):
+        from src.anime.job_contracts import failure_facts
+        try:
+            raise ValueError('boom')
+        except ValueError as exc:
+            facts = failure_facts(exc)
+        self.assertRegex(facts['failed_check'], r'^src/anime/tests/test_checks\.py:\d+ \w+ RAISED_VALUEERROR$')
