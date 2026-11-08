@@ -215,7 +215,7 @@ On `refactor`:
 4. **JD-4 Season-pack and batch duties.**
 5. **JD-5 Reset and cleanup duties**, with no cross-job waiting.
 6. **JD-6 Switch-over, dashboard and report**: episodes moving, waiting and
-   done; Leftovers; bug reports. The old kinds and review states are removed
+   done; bug reports. The old kinds and review states are removed
    (ledger entries).
 
 ## Decisions for the owner
