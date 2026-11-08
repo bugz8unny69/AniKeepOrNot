@@ -17,12 +17,12 @@ changes that improve things land on `refactor` and are listed in the PR.
 4. **No loops, no stale jobs.** A job never repeats itself. The worker
    supervises every job; a job that has done nothing since the last check is
    fired.
-6. **Cleanup deletes what we created.** The database records every path and
+5. **Cleanup deletes what we created.** The database records every path and
    hash we created, so cleanup removes exactly those. No extra "prove we own
    it" check, no leftovers.
-7. **Waits are defined and gentle.** A download is followed in qBittorrent
+6. **Waits are defined and gentle.** A download is followed in qBittorrent
    while it downloads, without stressing qBittorrent's API.
-5. **Logging is cheap and respects the configured level.** Writing a log or
+7. **Logging is cheap and respects the configured level.** Writing a log or
    a History row has a cost, so only what changed is written.
 
 ## Terms
