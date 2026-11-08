@@ -20,7 +20,7 @@ from src.nextgen.secrets import _value, _download_values, _access_values
 
 MAPPINGS={
     'daemon.concurrency':'worker.concurrency','web.port':'api.port',
-    'storage.download_root':'storage.download_root','storage.trial_root':'storage.trial_root',
+    'storage.download_root':'storage.download_root','storage.trial_root':'storage.user_evaluation_root',
     'anidb.client':'anidb.client_name','anidb.clientver':'anidb.client_version',
     'trial.max_episode_mb':'acquisition.max_episode_mb','trial.max_six_episode_mb':'acquisition.max_plan_mb',
     'qbittorrent.base_url':'qbittorrent.base_url','sonarr.quality_profile_id':'sonarr.quality_profile_id',

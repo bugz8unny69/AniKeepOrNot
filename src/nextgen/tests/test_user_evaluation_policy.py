@@ -32,15 +32,17 @@ class UserEvaluationWindowTests(unittest.TestCase):
         self.assertEqual(len(Window(100,100).episodes(200)),200)
 
     def test_zero_zero_rejected_for_snapshot_and_conversion(self):
-        settings={'trial':{'backfill_count':0,'following_count':0}}
+        settings={'user_evaluation':{'backfill_count':0,'following_count':0}}
+        # Published v5 calls the section "trial"; the upgrade must refuse 0/0 there too.
+        historical={'trial':{'backfill_count':0,'following_count':0}}
         for make in (lambda:ConfigurationSnapshot(1,settings),
-                     lambda:convert_document({'schema_version':5,'revision':1,'settings':settings})):
+                     lambda:convert_document({'schema_version':5,'revision':1,'settings':historical})):
             with self.assertRaises(ConfigurationError) as error:make()
             self.assertEqual(error.exception.reason_code,'USER_EVALUATION_COUNTS_INVALID')
             self.assertIn('at least 1',str(error.exception))
         for backfill,following in ((6,0),(0,1)):
-            snapshot=ConfigurationSnapshot(1,{'trial':{'backfill_count':backfill,'following_count':following}})
-            self.assertEqual(snapshot.value('trial.following_count'),following)
+            snapshot=ConfigurationSnapshot(1,{'user_evaluation':{'backfill_count':backfill,'following_count':following}})
+            self.assertEqual(snapshot.value('user_evaluation.following_count'),following)
 
     def test_v4_upgrade_adds_defaults_without_changing_historical_shapes(self):
         document={}
@@ -48,13 +50,13 @@ class UserEvaluationWindowTests(unittest.TestCase):
             document=CONVERSIONS[version](document)
             self.assertNotIn('trial',document['settings'])
         current=convert_document(document)
-        self.assertEqual((current.schema_version,current.revision),(14,14))
-        self.assertEqual(current.value('trial.backfill_count'),6)
-        self.assertEqual(current.value('trial.following_count'),1)
+        self.assertEqual((current.schema_version,current.revision),(15,15))
+        self.assertEqual(current.value('user_evaluation.backfill_count'),6)
+        self.assertEqual(current.value('user_evaluation.following_count'),1)
         with self.assertRaises(ConfigurationError):
-            convert_document({'schema_version':4,'revision':1,'settings':{'trial':{'following_count':2}}})
+            convert_document({'schema_version':4,'revision':1,'settings':{'user_evaluation':{'following_count':2}}})
         for value in (-1,True,1001):
-            with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'trial':{'backfill_count':value}})
+            with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'user_evaluation':{'backfill_count':value}})
 
 
 class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
@@ -115,11 +117,11 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind NOT IN ('VERIFY_RELEASE','SELECT_USER_EVALUATION')"),[(0,)])
 
     async def test_live_changes_apply_only_to_new_plans_and_later_seasons_reuse_the_plan(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':2}},expected_revision=1)
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':2}},expected_revision=1)
         worker=self.worker()
         self.source(10)
         await worker.attempt()
-        self.store.update({'trial':{'following_count':100}},expected_revision=2)
+        self.store.update({'user_evaluation':{'following_count':100}},expected_revision=2)
         self.source(11)
         await worker.attempt()
         self.source(12)
@@ -146,14 +148,14 @@ class UserEvaluationCheckTests(unittest.IsolatedAsyncioTestCase):
     async def test_zero_counts_rejected_before_saving_or_creating_work(self):
         before=self.store.read()
         with self.assertRaises(ConfigurationError) as error:
-            self.store.update({'trial':{'backfill_count':0,'following_count':0}},expected_revision=1)
+            self.store.update({'user_evaluation':{'backfill_count':0,'following_count':0}},expected_revision=1)
         self.assertEqual(error.exception.reason_code,'USER_EVALUATION_COUNTS_INVALID')
         self.assertEqual(self.store.read(),before)
         self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_plans'),[(0,)])
         self.assertEqual(self.rows('SELECT count(*) FROM user_evaluation_checks'),[(0,)])
 
     async def test_concurrent_evaluations_create_one_plan_and_one_anchor(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':1}},expected_revision=1)
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':1}},expected_revision=1)
         self.source(10)
         self.source(20)
         worker=self.worker()

@@ -74,7 +74,7 @@ class NfoTitleRepairTests(unittest.TestCase):
         self.db.execute("INSERT INTO staging_publications VALUES(?,?,?,'PUBLISHED')",
                         (22,json.dumps(self.manifest),json.dumps(self.receipts)))
         self.db.commit()
-        self.config=ConfigurationSnapshot(1,{'storage':{'trial_root':str(self.root)}})
+        self.config=ConfigurationSnapshot(1,{'storage':{'user_evaluation_root':str(self.root)}})
 
     def test_new_staging_nfo_display_title_does_not_rename_files(self):
         intent=SimpleNamespace(options=SimpleNamespace(download_root='/source'))

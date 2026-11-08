@@ -34,7 +34,7 @@ class AcquisitionBudgetTests(unittest.IsolatedAsyncioTestCase):
         return self.source(episode=episode)
 
     async def test_two_concurrent_episodes_cannot_each_spend_same_remaining_budget(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':2},
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':2},
                            'acquisition':{'max_episode_mb':1,'max_plan_mb':1}},expected_revision=1)
         worker=self.worker()
         self.release(10,700000)
@@ -58,7 +58,7 @@ class AcquisitionBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT max_episode_bytes,max_plan_bytes FROM acquisition_budgets'),[(1000000,1000000)])
 
     async def test_existing_budget_retains_captured_limits_after_live_settings_change(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':2},
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':2},
                            'acquisition':{'max_episode_mb':1,'max_plan_mb':2}},expected_revision=1)
         worker=self.worker()
         self.release(10,600000)
@@ -70,7 +70,7 @@ class AcquisitionBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT max_plan_bytes,configuration_revision FROM acquisition_budgets'),[(2000000,2)])
 
     async def test_per_episode_limit_rejects_without_creating_a_budget(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':2},
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':2},
                            'acquisition':{'max_episode_mb':1,'max_plan_mb':2}},expected_revision=1)
         worker=self.worker()
         self.release(10,1000001)
@@ -79,7 +79,7 @@ class AcquisitionBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT count(*) FROM acquisition_plans'),[(0,)])
 
     async def test_previously_prepared_unknown_size_blocks_further_admission(self):
-        self.store.update({'trial':{'backfill_count':0,'following_count':2}},expected_revision=1)
+        self.store.update({'user_evaluation':{'backfill_count':0,'following_count':2}},expected_revision=1)
         worker=self.worker()
         self.release(10,100)
         for _ in range(3):await worker.attempt()

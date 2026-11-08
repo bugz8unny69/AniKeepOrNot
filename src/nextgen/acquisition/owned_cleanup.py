@@ -53,7 +53,7 @@ class OwnedCleanup:
         credentials=self.secrets.qbittorrent_credentials()
         client=self.client_factory(intent.options,credentials);client.login()
         found=client.inspect(intent.plan.manifest.info_hash)
-        cleaner=self.files_factory(intent,(self.configuration.value('storage.trial_root'),self.configuration.value('storage.keep_root')))
+        cleaner=self.files_factory(intent,(self.configuration.value('storage.user_evaluation_root'),self.configuration.value('storage.keep_root')))
         if phase in ('PREPARED','STOP_UNCERTAIN'):
             current=owned(intent,found)
             if current.state in CHECKING:return False

@@ -25,7 +25,7 @@ class EpisodeReservationTests(unittest.IsolatedAsyncioTestCase):
         self.database=self.root/'queue.sqlite'
         self.store=ConfigurationStore(self.root)
         self.startup=self.store.initialize({'storage':{'database_path':str(self.database)},
-                                          'trial':{'backfill_count':0,'following_count':2}}).snapshot
+                                          'user_evaluation':{'backfill_count':0,'following_count':2}}).snapshot
         db=connect(self.database)
         initialize(db)
         db.close()

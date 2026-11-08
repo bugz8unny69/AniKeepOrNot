@@ -222,6 +222,8 @@ Risks to carry into RF-005 and RF-006:
 
 ### 8.3 Settings (configuration upgrade, not just a DB migration)
 
+**Done in RF-006d**: settings version 15 (`_v14_to_v15`), and the dashboard section is "Evaluation episodes".
+
 | Existing key | New key |
 |---|---|
 | `trial.backfill_count` | `user_evaluation.backfill_count` |
@@ -238,7 +240,7 @@ These keys live in the user's settings file, not in the database, so they need a
 
 ### 8.5 Dashboard wording
 
-**Done in RF-006a**, except the settings section label, which changes with the settings upgrade (§8.3, RF-006d).
+**Done in RF-006a**; the settings section label changed with the settings upgrade in RF-006d.
 
 | Existing | New |
 |---|---|

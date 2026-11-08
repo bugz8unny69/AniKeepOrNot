@@ -1155,7 +1155,7 @@ async function loadSettings() {
     const container = $('settings-fields'); container.replaceChildren();
     for (const section of Object.keys(settings.desired.settings)) {
       const panel = node('details', null, 'panel'); panel.dataset.section = section;
-      panel.appendChild(node('summary', section === 'trial' ? 'Intake selection' : section));
+      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section));
       const form = node('form', null, 'integration'); form.autocomplete = 'off';
       for (const [path, definition] of Object.entries(settings.fields)) {
         if (!path.startsWith(section + '.')) continue;

@@ -68,7 +68,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         release, first_started, second_started = asyncio.Event(),asyncio.Event(),asyncio.Event()
         seen = []
         async def handler(context):
-            seen.append(context.configuration.value("storage.trial_root"))
+            seen.append(context.configuration.value("storage.user_evaluation_root"))
             (first_started if len(seen)==1 else second_started).set()
             await release.wait()
             return Outcome()
@@ -77,7 +77,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         first = asyncio.create_task(worker.attempt())
         try:
             await asyncio.wait_for(first_started.wait(),2)
-            self.store.update({"storage":{"trial_root":str(self.root/"trial")}},expected_revision=1)
+            self.store.update({"storage":{"user_evaluation_root":str(self.root/"trial")}},expected_revision=1)
             self.enqueue(payload={"anime":1})
             second = asyncio.create_task(worker.attempt())
             try:
@@ -281,7 +281,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         worker = self.worker(handler)
         self.store.update({"storage": {
             "database_path":str(self.root.parent/"unopened-nextgen.sqlite"),
-            "trial_root":str(self.root)}},expected_revision=1)
+            "user_evaluation_root":str(self.root)}},expected_revision=1)
         with self.assertRaises(ConfigurationError):
             await worker.attempt()
         self.assertEqual(self.rows(),[("PENDING",0,None)])

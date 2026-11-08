@@ -214,15 +214,19 @@ class SonarrSettingsTests(unittest.TestCase):
             self.assertNotIn('sonarr',doc['settings'])
             with self.assertRaises(ConfigurationError):convert_document({**doc,'settings':{**doc['settings'],'sonarr':{'base_url':'http://sonarr.invalid'}}})
         upgraded=convert_document(doc)
-        self.assertEqual(upgraded.schema_version,14)
-        self.assertEqual(upgraded.revision,doc['revision']+7)
+        self.assertEqual(upgraded.schema_version,15)
+        self.assertEqual(upgraded.revision,doc['revision']+8)
         self.assertEqual(upgraded.value('sonarr.base_url'),'')
-        # The HTTP torrent metadata source was explicitly retired in v12.
-        # Every other historical setting remains unchanged.
-        self.assertNotIn('torrent_metadata',upgraded.to_document()['settings'])
+        # The HTTP torrent metadata source was explicitly retired in v12, and v15
+        # renamed "trial" to "user evaluation". Every other value is unchanged.
+        current=upgraded.to_document()['settings']
+        self.assertNotIn('torrent_metadata',current)
+        renamed={'trial':'user_evaluation'}
         for section,value in doc['settings'].items():
-            if section!='torrent_metadata':
-                self.assertEqual(upgraded.to_document()['settings'][section],value)
+            if section=='torrent_metadata':continue
+            expected=dict(value)
+            if section=='storage':expected['user_evaluation_root']=expected.pop('trial_root')
+            self.assertEqual(current[renamed.get(section,section)],expected)
 
 
 class SonarrCredentialApiTests(unittest.IsolatedAsyncioTestCase):

@@ -64,8 +64,8 @@ def registration(*, reservation_kind=None, discovery_kind=None):
         try:
             source,(origin,title)=await blocking(load_user_evaluation_source,context.configuration.value('storage.database_path'),
                                                  job,context.claim.event_id,with_delivery=True)
-            value=UserEvaluationProposal(source,Window(context.configuration.value('trial.backfill_count'),
-                                             context.configuration.value('trial.following_count')),
+            value=UserEvaluationProposal(source,Window(context.configuration.value('user_evaluation.backfill_count'),
+                                             context.configuration.value('user_evaluation.following_count')),
                                 context.configuration.desired_revision)
         except UserEvaluationConflict:return Outcome('review','USER_EVALUATION_PLAN_CONFLICT')
         # Gate the webhook release; Prowlarr uses the same eligibility rule.

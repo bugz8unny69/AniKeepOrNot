@@ -68,7 +68,7 @@ class InstallerSupportTests(unittest.TestCase):
 
     def test_units_use_real_paths_loopback_port_and_media_mounts(self):
         from src.nextgen.configuration_schema import ConfigurationSnapshot
-        snapshot=ConfigurationSnapshot(1,{'api':{'port':8877},'storage':{'download_root':'/mnt/downloads','trial_root':'/mnt/staging','keep_root':'/mnt/Anime Library'}})
+        snapshot=ConfigurationSnapshot(1,{'api':{'port':8877},'storage':{'download_root':'/mnt/downloads','user_evaluation_root':'/mnt/staging','keep_root':'/mnt/Anime Library'}})
         rendered=units(snapshot,'/opt/anime-discovery',str(self.config),str(self.root),'anime-discovery',None)
         self.assertIn('http://127.0.0.1:8877',rendered['anime-discovery-api.service'])
         self.assertIn('/opt/anime-discovery/current/.venv/bin/python',rendered['anime-discovery-api.service'])
