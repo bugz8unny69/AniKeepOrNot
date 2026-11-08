@@ -10,41 +10,7 @@ Architecture rules:
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import re
-import unicodedata
-
-from src.nextgen.providers.parsing import norm
-
-# Release metadata patterns to strip from title variants
-VERSION_TOKEN = re.compile(r'(?<![A-Za-z0-9])v\d{1,2}(?![A-Za-z0-9])', re.I)
-RELEASE_TECH = re.compile(
-    r'(?<![A-Za-z0-9])(?:\d{3,4}p|4K|UHD|WEB[ ._-]?DL|WEBRip|BluRay|'
-    r'BDRip|BDMV|BD[ ._-]?Remux|Remux|HEVC|AV1|x264|x265|H264|H265|'
-    r'Fixed|Proper|Repack|Uncensored|AT-X)(?![A-Za-z0-9])', re.I)
-AUDIO_TAGS = re.compile(
-    r'(?<![A-Za-z0-9])(?:Dual[ ._-]*Audio|Multi[ ._-]*Audio|Multi[ ._-]*Subs|'
-    r'AAC(?:\s*2\.0|\s*5\.1)?|FLAC|Opus(?:\s*2\.0|\s*5\.1)?|AC3|E-AC-3|DDP)(?![A-Za-z0-9])', re.I)
-PACKAGING_TAGS = re.compile(
-    r'(?<![A-Za-z0-9])(?:Batch|Complete(?:[ ._-]*Season)?|CRC32|'
-    r'\[[0-9a-fA-F]{8}\])(?![A-Za-z0-9])', re.I)
-YEAR_TAG = re.compile(r'\(\s*(?:19|20)\d{2}\s*\)')
-FOUR_DIGIT_YEAR = re.compile(r'\b(?:19|20)\d{2}\b')
-
-# Explicit sequel markers in written titles
-SEQUEL_PATTERNS = (
-    re.compile(r'(?<![A-Za-z0-9])(\d{1,2})(?:st|nd|rd|th)\s+Season(?![A-Za-z])', re.I),
-    re.compile(r'(?<![A-Za-z])(second|third|fourth|fifth|sixth)\s+Season(?![A-Za-z])', re.I),
-    re.compile(r'(?<![A-Za-z])Season\s*(\d{1,2})(?![0-9])', re.I),
-    re.compile(r'(?<![A-Za-z0-9])S(\d{1,2})(?![A-Za-z0-9])', re.I),
-    re.compile(r'(?<![A-Za-z])Part\s*(\d{1,2})(?![A-Za-z0-9])', re.I),
-)
-
-ORDINAL_WORDS = {'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5, 'sixth': 6}
-ROMAN = {'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6}
-
-SPECIAL_WORDS = re.compile(
-    r'(?<![A-Za-z])(?:special|specials|sp\d*|ova|oad|ona|movie|gekijouban|recap|preview|pv|cm|extra|bonus)(?![A-Za-z])',
-    re.I
-)
+from src.nextgen.release_names import FOUR_DIGIT_YEAR, SPECIAL_WORDS, YEAR_TAG, clean_metadata, detect_explicit_sequel_marker, norm
 
 
 @dataclass(frozen=True)
@@ -89,81 +55,6 @@ class ScoringResult:
     scoring_version: str = "v1"
 
 
-META_PARENS = re.compile(r'\(([^()]*)\)')
-METADATA_ONLY_INNER = re.compile(
-    r'^(?:'
-    r'BD(?:[ ._-]?Remux)?|Remux|BluRay|BDRip|BDMV|DVD|DVDRip|WEB[ ._-]?DL|WEBRip|'
-    r'HEVC|AV1|AVC|x26[45]|H\.?26[45]|10[- ]?bit|8[- ]?bit|'
-    r'\d{3,4}p|4K|UHD|'
-    r'Dual[ ._-]*Audio|Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
-    r'AAC(?:\s*2\.0|\s*5\.1)?|FLAC|Opus(?:\s*2\.0|\s*5\.1)?|AC3|E-AC-3|DDP|'
-    r'Batch|Complete(?:[ ._-]*Season)?|Fixed|Proper|Repack|Uncensored|AT-X|'
-    r'v\d{1,2}|[0-9a-fA-F]{8}'
-    r')(?:[,\s]+(?:'
-    r'BD(?:[ ._-]?Remux)?|Remux|BluRay|BDRip|BDMV|DVD|DVDRip|WEB[ ._-]?DL|WEBRip|'
-    r'HEVC|AV1|AVC|x26[45]|H\.?26[45]|10[- ]?bit|8[- ]?bit|'
-    r'\d{3,4}p|4K|UHD|'
-    r'Dual[ ._-]*Audio|Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
-    r'AAC(?:\s*2\.0|\s*5\.1)?|FLAC|Opus(?:\s*2\.0|\s*5\.1)?|AC3|E-AC-3|DDP|'
-    r'Batch|Complete(?:[ ._-]*Season)?|Fixed|Proper|Repack|Uncensored|AT-X|'
-    r'v\d{1,2}|[0-9a-fA-F]{8}'
-    r'))*$', re.I)
-
-
-def clean_metadata(text):
-    """Strip release versions (v4), tech specs, codecs, audio, and packaging descriptors."""
-    if not isinstance(text, str):
-        return ""
-    # Strip brackets e.g. [1080p], [Dual Audio]
-    cleaned = re.sub(r'[\[【][^\]】]*[\]】]', ' ', text)
-    # Strip metadata parentheticals e.g. (BD 1080p AVC Opus 2.0), (Dual Audio)
-    cleaned = META_PARENS.sub(
-        lambda m: '' if METADATA_ONLY_INNER.fullmatch(m.group(1).strip()) else m.group(0),
-        cleaned
-    )
-    cleaned = VERSION_TOKEN.sub(' ', cleaned)
-    cleaned = RELEASE_TECH.sub(' ', cleaned)
-    cleaned = AUDIO_TAGS.sub(' ', cleaned)
-    cleaned = PACKAGING_TAGS.sub(' ', cleaned)
-    # Strip trailing version tokens like v4 before extension
-    cleaned = re.sub(r'\s+v\d{1,2}\s*$', ' ', cleaned, flags=re.I)
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ._-:,')
-
-    # Balance unclosed or unmatched parentheses/brackets
-    while cleaned.count('(') > cleaned.count(')'):
-        m = re.search(r'\([^()]*$', cleaned)
-        if not m: break
-        cleaned = cleaned[:m.start()].strip()
-    while cleaned.count(')') > cleaned.count('('):
-        cleaned = re.sub(r'\)[^()]*$', '', cleaned).strip()
-    while cleaned.count('[') > cleaned.count(']'):
-        m = re.search(r'\[[^\[\]]*$', cleaned)
-        if not m: break
-        cleaned = cleaned[:m.start()].strip()
-    while cleaned.count(']') > cleaned.count('['):
-        cleaned = re.sub(r'\][^\[\]]*$', '', cleaned).strip()
-
-    cleaned = re.sub(r'[:\-\s]+$', '', cleaned).strip()
-    return cleaned
-
-
-def detect_explicit_sequel_marker(text):
-    """Return (base_text, season_number or None) if text contains an explicit sequel marker."""
-    for pattern in SEQUEL_PATTERNS:
-        match = pattern.search(text)
-        if match is None:
-            continue
-        token = match.group(1)
-        number = (int(token) if token.isdigit() else ORDINAL_WORDS.get(token.lower())
-                  or ROMAN.get(token.upper()))
-        if number:
-            base = text[:match.start()] + ' ' + text[match.end():]
-            base = re.sub(r'\(\s*\)', ' ', base)
-            base = re.sub(r'\s+', ' ', base).strip(' -:,')
-            return base, number
-    return text.strip(), None
-
-
 def generate_season_derived_aliases(base_title, season):
     """Generate meaningful season-aware title variants when season > 1."""
     if not base_title or not isinstance(season, int) or season <= 1:
@@ -198,7 +89,7 @@ def generate_title_variants(raw, *, seasons=None, episode=None):
     body = leading_groups.sub('', raw.strip()).strip()
 
     # Step 2: Detect episode and season markers
-    from src.nextgen.acquisition.release_titles import parse_release, EXPLICIT, DASHED, WORDED, TRAILING
+    from src.nextgen.release_names import parse_release, EXPLICIT, DASHED, WORDED, TRAILING
     parsed = parse_release(raw)
 
     detected_season = None

@@ -248,7 +248,7 @@ def _magnet_hash(uri):
 def search_aliases(titles, *, english_title=None):
     """Up to three distinct Latin-script titles; AniDB main title first, then AniDB English title when known, then synonyms."""
     picked, seen = [], set()
-    from src.nextgen.providers.parsing import norm
+    from src.nextgen.release_names import norm
     candidates = []
     for title in titles:
         if (type(title) is not str or not 2 <= len(title) <= 200 or not title.isascii()
@@ -304,7 +304,8 @@ def declared_title(titles, anidb_episode):
 
 def matches_episode(title, titles, target, season):
     """Whether a release title is exactly the target episode of this anime."""
-    from src.nextgen.acquisition.release_titles import AnimeTitles, matches, parse_release
+    from src.nextgen.acquisition.release_titles import AnimeTitles, matches
+    from src.nextgen.release_names import parse_release
     return matches(parse_release(title), AnimeTitles.build(titles, season), target, season)
 
 
@@ -428,7 +429,8 @@ class Client:
 
     def _search(self, catalog, season, target, *, tried=(), target_hash=None):
         """All matching releases for one searchable episode, ranked by policy."""
-        from src.nextgen.acquisition.release_titles import AnimeTitles, search_queries, read_release, matches
+        from src.nextgen.acquisition.release_titles import AnimeTitles, search_queries, matches
+        from src.nextgen.release_names import read_release
         from src.nextgen.storage.prowlarr_snapshots import sanitize_text
         prepared = AnimeTitles.build(catalog.titles, season)
         english_title = getattr(catalog, 'english_title', None)
@@ -812,9 +814,7 @@ class Client:
 
     def search_batch(self, anime_titles, season, *, tried=()):
         """Search Prowlarr for batch season pack candidates (WI-05)."""
-        from src.nextgen.acquisition.release_titles import (
-            batch_search_queries, AnimeTitles,
-        )
+        from src.nextgen.acquisition.release_titles import batch_search_queries, AnimeTitles
         from src.nextgen.batch.recognition import release_scope_hint
         from src.nextgen.acquisition.audio import is_audio_incompatible, dual_audio_tagged
         from src.nextgen.storage.prowlarr_snapshots import sanitize_text

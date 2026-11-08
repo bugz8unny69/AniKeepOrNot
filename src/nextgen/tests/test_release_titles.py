@@ -2,9 +2,8 @@
 import unittest
 
 from src.nextgen.acquisition.prowlarr_search import EpisodeTarget, declared_title
-from src.nextgen.acquisition.release_titles import (
-    AnimeTitles, matches, parse_release, search_queries, season_marker,
-)
+from src.nextgen.acquisition.release_titles import AnimeTitles, matches, search_queries
+from src.nextgen.release_names import parse_release, season_marker
 from src.nextgen.providers.release_mapping import declared_episode
 
 SEASON_ONE = ('Kusuriya no Hitorigoto', 'The Apothecary Diaries', '薬屋のひとりごと')
@@ -266,7 +265,7 @@ class IntakeSharesTheReaderTests(unittest.TestCase):
 
     def test_identity_aliases_and_seasons(self):
         from src.nextgen.providers.identity import _release_seasons
-        from src.nextgen.providers.parsing import release_title
+        from src.nextgen.release_names import release_title
         aliases_2nd, ep_2nd = release_title('[Erai-raws] Kusuriya no Hitorigoto 2nd Season - 05 [1080p]')
         self.assertEqual(ep_2nd, 5)
         self.assertIn('Kusuriya no Hitorigoto 2nd Season', aliases_2nd)

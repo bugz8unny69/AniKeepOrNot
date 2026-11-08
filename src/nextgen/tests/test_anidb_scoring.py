@@ -31,13 +31,9 @@ from src.nextgen.job_contracts import Outcome
 from src.nextgen.matching import MatchingTrace, validated
 from src.nextgen.providers.http import Credentials, Options
 from src.nextgen.providers.identity import make_resolver
-from src.nextgen.providers.parsing import norm, release_title
-from src.nextgen.providers.scoring import (
-    calculate_title_similarity, clean_metadata,
-    detect_explicit_sequel_marker, generate_season_derived_aliases,
-    generate_title_variants, rank_and_select_candidates,
-    score_anidb_candidate, TitleVariant, CandidateMatch
-)
+from src.nextgen.release_names import norm, release_title
+from src.nextgen.providers.scoring import calculate_title_similarity, generate_season_derived_aliases, generate_title_variants, rank_and_select_candidates, score_anidb_candidate, TitleVariant, CandidateMatch
+from src.nextgen.release_names import clean_metadata, detect_explicit_sequel_marker
 from src.nextgen.storage.candidate_evidence import load_candidate_evidence, save_candidate_evidence
 from src.nextgen.storage.migrations import LATEST_VERSION
 from src.nextgen.storage.sqlite import connect, initialize, transaction, IdentityConflict, IdentityNotReady

@@ -9,11 +9,9 @@ from src.nextgen.storage.migrations import _open, LATEST_VERSION
 from src.nextgen.providers.http import Clients, Credentials, Options, json_object
 from src.nextgen.providers.errors import (ProviderInvalidResponse, ProviderDeferred,
     ProviderUnavailable, ProviderAuthenticationFailed)
-from src.nextgen.providers.parsing import norm, release_title
-from src.nextgen.providers.scoring import (
-    generate_title_variants, rank_and_select_candidates,
-    detect_explicit_sequel_marker,
-)
+from src.nextgen.release_names import norm, release_title
+from src.nextgen.providers.scoring import generate_title_variants, rank_and_select_candidates
+from src.nextgen.release_names import detect_explicit_sequel_marker
 from src.nextgen.storage.sqlite import IdentityConflict, IdentityNotReady
 from src.nextgen.worker import blocking
 
@@ -40,7 +38,7 @@ def _release_seasons(title):
     A single episode is read by the shared title reader, so "Season - 05" is
     never taken for season 5. Other titles (packs) keep the original pattern.
     """
-    from src.nextgen.acquisition.release_titles import EXPLICIT, marker_seasons, parse_release
+    from src.nextgen.release_names import EXPLICIT, marker_seasons, parse_release
     # Only the primary title may declare the release's actual season. A
     # pipe-delimited alternative may mention another episode (e.g. S01E25).
     primary = title.split(" | ", 1)[0]

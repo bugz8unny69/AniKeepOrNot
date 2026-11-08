@@ -1,133 +1,13 @@
-"""Bounded provider parsing; title aliases adapted from legacy discovery probe."""
+"""Bounded parsing of provider responses (AniDB XML, TVDB JSON).
+
+Release-name parsing lives in src/nextgen/release_names.py.
+"""
 import re
-import unicodedata
 import xml.etree.ElementTree as ET
 
 from src.nextgen.providers.errors import ProviderInvalidResponse
 from src.nextgen.storage.sqlite import IdentityConflict, IdentityNotReady
-
-EP = re.compile(
-    r'(?<![A-Za-z0-9])S(?P<season>\d{1,2})[ ._-]*E(?P<season_ep>\d{1,4})(?!\d)'
-    r'|\s+-\s+(?P<dash_ep>\d{1,4})(?:v\d+)?(?!\d)'
-    r'|\b(?:ep|episode)[ ._-]*(?P<word_ep>\d{1,4})\b', re.I)
-PREFIX = re.compile(r'^\s*(?:\[[^]]+\]\s*)+')
-SEASON_TOKEN = re.compile(r'(?<![A-Za-z0-9])S\d{1,2}(?![A-Za-z0-9])', re.I)
-SEASON_WORD = re.compile(r'\bSeason[ ._-]*S?\d{1,2}\b', re.I)
-RELEASE_TECH = re.compile(
-    r'(?<![A-Za-z0-9])(?:\d{3,4}p|4K|UHD|WEB[ ._-]?DL|WEBRip|BluRay|'
-    r'BDRip|BDMV|BD[ ._-]?Remux|Remux|HEVC|AV1|x264|x265|H264|H265|'
-    r'Fixed|Proper)(?![A-Za-z0-9])', re.I)
-META_GROUP = re.compile(r'\(([^()]*)\)')
-TRAIL = re.compile(r'\s*(?:\[[^]]+\]\s*)+$')
-METADATA_ONLY = re.compile(
-    r'^(?:'
-    r'(?:Batch|Season[ ._-]*S?\d{1,2}|Complete(?:[ ._-]*Season)?|'
-    r'Dual[ ._-]*Audio|Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
-    r'\d{3,4}p|4K|AV1|HEVC|x26[45]|'
-    r'BD(?:[ ._-]?Remux)?|Remux|BDRip|WEB[ ._-]?DL|Fixed|Proper)'
-    r'(?:[,\s]+(?:Batch|Season[ ._-]*S?\d{1,2}|Complete(?:[ ._-]*Season)?|'
-    r'Dual[ ._-]*Audio|Multi[ ._-]*Subs|Multi[ ._-]*Audio|'
-    r'\d{3,4}p|4K|AV1|HEVC|x26[45]|'
-    r'BD(?:[ ._-]?Remux)?|Remux|BDRip|WEB[ ._-]?DL|Fixed|Proper))*'
-    r')$', re.I)
-
-
-def release_title(raw):
-    """Return series-title search aliases and an advisory episode number.
-
-    Extract release labels *before* querying AniDB/TVDB. Episode and season
-    hints from a filename are NOT canonical identity or download authority.
-    In particular do not search standalone "(Batch)" or "(Season S2)" tags.
-    """
-    if not isinstance(raw, str) or not raw.strip():
-        return [], None
-    from src.nextgen.acquisition.release_titles import parse_release, season_marker
-    from src.nextgen.providers.scoring import clean_metadata, detect_explicit_sequel_marker, YEAR_TAG
-    # Only the primary title determines base release aliases; pipe alternatives
-    # are handled as distinct sequel/alternate aliases.
-    primary = raw.split(" | ", 1)[0].strip() if " | " in raw else raw.strip()
-    parsed = parse_release(primary)
-    if parsed is not None:
-        aliases = []
-        for written in parsed.titles:
-            cleaned_written = clean_metadata(written)
-            base, number = season_marker(cleaned_written, roman=False)
-            candidates_to_add = (cleaned_written, base) if (number is not None and base != cleaned_written) else (cleaned_written,)
-            for alias in candidates_to_add:
-                cleaned = re.sub(r'[\(\[\{][^\)\]\}]*$', '', alias).strip()
-                cleaned = re.sub(r'[\(\[\{:\-\s]+$', '', cleaned).strip()
-                cleaned = re.sub(r'[\)\]\}]+$', '', cleaned).strip()
-                if cleaned and not re.fullmatch(r'^[A-Za-z]?\d{6,}$', cleaned) and cleaned not in aliases:
-                    aliases.append(cleaned)
-        if aliases:
-            return aliases, parsed.episode
-
-    value = PREFIX.sub('', primary).strip()
-    episode_match = EP.search(value)
-    episode = (next((int(x) for x in (
-        episode_match.group('season_ep'), episode_match.group('dash_ep'),
-        episode_match.group('word_ep')) if x is not None), None)
-        if episode_match else None)
-
-    slash_parts = [sp.strip() for sp in re.split(r'\s+/\s+', value) if sp.strip()]
-    if not slash_parts:
-        slash_parts = [value]
-
-    raw_aliases = []
-    for sp in slash_parts:
-        ep_m = EP.search(sp)
-        boundaries = [m.start() for m in (ep_m,
-                                         SEASON_TOKEN.search(sp),
-                                         SEASON_WORD.search(sp),
-                                         RELEASE_TECH.search(sp)) if m]
-        title = (sp[:min(boundaries)] if boundaries else sp).strip(' ._-')
-        title = TRAIL.sub('', title).strip()
-        title = clean_metadata(title)
-        if not title:
-            continue
-
-        base, num = detect_explicit_sequel_marker(title)
-        if num is not None and base != title:
-            raw_aliases.extend([title, base])
-        else:
-            raw_aliases.append(title)
-
-        if YEAR_TAG.search(title):
-            unyeared = re.sub(r'\s+', ' ', YEAR_TAG.sub(' ', title)).strip(' -:,')
-            if unyeared:
-                raw_aliases.append(unyeared)
-
-        without_parens = META_GROUP.sub('', title).strip(' ._-')
-        if without_parens and without_parens != title:
-            raw_aliases.append(without_parens)
-
-    aliases = []
-    for item in raw_aliases:
-        cleaned = item.strip()
-        while cleaned.count('(') > cleaned.count(')'):
-            m = re.search(r'\([^()]*$', cleaned)
-            if not m: break
-            cleaned = cleaned[:m.start()].strip()
-        while cleaned.count(')') > cleaned.count('('):
-            cleaned = re.sub(r'\)[^()]*$', '', cleaned).strip()
-        while cleaned.count('[') > cleaned.count(']'):
-            m = re.search(r'\[[^\[\]]*$', cleaned)
-            if not m: break
-            cleaned = cleaned[:m.start()].strip()
-        while cleaned.count(']') > cleaned.count('['):
-            cleaned = re.sub(r'\][^\[\]]*$', '', cleaned).strip()
-        cleaned = re.sub(r'[:\-\s]+$', '', cleaned).strip()
-        if not cleaned:
-            continue
-        if re.fullmatch(r'^[A-Za-z]?\d{6,}$', cleaned) or re.fullmatch(r'^[0-9a-fA-F]{16,}$', cleaned):
-            continue
-        if cleaned not in aliases:
-            aliases.append(cleaned)
-    return aliases, episode
-
-
-def norm(s):
-    return ''.join(ch for ch in unicodedata.normalize('NFKC', s).casefold() if ch.isalnum())
+from src.nextgen.release_names import norm
 
 
 def xml(payload, root_tag, *, limit=67108864):
@@ -293,7 +173,6 @@ def tvdb_record(document, tid):
     if len(names)>128 or any(len(name)>512 for name in names) or len(ids)>128:
         raise ProviderInvalidResponse()
     return {"tvdb_series_id":tid,"titles":tuple(names),"animation":animation,"live":live,"anidb_ids":frozenset(ids)}
-
 
 
 def episode_catalog(payload, aid):

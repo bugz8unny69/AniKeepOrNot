@@ -331,6 +331,24 @@
         "fixes/migrate_legacy_settings.py"
       ],
       "why": "Settings version 15 renamed the \"trial\" settings to user_evaluation.* and storage.user_evaluation_root. Only the upgrade code for published v14 and older, and the legacy-settings import, read the old names."
+    },
+    {
+      "id": "JD-1a",
+      "rule": "only_in",
+      "pattern": "^(?:def|class) (?:ParsedRelease|_type_words|clean_metadata|detect_explicit_sequel_marker|marker_seasons|norm|parse_release|read_release|release_title|season_marker)\\b",
+      "files": [
+        "src/nextgen/release_names.py"
+      ],
+      "why": "Release-name parsing has one home (JD-1a): import it from src.nextgen.release_names."
+    },
+    {
+      "id": "JD-1a",
+      "rule": "only_in",
+      "pattern": "^(?:AUDIO_TAGS|DASHED|EP|EXPLICIT|EXTENSION|FOUR_DIGIT_YEAR|LEADING_TAGS|METADATA_ONLY|METADATA_ONLY_INNER|META_GROUP|META_PARENS|MULTI|NOT_ONE_EPISODE|PACKAGING_TAGS|PREFIX|RELEASE_TECH|SEASON_ONLY|SEASON_TOKEN|SEASON_WORD|SPECIAL_WORDS|TITLE_END_TECH|TRAIL|TRAILING|VERSION_TOKEN|WORDED|YEAR_TAG|YEAR) = re\\.compile|^(?:ORDINAL_WORDS|ROMAN|MARKERS|SEQUEL_PATTERNS) = |^UNCLEAR, UNSUPPORTED = ",
+      "files": [
+        "src/nextgen/release_names.py"
+      ],
+      "why": "Release-name patterns have one home (JD-1a): import them from src.nextgen.release_names."
     }
   ]
 }

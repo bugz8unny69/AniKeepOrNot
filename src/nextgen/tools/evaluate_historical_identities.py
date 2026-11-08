@@ -12,11 +12,8 @@ import json
 import sys
 from typing import Any
 
-from src.nextgen.providers.parsing import norm, release_title
-from src.nextgen.providers.scoring import (
-    calculate_title_similarity, generate_title_variants,
-    rank_and_select_candidates, CandidateMatch,
-)
+from src.nextgen.release_names import norm, release_title
+from src.nextgen.providers.scoring import calculate_title_similarity, generate_title_variants, rank_and_select_candidates, CandidateMatch
 
 # 32 Historical IDENTIFY_ANIME cases representing real release failures
 HISTORICAL_CASES = [
