@@ -80,13 +80,27 @@ def atomic_file(path,content,mode):
         if os.path.exists(name):os.unlink(name)
 
 
+def adm_launcher(root,config_dir):
+    """Keep the local ADM command on the active branch's settings/database."""
+    current=Path(root)/'current'
+    return ('#!/bin/sh\n'
+            'ANIME_DISCOVERY_CONFIG_DIR='+shlex.quote(str(config_dir))+'\n'
+            'export ANIME_DISCOVERY_CONFIG_DIR\n'
+            'exec '+shlex.quote(str(current/'.venv/bin/python'))+' '
+            +shlex.quote(str(current/'bin/adm'))+' "$@"\n')
+
+
+def write_adm_launcher(destination,root,config_dir):
+    atomic_file(Path(destination).parent/'adm',adm_launcher(root,config_dir).encode(),0o755)
+
+
 def _saved_installation_file(path):
     info=path.lstat();parent=path.parent.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_mode&0o077:
         raise ValueError('Installer metadata must be a private root-owned regular file.')
     if parent.st_uid!=0 or parent.st_mode&0o022:
         raise ValueError('Installer metadata directory must be root-owned and protected.')
-    return {k:v for k,v in private_json(path).items() if k in (*DEFAULTS,'origin')}
+    return {k:v for k,v in private_json(path).items() if k in (*DEFAULTS,'origin','branches','config_base')}
 
 
 def saved_defaults():
@@ -449,9 +463,7 @@ def apply(options,args,execute=run):
                 package(release)+'.api.adm','set-password','--if-unset','--password-stdin'],cwd=release,input=password)
         destination=Path(options['destination']);destination.parent.mkdir(parents=True,exist_ok=True)
         atomic_file(destination,(release/'bin/anime-discovery-install').read_bytes(),0o755)
-        adm_command=destination.parent/'adm'
-        launcher='#!/bin/sh\nexec '+shlex.quote(str(root/'current/.venv/bin/python'))+' '+shlex.quote(str(root/'current/bin/adm'))+' "$@"\n'
-        atomic_file(adm_command,launcher.encode(),0o755)
+        write_adm_launcher(destination,root,config)
         branches=dict(options.get('branches') or {})
         branches[options['ref']]={'config_dir':options['config_dir']}
         saved={**{k:options[k] for k in (*DEFAULTS,'origin')},'branches':branches,'config_base':options.get('config_base',options['config_dir'])}
@@ -538,6 +550,7 @@ def rollback(options,args,execute=run):
                 atomic_file(Path(options['unit_dir'])/unit.name,unit.read_bytes(),0o644)
         pointer=root/('.current-'+previous.name);pointer.symlink_to(previous)
         os.replace(pointer,root/'current')
+        write_adm_launcher(options['destination'],root,config_dir)
         execute(['systemctl','daemon-reload'])
         if active:
             execute(['systemctl','start',*active])

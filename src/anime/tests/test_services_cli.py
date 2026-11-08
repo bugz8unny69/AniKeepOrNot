@@ -44,6 +44,18 @@ class ServicesCliTests(unittest.TestCase):
         self.assertIn('Beta is turned off (optional).', text)
         self.assertIn('Gamma is available. (from cache)', text)
 
+    def test_active_branch_environment_and_explicit_override(self):
+        registry = ServiceRegistry([Plugin('alpha', 'Alpha', UP)])
+        with patch.dict('os.environ', {'ANIME_DISCOVERY_CONFIG_DIR': str(self.root)}):
+            lines = []
+            self.assertEqual(main(['check'], out=lines.append, registry=registry), 0)
+            self.assertIn('Alpha', '\n'.join(lines))
+            from src.anime.job_recovery import parser as recover_parser
+            self.assertEqual(recover_parser().parse_args(['summary']).config_dir, str(self.root))
+            with patch('sys.stderr', io.StringIO()):
+                self.assertEqual(main(['--config-dir', str(self.root / 'missing'), 'check'],
+                                      out=lines.append, registry=registry), 2)
+
     def test_any_problem_exits_one_and_names_the_service(self):
         registry = ServiceRegistry([Plugin('alpha', 'Alpha', UP),
                                     Plugin('prowlarr', 'Prowlarr', DOWN, 'HTTP 503 at http://p:9696')])

@@ -22,6 +22,7 @@ import os
 import sys
 import time
 
+from src.anime.configuration import cli_config_dir
 from src.anime.acquisition.metadata import infohash
 from src.anime.acquisition.metadata_service import verify_torrent_ownership
 from src.anime.batch.recognition import release_scope_hint
@@ -330,7 +331,7 @@ def main(argv=None, *, qb_client_factory=None):
                                 description='Batch backlog audit and consolidation. Without --apply this is '
                                             'a read-only preview (WI-08, WI-16).')
     p.add_argument('--apply', action='store_true', help='Plan again and apply it in one transaction')
-    p.add_argument('--config-dir', default=os.environ.get('NEXTGEN_CONFIG_DIR', '/etc/anime-discovery'))
+    p.add_argument('--config-dir', default=(os.environ.get('ANIME_DISCOVERY_CONFIG_DIR') or os.environ.get('NEXTGEN_CONFIG_DIR') or cli_config_dir()))
     p.add_argument('--json', action='store_true', help='Print JSON')
     args = p.parse_args(argv)
     args.action = 'apply' if args.apply else 'preview'

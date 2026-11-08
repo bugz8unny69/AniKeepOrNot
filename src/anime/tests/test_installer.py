@@ -316,6 +316,7 @@ class InstallerOrchestrationTests(unittest.TestCase):
         self.assertEqual(adm.stat().st_mode&0o777,0o755)
         self.assertIn(str(self.root/'current/bin/adm'),adm.read_text())
         self.assertIn('"$@"',adm.read_text())
+        self.assertIn('ANIME_DISCOVERY_CONFIG_DIR='+str(self.config)+'\n',adm.read_text())
         self.assertFalse(any(event[:2]==['systemctl','stop'] for event in self.events))
         self.assertIn(['native','prepare'],self.events);self.assertIn(['native','render'],self.events)
         self.assertFalse(any('apt-get' in event for event in self.events))

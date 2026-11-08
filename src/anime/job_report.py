@@ -13,6 +13,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from src.anime.configuration import cli_config_dir
 from src.anime.messages import EVENTS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1235,7 +1236,7 @@ def main(argv):
                         help='Save as a .tar.gz (default /tmp/<kind>-report-<id>.tar.gz)')
     parser.add_argument('--dest', default=None,
                         help='File or directory to save the report to')
-    parser.add_argument('--config-dir', default='/etc/anime-discovery')
+    parser.add_argument('--config-dir', default=cli_config_dir())
     parser.add_argument('--json', action='store_true', default=False,
                         help='Print diagnostics or matching report as JSON')
     parser.add_argument('--short', action='store_true', default=False,
@@ -1269,7 +1270,7 @@ def main(argv):
     attempt = getattr(args, 'attempt', None)
     compress = getattr(args, 'compress', False)
     dest = getattr(args, 'dest', None)
-    config_dir = getattr(args, 'config_dir', '/etc/anime-discovery')
+    config_dir = getattr(args, 'config_dir', cli_config_dir())
 
     if is_short and not include_matching:
         parser.error('--short requires --include-matching <section>')
