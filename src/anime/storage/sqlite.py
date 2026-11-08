@@ -781,6 +781,20 @@ CREATE TABLE IF NOT EXISTS manual_release_submissions (
 );
 CREATE INDEX IF NOT EXISTS idx_manual_release_episode ON manual_release_submissions(anidb_id,tvdb_season,tvdb_episode);
 
+CREATE TABLE IF NOT EXISTS manual_release_archive (
+ event_id INTEGER PRIMARY KEY REFERENCES incoming_events(event_id),
+ verify_job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+ anidb_id INTEGER NOT NULL REFERENCES identified_anime(anidb_id),
+ tvdb_season INTEGER NOT NULL CHECK(tvdb_season BETWEEN 0 AND 1000),
+ tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode BETWEEN 1 AND 1000),
+ info_hash TEXT NOT NULL CHECK(length(info_hash)=40 AND info_hash NOT GLOB '*[^a-f0-9]*'),
+ source TEXT NOT NULL CHECK(source IN ('magnet','torrent')),
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0),
+ retired_at_ms INTEGER NOT NULL CHECK(retired_at_ms>=created_at_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_manual_release_archive_episode
+ ON manual_release_archive(anidb_id,tvdb_season,tvdb_episode);
+
 CREATE TABLE IF NOT EXISTS identity_candidate_evidence (
  evidence_id INTEGER PRIMARY KEY AUTOINCREMENT,
  job_id INTEGER NOT NULL REFERENCES jobs(job_id),

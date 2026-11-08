@@ -261,7 +261,7 @@ SCHEMA and the migration runner match v61.
 
 ## v61 → v62: service status
 
-062_service_status.sql adds the `service_status` table: one row per external
+063_service_status.sql adds the `service_status` table: one row per external
 service (qBittorrent, Prowlarr, Sonarr, Jellyfin, Shoko, AniDB, Anime-Lists,
 TVDB) with its last known status, a readable detail and when it was checked.
 The worker writes it; the API reads it for the dashboard status bar and to
@@ -271,7 +271,7 @@ SCHEMA and the migration runner match v62. See
 
 ## v62 → v63: renamed stored names
 
-063_renamed_stored_names.sql renames the Sonarr-era and "trial" names (refactor RF-006a):
+064_renamed_stored_names.sql renames the Sonarr-era and "trial" names (refactor RF-006a):
 
 - **Tables:**
   - `sonarr_backfill_results` → `episode_discovery_results`;
@@ -294,7 +294,7 @@ The code knows only the new names. `ALTER TABLE ... RENAME` updates the foreign 
 
 ## v63 → v64: renamed and removed reason and event codes
 
-064_renamed_codes.sql applies the reason and event code audit (refactor RF-006b; `docs/refactor/REASON_CODE_AUDIT.md`). It was generated from `docs/refactor/reason_code_proposals.py` and the v63 schema.
+065_renamed_codes.sql applies the reason and event code audit (refactor RF-006b; `docs/refactor/REASON_CODE_AUDIT.md`). It was generated from `docs/refactor/reason_code_proposals.py` and the v63 schema.
 
 - **Renamed:** 14 reason codes and 4 event codes, for example `TRIAL_SELECTED` → `USER_EVALUATION_SELECTED`, `PROWLARR_SEARCH_TIMEOUT` → `RELEASE_SEARCH_TIMEOUT`, `TORRENT_PROVENANCE_CONFLICT` → `TORRENT_OWNERSHIP_CONFLICT` and `SONARR_BACKFILL_OBSERVED` → `EPISODE_DISCOVERY_RECORDED`.
 - **Removed codes** (no longer emitted) are rewritten to their replacement:
@@ -309,7 +309,7 @@ The per-service codes that are being retired keep their names until v65. Fresh S
 
 ## v64 → v65: retired per-service reason codes
 
-065_retired_service_codes.sql retires the 20 per-service reason codes (refactor RF-006c; `docs/refactor/REASON_CODE_AUDIT.md` §1a). Codes name the situation, not the product, so a service can be replaced without renaming codes.
+066_retired_service_codes.sql retires the 20 per-service reason codes (refactor RF-006c; `docs/refactor/REASON_CODE_AUDIT.md` §1a). Codes name the situation, not the product, so a service can be replaced without renaming codes.
 
 - **Codes:** each retired code becomes `SERVICE_SETUP_INVALID`, `SERVICE_UNAVAILABLE` or `SERVICE_RESPONSE_INVALID`. Examples:
   - `PROWLARR_UNAVAILABLE`, `SHOKO_UNAVAILABLE` and `DOWNLOAD_CLIENT_UNAVAILABLE` → `SERVICE_UNAVAILABLE`;

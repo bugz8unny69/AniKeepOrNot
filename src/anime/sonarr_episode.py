@@ -27,3 +27,16 @@ def resolve_episode(identity, series, episodes):
     if match.get('tvdbId') not in (None, 0, identity.tvdb_episode_id):
         raise SonarrEpisodeMismatch("Sonarr episode has a different TVDB ID.")
     return sid, match['id']
+
+
+def __getattr__(name):
+    if name in ('EpisodeSearchContext', 'load_authoritative_episode_context'):
+        from src.anime.acquisition.episode_context import (
+            EpisodeSearchContext as _ESC,
+            load_authoritative_episode_context as _LAEC,
+        )
+        if name == 'EpisodeSearchContext':
+            return _ESC
+        return _LAEC
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+

@@ -107,9 +107,15 @@ class CancellationService:
                         db.execute("UPDATE staging_cleanup_artifacts SET phase='REMOVED' WHERE operation_id=?",(operation_id,))
                     self._state(job_id,'COMPLETE','CANCELLATION_COMPLETE')
             except CleanupBusy:
-                # Handlers are still stopping; try again shortly.
+                # A busy operation lock is not a cleanup safety conflict.
+                # Never turn elapsed time into REVIEW: worker restart / drain
+                # can make the same guarded cleanup succeed on a later attempt.
+                self._state(job_id,'PENDING','CANCELLATION_DRAINING',
+                            cause='CANCELLATION_DRAINING')
                 return self.store.status(job_id)
             except (ClientUnavailable,ClientInvalid):
+                # Temporary transport failures also remain retryable. Genuine
+                # ownership or filesystem contradictions still enter REVIEW.
                 self._state(job_id,'PENDING','CANCELLATION_PENDING',cause='SERVICE_UNAVAILABLE')
             except (ClientAuthenticationFailed,ClientUnsupported,OSError,CancellationError,ValueError) as exc:
                 from src.anime.reasons import get_reason

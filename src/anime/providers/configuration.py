@@ -34,6 +34,7 @@ from src.anime.providers.identity import ClientPool, make_resolver
 from src.anime.providers.releases import make_verifier
 from src.anime.secrets import SecretStore
 from src.anime.worker import Worker, blocking, serve_worker
+from src.anime.jobs.reset_episode_search_job import registration as reset_episode_registration
 
 
 def options_from_configuration(configuration):
@@ -129,7 +130,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                               select_candidates=backfill_select,
                               acquire_candidates=backfill_acquire),) if backfill else ()),
                          *batch_handlers,*preparation,
-                         *management_registrations(secrets),*additional_registrations))
+                         reset_episode_registration(),*management_registrations(secrets),*additional_registrations))
     if service_health is None:
         from src.anime.services import ServiceHealth, ServiceRegistry
         from src.anime.services.adapters import builtin_adapters

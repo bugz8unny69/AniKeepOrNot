@@ -1,4 +1,4 @@
--- v63 -> v64: renamed and removed reason and event codes (refactor RF-006b).
+-- v64 -> v65: renamed and removed reason and event codes (refactor RF-006b).
 -- Generated from docs/refactor/reason_code_proposals.py and the v63 schema; see
 -- docs/refactor/REASON_CODE_AUDIT.md. Every stored code is rewritten, history
 -- included, so the code knows only the new codes. Codes inside JSON are rewritten
@@ -6,8 +6,8 @@
 -- (what external senders sent) is not touched.
 PRAGMA foreign_keys=OFF;
 BEGIN IMMEDIATE;
-CREATE TEMP TABLE nextgen_v64_guard(ok INTEGER CHECK(ok=1));
-INSERT OR ROLLBACK INTO nextgen_v64_guard SELECT user_version=63 FROM pragma_user_version;
+CREATE TEMP TABLE nextgen_v65_guard(ok INTEGER CHECK(ok=1));
+INSERT OR ROLLBACK INTO nextgen_v65_guard SELECT user_version=64 FROM pragma_user_version;
 
 -- batch_torrent_submissions: its CHECK constraint names codes, so the table is rebuilt.
 CREATE TABLE batch_torrent_submissions_v64 (
@@ -527,8 +527,8 @@ UPDATE staging_publications SET manifest_json=replace(replace(replace(replace(re
 UPDATE staging_publications SET receipts_json=replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(receipts_json,'"ACTIVITY_CHANGED"','"DEFERRED"'),'"BATCH_SELECTION_CONFLICT"','"SEASON_PACK_SELECTION_CONFLICT"'),'"JELLYFIN_REFRESH_REVIEW"','"MEDIA_SERVER_REFRESH_REVIEW"'),'"KEEP_NOT_READY"','"KEEP_IMPORT_REVIEW"'),'"PROWLARR_RELEASE_WITHDRAWN"','"RELEASE_WITHDRAWN"'),'"PROWLARR_SEARCH_TIMEOUT"','"RELEASE_SEARCH_TIMEOUT"'),'"SHOKO_METADATA_REVIEW"','"METADATA_ENRICHMENT_REVIEW"'),'"SONARR_BACKFILL_OBSERVED"','"EPISODE_DISCOVERY_RECORDED"'),'"SONARR_BACKFILL_PLAN_CONFLICT"','"EPISODE_DISCOVERY_PLAN_CONFLICT"'),'"SONARR_CANDIDATES_EXHAUSTED"','"RELEASE_CANDIDATES_EXHAUSTED"'),'"SONARR_DISCOVERY_AUTH_FAILED"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_CONFIGURATION_INVALID"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_EPISODE_NOT_FOUND"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_NO_RESULTS"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_REVIEW"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_TIMEOUT"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_UNAVAILABLE"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_DISCOVERY_UNSUPPORTED"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_EPISODES_NOT_LISTED"','"EPISODE_DISCOVERY_OUTDATED"'),'"SONARR_SELECTION_CONFLICT"','"RELEASE_SELECTION_CONFLICT"'),'"TORRENT_INTENT_RECORDED"','"TORRENT_SUBMISSION_RECORDED"'),'"TORRENT_PROVENANCE_CONFLICT"','"TORRENT_OWNERSHIP_CONFLICT"'),'"TRIAL_AUDIO_SEARCH"','"USER_EVALUATION_AUDIO_SEARCH"'),'"TRIAL_COUNTS_INVALID"','"USER_EVALUATION_COUNTS_INVALID"'),'"TRIAL_DISABLED"','"USER_EVALUATION_DISABLED"'),'"TRIAL_EVALUATED"','"USER_EVALUATION_CHECKED"'),'"TRIAL_OUTSIDE_WINDOW"','"USER_EVALUATION_OUTSIDE_WINDOW"'),'"TRIAL_PLAN_CONFLICT"','"USER_EVALUATION_PLAN_CONFLICT"'),'"TRIAL_SELECTED"','"USER_EVALUATION_SELECTED"')
  WHERE receipts_json IS NOT NULL AND (instr(receipts_json,'"ACTIVITY_CHANGED"')>0 OR instr(receipts_json,'"BATCH_SELECTION_CONFLICT"')>0 OR instr(receipts_json,'"JELLYFIN_REFRESH_REVIEW"')>0 OR instr(receipts_json,'"KEEP_NOT_READY"')>0 OR instr(receipts_json,'"PROWLARR_RELEASE_WITHDRAWN"')>0 OR instr(receipts_json,'"PROWLARR_SEARCH_TIMEOUT"')>0 OR instr(receipts_json,'"SHOKO_METADATA_REVIEW"')>0 OR instr(receipts_json,'"SONARR_BACKFILL_OBSERVED"')>0 OR instr(receipts_json,'"SONARR_BACKFILL_PLAN_CONFLICT"')>0 OR instr(receipts_json,'"SONARR_CANDIDATES_EXHAUSTED"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_AUTH_FAILED"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_CONFIGURATION_INVALID"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_EPISODE_NOT_FOUND"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_NO_RESULTS"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_REVIEW"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_TIMEOUT"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_UNAVAILABLE"')>0 OR instr(receipts_json,'"SONARR_DISCOVERY_UNSUPPORTED"')>0 OR instr(receipts_json,'"SONARR_EPISODES_NOT_LISTED"')>0 OR instr(receipts_json,'"SONARR_SELECTION_CONFLICT"')>0 OR instr(receipts_json,'"TORRENT_INTENT_RECORDED"')>0 OR instr(receipts_json,'"TORRENT_PROVENANCE_CONFLICT"')>0 OR instr(receipts_json,'"TRIAL_AUDIO_SEARCH"')>0 OR instr(receipts_json,'"TRIAL_COUNTS_INVALID"')>0 OR instr(receipts_json,'"TRIAL_DISABLED"')>0 OR instr(receipts_json,'"TRIAL_EVALUATED"')>0 OR instr(receipts_json,'"TRIAL_OUTSIDE_WINDOW"')>0 OR instr(receipts_json,'"TRIAL_PLAN_CONFLICT"')>0 OR instr(receipts_json,'"TRIAL_SELECTED"')>0);
 
-INSERT OR ROLLBACK INTO nextgen_v64_guard SELECT count(*)=0 FROM pragma_foreign_key_check;
-DROP TABLE nextgen_v64_guard;
-PRAGMA user_version=64;
+INSERT OR ROLLBACK INTO nextgen_v65_guard SELECT count(*)=0 FROM pragma_foreign_key_check;
+DROP TABLE nextgen_v65_guard;
+PRAGMA user_version=65;
 COMMIT;
 PRAGMA foreign_keys=ON;

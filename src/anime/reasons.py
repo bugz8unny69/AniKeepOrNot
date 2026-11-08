@@ -77,7 +77,8 @@ _ENTRIES = (
     Reason('API_RATE_LIMITED','Too many sign-in attempts or sessions in a short time.','Too many requests; try again shortly.','Wait a moment, then try again.','WARNING',None),
     Reason('API_UNAVAILABLE','The request failed on the server. Details are in the server log, not shown here.','The server could not complete the request.','Check the service status and the API log, then try again.','ERROR',None),
     Reason('JOB_CANCELED','Someone canceled this work before it finished.','This work was canceled.','Nothing to do. Check the cleanup status if a download was in progress.','INFO',False),
-    Reason('CANCELLATION_DRAINING','The cancellation is saved; cleanup starts once the work that is running now has stopped.','Waiting for running work to stop before cleanup.','Nothing to do.','INFO',None),
+    Reason('EPISODE_CONTEXT_CONFLICT','The saved selection, the recognized episode and the verified release disagree on where this episode is in TVDB.','The saved episode details disagree.','Check the details shown. A new search cannot override saved details that disagree; correct the wrong one, then press Retry.','WARNING',False),
+    Reason('CANCELLATION_DRAINING','The cancellation is saved; cleanup waits until the canceled work releases its lock.','Waiting for the canceled work to release its lock.','Nothing to do. If none of its jobs is running and this does not clear, restart the worker to release its locks. If cleanup then stops for review, check the failed check shown and press Retry.','INFO',None),
     Reason('CANCELLATION_PENDING','Cleanup is not finished: stopping or removing the torrent has not been confirmed yet. It is retried after checking the torrent still belongs to this work.','Cancellation cleanup is waiting for confirmation.','Nothing to do unless this continues; then check the torrent in qBittorrent.','INFO',None),
     Reason('CANCELLATION_REVIEW','Cleanup could not safely confirm that a file or torrent belongs to this work, so nothing was deleted.','Cancellation cleanup needs attention.','The failed check and the file involved are shown in History. Run sudo adm report job --id followed by the job number for the full picture, fix or remove only that file, then press Retry. Never delete the whole staging or download folder.','WARNING',False),
     Reason('CANCELLATION_COMPLETE','The torrent and temporary files owned by this work were cleaned up, or there were none.','Cancellation cleanup finished.','Nothing to do.','INFO',None),
@@ -164,6 +165,7 @@ if len(REGISTRY) != len(_ENTRIES):
 
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}", re.ASCII)
 _MAX_INTEGER = (1 << 63) - 1
+_CONTEXT_IDENTITY = re.compile(r'(selection|recognized|verification):(INVALID|S(?:0|[1-9][0-9]{0,3})E[1-9][0-9]{0,4}#[1-9][0-9]{0,11})', re.ASCII)
 _CHECK = re.compile(r"src/anime/[a-z0-9_/]{1,120}\.py:[1-9][0-9]{0,5} [A-Za-z_][A-Za-z0-9_]{0,63}( [A-Z0-9_]{1,32})?")
 _FIELDS = frozenset({
     "schema_version", "anime.anidb_id", "anime.tvdb_series_id", "anime.title",
@@ -198,6 +200,7 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  attempt=None, max_attempts=None, cause_reason_code=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
                  failed_check=None, failed_path=None,
+                 context_left=None, context_right=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
                  blocking_job_id=None, operation_id=None,
@@ -247,6 +250,11 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                 or any(ord(c) < 32 or ord(c) == 127 for c in failed_path)):
             raise ValueError("invalid failed path")
         details["failed_path"] = failed_path
+    for key, value in (('context_left', context_left), ('context_right', context_right)):
+        if value is not None:
+            if type(value) is not str or not _CONTEXT_IDENTITY.fullmatch(value):
+                raise ValueError('invalid persisted identity diagnostic')
+            details[key] = value
     if observed_audio is not None:
         if type(observed_audio) is not str or len(observed_audio) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in observed_audio):
             raise ValueError("invalid observed audio tags")

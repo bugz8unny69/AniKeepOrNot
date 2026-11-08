@@ -89,7 +89,24 @@ def _admit_size(db,value,job_id,now):
     source=value.source
     plan=db.execute('SELECT plan_id FROM episode_reservations WHERE reservation_id=?',(source.reservation_id,)).fetchone()[0]
     row=db.execute('SELECT max_episode_bytes,max_plan_bytes FROM acquisition_budgets WHERE user_evaluation_plan_id=?',(plan,)).fetchone()
-    limits=value.limits if row is None else SizeLimits(row[0]//1000000,row[1]//1000000)
+    # Plans retain their originally admitted budget for normal automatic work.
+    # An explicit operator Retry/size-source replay is different: a size limit
+    # is editable policy, not a permanent rejection of the old info hash.
+    manual_retry=db.execute(
+        "SELECT 1 FROM job_history WHERE job_id=? AND event_code='RETRY_REQUESTED' LIMIT 1",
+        (job_id,)
+    ).fetchone() is not None
+    recovered=db.execute(
+        "WITH RECURSIVE chain(parent,depth) AS ("
+        " SELECT created_by_job_id,0 FROM jobs WHERE job_id=?"
+        " UNION ALL SELECT j.created_by_job_id,chain.depth+1 FROM jobs j "
+        " JOIN chain ON j.job_id=chain.parent WHERE chain.depth<32)"
+        " SELECT 1 FROM jobs WHERE kind='RESET_EPISODE_SEARCH' "
+        " AND job_id IN (SELECT parent FROM chain) LIMIT 1",(job_id,)
+    ).fetchone() is not None
+    refresh_policy=manual_retry or recovered
+    limits=(value.limits if row is None or refresh_policy else
+            SizeLimits(row[0]//1000000,row[1]//1000000))
     prior=db.execute('SELECT p.job_id,p.selected_size_bytes FROM acquisition_plans p JOIN episode_reservations r '
                      "ON r.reservation_id=p.reservation_id WHERE r.plan_id=? AND r.state='ACTIVE' AND p.state='PREPARED'",(plan,)).fetchall()
     size=value.manifest.files[value.manifest.selected_index].size
@@ -98,6 +115,15 @@ def _admit_size(db,value,job_id,now):
     if row is None:
         db.execute('INSERT INTO acquisition_budgets VALUES(?,?,?,?,?)',
                    (plan,limits.episode_bytes,limits.plan_bytes,value.configuration_revision,now))
+    elif refresh_policy and (limits.episode_bytes>row[0] or limits.plan_bytes>row[1]):
+        # Never retroactively lower limits for previously admitted plan items.
+        # Raised policy may be used for this recovery and future admissions.
+        db.execute(
+            'UPDATE acquisition_budgets SET max_episode_bytes=?,max_plan_bytes=?,configuration_revision=? '
+            'WHERE user_evaluation_plan_id=?',
+            (max(row[0],limits.episode_bytes),max(row[1],limits.plan_bytes),
+             value.configuration_revision,plan)
+        )
     return size
 
 

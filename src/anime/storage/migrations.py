@@ -18,7 +18,7 @@ from src.anime.diagnostics import event
 from src.anime.maintenance import MaintenanceLease, MaintenanceError
 from src.anime.storage.sqlite import SCHEMA
 
-LATEST_VERSION = 67
+LATEST_VERSION = 68
 SQL_DIR = Path(__file__).with_name("sql")
 SCRIPTS = (
     "001_foundation.sql", "002_independent_jobs.sql", "003_incoming_events.sql",
@@ -29,12 +29,13 @@ SCRIPTS = (
     "059_identity_candidate_evidence.sql",
     "060_batch_candidate_operations.sql",
     "061_batch_candidate_stops.sql",
-    "062_service_status.sql",
-    "063_renamed_stored_names.sql",
-    "064_renamed_codes.sql",
-    "065_retired_service_codes.sql",
-    "066_resources.sql",
-    "067_package_paths.sql",
+    "062_manual_release_archive.sql",   # NextGen's 062; refactor's migrations follow it
+    "063_service_status.sql",
+    "064_renamed_stored_names.sql",
+    "065_renamed_codes.sql",
+    "066_retired_service_codes.sql",
+    "067_resources.sql",
+    "068_package_paths.sql",
 )
 
 

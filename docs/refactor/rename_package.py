@@ -17,7 +17,7 @@ import re
 import subprocess
 
 OLD, NEW = 'nextgen', 'anime'
-SKIP = ('docs/refactor/rename_package.py',)
+SKIP = ('docs/refactor/rename_package.py', 'docs/refactor/sync_renames.py')
 KEEP = 'rename_package: keep'
 SKIP_PREFIX = ('src/anime/storage/sql/', 'src/nextgen/storage/sql/')
 

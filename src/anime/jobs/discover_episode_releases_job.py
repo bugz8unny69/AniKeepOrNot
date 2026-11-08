@@ -3,6 +3,7 @@
 The job kind keeps its historical name so existing jobs and history stay valid.
 """
 from src.anime.acquisition.audio import dual_audio_tagged, wants_english
+from src.anime.acquisition.episode_context import EpisodeContextConflict
 from src.anime.acquisition.prowlarr_search import (
     Client, CandidateSelection, SearchConfiguration, SearchUnauthorized, SearchReview,
     SearchTimeout, SearchUnavailable, _magnet_hash,
@@ -28,6 +29,15 @@ from src.anime.storage.episode_discovery import (
 from src.anime.storage.cached_release_retry import CachedTorrent, load_cached, persist_cached
 from src.anime.worker import blocking
 from src.anime.services.base import service_facts
+from src.anime.checks import here
+
+
+def _check_facts(exc):
+    """The failed check (and file) a search error named, for History."""
+    facts = {}
+    if getattr(exc, 'failed_check', None): facts['failed_check'] = exc.failed_check
+    if getattr(exc, 'failed_path', None): facts['failed_path'] = exc.failed_path
+    return facts
 
 KIND = 'DISCOVER_EPISODE_RELEASES'
 SERVICES=('prowlarr',)  # External services this job needs; see services/README.md.
@@ -81,7 +91,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
             if type(delete_cache) is not bool or ('delete_cache' in payload and exhausted_episode is None):
                 raise ValueError()
         except (ValueError, TypeError):
-            return Outcome('review', 'JOB_PAYLOAD_INVALID')
+            return Outcome('review', 'JOB_PAYLOAD_INVALID',
+                           facts={'failed_check': here('JOB_PAYLOAD_INVALID')})
         log = context.logger
         try:
             plan = await blocking(load_batch,
@@ -172,45 +183,57 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                          item.number, item.status, item.candidates, item.accepted)
             snapshots = getattr(client, 'snapshots', None)
             return Outcome(value=BackfillCompletion(plan,observed,retry_episode),search_snapshots=snapshots)
+        except EpisodeContextConflict as exc:
+            log.warning('Persisted episode identity conflict: %s != %s',
+                        exc.context_left, exc.context_right)
+            return Outcome('review', exc.reason_code, facts={
+                'failed_check': exc.failed_check,
+                'context_left': exc.context_left,
+                'context_right': exc.context_right,
+            })
         except BackfillConflict:
-            return Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')
+            return Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT',facts={'failed_check':here('PLAN_CONFLICT')})
         except SearchUnavailable as exc:   # includes SearchTimeout
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
             if not isinstance(exc, SearchTimeout):
                 # Prowlarr is unavailable: wait for it like every service outage
                 # (no retry spent, resumes when it is back, review after 72 hours).
-                return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('prowlarr'),
+                return Outcome('retry','SERVICE_UNAVAILABLE',facts={**service_facts('prowlarr'), **_check_facts(exc)},
                                search_snapshots=snapshots)
             # Timed out three times in the client: wait 30 minutes once, then
             # stop for a manual Retry; nothing is published for this page.
             reason = exc.reason_code
             used = await blocking(automatic_retry_used,
                 context.configuration.value('storage.database_path'),context.claim.job_id)
-            if used: return Outcome('blocked',reason,search_snapshots=snapshots)
+            snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
+            facts = {}
+            if getattr(exc, 'failed_check', None): facts['failed_check'] = exc.failed_check
+            if getattr(exc, 'failed_path', None): facts['failed_path'] = exc.failed_path
+            if used: return Outcome('blocked', reason, search_snapshots=snapshots, facts=facts or None)
             log.warning('Backfill search will run again in %s minutes: %s',
                         AUTOMATIC_RETRY_MS//60000, reason)
-            return Outcome('defer',reason,delay_ms=AUTOMATIC_RETRY_MS,search_snapshots=snapshots)
-        except SearchUnauthorized:
+            return Outcome('defer', reason, delay_ms=AUTOMATIC_RETRY_MS, search_snapshots=snapshots, facts=facts or None)
+        except SearchUnauthorized as exc:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','SERVICE_SETUP_INVALID',facts=service_facts('prowlarr','AUTH_FAILED'),
-                           search_snapshots=snapshots)
-        except SearchConfiguration:
+            facts = {**service_facts('prowlarr','AUTH_FAILED'), **_check_facts(exc)}
+            return Outcome('review','SERVICE_SETUP_INVALID',facts=facts,search_snapshots=snapshots)
+        except SearchConfiguration as exc:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','SERVICE_SETUP_INVALID',facts=service_facts('prowlarr','NOT_CONFIGURED'),
-                           search_snapshots=snapshots)
-        except SearchReview:
+            facts = {**service_facts('prowlarr','NOT_CONFIGURED'), **_check_facts(exc)}
+            return Outcome('review','SERVICE_SETUP_INVALID',facts=facts,search_snapshots=snapshots)
+        except SearchReview as exc:
             snapshots = getattr(client, 'snapshots', None) if 'client' in locals() else None
-            return Outcome('review','SERVICE_RESPONSE_INVALID',facts=service_facts('prowlarr'),
-                           search_snapshots=snapshots)
+            facts = {**service_facts('prowlarr'), **_check_facts(exc)}
+            return Outcome('review','SERVICE_RESPONSE_INVALID',facts=facts,search_snapshots=snapshots)
         except ProviderDeferred as exc:
             return Outcome('defer','JOB_WAITING',delay_ms=exc.delay_ms)
         except (ProviderUnavailable,ProviderInvalidResponse) as exc:
-            return Outcome('retry',exc.reason_code)
+            return Outcome('retry',exc.reason_code,facts={'failed_check':here('SERVICE_UNAVAILABLE')})
         except ProviderAuthenticationFailed as exc:
             # AniDB or TVDB, not Prowlarr: no service is named, so Prowlarr is not marked.
-            return Outcome('review',exc.reason_code,facts={'service_status':'AUTH_FAILED'})
+            return Outcome('review',exc.reason_code,facts={'service_status':'AUTH_FAILED','failed_check':here('SERVICE_SETUP_INVALID')})
         except (ReleaseNotReady,ReleaseConflict) as exc:
-            return Outcome('review',exc.reason_code)
+            return Outcome('review',exc.reason_code,facts={'failed_check':here('RELEASE_NOT_READY')})
 
     def persist(db,claim,value):
         try:
@@ -229,7 +252,8 @@ def registration(secrets, *, catalog_factory=None, client_factory=None,
                 return persist_cached(db,claim,value[0],value[1],value[2],eng)
             return persist_observations(db,claim,value,dispatch=acquire_candidates)
         except BackfillConflict:
-            raise CompletionRejected(Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')) from None
+            raise CompletionRejected(Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT',
+                                             facts={'failed_check':here('PERSIST_PLAN_CONFLICT')})) from None
 
     def route(value):
         if (type(value) in (FallbackCompletion,FallbackMissing,DubFound,DubExhausted,CandidatesExhausted)

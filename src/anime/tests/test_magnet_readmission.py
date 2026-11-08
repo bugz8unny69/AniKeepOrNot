@@ -20,7 +20,7 @@ from src.anime.tests.test_torrent_submission import Secrets
 from src.anime.worker import Worker
 
 
-# The reverse of 063_renamed_stored_names.sql: back to the v62 names.
+# The reverse of 064_renamed_stored_names.sql: back to the v62 names.
 UNDO_V63 = """BEGIN IMMEDIATE;
 ALTER TABLE episode_discovery_results RENAME TO sonarr_backfill_results;
 ALTER TABLE episode_release_candidates RENAME TO sonarr_episode_candidates;
@@ -115,6 +115,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
                 'DROP TABLE manual_release_submissions;\n'
                 'DROP TABLE identity_candidate_evidence;\n'
                 'DROP TABLE service_status;\n'
+                'DROP TABLE manual_release_archive;\n'
                 'DROP TABLE batch_candidate_stops;\n'
                 'DROP TABLE batch_candidate_events;\n'
                 'DROP TABLE batch_candidates;\n'
@@ -136,12 +137,13 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'059_identity_candidate_evidence.sql').read_text())
             db.executescript((SQL_DIR/'060_batch_candidate_operations.sql').read_text())
             db.executescript((SQL_DIR/'061_batch_candidate_stops.sql').read_text())
-            db.executescript((SQL_DIR/'062_service_status.sql').read_text())
-            db.executescript((SQL_DIR/'063_renamed_stored_names.sql').read_text())
-            db.executescript((SQL_DIR/'064_renamed_codes.sql').read_text())
-            db.executescript((SQL_DIR/'065_retired_service_codes.sql').read_text())
-            db.executescript((SQL_DIR / '066_resources.sql').read_text())
-            db.executescript((SQL_DIR / '067_package_paths.sql').read_text())
+            db.executescript((SQL_DIR/'062_manual_release_archive.sql').read_text())
+            db.executescript((SQL_DIR/'063_service_status.sql').read_text())
+            db.executescript((SQL_DIR/'064_renamed_stored_names.sql').read_text())
+            db.executescript((SQL_DIR/'065_renamed_codes.sql').read_text())
+            db.executescript((SQL_DIR/'066_retired_service_codes.sql').read_text())
+            db.executescript((SQL_DIR / '067_resources.sql').read_text())
+            db.executescript((SQL_DIR / '068_package_paths.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

@@ -121,6 +121,11 @@ class SeriesIntakeTests(unittest.TestCase):
         self.assertEqual((episode['status'], episode['can_retry']),
                          ('WAITING_FOR_DUB', True))
         self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 1)
+        # CANDIDATES also offers a recovery search, and no longer counts as waiting for dub.
+        self.db.execute("UPDATE episode_discovery_results SET status='CANDIDATES' WHERE anidb_episode_number=2")
+        self.assertTrue(next(x for x in detail(self.db,10)['missing']
+                             if x['anidb_episode']==2)['can_retry'])
+        self.assertEqual(list_items(self.db, 100, 30)['items'][0]['waiting_for_dub'], 0)
 
 
     def test_failed_anchor_is_visible_with_owner_and_three_held_releases(self):
@@ -176,7 +181,8 @@ class SeriesIntakeTests(unittest.TestCase):
         self.assertEqual((labels[999], labels[1000], labels[1001], labels[994]),
                          ((1, 999), (2, 1), (2, 2), (None, None)))
         self.assertEqual(next(x for x in missing if x['anidb_episode'] == 995)['status'], 'NO_RESULTS')
-        self.assertFalse(next(x for x in missing if x['anidb_episode'] == 1000)['can_retry'])
+        # An unstaged anchor is deliberately recoverable by a targeted search.
+        self.assertTrue(next(x for x in missing if x['anidb_episode'] == 1000)['can_retry'])
 
     def test_missing_series_is_not_invented(self):
         self.assertIsNone(detail(self.db, 999))

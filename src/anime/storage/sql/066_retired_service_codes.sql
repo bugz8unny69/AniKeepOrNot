@@ -1,4 +1,4 @@
--- v64 -> v65: retire the per-service reason codes (refactor RF-006c).
+-- v65 -> v66: retire the per-service reason codes (refactor RF-006c).
 -- Codes name the situation, not the product, so a service can be replaced
 -- without renaming codes (owner decision, 2026-11-06). Each retired code becomes
 -- SERVICE_SETUP_INVALID, SERVICE_UNAVAILABLE or SERVICE_RESPONSE_INVALID. History
@@ -6,8 +6,8 @@
 -- (and, for setup problems, the status) is added to the row's details.
 -- Generated from docs/refactor/reason_code_proposals.py (RETIRED).
 BEGIN IMMEDIATE;
-CREATE TEMP TABLE nextgen_v65_guard(ok INTEGER CHECK(ok=1));
-INSERT OR ROLLBACK INTO nextgen_v65_guard SELECT user_version=64 FROM pragma_user_version;
+CREATE TEMP TABLE nextgen_v66_guard(ok INTEGER CHECK(ok=1));
+INSERT OR ROLLBACK INTO nextgen_v66_guard SELECT user_version=65 FROM pragma_user_version;
 
 -- job_history: name the service the old code (or its cause) named, unless one is recorded.
 UPDATE job_history SET details_json=json_set(COALESCE(details_json,'{}'),'$.service',
@@ -470,6 +470,6 @@ UPDATE event_history SET details_json=json_remove(details_json,'$.cause_reason_c
  WHERE reason_code='SERVICE_UNAVAILABLE' AND json_valid(details_json)
    AND json_extract(details_json,'$.cause_reason_code')='SERVICE_UNAVAILABLE';
 
-DROP TABLE nextgen_v65_guard;
-PRAGMA user_version=65;
+DROP TABLE nextgen_v66_guard;
+PRAGMA user_version=66;
 COMMIT;

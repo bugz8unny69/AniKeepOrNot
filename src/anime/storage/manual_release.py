@@ -91,6 +91,15 @@ def _candidate(db, aid, season, episode):
     if number is None or (number != anchor and
                           number not in plan_window(db, plan_id, anchor, backfill, following)):
         raise ManualSubmissionUnavailable()
+    # A manual attempt must not race the episode reset's cancellation barrier.
+    if db.execute(
+        "SELECT 1 FROM jobs WHERE kind='RESET_EPISODE_SEARCH' "
+        "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
+        "AND json_extract(payload_json,'$.plan_id')=? "
+        "AND json_extract(payload_json,'$.episode')=? LIMIT 1",
+        (plan_id,number)
+    ).fetchone():
+        raise ManualSubmissionUnavailable()
     if db.execute('SELECT 1 FROM anime_review_decisions WHERE anidb_id=?', (aid,)).fetchone():
         raise ManualSubmissionUnavailable()
     # Never add a candidate for an episode that is already staged.
