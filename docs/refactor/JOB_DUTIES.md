@@ -17,11 +17,12 @@ changes that improve things land on `refactor` and are listed in the PR.
 4. **No loops, no stale jobs.** A job never repeats itself. The worker
    supervises every job; a job that has done nothing since the last check is
    fired.
-5. **One interface for files and torrents.** Every job creates, moves and
-   deletes files, folders and torrents through the same interface. It records
-   everything it did, so it can show the work done on each file and clean it up.
-   Jobs don't keep their own records or their own cleanup code. No extra "prove
-   we own it" check, no leftovers.
+5. **One interface for files; adapters for torrent clients.** Every job
+   creates, moves and deletes files through the same interface, which records
+   everything it did, shows the work done on each file and cleans up. Torrents
+   go through the qBittorrent **adapters**. They only talk to the client, never touch
+   files, and all report the files each torrent uses in the same format. No extra
+   "prove we own it" check, no leftovers.
 6. **Waits are defined and gentle.** A download is followed in qBittorrent
    while it downloads, without stressing qBittorrent's API.
 7. **Logging is cheap and respects the configured level.** Writing a log or
@@ -159,7 +160,7 @@ unfinished job "what have you done since my last check?"
   its lease expires, and if no progress was recorded, the job is fired instead
   of being started again.
 
-## 5. One interface for files and torrents: `resources`
+## 5. Files through `resources`, torrents through client adapters
 
 ### Today
 
@@ -173,21 +174,58 @@ things, kept separately for single episodes and batches:
 - `batch_download_cleanup`, `batch_keep_cleanup`, `torrent_submissions`,
   `torrent_transfers`, …
 
-Each has its own rules and its own ways to get stuck.
+There are also **three qBittorrent clients**:
+- `acquisition/qbittorrent.py` (single episodes);
+- `batch/qb_client.py` (batches);
+- `services/adapters/qbittorrent.py` (health).
 
-### On `refactor`
+Each has its own version handling.
 
-Every job goes through **one interface**, `resources.py`, for anything it does to
-a file, folder or torrent:
+### Torrent client adapters
+
+qBittorrent's Web API differs between the versions we support (4.5.2 up to
+5.2). Before WebAPI 2.11 a torrent is *paused* and *resumed*; from 2.11 it is
+*stopped* and *started*. Metadata-only fetch exists only from 5.2. Each
+version range gets an **adapter**, and every adapter fulfils **one contract**:
+
+```python
+class TorrentClient:                       # services/adapters/torrent_client.py
+    def add(self, source, save_path, *, stopped=True) -> Torrent
+    def select_files(self, hash, indexes)
+    def start(self, hash)                  # "resume" before WebAPI 2.11
+    def stop(self, hash)                   # "pause" before WebAPI 2.11
+    def remove(self, hash, *, with_data)
+    def fetch_metadata(self, source)       # 5.2+; older adapters return None: use add+stop
+    def files(self, hash) -> list[TorrentFile]   # same shape for every version
+    def changes(self, since) -> Changes    # one incremental sync/maindata call for all torrents
+```
+
+* **Adapters never touch files.** They only talk to qBittorrent and adapt to
+  its version. qBittorrent itself writes the download, and the adapter reports
+  it.
+* **Every adapter reports the files a torrent uses in the same format:**
+  `TorrentFile(index, path, size, progress, selected)`, with `path` absolute
+  (save path + content path), whatever the version returns.
+* The adapter is picked once at connect time from `app/version` and
+  `app/webapiVersion`. One client replaces the three above, and the health
+  check uses the same adapter.
+* The shared poller (section 4) is `changes()`: one call for all torrents.
+* Adding qBittorrent 5.3, or another client later, means adding one adapter.
+  No job changes.
+
+### `resources`: one interface for files
+
+Every job goes through **one interface**, `resources.py`, for anything it does to a
+file or folder, and to record the files a torrent uses:
 
 ```python
 res = resources.for_job(job)
-torrent = res.add_torrent(magnet, save_path)          # recorded: hash, save path
-video   = res.downloaded_file(torrent, index)          # recorded: path, size
-staged  = res.link(video, staging_path)                # recorded: hardlink staging → download
+torrent = client.add(magnet, save_path)               # adapter: talks to qBittorrent only
+res.track_torrent(torrent, client.files(torrent.hash))  # recorded: hash + every file it uses
+staged  = res.link(video, staging_path)                 # recorded: hardlink staging → download
 nfo     = res.write_file(staging_dir / "S01E03.nfo", data)
-kept    = res.import_to_library(staged, library_path)  # recorded: library copy, owned by you now
-res.cleanup()                                          # undo what this job did (rules below)
+kept    = res.import_to_library(staged, library_path)   # recorded: library copy, yours now
+res.cleanup(client)                                     # undo what this job did (rules below)
 ```
 
 * **It records everything as it happens.** There is one table, `resources`
@@ -195,11 +233,16 @@ res.cleanup()                                          # undo what this job did 
   job; which resource it came from; current state). A second table,
   `resource_operations`, holds every operation on it (created, linked,
   moved, imported, deleted), with time and job.
+* **Torrent files are tracked uniformly.** A torrent is recorded with the files
+  its adapter reported, so every download path is known the same way for every
+  qBittorrent version.
 * **It shows the work.** The job's report and the dashboard list, per file,
   what was done to it: *downloaded → linked to staging → imported to library →
   download removed*.
-* **It cleans up.** `cleanup()` walks the job's own records in reverse and
-  undoes them. The rules are the same for every duty, episode or batch:
+* **It cleans up.** `cleanup()` walks the job's own records in reverse.
+  Torrents are removed through the adapter (`remove(with_data=True)`), and the
+  tracked files are then confirmed gone. Files and folders are deleted
+  directly. The rules are the same for every duty, episode or batch:
 
   | Job ending | Torrent and download | Staging files | Library import |
   |---|---|---|---|
@@ -210,24 +253,25 @@ res.cleanup()                                          # undo what this job did 
 
 * **Already gone counts as done.** A file someone deleted by hand, or a
   torrent removed in qBittorrent, is not an error.
-* **One guard stays:** the interface only creates or deletes inside the
+* **One guard stays:** `resources` only creates or deletes inside the
   configured download, staging and library folders. A path outside them is a
   bug report, and nothing is touched.
-* **Only the interface touches the disk or qBittorrent.** A test scans the
-  code: no module except `resources.py` (and its qBittorrent client) may call
-  `os.unlink`, `os.link`, `shutil`, `mkdir`, or qBittorrent add/delete. A new job
-  can't quietly invent its own cleanup again.
-* **Two jobs never own the same thing.** A resource belongs to exactly one job.
-  A second job that needs the same torrent (e.g. a season pack already being
-  downloaded) uses it through the interface. It is recorded as a *user* of that
-  resource, and cleanup removes it only when its last user is done.
+* **Only `resources` touches the disk, and only the adapters talk to
+  qBittorrent.** A test scans the code: no other module may call `os.unlink`,
+  `os.link`, `shutil` or `mkdir`, or make qBittorrent requests. A new job can't
+  quietly invent its own file handling or cleanup.
+* **Shared torrents.** A second job that needs the same torrent (e.g. a
+  season pack already downloading) is recorded as another *user* of that
+  resource. Cleanup removes it only when its last user is done.
 
-### What happens to the 17 modules and 21 tables
+### What happens to the old modules and tables
 
-Their logic becomes the interface's rules above, and their tables migrate into
-`resources` / `resource_operations` (one migration, history included, as with
-the earlier renames). The modules and tables are then removed, with ledger
-entries in `removed.json`.
+* The 17 modules' logic becomes the rules above, and their 21 tables migrate into
+  `resources` / `resource_operations` (one migration, history included, as
+  with the earlier renames).
+* The three qBittorrent clients become the adapters.
+* The old modules, tables and clients are removed, with ledger entries in
+  `removed.json`.
 
 ## 6. Quiet, level-respecting logging
 
@@ -258,10 +302,14 @@ On `refactor`:
 0. **JD-0 Measure and map.** Rank today's review, hold and fail reasons with
    counts from the server; map every review path to section 3; fix the logging
    level bugs (startup-only level, override visibility). Bug fixes go to NextGen too.
-1. **JD-1 `release_names.py`, `resources.py` and activities.** Parsing in one
-   module. The resources interface, with today's file and torrent operations moved
-   behind it and the scan test. Each handler becomes an activity function. No
-   behaviour change yet, except that every file and torrent operation is now recorded.
+1. **JD-1 `release_names.py`, torrent adapters, `resources.py` and activities.**
+   - Parsing in one module.
+   - The three qBittorrent clients become version adapters behind one contract.
+   - The resources interface, with today's file operations moved behind it, and
+     the scan test.
+   - Each handler becomes an activity function.
+
+   No behaviour change yet, except that every file and torrent is now recorded.
 2. **JD-2 Episode duty.** Job created on accept, Identifying as its first
    activity, `REJECTED` as a normal ending, saved progress, deadlines,
    repeat counting and change-only History. Test: one release end to end as
