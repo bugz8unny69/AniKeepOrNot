@@ -180,11 +180,15 @@ class BranchSwitchApplyTests(base.InstallerOrchestrationTests):
         locals()[_name] = None
     del _name
 
-    def switch_options(self):
+    def switch_options(self, package='next' + 'gen'):
+        # The release running now is another branch's. A NextGen release ships
+        # the older "nextgen" package folder, not src/anime.
         self.config.mkdir(parents=True)
         (self.config / 'settings.json').write_text('{}')
         previous = self.root / 'releases' / 'old'
-        (previous / 'src/anime/storage/sql').mkdir(parents=True)
+        (previous / 'src' / package / 'storage/sql').mkdir(parents=True)
+        (previous / 'src' / package / '__main__.py').write_text('')
+        self.previous_sql = previous / 'src' / package / 'storage/sql'
         self.root.joinpath('current').symlink_to(previous)
         target = self.state / 'config' / 'branches' / 'refactor'
         self.options.update({'ref': 'refactor', 'switch': 'new', 'config_dir': str(target),
@@ -208,13 +212,25 @@ class BranchSwitchApplyTests(base.InstallerOrchestrationTests):
         self.assertEqual(folder, str(target))
         self.assertEqual(payload, {'source_config_dir': str(self.config), 'copy_data': True,
                                    'database': str(self.state / 'anime-discovery-refactor.sqlite'),
-                                   'source_sql_dir': str(previous / 'src/anime/storage/sql')})
+                                   'source_sql_dir': str(self.previous_sql)})
         self.assertEqual(calls['render'][0], str(target))              # Units use the branch's own folder.
         saved = json.loads((self.state / 'installer' / 'installer.json').read_text())
         self.assertEqual((saved['ref'], saved['config_dir']), ('refactor', str(target)))
         self.assertEqual(saved['branches'], {'NextGen': {'config_dir': str(self.config)},
                                              'refactor': {'config_dir': str(target)}})
         self.assertEqual((result['branch_switch'], result['database_copied_from_version']), ('new', 65))
+
+    def test_switching_from_a_refactor_release_reads_its_src_anime_migrations(self):
+        self.switch_options(package='anime')
+        calls = {}
+        def service(release, options, command, payload, execute):
+            calls[command] = payload
+            return {'database': payload.get('database'), 'copied_from_version': 68} if command == 'branch-setup' \
+                else self.service(release, options, command, payload, execute)
+        with self.patches(service):
+            installer.apply(self.options, self.args, self.execute)
+        self.assertEqual(calls['branch-setup']['source_sql_dir'], str(self.previous_sql))
+        self.assertTrue(self.previous_sql.as_posix().endswith('src/anime/storage/sql'))
 
     def test_a_failed_setup_removes_the_new_branch_state_and_keeps_the_old(self):
         target, _ = self.switch_options()
