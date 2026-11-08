@@ -91,7 +91,8 @@ def adm_launcher(root,config_dir):
 
 
 def write_adm_launcher(destination,root,config_dir):
-    atomic_file(Path(destination).parent/'adm',adm_launcher(root,config_dir).encode(),0o755)
+    folder=Path(destination).parent;folder.mkdir(parents=True,exist_ok=True)
+    atomic_file(folder/'adm',adm_launcher(root,config_dir).encode(),0o755)
 
 
 def _saved_installation_file(path):

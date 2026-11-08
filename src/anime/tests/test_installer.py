@@ -355,7 +355,10 @@ class InstallerOrchestrationTests(unittest.TestCase):
         self.assertTrue((self.state/'installer/installation.json').exists())
         self.assertEqual((self.state/'installer').stat().st_mode&0o777,0o700)
         with self.patches(),patch.object(installer,'DEFAULTS',{**installer.DEFAULTS,'destination':str(self.command)}):
-            self.assertEqual(installer.saved_defaults(),saved)
+            # The branch index is kept too (#314): the installed branch maps to its folder.
+            self.assertEqual(installer.saved_defaults(),{**saved,
+                'branches':{saved['ref']:{'config_dir':saved['config_dir']}},
+                'config_base':saved['config_dir']})
 
     def test_upgrade_reports_failed_service_restart(self):
         self.args.upgrade=True
