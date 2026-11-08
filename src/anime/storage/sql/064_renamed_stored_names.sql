@@ -1,11 +1,11 @@
--- v62 -> v63: rename Sonarr-era and "trial" names (refactor RF-006a).
+-- v63 -> v64: rename Sonarr-era and "trial" names (refactor RF-006a).
 -- Discovery searches Prowlarr, not Sonarr, and "trial" is now "user
 -- evaluation". Every row is rewritten, history included, so only the new
 -- names exist afterwards. ALTER TABLE ... RENAME also updates the foreign
 -- keys and indexes that refer to a renamed table or column.
 BEGIN IMMEDIATE;
-CREATE TEMP TABLE nextgen_v63_guard(ok INTEGER CHECK(ok=1));
-INSERT OR ROLLBACK INTO nextgen_v63_guard SELECT user_version=62 FROM pragma_user_version;
+CREATE TEMP TABLE nextgen_v64_guard(ok INTEGER CHECK(ok=1));
+INSERT OR ROLLBACK INTO nextgen_v64_guard SELECT user_version=63 FROM pragma_user_version;
 
 ALTER TABLE sonarr_backfill_results RENAME TO episode_discovery_results;
 ALTER TABLE sonarr_episode_candidates RENAME TO episode_release_candidates;
@@ -35,6 +35,6 @@ UPDATE job_history SET handler_code=CASE handler_code
 -- Internal deliveries created by NextGen discovery; raw_body is unchanged.
 UPDATE incoming_events SET source='release-discovery' WHERE source='sonarr-discovery';
 
-DROP TABLE nextgen_v63_guard;
-PRAGMA user_version=63;
+DROP TABLE nextgen_v64_guard;
+PRAGMA user_version=64;
 COMMIT;

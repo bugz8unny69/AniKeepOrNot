@@ -1,9 +1,9 @@
--- v65 -> v66: one record of every file, folder and torrent a job creates
+-- v66 -> v67: one record of every file, folder and torrent a job creates
 -- (job design JD-1c). The `resources` interface writes these as the work
 -- happens; later phases clean up from them alone.
 BEGIN IMMEDIATE;
-CREATE TEMP TABLE nextgen_v66_guard(ok INTEGER CHECK(ok=1));
-INSERT OR ROLLBACK INTO nextgen_v66_guard SELECT user_version=65 FROM pragma_user_version;
+CREATE TEMP TABLE nextgen_v67_guard(ok INTEGER CHECK(ok=1));
+INSERT OR ROLLBACK INTO nextgen_v67_guard SELECT user_version=66 FROM pragma_user_version;
 CREATE TABLE resources (
  resource_id INTEGER PRIMARY KEY,
  job_id INTEGER NOT NULL REFERENCES jobs(job_id),
@@ -32,6 +32,6 @@ CREATE TABLE resource_operations (
  occurred_at_ms INTEGER NOT NULL CHECK(occurred_at_ms >= 0)
 );
 CREATE INDEX resource_operations_by_resource ON resource_operations(resource_id, operation_id);
-DROP TABLE nextgen_v66_guard;
-PRAGMA user_version=66;
+DROP TABLE nextgen_v67_guard;
+PRAGMA user_version=67;
 COMMIT;

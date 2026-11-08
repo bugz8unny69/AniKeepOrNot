@@ -1,4 +1,4 @@
-"""Offline v64 -> v65: per-service codes retired into generic service codes; history keeps the service."""
+"""Offline v65 -> v66: per-service codes retired into generic service codes; history keeps the service."""
 import json
 import sqlite3
 import unittest
@@ -6,14 +6,14 @@ import unittest
 from src.anime.storage.migrations import SQL_DIR, SCRIPTS, _structure
 from src.anime.storage.sqlite import initialize
 
-SCRIPT_65 = (SQL_DIR / '065_retired_service_codes.sql').read_text()
+SCRIPT_65 = (SQL_DIR / '066_retired_service_codes.sql').read_text()
 
 
 class RetiredServiceCodesMigrationTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
-        for name in SCRIPTS[:64]:
+        for name in SCRIPTS[:65]:
             self.db.executescript((SQL_DIR / name).read_text())
         self.db.executescript("""
             INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES(1,'manual-release',X'7b7d',1);
@@ -40,7 +40,7 @@ class RetiredServiceCodesMigrationTests(unittest.TestCase):
 
     def test_codes_become_generic_and_history_names_the_service(self):
         self.migrate()
-        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 65)
+        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 66)
         self.assertEqual(self.history(), [
             ('SERVICE_UNAVAILABLE', {'service': 'jellyfin'}),
             ('SERVICE_SETUP_INVALID', {'attempt': 1, 'service': 'prowlarr', 'service_status': 'AUTH_FAILED'}),
@@ -68,7 +68,7 @@ class RetiredServiceCodesMigrationTests(unittest.TestCase):
                     safe_details(**{k: v for k, v in details.items()})
 
     def test_guard_rolls_back_if_version_is_not_64(self):
-        self.db.execute('PRAGMA user_version=63')
+        self.db.execute('PRAGMA user_version=64')
         with self.assertRaises(sqlite3.IntegrityError):
             self.migrate()
         self.assertEqual(self.db.execute('SELECT last_reason_code FROM jobs WHERE job_id=1').fetchone(),
@@ -76,7 +76,7 @@ class RetiredServiceCodesMigrationTests(unittest.TestCase):
 
     def test_fresh_schema_matches_sequential_upgrade(self):
         self.migrate()
-        for name in SCRIPTS[65:]:  # Later versions build on v65.
+        for name in SCRIPTS[66:]:  # Later versions build on v66.
             self.db.executescript((SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         try:

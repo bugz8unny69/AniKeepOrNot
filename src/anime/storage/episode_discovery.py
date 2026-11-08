@@ -104,6 +104,10 @@ def _plan(db, plan_id, start, retry_episode=None):
         raise BackfillConflict()
     aid, tid, backfill, anchor, following = row[:5]
     episodes = plan_window(db, plan_id, anchor, backfill, following)
+    # Explicit single-episode recovery may include the original delivered
+    # anchor, even when automatic backfill correctly excluded it.
+    if retry_episode == anchor:
+        episodes = tuple(sorted(set(episodes) | {anchor}))
     if not episodes or start > len(episodes) or (start - 1) % PAGE_SIZE:
         raise BackfillConflict()
     numbers = episodes[start-1:start-1+PAGE_SIZE]
@@ -266,13 +270,31 @@ def persist_fallback_missing(db,claim,value):
 
 
 def _selected(db,plan_id,episode):
-    """(VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
+    """(EpisodeSearchContext or VerifiedEpisode at its own TVDB placement, hash) of a selected AniDB episode."""
+    from src.anime.acquisition.episode_context import (
+        EpisodeContextMissing, load_authoritative_episode_context,
+    )
     from src.anime.episode_identity import VerifiedEpisode
     row=db.execute(
         "SELECT p.tvdb_series_id,s.tvdb_episode_id,s.tvdb_season,s.tvdb_episode,s.info_hash "
         "FROM user_evaluation_plans p JOIN episode_release_selections s USING(plan_id) "
         "WHERE p.plan_id=? AND s.anidb_episode_number=?",(plan_id,episode)).fetchone()
-    return None if row is None else (VerifiedEpisode(*row[:4]),row[4])
+    if row is None:
+        return None
+    # Legacy pre-migration schemas, including historical lightweight adapters,
+    # lack the authoritative AniDB plan ID entirely. Detect that structural
+    # absence explicitly; do not turn arbitrary SQLite query failures into
+    # missing episode evidence.
+    if db.execute('PRAGMA user_version').fetchone()[0] == 0:
+        columns = {col[1] for col in db.execute('PRAGMA table_info(user_evaluation_plans)').fetchall()}
+        if 'anidb_id' not in columns:
+            return (VerifiedEpisode(*row[:4]), row[4])
+    try:
+        ctx = load_authoritative_episode_context(db, plan_id, episode)
+    except EpisodeContextMissing:
+        # Only true legacy absence permits provider-backed resolution.
+        return (VerifiedEpisode(*row[:4]), row[4])
+    return (ctx, row[4])
 
 
 def load_fallback(database,plan_id,episode):

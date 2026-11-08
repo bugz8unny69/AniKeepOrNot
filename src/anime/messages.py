@@ -26,6 +26,7 @@ _EVENTS = (
     EventDefinition('KEEP_COMPLETED','job','Episode kept in the library.',True),
     EventDefinition('MANAGEMENT_ACTION_RESUMED','job','The action was submitted again after review.'),
     EventDefinition('SERIES_REJECTED','job','Anime rejected; no more episodes are downloaded.',True,'ANIME_REJECTED'),
+    EventDefinition('EPISODE_SEARCH_RESET','job','Failed episode attempts were cleaned up; searching again.'),
     EventDefinition('API_SESSION_CREATED','runtime','Signed in to the dashboard.'),
     EventDefinition('API_SESSION_CLOSED','runtime','Signed out of the dashboard.'),
     EventDefinition('API_CREDENTIALS_UPDATED','runtime','Service credentials were updated.'),

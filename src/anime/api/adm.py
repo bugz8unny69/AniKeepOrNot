@@ -21,7 +21,7 @@ def main():
         sys.exit(services(sys.argv[2:]))
     parser = argparse.ArgumentParser(
         description="Anime Discovery local administration",
-        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover batch-audit) | adm services check (external service health)",
+        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health)",
     )
     parser.add_argument("command", choices=("set-password",))
     parser.add_argument("--socket", default="/run/anime-discovery/admin.sock")

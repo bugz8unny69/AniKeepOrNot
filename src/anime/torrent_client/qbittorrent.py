@@ -463,12 +463,15 @@ class Client:
         self._request(self.protocol.start_endpoint,
                       form={'hashes':intent.plan.manifest.info_hash},limit=4096)
 
-    def cleanup_control(self,intent,fingerprint,permit,action):
+    def cleanup_control(self,intent,fingerprint,permit,action,*,delete_files=True):
         from src.anime.acquisition.cleanup import CleanupPermit, owned
+        from src.anime.acquisition.transfers import STOPPED, MISSING_FILES
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
         if type(permit) is not CleanupPermit or self.options!=intent.options or fingerprint!=intent.fingerprint:raise ClientInvalid()
         current=owned(intent,self.inspect(intent.plan.manifest.info_hash))
-        if action=='remove' and current.state not in STOPPED:raise ClientInvalid()
+        if action=='remove':
+            allowed_states = (STOPPED | {MISSING_FILES}) if not delete_files else STOPPED
+            if current.state not in allowed_states:raise ClientInvalid()
         if action not in ('stop','remove'):raise ClientInvalid()
         permit.take(fingerprint,action)
         if action=='stop':
@@ -476,8 +479,12 @@ class Client:
                           form={'hashes':intent.plan.manifest.info_hash},limit=4096)
         else:
             # Staging is already committed; qBittorrent deletes its original
-            # payload. The owned ad-* folder is removed separately if needed.
-            self._request('torrents/delete',form={'hashes':intent.plan.manifest.info_hash,'deleteFiles':'true'},limit=4096)
+            # payload when delete_files is True. For legacy MOVE recovery (delete_files=False),
+            # qBittorrent only deletes the torrent record without touching disk.
+            self._request('torrents/delete',
+                          form={'hashes':intent.plan.manifest.info_hash,
+                                'deleteFiles':'true' if delete_files else 'false'},
+                          limit=4096)
 
     # Uniform reports (JD-1b). The same shape for every supported version, so
     # `resources` can track a torrent's files without knowing the client.

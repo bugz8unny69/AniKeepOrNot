@@ -131,6 +131,9 @@ def parser():
     p.add_argument('--public-origin',dest='origin',help='Exact HTTPS dashboard origin, or loopback HTTP. Existing installed origin is retained.')
     p.add_argument('--branch',help='Git branch to install from, for example NextGen or refactor. With --upgrade it '
                    'switches the installation to that branch, and later upgrades keep using it.')
+    p.add_argument('--copy-db-data',action='store_true',help='With --upgrade --branch to a branch used for the first time: '
+                   'start its database as a copy of the current branch\'s, if the two branches\' migration histories match. '
+                   'Without it the new branch starts with an empty database. Each branch keeps its own settings and database.')
     p.add_argument('--source-dir',type=Path,help='Use tracked files from an existing local Git checkout instead of fetching.')
     p.add_argument('--revision',help='Exact Git commit to install; defaults to the selected branch head.')
     p.add_argument('--database',type=Path,help='New Anime Discovery database path; existing configuration always wins.')
@@ -163,10 +166,12 @@ def resolve(args):
         for k in (*DEFAULTS,'origin'):
             if getattr(args,k,None) is not None:options[k]=getattr(args,k)
     # --branch is the one setting an upgrade may change; it is saved for later upgrades.
+    current_ref=options['ref']
     if getattr(args,'branch',None) is not None:
         if args.rollback:raise ValueError('--branch cannot be combined with --rollback.')
         if getattr(args,'ref',None) is not None and args.ref!=args.branch:raise ValueError('Use --branch or --ref, not both.')
         options['ref']=args.branch
+    resolve_branch_state(options,args,saved,current_ref)
     # Upgrades reuse the saved installation configuration. Only a fresh
     # installation asks the operator to choose paths and a public origin.
     interactive=not(args.yes or args.upgrade or args.rollback)
@@ -194,12 +199,57 @@ def resolve(args):
     options.setdefault('origin',None)
     options['database']=str(args.database or Path(options['state_dir'])/'anime-discovery.sqlite')
     existing=Path(options['config_dir'])/'settings.json'
-    if existing.exists():
+    if options['switch']=='new':
+        # First use of a branch: its own folder and database, never an existing one.
+        for path,what in ((Path(options['config_dir']),'settings folder'),(Path(options['new_database']),'database')):
+            if path.exists() or path.is_symlink():
+                raise ValueError(f"A {what} for branch {options['ref']} already exists at {path} "
+                                 '(perhaps from an interrupted switch). Move it away, then try again.')
+        if not (Path(options['switch_from']['config_dir'])/'settings.json').is_file():
+            raise ValueError('The current branch has no native settings to start the new branch from.')
+        options['database']=options['new_database']
+    elif existing.exists():
         doc=private_json(existing)
         if 'schema_version' not in doc:raise ValueError('Choose a separate fresh Anime Discovery configuration directory; legacy conversion is unsupported.')
         options['database']=doc.get('settings',{}).get('storage',{}).get('database_path',options['database'])
-    if (args.upgrade or args.rollback) and not existing.exists():raise ValueError('Upgrade needs an existing native Anime Discovery configuration.')
+    if (args.upgrade or args.rollback) and options['switch']!='new' and not existing.exists():
+        raise ValueError('Upgrade needs an existing native Anime Discovery configuration.')
     return options
+
+
+def branch_folder(ref):
+    """A folder-safe branch name: feature/x -> feature-x."""
+    return re.sub(r'[^A-Za-z0-9_.-]+','-',ref).strip('-.') or 'branch'
+
+
+def resolve_branch_state(options,args,saved,current_ref):
+    """Each branch keeps its own settings folder and database.
+
+    Branches can carry different migrations and settings versions, so a branch
+    never runs on another branch's database or settings. The first branch
+    keeps the folders it was installed with; a branch used for the first time
+    gets <config>/branches/<branch>/ and <state>/anime-discovery-<branch>.sqlite.
+    """
+    branches={ref:dict(entry) for ref,entry in (saved.get('branches') or {}).items()}
+    options['config_base']=saved.get('config_base') or options['config_dir']
+    options['switch']=None
+    switching=bool(args.upgrade and getattr(args,'branch',None) is not None and args.branch!=current_ref)
+    if getattr(args,'copy_db_data',False) and not switching:
+        raise ValueError('--copy-db-data only applies when --upgrade --branch switches to another branch.')
+    if switching:
+        branches.setdefault(current_ref,{'config_dir':options['config_dir']})
+        options['switch_from']={'ref':current_ref,'config_dir':options['config_dir']}
+        if args.branch in branches:
+            if args.copy_db_data:
+                raise ValueError(f'Branch {args.branch} is already set up and keeps its own database; '
+                                 '--copy-db-data only applies to a branch used for the first time.')
+            options['config_dir']=branches[args.branch]['config_dir'];options['switch']='existing'
+        else:
+            label=branch_folder(args.branch)
+            options['config_dir']=str(Path(options['config_base'])/'branches'/label)
+            options['new_database']=str(Path(options['state_dir'])/f'anime-discovery-{label}.sqlite')
+            options['switch']='new'
+    options['branches']=branches
 
 
 def extract_checkout(source,release,revision,execute=run):
@@ -335,7 +385,20 @@ def apply(options,args,execute=run):
             if execute(['systemctl','show','--property=LoadState','--value',name],check=False).stdout.strip() not in ('','not-found')]
         setup_started=True
         if installed:execute(['systemctl','stop',*installed])
+        new_branch=options.get('switch')=='new'
+        if new_branch:branch_state=(config,Path(options['database']))   # Removed again if setup fails early.
         if not config.exists():config.mkdir(mode=0o700);os.chown(config,account.pw_uid,account.pw_gid)
+        if new_branch:
+            source_release=Path(previous) if previous else None
+            if source_release is not None and not source_release.is_absolute():source_release=root/source_release
+            if source_release is None or not (source_release/'src/anime/storage/sql').is_dir():
+                raise ValueError('The current release is not installed, so its data cannot be checked.')
+            print(f"Setting up branch {options['ref']}: its own settings"
+                  +(' and a copy of the current database...' if args.copy_db_data else ' and a new database...'),flush=True)
+            branch_result=service_call(release,options,'branch-setup',{
+                'source_config_dir':options['switch_from']['config_dir'],'database':options['database'],
+                'source_sql_dir':str(source_release/'src/anime/storage/sql'),
+                'copy_data':bool(args.copy_db_data)},execute)
         settings={} if args.settings_file is None else private_json(args.settings_file)
         access={}
         for key,path in [('webhook_token',args.webhook_key_file)]:
@@ -356,6 +419,7 @@ def apply(options,args,execute=run):
         selected=(list(SERVICES) if args.start=='all' else [SERVICES[0]] if args.start=='api' else [] if args.start=='none'
             else active if args.upgrade else active if previous or had_config or active else [SERVICES[0]])
         if SERVICES[1] in selected:service_call(release,options,'check-worker',{},execute)
+        branch_state=None   # Units change from here on; a failure now leaves state for recovery.
         unit_dir=Path(options['unit_dir']);unit_dir.mkdir(parents=True,exist_ok=True)
         backup=metadata/'unit-backups'/release.name;backup.mkdir(parents=True,mode=0o700)
         for name,body in units.items():
@@ -388,7 +452,9 @@ def apply(options,args,execute=run):
         adm_command=destination.parent/'adm'
         launcher='#!/bin/sh\nexec '+shlex.quote(str(root/'current/.venv/bin/python'))+' '+shlex.quote(str(root/'current/bin/adm'))+' "$@"\n'
         atomic_file(adm_command,launcher.encode(),0o755)
-        saved={k:options[k] for k in (*DEFAULTS,'origin')}
+        branches=dict(options.get('branches') or {})
+        branches[options['ref']]={'config_dir':options['config_dir']}
+        saved={**{k:options[k] for k in (*DEFAULTS,'origin')},'branches':branches,'config_base':options.get('config_base',options['config_dir'])}
         atomic_file(metadata/'installer.json',(json.dumps(saved,sort_keys=True)+'\n').encode(),0o600)
         # A nondefault installation needs a tiny root locator because the
         # standalone command itself lives outside that application directory.
@@ -399,7 +465,10 @@ def apply(options,args,execute=run):
             'configuration_preserved':True,'started_services':selected,
             'previously_running_services':active,
             'remaining_stopped_services':[name for name in SERVICES if name not in selected],
-            'credentials_file':str(config/'secrets.json'),'command':str(destination)}
+            'credentials_file':str(config/'secrets.json'),'command':str(destination),
+            'branch':options['ref'],'database':options['database'],
+            'branch_switch':options.get('switch'),
+            'database_copied_from_version':(branch_result.get('copied_from_version') if new_branch else None)}
         atomic_file(metadata/'installation.json',(json.dumps(result,sort_keys=True)+'\n').encode(),0o600)
         (metadata/'installation.pending.json').unlink()
         # Keep the running release and one previous; everything older goes.
@@ -409,6 +478,11 @@ def apply(options,args,execute=run):
             (root/name).unlink(missing_ok=True)
         return result
     except BaseException:
+        if setup_started and locals().get('branch_state'):
+            # The new branch's folder and database were created by this run and never used.
+            folder,database=branch_state
+            shutil.rmtree(folder,ignore_errors=True)
+            for suffix in ('','-wal','-shm','-journal'):Path(str(database)+suffix).unlink(missing_ok=True)
         if setup_started:
             # Schema may have advanced: never restart older source or restore a
             # database automatically. Retain pending metadata for the next run.
@@ -441,11 +515,16 @@ def rollback(options,args,execute=run):
     if (previous.parent!=releases or previous.is_symlink() or not previous.is_dir()
             or previous.resolve()==current.resolve()):
         raise ValueError('The recorded previous release is no longer installed: '+str(previous))
+    # The previous release may belong to another branch: use that branch's own settings.
+    info=previous/RELEASE_INFO
+    previous_ref=private_json(info).get('ref') if info.is_file() else None
+    branches=options.get('branches') or {}
+    config_dir=branches.get(previous_ref,{}).get('config_dir',options['config_dir']) if previous_ref else options['config_dir']
     lock=os.open(metadata/'.installer.lock',os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
     try:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         check=execute(['runuser','-u',options['user'],'--',previous/'.venv/bin/python','-m',package(previous),'check',
-                       '--config-dir',options['config_dir']],cwd=previous,check=False)
+                       '--config-dir',config_dir],cwd=previous,check=False)
         if check.returncode:
             reason=' '.join((check.stderr or check.stdout or '').split())[:400] or 'status '+str(check.returncode)
             raise ValueError('Cannot roll back to '+previous.name+': it cannot use the current database or '
@@ -465,10 +544,14 @@ def rollback(options,args,execute=run):
             for name in active:
                 if execute(['systemctl','is-active','--quiet',name],check=False).returncode:
                     raise RuntimeError('Service did not return to active state after rollback: '+name)
-        info=previous/RELEASE_INFO
         revision=private_json(info).get('revision') if info.is_file() else None
+        if previous_ref and (metadata/'installer.json').is_file():
+            # Later upgrades continue on the branch that is running now.
+            saved=private_json(metadata/'installer.json')
+            saved.update({'ref':previous_ref,'config_dir':config_dir})
+            atomic_file(metadata/'installer.json',(json.dumps(saved,sort_keys=True)+'\n').encode(),0o600)
         result={**recorded,'rolled_back':True,'release':str(previous),'previous_release':str(current),
-                'revision':revision,'started_services':active}
+                'revision':revision,'started_services':active,'branch':previous_ref}
         atomic_file(metadata/'installation.json',(json.dumps(result,sort_keys=True)+'\n').encode(),0o600)
         return result
     finally:
@@ -523,7 +606,17 @@ def main(argv=None):
                 remaining=result.get('remaining_stopped_services',[])
                 if remaining:
                     print('Remained stopped: '+', '.join(remaining))
-                print('Configuration and credentials preserved.')
+                switch=result.get('branch_switch')
+                if switch=='new':
+                    copied=result.get('database_copied_from_version')
+                    print('Branch '+result['branch']+' set up with its own settings and '
+                          +(f'a copy of the previous branch\'s database (schema v{copied}, then upgraded).' if copied
+                            else 'a new, empty database.'))
+                    print('Database: '+result['database'])
+                elif switch=='existing':
+                    print('Switched to branch '+result['branch']+', using its own settings and database.')
+                else:
+                    print('Configuration and credentials preserved.')
                 if result.get('removed_releases'):
                     print('Removed old releases: '+', '.join(result['removed_releases']))
             else:

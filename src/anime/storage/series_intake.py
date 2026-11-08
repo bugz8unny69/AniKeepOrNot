@@ -75,7 +75,7 @@ def _active_episode(db, anidb_id, season, episode, anidb_episode_id=None):
         "SELECT j.job_id,j.state,j.last_reason_code "
         "FROM jobs j JOIN job_operation_members m USING(job_id) "
         "WHERE m.operation_id=? "
-        "ORDER BY CASE j.state WHEN 'NEEDS_REVIEW' THEN 0 WHEN 'BLOCKED' THEN 1 "
+        "ORDER BY CASE j.state WHEN 'NEEDS_REVIEW' THEN 0 WHEN 'FAILED' THEN 1 WHEN 'BLOCKED' THEN 2 "
         "WHEN 'RUNNING' THEN 2 WHEN 'RETRY_WAIT' THEN 3 WHEN 'PENDING' THEN 4 "
         "ELSE 5 END, j.job_id DESC LIMIT 1", (operation_id,)
     ).fetchone()
@@ -101,11 +101,11 @@ def _active_episode(db, anidb_id, season, episode, anidb_episode_id=None):
     ).fetchall()
     job_id, job_state, reason = step if step else (owner_job_id, 'DONE', None)
     state = ('CLEANUP_PENDING' if operation_state != 'ACTIVE' else
-             job_state if job_state in ('NEEDS_REVIEW', 'BLOCKED') else 'IN_PROGRESS')
+             job_state if job_state in ('NEEDS_REVIEW', 'FAILED', 'BLOCKED') else 'IN_PROGRESS')
     return {'status': state, 'job_id': job_id, 'reason_code': reason,
             'operation_id': operation_id, 'reservation_id': reservation_id,
             'waiting_job_ids': [row[0] for row in waiting],
-            'can_retry_job': operation_state == 'ACTIVE' and job_state == 'NEEDS_REVIEW',
+            'can_retry_job': operation_state == 'ACTIVE' and job_state in ('NEEDS_REVIEW','FAILED'),
             'can_try_next': (operation_state == 'ACTIVE' and
                              job_state in ('NEEDS_REVIEW', 'BLOCKED') and bool(waiting))}
 
@@ -151,6 +151,16 @@ def detail(db, anidb_id, language='english'):
     ).fetchall():
         key = (season, episode)
         reservation_counts[key] = reservation_counts.get(key, 0) + count
+    active_reservation_counts = {}
+    for season, episode, count in db.execute(
+        "SELECT tvdb_season,tvdb_episode,count(*) FROM episode_reservations "
+        "WHERE anidb_id=? AND state='ACTIVE' GROUP BY tvdb_season,tvdb_episode "
+        "UNION ALL SELECT tvdb_season,tvdb_episode,count(*) FROM batch_episode_reservations "
+        "WHERE anidb_id=? AND state='ACTIVE' GROUP BY tvdb_season,tvdb_episode",
+        (anidb_id,anidb_id)
+    ).fetchall():
+        key=(season,episode)
+        active_reservation_counts[key]=active_reservation_counts.get(key,0)+count
     have_manual = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_release_submissions'"
     ).fetchone()
@@ -202,6 +212,7 @@ def detail(db, anidb_id, language='english'):
             'operation_id': op, 'status': status,
             'anidb_episode': anidb_num,
             'reservation_count': reservation_counts.get((season, episode), 0),
+            'active_reservation_count': active_reservation_counts.get((season, episode), 0),
             'manual_submission_count': manual_counts.get((season, episode), 0)
         })
         if season is not None and episode is not None:
@@ -257,17 +268,38 @@ def detail(db, anidb_id, language='english'):
             status = (work['status'] if work else
                       WAITING_FOR_DUB if number in waiting else observed.get(number, 'NOT_SEARCHED'))
             season, episode = place or (None, None)
-            result['missing'].append({
+            from src.anime.storage.episode_reset import can_replay
+            can_retry_size = (
+                rejected is None and work is None and place is not None
+                and can_replay(db,plan_id,number,anidb_id,season,episode)
+            )
+            reset = db.execute(
+                "SELECT job_id FROM jobs WHERE kind='RESET_EPISODE_SEARCH' "
+                "AND state IN ('PENDING','RUNNING','RETRY_WAIT') "
+                "AND json_extract(payload_json,'$.plan_id')=? "
+                "AND json_extract(payload_json,'$.episode')=? "
+                "ORDER BY job_id DESC LIMIT 1", (plan_id,number)
+            ).fetchone()
+            entry = {
+                'can_retry_size': can_retry_size,
                 'anidb_episode': number,
                 # Verified TVDB placement is a label only; None when not yet known.
                 'season': season, 'episode': episode, 'status': status,
                 'reservation_count': reservation_counts.get(place, 0),
+                'active_reservation_count': active_reservation_counts.get(place, 0),
                 'manual_submission_count': manual_counts.get(place, 0),
-                'can_retry': rejected is None and work is None and number != anchor
+                'can_retry': rejected is None and work is None
                              and status in ('NOT_SEARCHED', 'NO_RESULTS', 'NOT_AIRED',
-                                            'MAPPING_MISSING', WAITING_FOR_DUB),
+                                            'MAPPING_MISSING', 'CANDIDATES', WAITING_FOR_DUB),
                 **(work or {})
-            })
+            }
+            if reset:
+                entry.update({
+                    'job_id':reset[0], 'status':'RECOVERY_PENDING',
+                    'can_retry':False, 'can_retry_size':False,
+                    'can_retry_job':False, 'can_try_next':False
+                })
+            result['missing'].append(entry)
     return result
 
 
@@ -421,12 +453,18 @@ def reject_series(database, anidb_id, operation_ids, reason, note):
         return {'job_id': control, 'reused': False}
 
 
-def retry_episode(database, anidb_id, episode, *, delete_cache=True):
+def retry_episode(database, anidb_id, episode, *, delete_cache=False):
     """Search one missing AniDB episode of the anime's plan again."""
     integer(anidb_id, positive=True)
     integer(episode, positive=True)
     if type(delete_cache) is not bool:
         raise IntakeUnavailable()
+    if delete_cache:
+        from src.anime.storage.episode_reset import schedule, EpisodeResetUnavailable
+        try:
+            return schedule(database,anidb_id,episode)
+        except EpisodeResetUnavailable:
+            raise IntakeUnavailable() from None
     queue = JobQueue(database)
     with queue.connection() as db, transaction(db):
         row = db.execute(
@@ -442,6 +480,8 @@ def retry_episode(database, anidb_id, episode, *, delete_cache=True):
             raise IntakeUnavailable()
         plan_id, anchor, backfill, following, event_id, parent_job = row
         numbers = plan_window(db, plan_id, anchor, backfill, following)
+        if episode == anchor:
+            numbers = tuple(sorted(set(numbers) | {anchor}))
         if episode not in numbers:
             raise IntakeUnavailable()
         held = _waiting_for_dub(db, plan_id).get(episode)

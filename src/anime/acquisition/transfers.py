@@ -9,6 +9,7 @@ from src.anime.acquisition.submission import Intent, Observation, ClientInvalid
 from src.anime.acquisition.metadata_service import STOPPED  # The one definition of qBittorrent's stopped states.
 CHECKING=frozenset(('checkingDL','checkingUP','checkingResumeData','allocating','moving'))
 ACTIVE=frozenset(('downloading','stalledDL','forcedDL','queuedDL','uploading','stalledUP','forcedUP','queuedUP'))
+MISSING_FILES='missingFiles'
 
 
 class TransferConflict(ValueError):

@@ -17,6 +17,8 @@ from src.anime.torrent_client.qbittorrent import _NoRedirect, _json
 from src.anime.acquisition.audio import dual_audio_tagged, wants_english
 from src.anime.acquisition.settings import endpoint
 from src.anime.episode_identity import VerifiedEpisode
+from src.anime.acquisition.episode_context import EpisodeSearchContext, load_authoritative_episode_context
+from src.anime.checks import here
 
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_RELEASES = 1000
@@ -29,33 +31,45 @@ MAX_RETRY_AFTER_SECONDS = 120
 class SearchReview(ValueError):
     reason_code = 'SERVICE_RESPONSE_INVALID'
     service = 'prowlarr'
-    def __init__(self): super().__init__('Prowlarr returned data that needs review.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        self.failed_check = failed_check
+        self.failed_path = failed_path
+        super().__init__(message or 'Prowlarr returned data that needs review.')
 
 
 class SearchConfiguration(SearchReview):
     reason_code = 'SERVICE_SETUP_INVALID'
     service = 'prowlarr'
     service_status = 'NOT_CONFIGURED'
-    def __init__(self): ValueError.__init__(self, 'Configure Prowlarr before backfill search.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Configure Prowlarr before backfill search.',
+                         failed_check=failed_check, failed_path=failed_path)
 
 
 class SearchUnauthorized(SearchConfiguration):
     reason_code = 'SERVICE_SETUP_INVALID'
     service = 'prowlarr'
     service_status = 'AUTH_FAILED'
-    def __init__(self): ValueError.__init__(self, 'Prowlarr rejected the API key.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Prowlarr rejected the API key.',
+                         failed_check=failed_check, failed_path=failed_path)
 
 
 class SearchUnavailable(RuntimeError):
     reason_code = 'SERVICE_UNAVAILABLE'
     service = 'prowlarr'
     retry_after = None      # seconds Prowlarr asked us to wait (429), if any
-    def __init__(self): super().__init__('Prowlarr search is unavailable.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        self.failed_check = failed_check
+        self.failed_path = failed_path
+        super().__init__(message or 'Prowlarr search is unavailable.')
 
 
 class SearchTimeout(SearchUnavailable):
     reason_code = 'RELEASE_SEARCH_TIMEOUT'
-    def __init__(self): RuntimeError.__init__(self, 'Prowlarr search timed out.')
+    def __init__(self, message=None, *, failed_check=None, failed_path=None):
+        super().__init__(message or 'Prowlarr search timed out.',
+                         failed_check=failed_check, failed_path=failed_path)
 
 
 @dataclass(frozen=True)
@@ -247,7 +261,7 @@ def _magnet_hash(uri):
 
 def search_aliases(titles, *, english_title=None):
     """Up to three distinct Latin-script titles; AniDB main title first, then AniDB English title when known, then synonyms."""
-    picked, seen = [], set()
+    picked, indices = [], {}
     from src.anime.release_names import norm
     candidates = []
     for title in titles:
@@ -255,9 +269,20 @@ def search_aliases(titles, *, english_title=None):
                 or any(ord(c) < 32 for c in title)):
             continue
         key = norm(title)
-        if key and key not in seen:
-            seen.add(key)
+        if not key:
+            continue
+        if key not in indices:
+            indices[key] = len(candidates)
             candidates.append(title)
+        else:
+            # An old saved title may itself be a normalized lookup key.
+            # For the SAME identity, prefer the readable spelling (spaces,
+            # punctuation) over an unbroken token before composing queries.
+            index = indices[key]
+            existing = candidates[index]
+            if (all(ch.isalnum() for ch in existing)
+                    and any(not ch.isalnum() for ch in title)):
+                candidates[index] = title
 
     if not candidates:
         return ()
@@ -310,7 +335,7 @@ def matches_episode(title, titles, target, season):
 
 
 def _unavailable(headers):
-    error = SearchUnavailable()
+    error = SearchUnavailable(failed_check=here('HTTP_429_OR_5XX'))
     try: value = headers.get('Retry-After') if headers is not None else None
     except AttributeError: value = None
     if type(value) is str and re.fullmatch(r'[0-9]{1,6}', value.strip()):
@@ -386,7 +411,8 @@ class Client:
 
     def _get_once(self, query, *, search_type='search', params=None):
         if type(query) is not str or not 1 <= len(query) <= 256:
-            raise SearchReview()
+            raise SearchReview('Query must be non-empty text up to 256 chars.',
+                               failed_check=here('INVALID_QUERY'))
         query_params = {'query': query, 'type': search_type, 'limit': 100}
         if params: query_params.update(params)
         url = (self.options.base_url + '/api/v1/search?' + urllib.parse.urlencode(query_params))
@@ -400,28 +426,28 @@ class Client:
         try:
             with self._transport(request, self.options.timeout_seconds) as response:
                 code = response.getcode()
-                if code in (401, 403): raise SearchUnauthorized()
+                if code in (401, 403): raise SearchUnauthorized(failed_check=here('HTTP_401_403'))
                 if code == 429 or code >= 500: raise _unavailable(getattr(response, 'headers', None))
-                if code != 200: raise SearchReview()
+                if code != 200: raise SearchReview(f'Prowlarr returned HTTP {code}', failed_check=here(f'HTTP_{code}'))
                 raw = response.read(MAX_RESPONSE + 1)
-                if type(raw) is not bytes or len(raw) > MAX_RESPONSE: raise SearchReview()
+                if type(raw) is not bytes or len(raw) > MAX_RESPONSE: raise SearchReview('Prowlarr response exceeded size limit.', failed_check=here('RESPONSE_TOO_LARGE'))
                 try: payload = _json(raw)
-                except ValueError: raise SearchReview() from None
+                except ValueError: raise SearchReview('Prowlarr returned malformed JSON.', failed_check=here('INVALID_JSON')) from None
         except urllib.error.HTTPError as exc:
             code, headers = exc.code, exc.headers
             exc.close()
-            if code in (401, 403): raise SearchUnauthorized() from None
+            if code in (401, 403): raise SearchUnauthorized(failed_check=here('HTTP_ERROR_401_403')) from None
             if code == 429 or code >= 500: raise _unavailable(headers) from None
-            raise SearchReview() from None
+            raise SearchReview(f'Prowlarr HTTP error {code}', failed_check=here(f'HTTP_{code}')) from None
         except TimeoutError:
-            raise SearchTimeout() from None
+            raise SearchTimeout(failed_check=here('TIMEOUT')) from None
         except urllib.error.URLError as exc:
-            if isinstance(exc.reason, TimeoutError): raise SearchTimeout() from None
-            raise SearchUnavailable() from None
+            if isinstance(exc.reason, TimeoutError): raise SearchTimeout(failed_check=here('URL_TIMEOUT')) from None
+            raise SearchUnavailable(failed_check=here('URL_ERROR')) from None
         except (OSError, http.client.HTTPException):
-            raise SearchUnavailable() from None
+            raise SearchUnavailable(failed_check=here('HTTP_EXCEPTION')) from None
         if type(payload) is not list or len(payload) > MAX_RELEASES:
-            raise SearchReview()
+            raise SearchReview('Prowlarr payload must be a list bounded by MAX_RELEASES.', failed_check=here('INVALID_PAYLOAD_STRUCTURE'))
         if self.logger is not None:
             self.logger.info('Prowlarr search answered: results=%s elapsed_seconds=%.3f',
                              len(payload), time.monotonic() - started)
@@ -436,6 +462,9 @@ class Client:
         english_title = getattr(catalog, 'english_title', None)
         queries = search_queries(catalog.titles, prepared, target, season=season,
                                  english_title=english_title, prefer_audio=self.policy.prefer_audio_tag)
+        if not queries:
+            raise SearchReview('No search queries could be built from anime titles.',
+                               failed_check=here('SEARCH_QUERIES_EMPTY'))
         found, seen = [], set()
         tried_set = {h.lower() for h in tried if h}
 
@@ -799,16 +828,65 @@ class Client:
 
     def search(self, anidb_id, episode, identity, *, tried=(), target_hash=None):
         """Ranked releases for one previously selected AniDB episode (candidate fallback)."""
-        if type(identity) is not VerifiedEpisode or type(episode) is not int or episode <= 0:
-            raise SearchReview()
+        if not isinstance(identity, VerifiedEpisode) or type(episode) is not int or episode <= 0:
+            raise SearchReview('Identity must be a VerifiedEpisode instance and episode must be a positive int.',
+                               failed_check=here('IDENTITY_INVALID'))
         self._current_anidb_id = anidb_id
         self._current_tvdb_series_id = identity.tvdb_series_id
+
+        # Saved search coordinates may be used without independently verifying
+        # a release. VERIFY_RELEASE remains mandatory before acquisition.
+        if isinstance(identity, EpisodeSearchContext):
+            if identity.anidb_id != anidb_id or identity.anidb_episode != episode:
+                raise SearchReview(
+                    f'Episode context ({identity.anidb_id} ep {identity.anidb_episode}) does not match requested ({anidb_id} ep {episode})',
+                    failed_check=here('EPISODE_CONTEXT_MISMATCH')
+                )
+            if identity.status != 'SEARCHABLE':
+                raise SearchReview(
+                    f'Episode context status is {identity.status}, expected SEARCHABLE',
+                    failed_check=here('EPISODE_NOT_SEARCHABLE')
+                )
+            if not identity.titles:
+                raise SearchReview(
+                    'Episode context has no anime titles for search queries',
+                    failed_check=here('SAVED_TITLES_EMPTY')
+                )
+            return SearchResult(
+                identity.tvdb_series_id, identity.tvdb_episode_id,
+                self._search(identity, identity.tvdb_season, identity,
+                             tried=tried, target_hash=target_hash)
+            )
+
+        # Legacy / unverified resolution path via provider catalog
         catalog = self.catalog(anidb_id, identity.tvdb_series_id)
+        if catalog is None:
+            raise SearchReview(
+                f'Failed to load catalog for anidb_id={anidb_id}, tvdb_series_id={identity.tvdb_series_id}',
+                failed_check=here('CATALOG_LOAD_FAILED')
+            )
         target = catalog.target(episode)
+        if target is None:
+            raise SearchReview(
+                f'Catalog has no target for episode {episode}',
+                failed_check=here('EPISODE_NOT_FOUND')
+            )
         # The same AniDB target as the initial search, still at its selected placement.
-        if (target.status != 'SEARCHABLE' or target.tvdb_episode_id != identity.tvdb_episode_id
-                or (target.tvdb_season, target.tvdb_episode) != (identity.tvdb_season, identity.tvdb_episode)):
-            raise SearchReview()
+        if target.status != 'SEARCHABLE':
+            raise SearchReview(
+                f'Episode {episode} target status is {target.status}, not SEARCHABLE',
+                failed_check=here('CATALOG_EPISODE_NOT_SEARCHABLE')
+            )
+        if target.tvdb_episode_id != identity.tvdb_episode_id:
+            raise SearchReview(
+                f'Episode {episode} TVDB ID mismatch: target={target.tvdb_episode_id}, identity={identity.tvdb_episode_id}',
+                failed_check=here('EPISODE_TVDB_ID_MISMATCH')
+            )
+        if (target.tvdb_season, target.tvdb_episode) != (identity.tvdb_season, identity.tvdb_episode):
+            raise SearchReview(
+                f'Episode {episode} placement mismatch: target=S{target.tvdb_season}E{target.tvdb_episode}, identity=S{identity.tvdb_season}E{identity.tvdb_episode}',
+                failed_check=here('EPISODE_PLACEMENT_CONFLICT')
+            )
         return SearchResult(identity.tvdb_series_id, identity.tvdb_episode_id,
                             self._search(catalog, target.tvdb_season, target, tried=tried, target_hash=target_hash))
 

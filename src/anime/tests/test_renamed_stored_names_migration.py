@@ -1,11 +1,11 @@
-"""Offline v62 -> v63: Sonarr-era and "trial" tables, column, job kinds and event source renamed."""
+"""Offline v63 -> v64: Sonarr-era and "trial" tables, column, job kinds and event source renamed."""
 import sqlite3
 import unittest
 
 from src.anime.storage.migrations import SQL_DIR, SCRIPTS, _structure
 from src.anime.storage.sqlite import initialize
 
-SCRIPT_63 = (SQL_DIR / '063_renamed_stored_names.sql').read_text()
+SCRIPT_63 = (SQL_DIR / '064_renamed_stored_names.sql').read_text()
 TABLES = {
     'sonarr_backfill_results': 'episode_discovery_results',
     'sonarr_episode_candidates': 'episode_release_candidates',
@@ -27,7 +27,7 @@ class RenamedStoredNamesMigrationTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
-        for name in SCRIPTS[:62]:
+        for name in SCRIPTS[:63]:
             self.db.executescript((SQL_DIR / name).read_text())
         self.db.executescript("""
             INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES
@@ -48,7 +48,7 @@ class RenamedStoredNamesMigrationTests(unittest.TestCase):
 
     def test_tables_column_and_indexes_have_their_new_names(self):
         self.migrate()
-        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 63)
+        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 64)
         names = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','index')")}
         for old, new in TABLES.items():
             with self.subTest(table=old):
@@ -87,16 +87,16 @@ class RenamedStoredNamesMigrationTests(unittest.TestCase):
                 self.assertEqual(self.db.execute('SELECT count(*) FROM jobs WHERE kind=?', (old,)).fetchone(), (0,))
 
     def test_guard_rolls_back_if_version_is_not_62(self):
-        self.db.execute('PRAGMA user_version=61')
+        self.db.execute('PRAGMA user_version=62')
         with self.assertRaises(sqlite3.IntegrityError):
             self.migrate()
-        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 61)
+        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 62)
         self.assertIsNotNone(self.db.execute("SELECT 1 FROM sqlite_master WHERE name='trial_plans'").fetchone())
         self.assertEqual(self.db.execute("SELECT kind FROM jobs WHERE job_id=2").fetchone(), ('EVALUATE_TRIAL',))
 
     def test_fresh_schema_matches_sequential_upgrade(self):
         self.migrate()
-        for name in SCRIPTS[63:]:  # Later versions build on v63.
+        for name in SCRIPTS[64:]:  # Later versions build on v64.
             self.db.executescript((SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         try:

@@ -54,12 +54,13 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'identity_candidate_evidence',  # v59 adds durable candidate evidence
             'batch_candidate_scopes',  # v60 adds batch candidate operations
             'batch_candidate_stops',  # v61 records why each candidate stopped
-            'service_status',  # v62 adds the last known status of each external service
-            'user_evaluation_plans',  # v63 renames tables; a failed v63 leaves no new name behind
-            'user_evaluation_checks_v64',  # v64 rebuilds tables whose checks name codes
-            None,  # v65 rewrites retired service codes
-            'resources',  # v66 records every file, folder and torrent a job creates
-            None)  # v67 rewrites stored src/anime paths to src/anime
+            'manual_release_archive',  # v62 (NextGen) archives replaced manual release submissions
+            'service_status',  # v63 adds the last known status of each external service
+            'user_evaluation_plans',  # v64 renames tables; a failed v64 leaves no new name behind
+            'user_evaluation_checks_v64',  # v65 rebuilds tables whose checks name codes
+            None,  # v66 rewrites retired service codes
+            'resources',  # v67 records every file, folder and torrent a job creates
+            None)  # v68 rewrites stored src/nextgen paths to src/anime; rename_package: keep
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

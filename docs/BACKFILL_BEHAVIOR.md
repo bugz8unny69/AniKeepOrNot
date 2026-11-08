@@ -11,9 +11,9 @@ episode numbers of the verified anime; TVDB seasons never reset the window.
 
 The searched window is the union of:
 
-- backfill (`trial.backfill_count` = N): episodes 1 through N while the incoming
+- backfill (`user_evaluation.backfill_count` = N): episodes 1 through N while the incoming
   episode is within the first N, otherwise the N episodes just before it;
-- continue: the incoming episode and the following ones (`trial.following_count`
+- continue: the incoming episode and the following ones (`user_evaluation.following_count`
   includes the incoming episode).
 
 Overlaps count once. The incoming episode itself is never searched: its own
@@ -32,8 +32,16 @@ skipped too. A canceled episode releases its reservation and is searched again.
 
 There is one frozen plan per AniDB anime; it keeps its captured counts and
 anchor, and later deliveries in any TVDB season reuse it. The window is searched in
-pages of four episodes; each page is one `DISCOVER_SONARR_BACKFILL` job (the
+pages of four episodes; each page is one `DISCOVER_EPISODE_RELEASES` job (the
 historical job and table names are kept so existing jobs and history stay valid).
+
+For an unstaged failed anchor, exhausted `CANDIDATES`, and manual submissions
+that are no longer making progress, use the episode-scoped recovery workflow:
+[Episode reservation recovery](EPISODE_RESERVATION_RECOVERY.md). Search again
+with **Delete cache** does not delete historical reservation rows. It cancels
+owners, waits for owned cleanup to mark reservations RELEASED, archives manual
+candidate registrations, then re-searches. Explicit **Retry acquisition**
+re-verifies a size-rejected source against current configurable limits.
 
 ## How an episode is searched
 
@@ -64,7 +72,7 @@ historical job and table names are kept so existing jobs and history stay valid)
    an already-failed hash proceeds to subsequent queries. In fallback mode,
    searching stops early once the target candidate hash is located; for initial
    searches, queries execute deterministically to populate the candidate
-   fallback set in `sonarr_episode_candidates`.
+   fallback set in `episode_release_candidates`.
 3. Each result title is parsed the way release groups write it
    (`acquisition/release_titles.py`): `[Group] Title - 05 (1080p)`,
    `Title 2nd Season - 05`, `Title S2 - 05`, `Title II - 05`, `Title - S02E05`,
@@ -142,10 +150,10 @@ A slow or busy Prowlarr is retried, not reported straight away:
 2. If all three tries fail, nothing from that page is published and the job
    runs again once, 30 minutes later.
 3. If that also fails, it stops as BLOCKED with Retry available:
-   `PROWLARR_SEARCH_TIMEOUT` or `PROWLARR_UNAVAILABLE`. A manual Retry gets
+   `RELEASE_SEARCH_TIMEOUT` or `SERVICE_UNAVAILABLE`. A manual Retry gets
    the same allowance again.
 
-`PROWLARR_AUTH_FAILED`, `PROWLARR_CONFIGURATION_INVALID` and unreadable
+`SERVICE_SETUP_INVALID`, `SERVICE_SETUP_INVALID` and unreadable
 responses are never retried automatically: fix Settings, then Retry.
 
 Not-aired episodes are reported, not polled. Continue still admits later

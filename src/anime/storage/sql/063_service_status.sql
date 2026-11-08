@@ -1,8 +1,8 @@
--- v61 -> v62: last known status of each external service, written by the
+-- v62 -> v63: last known status of each external service, written by the
 -- worker and read by the API (the dashboard status bar and the Keep check).
 BEGIN IMMEDIATE;
-CREATE TEMP TABLE nextgen_v62_guard(ok INTEGER CHECK(ok=1));
-INSERT OR ROLLBACK INTO nextgen_v62_guard SELECT user_version=61 FROM pragma_user_version;
+CREATE TEMP TABLE nextgen_v63_guard(ok INTEGER CHECK(ok=1));
+INSERT OR ROLLBACK INTO nextgen_v63_guard SELECT user_version=62 FROM pragma_user_version;
 CREATE TABLE service_status (
  service TEXT PRIMARY KEY CHECK(length(service) BETWEEN 1 AND 64),
  label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 64),
@@ -12,6 +12,6 @@ CREATE TABLE service_status (
  checked_at_ms INTEGER NOT NULL CHECK(checked_at_ms >= 0),
  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0)
 );
-DROP TABLE nextgen_v62_guard;
-PRAGMA user_version=62;
+DROP TABLE nextgen_v63_guard;
+PRAGMA user_version=63;
 COMMIT;

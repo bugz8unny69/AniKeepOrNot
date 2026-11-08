@@ -124,12 +124,12 @@ class ResourcesMigrationTests(unittest.TestCase):
         from src.anime.storage.migrations import SCRIPTS, SQL_DIR
         db = sqlite3.connect(':memory:')
         self.addCleanup(db.close)
-        for name in SCRIPTS[:65]:
+        for name in SCRIPTS[:66]:
             db.executescript((SQL_DIR / name).read_text())
-        script = (SQL_DIR / '066_resources.sql').read_text()
+        script = (SQL_DIR / '067_resources.sql').read_text()
         db.executescript(script)
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 66)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 67)
         self.assertEqual(db.execute('SELECT count(*) FROM resources').fetchone()[0], 0)
         with self.assertRaises(sqlite3.DatabaseError):
-            db.executescript(script)                      # already v66: the guard rolls back
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 66)
+            db.executescript(script)                      # already v67: the guard rolls back
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 67)

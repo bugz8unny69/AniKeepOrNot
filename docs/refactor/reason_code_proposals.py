@@ -259,10 +259,10 @@ REASONS = {
         'Someone canceled this work before it finished.',
         'This work was canceled.',
         'Nothing to do. Check the cleanup status if a download was in progress.'),
-    'CANCELLATION_DRAINING': ('CANCELLATION_DRAINING',
-        'The cancellation is saved; cleanup starts once the work that is running now has stopped.',
-        'Waiting for running work to stop before cleanup.',
-        'Nothing to do.'),
+    'CANCELLATION_DRAINING': ('CANCELLATION_DRAINING',  # NextGen #301: waits for the operation's lock
+        'The cancellation is saved; cleanup waits until the canceled work releases its lock.',
+        'Waiting for the canceled work to release its lock.',
+        'Nothing to do. If none of its jobs is running and this does not clear, restart the worker to release its locks. If cleanup then stops for review, check the failed check shown and press Retry.'),
     'CANCELLATION_PENDING': ('CANCELLATION_PENDING',
         'Cleanup is not finished: stopping or removing the torrent has not been confirmed yet. It is retried after checking the torrent still belongs to this work.',
         'Cancellation cleanup is waiting for confirmation.',
@@ -610,6 +610,7 @@ EVENTS = {
     'KEEP_COMPLETED': ('KEEP_COMPLETED', 'Episode kept in the library.'),
     'MANAGEMENT_ACTION_RESUMED': ('MANAGEMENT_ACTION_RESUMED', 'The action was submitted again after review.'),
     'SERIES_REJECTED': ('SERIES_REJECTED', 'Anime rejected; no more episodes are downloaded.'),
+    'EPISODE_SEARCH_RESET': ('EPISODE_SEARCH_RESET', 'Failed episode attempts were cleaned up; searching again.'),  # NextGen #299
     'API_SESSION_CREATED': ('API_SESSION_CREATED', 'Signed in to the dashboard.'),
     'API_SESSION_CLOSED': ('API_SESSION_CLOSED', 'Signed out of the dashboard.'),
     'API_CREDENTIALS_UPDATED': ('API_CREDENTIALS_UPDATED', 'Service credentials were updated.'),
@@ -666,6 +667,10 @@ EVENTS = {
 
 # Codes this refactor adds. (severity, retryable, description, message, action)
 NEW = {
+    'EPISODE_CONTEXT_CONFLICT': ('WARNING', False,  # NextGen #290
+        'The saved selection, the recognized episode and the verified release disagree on where this episode is in TVDB.',
+        'The saved episode details disagree.',
+        'Check the details shown. A new search cannot override saved details that disagree; correct the wrong one, then press Retry.'),
     'SERVICE_RESPONSE_INVALID': ('WARNING', None,
         'A service sent back a response that could not be read or did not make sense. The details name the service.',
         'A service sent a response that could not be used.',

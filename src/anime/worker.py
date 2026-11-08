@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 import inspect
 import threading
+import time
 import uuid
 
 from src.anime.async_io import blocking
@@ -92,6 +93,7 @@ class Worker:
         self._close_task = None
         self._running = False
         self._closed = False
+        self._last_cleanup_review_scan = None
         self._control_pool = ThreadPoolExecutor(max_workers=4,thread_name_prefix="nextgen-control")
 
     async def _io(self, callable_, *args, **kwargs):
@@ -501,6 +503,15 @@ class Worker:
                     log_history(self.logger,record)
                 for record in await self._io(reconcile_unreserved_waiters,self.queue.database):
                     log_history(self.logger,record)
+                # Old builds incorrectly parked transient cleanup waits in
+                # NEEDS_REVIEW. Recover them only when the target gate can be
+                # obtained exclusively; never infer resource removal.
+                if (self._last_cleanup_review_scan is None or
+                        time.monotonic()-self._last_cleanup_review_scan >= 30):
+                    from src.anime.storage.cleanup_recovery import recover_timeout_reviews
+                    for record in await self._io(recover_timeout_reviews,self.queue.database):
+                        log_history(self.logger,record)
+                    self._last_cleanup_review_scan=time.monotonic()
         except (MaintenanceBusy, MaintenancePending):
             return
 

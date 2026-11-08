@@ -40,8 +40,18 @@ new files under `src/anime/`, but the lines NextGen adds still say
 `src.nextgen`. After every sync merge, before running the tests: <!-- rename_package: keep -->
 
     python -I docs/refactor/rename_package.py
+    python -I docs/refactor/sync_renames.py
 
-It is safe to run again. The ledger rule `PKG` fails until it has run.
+Both are safe to run again. `rename_package.py` fixes the package name;
+`sync_renames.py` re-applies RF-005/RF-006 (code names, stored names, codes,
+settings keys, moved names) to just the files NextGen changed, and skips
+migration tests, which build old schemas with the old names on purpose. The
+ledger rule `PKG` and the ledger/audit tests list anything left to decide by hand.
+
+Migrations: NextGen's new migration files keep their numbers (production
+databases are at NextGen's versions); refactor's own migrations are renumbered
+after them, with their `vN -> vN+1` header, guard table and `user_version`
+checks. Tests that build a database with `SCRIPTS[:N]` shift with them.
 
 ## When it fails after a sync
 

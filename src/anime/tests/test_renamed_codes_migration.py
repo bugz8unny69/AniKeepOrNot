@@ -1,4 +1,4 @@
-"""Offline v63 -> v64: renamed and removed reason and event codes, history and JSON included."""
+"""Offline v64 -> v65: renamed and removed reason and event codes, history and JSON included."""
 import json
 import runpy
 import sqlite3
@@ -8,7 +8,7 @@ from pathlib import Path
 from src.anime.storage.migrations import SQL_DIR, SCRIPTS, _structure
 from src.anime.storage.sqlite import initialize
 
-SCRIPT_64 = (SQL_DIR / '064_renamed_codes.sql').read_text()
+SCRIPT_64 = (SQL_DIR / '065_renamed_codes.sql').read_text()
 AUDIT = runpy.run_path(str(Path(__file__).resolve().parents[3] / 'docs' / 'refactor' / 'reason_code_proposals.py'))
 
 
@@ -16,7 +16,7 @@ class RenamedCodesMigrationTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
-        for name in SCRIPTS[:63]:
+        for name in SCRIPTS[:64]:
             self.db.executescript((SQL_DIR / name).read_text())
         self.db.executescript("""
             INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms,last_reason_code)
@@ -36,7 +36,7 @@ class RenamedCodesMigrationTests(unittest.TestCase):
 
     def test_codes_in_columns_and_history_are_rewritten(self):
         self.migrate()
-        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 64)
+        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 65)
         self.assertEqual(self.db.execute('SELECT job_id,last_reason_code FROM jobs ORDER BY job_id').fetchall(),
                          [(1, 'EPISODE_DISCOVERY_OUTDATED'), (2, 'RELEASE_SEARCH_TIMEOUT'), (3, 'IDENTITY_CONFLICT')])
         self.assertEqual(self.db.execute('SELECT event_code,reason_code FROM job_history ORDER BY history_id').fetchall(),
@@ -82,17 +82,17 @@ class RenamedCodesMigrationTests(unittest.TestCase):
                         self.assertEqual(hits, 0)
 
     def test_guard_rolls_back_if_version_is_not_63(self):
-        self.db.execute('PRAGMA user_version=62')
+        self.db.execute('PRAGMA user_version=63')
         with self.assertRaises(sqlite3.IntegrityError):
             self.migrate()
         self.db.execute('PRAGMA foreign_keys=ON')
-        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 62)
+        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 63)
         self.assertEqual(self.db.execute('SELECT last_reason_code FROM jobs WHERE job_id=2').fetchone(),
                          ('PROWLARR_SEARCH_TIMEOUT',))
 
     def test_fresh_schema_matches_sequential_upgrade(self):
         self.migrate()
-        for name in SCRIPTS[64:]:  # Later versions build on v64.
+        for name in SCRIPTS[65:]:  # Later versions build on v65.
             self.db.executescript((SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         try:
