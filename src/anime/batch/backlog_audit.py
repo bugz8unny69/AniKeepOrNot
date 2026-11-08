@@ -29,6 +29,7 @@ from src.anime.storage.batch_candidates import (
     _metadata_evidence, activate_candidate, release_facts, add_candidate, get_active_candidate, get_candidate,
     get_candidate_pool, get_or_create_scope, rank_candidates, reorder_candidates,
 )
+from src.anime.config_location import default_config_dir
 
 BATCH_KINDS = ('VERIFY_RELEASE', 'EVALUATE_BATCH', 'RESERVE_BATCH', 'SUBMIT_BATCH', 'TRANSFER_BATCH',
                'VERIFY_BATCH_PROBE', 'UNLOCK_BATCH', 'VERIFY_BATCH_EPISODE', 'STAGE_BATCH_EPISODE')
@@ -330,7 +331,7 @@ def main(argv=None, *, qb_client_factory=None):
                                 description='Batch backlog audit and consolidation. Without --apply this is '
                                             'a read-only preview (WI-08, WI-16).')
     p.add_argument('--apply', action='store_true', help='Plan again and apply it in one transaction')
-    p.add_argument('--config-dir', default=os.environ.get('NEXTGEN_CONFIG_DIR', '/etc/anime-discovery'))
+    p.add_argument('--config-dir', default=os.environ.get('NEXTGEN_CONFIG_DIR') or default_config_dir())
     p.add_argument('--json', action='store_true', help='Print JSON')
     args = p.parse_args(argv)
     args.action = 'apply' if args.apply else 'preview'

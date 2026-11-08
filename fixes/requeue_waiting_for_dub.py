@@ -27,6 +27,7 @@ from src.anime.acquisition.audio import wants_english  # noqa: E402
 from src.anime.configuration_schema import FIELDS  # noqa: E402
 from src.anime.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
 from src.anime.storage.episode_discovery import audio_exhausted  # noqa: E402
+from src.anime.config_location import default_config_dir
 
 REASON = 'RELEASE_CANDIDATES_EXHAUSTED'
 ROWS = """
@@ -76,7 +77,7 @@ def execute(path, audio, apply=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config-dir', type=Path, default=Path('/etc/anime-discovery'))
+    parser.add_argument('--config-dir', type=Path, default=Path(default_config_dir()))
     parser.add_argument('--database', type=Path, help='Override settings.json database path')
     parser.add_argument('--apply', action='store_true', help='Back up the DB, then retry the jobs')
     args = parser.parse_args(argv)

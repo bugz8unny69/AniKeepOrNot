@@ -17,6 +17,7 @@ import tempfile
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from src.anime.configuration_schema import ConfigurationSnapshot, decode, encode
 from src.anime.secrets import _value, _download_values, _access_values
+from src.anime.config_location import default_config_dir
 
 MAPPINGS={
     'daemon.concurrency':'worker.concurrency','web.port':'api.port',
@@ -202,7 +203,7 @@ def replace_private(path,raw,uid,gid):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description='One-time in-place settings compatibility fix. Stop the old service before running.')
-    parser.add_argument('--config-dir',type=Path,default=Path('/etc/anime-discovery'))
+    parser.add_argument('--config-dir',type=Path,default=Path(default_config_dir()))
     args=parser.parse_args(argv)
     try:
         result=fix_in_place(args.config_dir)

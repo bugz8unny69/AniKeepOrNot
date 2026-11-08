@@ -21,6 +21,7 @@ from src.anime.storage.review_retry import (
     RetryNotAllowed,
     RetryStale,
 )
+from src.anime.config_location import default_config_dir
 
 CATALOG = MessageCatalog()
 
@@ -381,7 +382,7 @@ def parser():
         prog='adm recover',
         description='Historical stopped jobs recovery, diagnostic classification, and safe retry tooling'
     )
-    p.add_argument('--config-dir', default='/etc/anime-discovery', help='Path to anime-discovery configuration directory')
+    p.add_argument('--config-dir', default=default_config_dir(), help='Path to anime-discovery configuration directory')
     p.add_argument('--json', action='store_true', help='Output results as structured JSON')
 
     sub = p.add_subparsers(dest='action', required=False)

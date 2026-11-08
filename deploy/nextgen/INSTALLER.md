@@ -75,6 +75,7 @@ Branches can carry different database migrations and settings versions, so a bra
 | The branch you installed first | the configuration folder you installed with (`/etc/anime-discovery`) | the database in its settings |
 | Any other branch | `/etc/anime-discovery/branches/<branch>/` | `/var/lib/anime-discovery/anime-discovery-<branch>.sqlite` |
 
+
 `<branch>` is the branch name with `/` replaced by `-`. The installer records which folder belongs to which branch in `/var/lib/anime-discovery/installer/installer.json`.
 
 - **The first switch to a branch** sets up its folder:
@@ -89,6 +90,15 @@ Branches can carry different database migrations and settings versions, so a bra
 - **Switching back** to a branch you used before reuses its own folder and database exactly as you left them, so changes made on one branch never reach the other. That includes settings and passwords.
 - **`--rollback`** to a release of another branch uses that branch's folder too.
 - **A failed first switch** removes the new branch's folder and database again, and the current branch is untouched. Leftovers from an interrupted switch are never reused: the installer refuses until you move them away.
+
+
+### Which settings folder `adm` uses
+
+`adm` (report, recover, services check) and the `fixes/` scripts use the
+settings folder of the branch that is **running**: the `--config-dir` of the
+installed worker unit (for example `/etc/anime-discovery/branches/refactor`).
+`ANIME_DISCOVERY_CONFIG_DIR` overrides it, and an explicit `--config-dir` always
+wins. Without an installed unit they use `/etc/anime-discovery`.
 
 ### When a database can be copied
 

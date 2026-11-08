@@ -14,6 +14,7 @@ import sys
 from src.anime.services.base import DISABLED, UNKNOWN, UP
 from src.anime.services.health import ServiceHealth
 from src.anime.services.registry import default_registry
+from src.anime.config_location import default_config_dir
 
 _SHOW = {UP: 'OK', DISABLED: 'off', UNKNOWN: 'unknown'}
 
@@ -44,7 +45,7 @@ def _table(states, registry):
 def main(argv=None, *, out=print, registry=None):
     parser = argparse.ArgumentParser(prog='adm services',
                                      description='Check the external services Anime Discovery depends on.')
-    parser.add_argument('--config-dir', default='/etc/anime-discovery')
+    parser.add_argument('--config-dir', default=default_config_dir())
     sub = parser.add_subparsers(dest='action', required=True)
     run = sub.add_parser('check', help='Check each service once and print its status')
     run.add_argument('--service', action='append', metavar='NAME',

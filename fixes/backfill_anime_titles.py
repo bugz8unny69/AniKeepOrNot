@@ -25,6 +25,7 @@ from src.anime.providers.errors import (
 from src.anime.providers.http import Clients, Options
 from src.anime.storage.job_queue import JobQueue
 from src.anime.storage.sqlite import transaction, upsert_anime_titles
+from src.anime.config_location import default_config_dir
 
 
 IDENTIFIED_ANIME = """
@@ -70,7 +71,7 @@ def lookup(client, aid):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-dir", default="/etc/anime-discovery",
+    parser.add_argument("--config-dir", default=default_config_dir(),
                         help="Directory containing the NextGen settings.json")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview only (default)")

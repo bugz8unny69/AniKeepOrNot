@@ -392,6 +392,15 @@
         "docs/refactor/sync_renames.py"
       ],
       "why": "The package is src/anime on refactor (owner decision, 2026-11-08). After a NextGen sync, run python -I docs/refactor/rename_package.py."
+    },
+    {
+      "id": "BRANCH-CONFIG",
+      "rule": "only_in",
+      "pattern": "default\\s*=\\s*(?:Path\\()?['\"]/etc/anime-discovery['\"]",
+      "files": [
+        "src/anime/config_location.py"
+      ],
+      "why": "Each branch has its own settings folder; tools default to the running branch's: use config_location.default_config_dir()."
     }
   ]
 }

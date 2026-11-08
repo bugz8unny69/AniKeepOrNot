@@ -25,6 +25,7 @@ from fixes.cleanup_legacy_not_listed import backup, configured_database, open_da
 
 # The release's own schema version: the fix ships with, and is run from, that release.
 from src.anime.storage.migrations import LATEST_VERSION as SCHEMA_VERSION  # noqa: E402
+from src.anime.config_location import default_config_dir
 KIND = 'CLEANUP_DECIDED_DOWNLOAD'
 
 ROWS = """
@@ -81,7 +82,7 @@ def execute(path, apply=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config-dir', type=Path, default=Path('/etc/anime-discovery'))
+    parser.add_argument('--config-dir', type=Path, default=Path(default_config_dir()))
     parser.add_argument('--database', type=Path, help='Override settings.json database path')
     parser.add_argument('--apply', action='store_true', help='Back up the DB, then queue the cleanups')
     args = parser.parse_args(argv)
