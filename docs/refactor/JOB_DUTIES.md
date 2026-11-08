@@ -40,7 +40,31 @@ rediscover the cleanup jobs it had launched.
 
 ## How it works
 
-### 1. Intake identifies, then accepts or rejects
+### 1. The API stops known rejections before any job
+
+The webhook is received by the **API process**. Before it creates anything,
+it checks the release name against **local memory only**: the recognized
+release names (`recognized_for_release`, seeded by earlier verified
+releases) and your rejections (`anime_review_decisions`). It makes no AniDB,
+TVDB or Prowlarr call, so the webhook stays fast.
+
+| API check | What happens |
+|---|---|
+| Name recognized as a series you rejected | Release recorded as **rejected** (`ANIME_REJECTED`) in its History. The rejected series' count goes up. **No job is created.** Response: `200 {"rejected": true, "reason_code": "ANIME_REJECTED"}` |
+| Name not recognized, or a series not rejected | Accepted as today and handed to intake (`202`) |
+
+* A series you rejected was identified and verified before you rejected it,
+  so its release names are normally already recognized. The API stops it on
+  the very first re-send.
+* A re-send under a name the API doesn't recognize (a new group or a
+  different title) goes to intake. Intake identifies it and rejects it, still
+  with no job and no review.
+* The response is a `200` with `rejected: true`, not an error, so autobrr
+  doesn't log the webhook as a failure. If autobrr is set up to call the webhook as
+  an external filter, autobrr can then skip the download on its side too
+  (to confirm with the owner's autobrr setup).
+
+### 1b. Intake identifies, then accepts or rejects
 
 Identification happens **at intake, before any job exists**. Intake decides
 on the spot:
@@ -149,6 +173,7 @@ or torrent at once (today's reservations, with one clear owner).
 |---|---|
 | handlers in `jobs/` | each becomes an **activity function** (same code), callable from the job's lifecycle |
 | new `duties.py` | each duty's ordered activities, plus the worker's duty decision |
+| API `/webhook` (`api/app.py`) | local check (recognized names and rejections) before `accept_event_and_job`; a rejected series gets no job |
 | intake (`storage/series_intake.py`, identify step) | identifies before any job; identity failures become rejections; outages wait |
 | `worker.py` | creates the job, assigns the duty, runs activities, saves progress after each one |
 | successor enqueue in handlers | replaced by "next activity"; no new jobs |
@@ -158,11 +183,13 @@ or torrent at once (today's reservations, with one clear owner).
 
 ## Phases (each a PR, tests local only)
 
-0. **JD-0 Intake rejects.** Identification at intake; identity failures
+0. **JD-0 Reject before any job.** The API stops recognized rejected series
+   at the webhook, with no job and no provider call. Intake identifies the rest; identity failures
    become rejections and never go to review; outages wait; re-sends of a
    rejected series are rejected without a job. Test: each row of the intake
    table above, and the same rejected series sent five times (no job, one
-   series entry, count 5).
+   series entry, count 5). Also: a webhook for a recognized rejected
+   series creates no `jobs` row and makes no provider call.
 1. **JD-1 Activities.** Each handler's work becomes an activity function, called by
    today's job wrappers. No behaviour change yet.
 2. **JD-2 Episode duty.** The worker assigns `EPISODE`, and one job runs every
