@@ -287,6 +287,11 @@ def package(release):
     return 'src.anime'
 
 
+def package_dir(release):
+    """The release's package folder: src/anime, or the older "nextgen" folder on a NextGen release."""
+    return Path('src')/package(release).split('.',1)[1]
+
+
 def service_call(release,options,command,payload,execute=run):
     result=execute(['runuser','-u',options['user'],'--',release/'.venv/bin/python','-m',package(release)+'.install_support',command,
         '--config-dir',options['config_dir']],cwd=release,input=json.dumps(payload))
@@ -385,7 +390,8 @@ def apply(options,args,execute=run):
         os.rename(incoming,release)
         atomic_file(release/RELEASE_INFO,(json.dumps({'revision':revision,'ref':options['ref'],
             'installed_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},sort_keys=True)+'\n').encode(),0o644)
-        for required in ('src/anime/__main__.py','src/anime/install_support.py','bin/anime-discovery-install','bin/adm'):
+        pkg=package_dir(release)
+        for required in (pkg/'__main__.py',pkg/'install_support.py','bin/anime-discovery-install','bin/adm'):
             if not (release/required).is_file():raise ValueError('Selected source does not contain the Anime Discovery installer.')
         execute([options['python'],'-m','venv',str(release/'.venv')])
         execute([str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
@@ -405,13 +411,15 @@ def apply(options,args,execute=run):
         if new_branch:
             source_release=Path(previous) if previous else None
             if source_release is not None and not source_release.is_absolute():source_release=root/source_release
-            if source_release is None or not (source_release/'src/anime/storage/sql').is_dir():
+            # The current release may be another branch's: a NextGen release ships the older "nextgen" package.
+            source_sql=None if source_release is None else source_release/package_dir(source_release)/'storage/sql'
+            if source_sql is None or not source_sql.is_dir():
                 raise ValueError('The current release is not installed, so its data cannot be checked.')
             print(f"Setting up branch {options['ref']}: its own settings"
                   +(' and a copy of the current database...' if args.copy_db_data else ' and a new database...'),flush=True)
             branch_result=service_call(release,options,'branch-setup',{
                 'source_config_dir':options['switch_from']['config_dir'],'database':options['database'],
-                'source_sql_dir':str(source_release/'src/anime/storage/sql'),
+                'source_sql_dir':str(source_sql),
                 'copy_data':bool(args.copy_db_data)},execute)
         settings={} if args.settings_file is None else private_json(args.settings_file)
         access={}
