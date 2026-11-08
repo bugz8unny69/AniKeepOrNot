@@ -78,7 +78,9 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
         try:
             with transaction(db):db.execute("UPDATE magnet_intents SET state='REVIEW'")
             # Undo v63 (renamed tables) so the hand-built older shapes below use their own names.
-            db.execute('PRAGMA user_version=63')  # v64 and v65 changed only codes, none used below
+            # Undo v66 (resources), then v63; v64 and v65 changed only codes, none used below.
+            db.executescript('DROP TABLE resource_operations; DROP TABLE resources;')
+            db.execute('PRAGMA user_version=63')
             db.executescript(UNDO_V63)
             # Undo v56 (AniDB-keyed trial tables) so the v46 shape below is exact.
             reference=sqlite3.connect(':memory:')
@@ -138,6 +140,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'063_renamed_stored_names.sql').read_text())
             db.executescript((SQL_DIR/'064_renamed_codes.sql').read_text())
             db.executescript((SQL_DIR/'065_retired_service_codes.sql').read_text())
+            db.executescript((SQL_DIR / '066_resources.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

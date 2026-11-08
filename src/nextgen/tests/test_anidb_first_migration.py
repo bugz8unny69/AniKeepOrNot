@@ -58,6 +58,7 @@ class AniDBFirstMigrationTests(unittest.TestCase):
         self.db.executescript((SQL_DIR / '063_renamed_stored_names.sql').read_text())
         self.db.executescript((SQL_DIR / '064_renamed_codes.sql').read_text())
         self.db.executescript((SQL_DIR / '065_retired_service_codes.sql').read_text())
+        self.db.executescript((SQL_DIR / '066_resources.sql').read_text())
         return self.db
 
     def test_runner_applies_the_step_with_validation(self):

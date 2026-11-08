@@ -190,6 +190,13 @@ def report(db, job_id, out=print):
         out('\n(No failed check was recorded; this stop happened before check recording existed. '
             'Resume it once with Retry to record which check fails.)')
 
+    # What was done to each file and torrent of this work (JD-1c resources).
+    if 'resources' in have:
+        from src.nextgen.resources import report as resource_report
+        lines = resource_report(db, sorted({job_id, focus, *members}))
+        out(f'\n=== Files and torrents ({len(lines)})')
+        for text in lines: out('  ' + text)
+
     # Every recorded record and path for the work, with on-disk existence.
     out('\n=== Records and paths')
     paths = list(dict.fromkeys(failed_paths))

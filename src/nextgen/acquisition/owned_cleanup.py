@@ -43,6 +43,10 @@ class OwnedCleanup:
                 changed=db.execute('UPDATE cancellation_cleanup SET phase=?,files_json=?,updated_at_ms=? WHERE plan_id=? AND phase=?',
                     (phase,raw,now,intent.plan.plan_id,prior)).rowcount
             if changed!=1:raise CancellationError()
+            if phase=='COMPLETE':
+                # Resources (JD-1c): the torrent was removed with its data.
+                from src.nextgen.resources import Resources
+                Resources(db,intent.plan.preparation_job_id,now).deleted_torrent(intent.plan.manifest.info_hash)
             receipt=append_job_history(db,job_id=intent.plan.preparation_job_id,event_code=self.cleanup_event,
                 reason_code=self.complete_reason if phase=='COMPLETE' else self.pending_reason,
                 component=self.component,occurred_at_ms=now,details={'attempt':job_attempt(db,intent.plan.preparation_job_id)})

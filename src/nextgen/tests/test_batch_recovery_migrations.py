@@ -57,7 +57,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'service_status',  # v62 adds the last known status of each external service
             'user_evaluation_plans',  # v63 renames tables; a failed v63 leaves no new name behind
             'user_evaluation_checks_v64',  # v64 rebuilds tables whose checks name codes
-            None)  # v65 rewrites retired service codes
+            None,  # v65 rewrites retired service codes
+            'resources')  # v66 records every file, folder and torrent a job creates
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):
