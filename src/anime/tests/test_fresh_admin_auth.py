@@ -33,7 +33,7 @@ class FreshAdministrationTests(unittest.TestCase):
 
     def test_fresh_schema_has_no_management_token(self):
         record = json.loads((Path(self.directory.name) / "secrets.json").read_text())
-        self.assertEqual(record["schema_version"], 8)
+        self.assertEqual(record["schema_version"], 9)
         self.assertNotIn("management_token", record["credentials"])
         self.assertTrue(self.secrets.status().webhook_configured)
         self.assertFalse(self.secrets.status().management_configured)

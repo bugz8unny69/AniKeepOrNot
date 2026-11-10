@@ -65,18 +65,18 @@ class ShokoTests(unittest.TestCase):
             document=CONVERSIONS[version](document)
             self.assertNotIn('shoko',document['settings'])
         upgraded=convert_document(document)
-        self.assertEqual((upgraded.schema_version,upgraded.revision),(16,16))
+        self.assertEqual((upgraded.schema_version,upgraded.revision),(17,17))
         self.assertEqual(upgraded.value('shoko.base_url'),'')
         with self.assertRaises(ConfigurationError):convert_document({**document,'settings':{**document['settings'],'shoko':{}}})
         with tempfile.TemporaryDirectory() as directory:
             store=SecretStore(directory);store.initialize('tvdb',sonarr_api_key='sonarr',jellyfin_api_key='jellyfin')
-            self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],8)
+            self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],9)
             status=store.update_shoko_api_key('private-shoko',expected_revision=1).status
             self.assertTrue(status.shoko_configured);self.assertNotIn('private-shoko',repr(status))
             store.update_tvdb_api_key('replacement',expected_revision=2)
             self.assertEqual(store.shoko_api_key(),'private-shoko');self.assertEqual(store.sonarr_api_key(),'sonarr')
             self.assertEqual(store.jellyfin_api_key(),'jellyfin')
-            self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],8)
+            self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],9)
 
 
 class ShokoJobTests(unittest.IsolatedAsyncioTestCase):

@@ -766,3 +766,9 @@ REMOVED = {
 # Internal exception labels that are not registered or stored; rename only.
 # (SONARR_SELECTION_CONFLICT was here; #283 registered it, so it is in REASONS.)
 UNREGISTERED = {}
+
+# Transcoding work items T2/T3.
+NEW.update({
+    'TRANSCODE_WAITING': ('INFO', None, 'All allowed transcoders are busy, offline or out of temporary space.', 'Waiting for transcoder', 'Nothing to do. The worker tries again later.'),
+    'TRANSCODE_FAILED': ('WARNING', False, 'Transcoding failed after three attempts across the configured agents.', 'Transcode failed on all agents.', 'Check agent errors, then Retry to start a fresh attempt budget.'),
+})

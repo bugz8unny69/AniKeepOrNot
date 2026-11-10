@@ -511,6 +511,8 @@ class Worker:
                     from src.anime.storage.cleanup_recovery import recover_timeout_reviews
                     for record in await self._io(recover_timeout_reviews,self.queue.database):
                         log_history(self.logger,record)
+                    from src.anime.storage.transcode import cleanup_outputs
+                    await self._io(cleanup_outputs,self.queue.database)
                     self._last_cleanup_review_scan=time.monotonic()
         except (MaintenanceBusy, MaintenancePending):
             return

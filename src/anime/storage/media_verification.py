@@ -39,6 +39,9 @@ def persist(db,claim,value):
     if (intent.plan.plan_id!=value.plan_id or intent.fingerprint!=value.submission_fingerprint
             or record.fingerprint!=value.transfer_fingerprint or selected.path!=value.relative_path
             or selected.size!=value.file_signature[2]):raise MediaInvalid()
+    if value.probe_info is not None:
+        import json
+        db.execute('INSERT OR IGNORE INTO media_probe_details VALUES(?,?)',(claim.job_id,json.dumps(value.probe_info)))
     expected=(claim.job_id,value.download_job_id,value.submission_fingerprint,value.transfer_fingerprint,value.json())
     prior=db.execute('SELECT job_id,download_job_id,submission_fingerprint,transfer_fingerprint,evidence_json '
                      'FROM media_verifications WHERE plan_id=?',(value.plan_id,)).fetchone()

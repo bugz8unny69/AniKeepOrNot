@@ -49,21 +49,8 @@ class AniDBFirstMigrationTests(unittest.TestCase):
     def migrate(self):
         self.db.commit()
         self.db.executescript(SCRIPT)
-        self.db.executescript((SQL_DIR / '057_anidb_first_staging.sql').read_text())
-        self.db.executescript((SQL_DIR / '058_failed_job_state.sql').read_text())
-        self.db.executescript((SQL_DIR / '059_identity_candidate_evidence.sql').read_text())
-        self.db.executescript((SQL_DIR / '060_batch_candidate_operations.sql').read_text())
-        self.db.executescript((SQL_DIR / '061_batch_candidate_stops.sql').read_text())
-        self.db.executescript((SQL_DIR / '062_manual_release_archive.sql').read_text())
-        self.db.executescript((SQL_DIR / '063_service_status.sql').read_text())
-        self.db.executescript((SQL_DIR / '064_renamed_stored_names.sql').read_text())
-        self.db.executescript((SQL_DIR / '065_renamed_codes.sql').read_text())
-        self.db.executescript((SQL_DIR / '066_retired_service_codes.sql').read_text())
-        self.db.executescript((SQL_DIR / '067_resources.sql').read_text())
-        self.db.executescript((SQL_DIR / '068_package_paths.sql').read_text())
-        self.db.executescript((SQL_DIR / '069_series_accept_search.sql').read_text())
-        self.db.executescript((SQL_DIR / '070_recognized_series.sql').read_text())
-        self.db.executescript((SQL_DIR / '071_notifications.sql').read_text())
+        for name in SCRIPTS[56:]:
+            self.db.executescript((SQL_DIR/name).read_text())
         return self.db
 
     def test_runner_applies_the_step_with_validation(self):

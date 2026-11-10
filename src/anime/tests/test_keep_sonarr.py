@@ -330,8 +330,8 @@ class SonarrSettingsTests(unittest.TestCase):
             self.assertNotIn('sonarr',doc['settings'])
             with self.assertRaises(ConfigurationError):convert_document({**doc,'settings':{**doc['settings'],'sonarr':{'base_url':'http://sonarr.invalid'}}})
         upgraded=convert_document(doc)
-        self.assertEqual(upgraded.schema_version,16)
-        self.assertEqual(upgraded.revision,doc['revision']+9)
+        self.assertEqual(upgraded.schema_version,17)
+        self.assertEqual(upgraded.revision,doc['revision']+10)
         self.assertEqual(upgraded.value('sonarr.base_url'),'')
         # The HTTP torrent metadata source was explicitly retired in v12, and v15
         # renamed "trial" to "user evaluation". Every other value is unchanged.
@@ -356,7 +356,7 @@ class SonarrCredentialApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,200);self.assertTrue(data['data']['status']['sonarr_configured'])
         self.assertNotIn('private-sonarr-key',json.dumps(data))
         self.assertEqual(self.secrets.sonarr_api_key(),'private-sonarr-key')
-        self.assertEqual(json.loads((self.root/'secrets.json').read_text())['schema_version'],8)
+        self.assertEqual(json.loads((self.root/'secrets.json').read_text())['schema_version'],9)
         self.assertEqual(self.secrets.access_credentials().webhook_token,WEB)
         self.secrets.update_tvdb_api_key('tvdb-key',expected_revision=2)
         self.assertEqual(self.secrets.sonarr_api_key(),'private-sonarr-key')

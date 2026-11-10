@@ -69,13 +69,23 @@ class Journal:
         with self.queue.connection() as db,transaction(db):
             self.queue._owns(db,claim,self.queue.now())
             intent,evidence,identity=facts(db,claim,verification)
+            from src.anime.storage.transcode import apply
+            source_root,evidence=apply(db,verification,intent,evidence)
             prior=db.execute('SELECT job_id,verification_job_id,manifest_json FROM staging_publications WHERE plan_id=?',
                              (intent.plan.plan_id,)).fetchone()
             if prior is not None:
                 if prior[:2]!=(claim.job_id,verification):raise StagingReview()
                 plan=json.loads(prior[2])
                 # Pinned transfer mode and destinations survive later changes.
-                if plan['source']!=evidence or plan['source_root']!=intent.options.download_root:raise StagingReview()
+                if plan['source']!=evidence or plan['source_root']!=source_root:
+                    if source_root==intent.options.download_root:raise StagingReview()
+                    state=db.execute('SELECT state FROM staging_publications WHERE plan_id=?',(intent.plan.plan_id,)).fetchone()
+                    if state!=('PLANNED',):raise StagingReview()
+                    plan['source']=evidence;plan['source_root']=source_root
+                    plan['transfer']='MOVE' if source_root==plan['root'] else 'COPY'
+                    media=next(e for e in plan['entries'] if e['role']=='media')
+                    media.update(path=str(PurePosixPath(media['path']).with_suffix('.mkv')),size=evidence['file'][2],sha256=evidence['sha256'])
+                    db.execute('UPDATE staging_publications SET manifest_json=? WHERE plan_id=?',(encoded(plan),intent.plan.plan_id))
                 return plan
             root=configuration.value('storage.user_evaluation_root')
             disjoint(root,(intent.options.download_root,configuration.value('storage.download_root'),
@@ -83,6 +93,8 @@ class Journal:
             shown=title_for(db,identity[0],identity[6],configuration.value('anime.title_language'))
             plan=specification(intent,evidence,identity,root,configuration.desired_revision,
                                display_title=shown)
+            plan['source_root']=source_root
+            plan['transfer']='MOVE' if source_root==root else 'COPY'
             plan['root_identity']=root_identity(root)
             raw=encoded(plan)
             if len(raw.encode())>65536:raise StagingReview()

@@ -19,6 +19,7 @@ from src.anime.jobs.discover_episode_releases_job import DEFINITION as backfill
 from src.anime.jobs.prepare_acquisition_job import DEFINITION as prepare
 from src.anime.jobs.submit_torrent_job import DEFINITION as submit
 from src.anime.jobs.download_torrent_job import DEFINITION as download
+from src.anime.jobs.transcode_media_job import DEFINITION as transcode
 from src.anime.jobs.verify_media_job import DEFINITION as media
 from src.anime.jobs.stage_user_evaluation_media_job import DEFINITION as stage
 from src.anime.jobs.reject_series_job import DEFINITION as reject_series
@@ -35,4 +36,4 @@ from src.anime.decision_download_cleanup import DEFINITION as cleanup_download
 from src.anime.jobs.enrich_shoko_job import DEFINITION as shoko
 from src.anime.jobs.reset_episode_search_job import DEFINITION as reset_episode
 
-HANDLERS=HandlerCatalog((identify,verify,evaluate,evaluate_batch,reserve,reserve_batch,submit_batch,transfer_batch,verify_batch_probe,unlock_batch,verify_batch_episode,stage_batch_episode,keep_batch,cleanup_batch_download,cleanup_batch_kept_media,bulk,backfill,prepare,submit,download,media,stage,keep,reject_series,cleanup,refresh,cleanup_kept,cleanup_download,shoko,reset_episode))
+HANDLERS=HandlerCatalog((identify,verify,evaluate,evaluate_batch,reserve,reserve_batch,submit_batch,transfer_batch,verify_batch_probe,unlock_batch,verify_batch_episode,stage_batch_episode,keep_batch,cleanup_batch_download,cleanup_batch_kept_media,bulk,backfill,prepare,submit,download,media,transcode,stage,keep,reject_series,cleanup,refresh,cleanup_kept,cleanup_download,shoko,reset_episode))

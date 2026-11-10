@@ -278,7 +278,7 @@ function renderJobs() {
       });
       title.appendChild(expanded);
     }
-    td().appendChild(node('span', `#${job.job_id} · ${job.label?.message || 'Job'}`));
+    td().appendChild(node('span', `#${job.job_id} · ${job.transcode_step || job.label?.message || 'Job'}`));
     const status = td(); status.appendChild(statusBadge(job));
     if (state.page === 'intake') status.appendChild(node('small', job.acquisition_status.message, 'muted job-note'));
     const details = td();
@@ -713,8 +713,15 @@ function renderServices() {
   const bar = $('service-bar'); bar.replaceChildren();
   bar.hidden = !state.services;
   for (const item of state.services || []) {
-    const [label, tone] = item.stale ? ['Not checked recently', 'unknown'] :
+    let [label, tone] = item.stale ? ['Not checked recently', 'unknown'] :
       SERVICE_STATES[item.status] || SERVICE_STATES.UNKNOWN;
+    if (item.service === 'transcode') {
+      const count = item.message.match(/Agents alive: (\d+)\/(\d+)/);
+      if (count) {
+        label = `Agents alive: ${count[1]}/${count[2]}`;
+        if (!item.stale && Number(count[1]) > 0 && count[1] !== count[2]) tone = 'unknown';
+      }
+    }
     const chip = node('span', null, 'service ' + tone);
     chip.appendChild(node('strong', item.label)); chip.appendChild(node('span', ' ' + label));
     chip.title = item.message + (item.stale ? ' The worker has not updated this recently.' : '') +
@@ -1104,13 +1111,65 @@ async function openMatching(jobId) {
   }
 }
 
+function agentSettings(path, definition, values) {
+  const wrapper = node('div', null, 'setting-field');
+  wrapper.appendChild(node('span', definition.label));
+  const input = node('input'); input.type = 'hidden'; input.name = path;
+  input.dataset.kind = 'transcode_agents'; input.value = JSON.stringify(values);
+  input.dataset.original = input.value; wrapper.appendChild(input);
+  const list = node('div'); wrapper.appendChild(list);
+  const agents = [...values];
+  const tokenConfigured = address => state.credentials?.transcode_agents?.includes((address.includes('://') ? address : 'http://' + address).replace(/\/$/, ''));
+  const sync = () => { input.value = JSON.stringify(agents); refreshDirty(); };
+  const render = () => {
+    list.replaceChildren();
+    agents.forEach((address, index) => {
+      const row = node('div', null, 'credential-input');
+      const host = node('input'); host.value = address; host.placeholder = 'host:port';
+      host.setAttribute('aria-label', 'Agent host and port');
+      host.addEventListener('input', () => { agents[index] = host.value; sync(); }); row.appendChild(host);
+      for (const [caption, delta] of [['Up', -1], ['Down', 1]]) {
+        const button = node('button', caption, 'secondary'); button.type = 'button';
+        button.disabled = index + delta < 0 || index + delta >= agents.length;
+        button.addEventListener('click', () => { [agents[index], agents[index + delta]] = [agents[index + delta], agents[index]]; sync(); render(); });
+        row.appendChild(button);
+      }
+      const remove = node('button', 'Remove', 'secondary'); remove.type = 'button';
+      remove.addEventListener('click', () => { agents.splice(index, 1); sync(); render(); }); row.appendChild(remove);
+      const token = node('input'); token.type = 'password'; token.autocomplete = 'new-password';
+      token.setAttribute('aria-label', 'Agent token');
+      token.placeholder = tokenConfigured(address) ? 'Token is set' : 'Token is not set';
+      row.appendChild(token);
+      const save = node('button', 'Save token', 'secondary'); save.type = 'button';
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        try {
+          const result = await request(API + '/credentials/transcode', {method: 'PATCH', body: {
+            expected_revision: state.credentials.revision, agent: agents[index], token: token.value}});
+          state.credentials = result.status; token.value = '';
+          token.placeholder = tokenConfigured(agents[index]) ? 'Token is set' : 'Token is not set';
+        } catch (error) { displayError(error); }
+        finally { save.disabled = false; }
+      });
+      row.appendChild(save); list.appendChild(row);
+    });
+  };
+  const add = node('button', 'Add agent', 'secondary'); add.type = 'button';
+  add.addEventListener('click', () => { agents.push(''); sync(); render(); }); wrapper.appendChild(add);
+  render(); return wrapper;
+}
+
 function settingInput(path, definition, value) {
   const label = node('label', null, 'setting-field'); label.appendChild(node('span', definition.label));
-  const input = node(definition.type === 'title_language' ? 'select' :
+  if (definition.type === 'transcode_agents') return agentSettings(path, definition, value);
+  const input = node(['title_language', 'transcode_mode', 'transcode_encoders'].includes(definition.type) ? 'select' :
     definition.type === 'levels' ? 'textarea' : 'input');
   input.name = path; input.dataset.kind = definition.type;
-  if (definition.type === 'title_language') {
-    for (const [code, text] of [['english', 'English'], ['japanese', 'Japanese (Romaji)']]) {
+  if (['title_language', 'transcode_mode', 'transcode_encoders'].includes(definition.type)) {
+    const choices = definition.type === 'transcode_mode' ? [['off', 'Off'], ['local', 'Local'], ['remote', 'Remote']] :
+      definition.type === 'transcode_encoders' ? [['gpu,cpu', 'GPU, then CPU'], ['gpu', 'GPU only'], ['cpu', 'CPU only']] :
+      [['english', 'English'], ['japanese', 'Japanese (Romaji)']];
+    for (const [code, text] of choices) {
       const option = node('option', text); option.value = code; input.appendChild(option);
     }
     input.value = value;
@@ -1207,7 +1266,7 @@ function wireSectionForm(form, section) {
         for (const input of changedSettings) {
           let value;
           try {
-            value = input.dataset.kind === 'levels' ? JSON.parse(input.value) :
+            value = ['levels', 'transcode_agents'].includes(input.dataset.kind) ? JSON.parse(input.value) :
               input.dataset.kind === 'integer' ? Number(input.value) :
               input.dataset.kind === 'boolean' ? input.value === 'true' : input.value;
           } catch { throw new Error(COPY['dashboard.invalid_value']); }
@@ -1252,7 +1311,7 @@ async function loadSettings() {
     const container = $('settings-fields'); container.replaceChildren();
     for (const section of Object.keys(settings.desired.settings)) {
       const panel = node('details', null, 'panel'); panel.dataset.section = section;
-      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section));
+      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section === 'transcode' ? 'Transcode' : section));
       const form = node('form', null, 'integration'); form.autocomplete = 'off';
       for (const [path, definition] of Object.entries(settings.fields)) {
         if (!path.startsWith(section + '.')) continue;

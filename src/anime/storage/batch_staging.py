@@ -121,6 +121,8 @@ class BatchStagingJournal(Journal):
             self.queue._owns(db,claim,self.queue.now())
             plan_id,index,intent,evidence,identity=facts(
                 db,claim,verification_job_id)
+            from src.anime.storage.transcode import apply
+            source_root,evidence=apply(db,verification_job_id,intent,evidence)
             old=db.execute(
                 'SELECT job_id,verification_job_id,manifest_json '
                 'FROM batch_staging_publications WHERE plan_id=? AND file_index=?',
@@ -129,9 +131,9 @@ class BatchStagingJournal(Journal):
                 if old[:2]!=(claim.job_id,verification_job_id):
                     raise StagingReview()
                 plan=json.loads(old[2])
-                if (plan.get('transfer')!='COPY'
+                if (plan.get('transfer')!=('MOVE' if source_root==plan['root'] else 'COPY')
                         or plan['source']!=evidence
-                        or plan['source_root']!=intent.options.download_root):
+                        or plan['source_root']!=source_root):
                     raise StagingReview()
                 return plan
             root=configuration.value('storage.user_evaluation_root')
@@ -142,7 +144,8 @@ class BatchStagingJournal(Journal):
             shown=title_for(db,identity[0],identity[6],configuration.value('anime.title_language'))
             plan=specification(intent,evidence,identity,root,
                                configuration.desired_revision,display_title=shown)
-            plan['transfer']='COPY'
+            plan['source_root']=source_root
+            plan['transfer']='MOVE' if source_root==root else 'COPY'
             plan['root_identity']=root_identity(root)
             raw=encoded(plan)
             if len(raw.encode())>65536:raise StagingReview()

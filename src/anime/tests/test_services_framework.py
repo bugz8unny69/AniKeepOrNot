@@ -65,12 +65,12 @@ class RegistryTests(unittest.TestCase):
     def test_default_registry_covers_every_service(self):
         registry = default_registry()
         self.assertEqual(registry.names(), ('qbittorrent', 'prowlarr', 'sonarr', 'jellyfin', 'shoko',
-                                            'anidb', 'anime_lists', 'tvdb'))
+                                            'anidb', 'anime_lists', 'tvdb', 'transcode'))
         # AniDB, Anime-Lists and TVDB are never contacted just to check health.
         self.assertEqual({a.name for a in registry if not a.network_probe},
                          {'anidb', 'anime_lists', 'tvdb'})
         self.assertEqual({a.name for a in registry if a.optional},
-                         {'prowlarr', 'sonarr', 'jellyfin', 'shoko'})
+                         {'prowlarr', 'sonarr', 'jellyfin', 'shoko', 'transcode'})
         # Only these stop the worker at startup when misconfigured.
         self.assertEqual({a.name for a in registry if a.required}, {'qbittorrent', 'anidb', 'tvdb'})
 

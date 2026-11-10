@@ -19,13 +19,16 @@ REVIEW=(MediaInvalid,AcquisitionConflict,MetadataInvalid,SourceMissing,SizeEvide
 
 def _persist(db,claim,value):
     try:
+        if type(value) is not dict:raise MediaInvalid()
+        value=dict(value)
+        value.pop('transcode',None)
         if type(value) is not dict or set(value)!={'media','verification_job_id'} or value['verification_job_id']!=claim.job_id:raise MediaInvalid()
         persist(db,claim,value['media'])
     except MediaInvalid as exc:raise CompletionRejected(Outcome('fail',exc.reason_code, facts=failure_facts(exc))) from None
     except REVIEW as exc:raise CompletionRejected(Outcome('review',exc.reason_code, facts=failure_facts(exc))) from None
 
 
-def registration(*,verify=verify_file,load_input=load,staging_kind=None):
+def registration(*,verify=verify_file,load_input=load,staging_kind=None,transcode_kind=None):
     if staging_kind is not None and (type(staging_kind) is not str or not staging_kind.strip()
             or len(staging_kind)>64 or staging_kind==KIND):raise ValueError('invalid staging successor')
     async def execute(context):
@@ -42,7 +45,10 @@ def registration(*,verify=verify_file,load_input=load,staging_kind=None):
                 context.configuration.value('storage.user_evaluation_root'),context.configuration.value('storage.keep_root')),
                 audio=context.configuration.value('acquisition.audio_check'))
             value=await blocking(work)
-            return Outcome(value={'media':value,'verification_job_id':context.claim.job_id})
+            result={'media':value,'verification_job_id':context.claim.job_id}
+            if transcode_kind is not None:
+                result['transcode']=context.configuration.value('transcode.mode')!='off'
+            return Outcome(value=result)
         except MediaUnavailable as exc:return Outcome('retry',exc.reason_code)
         except ProbeUnavailable as exc:return Outcome('review',exc.reason_code)
         except AudioMissing as exc:
@@ -54,6 +60,7 @@ def registration(*,verify=verify_file,load_input=load,staging_kind=None):
             return Outcome('fail', exc.reason_code, facts=failure_facts(exc))
         except REVIEW as exc:return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     def route(value):
-        return () if staging_kind is None else (Successor.create(staging_kind,{'verification_job_id':value['verification_job_id']}),)
+        target=transcode_kind if value.get('transcode') else staging_kind
+        return () if target is None else (Successor.create(target,{'verification_job_id':value['verification_job_id']}),)
     return Registration(KIND,DEFINITION,execute,persist=_persist,route=route,
-        successor_kinds=() if staging_kind is None else (staging_kind,))
+        successor_kinds=tuple(k for k in (staging_kind,transcode_kind) if k is not None))

@@ -173,7 +173,7 @@ def failed_detail(details):
     return res
 
 
-def service_statuses(database, *, now_ms=None):
+def service_statuses(database, *, now_ms=None, configuration=None):
     """Every service's last known status as written by the worker (status bar)."""
     import time
     from src.anime.services import default_registry
@@ -182,6 +182,7 @@ def service_statuses(database, *, now_ms=None):
     stored=load(database)
     items=[]
     for adapter in default_registry():
+        if adapter.name=='transcode' and configuration is not None and configuration.value('transcode.mode')!='remote': continue
         row=stored.get(adapter.name)
         items.append({'service':adapter.name,'label':adapter.label,'required':adapter.required,
             'optional':adapter.optional,
@@ -422,7 +423,7 @@ class Application:
             if path==PREFIX+'/services':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                data=service_statuses(configuration.value('storage.database_path'))
+                data=service_statuses(configuration.value('storage.database_path'),configuration=configuration)
                 # The bell's unread count rides on this poll, which runs on every page.
                 with JobQueue(configuration.value('storage.database_path')).connection() as db:
                     data['notifications_unread']=inbox.unread(db)
@@ -786,6 +787,16 @@ class Application:
                         'reason':None if result.reason_code is None else CATALOG.reason(result.reason_code),
                         'restart_fields':result.restart_fields,'restart_components':result.restart_components},[]
                 raise ApiError(405,'API_METHOD_INVALID')
+            if path==PREFIX+'/credentials/transcode':
+                if method!='PATCH':raise ApiError(405,'API_METHOD_INVALID')
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                exact(body,('expected_revision','agent','token'))
+                validate_secret_fields('transcode',{'api_key':body['token']},('api_key',))
+                from src.anime.services.transcode import agent_url
+                try:agent=agent_url(body['agent'])
+                except (ValueError,TypeError):raise ApiError(400,'API_REQUEST_INVALID') from None
+                result=self.secrets.update_transcode_token(agent,body['token'],expected_revision=body['expected_revision'])
+                return 200,{'status':asdict(result.status),'saved':result.saved},[]
             if path==PREFIX+'/credentials' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 return 200,asdict(self.secrets.status()),[]
@@ -1222,6 +1233,7 @@ class Application:
         targets=self._episode_targets(db,row[0],row[3],row[1])
         return {'job_id':row[0],'event_id':row[1],'created_by_job_id':row[2],'kind':row[3],'state':row[4],
                 'is_management_action':db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(row[0],)).fetchone() is not None,
+                'transcode_step':(db.execute('SELECT step FROM transcode_media WHERE job_id=?',(row[0],)).fetchone() or (None,))[0] if row[4] in ('RUNNING','RETRY_WAIT') else None,
                 'label':CATALOG.handler(row[3]),'created_at_ms':context[0],'received_at_ms':context[1],
                 'release_name':release,'anime_title':anime_title,'episode_targets':targets,
                 'acquisition_status':CATALOG.state('acquisition',op[1]),

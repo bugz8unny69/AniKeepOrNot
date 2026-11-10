@@ -752,3 +752,26 @@ test('the bell count comes with the service poll, shows 99+, and items mark read
   h.run('clearPrivate()');
   assert.equal(h.elements.get('bell-items').children.length, 0);
 });
+
+test('transcode health shows the alive count and partial availability in yellow', async () => {
+  const h = await harness();
+  h.run("state.services=[{service:'transcode',label:'Transcode agents',status:'UP',message:'Agents alive: 1/2. pc:8787: up, busy, gpu; lxc:8787: down'}]; renderServices();");
+  const chip = h.elements.get('service-bar').children[0];
+  assert.match(chip.className, /unknown/);
+  assert.equal(chip.children[1].textContent, ' Agents alive: 1/2');
+  assert.match(chip.title, /busy/);
+});
+
+test('remote agents can be added and reordered without returning stored tokens', async () => {
+  const h = await harness();
+  const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},['http://first:8787','http://second:8787'])");
+  const hidden = view.children[1];
+  const list = view.children[2];
+  const firstDown = list.children[0].children[2];
+  firstDown.listeners.click();
+  assert.deepEqual(JSON.parse(hidden.value), ['http://second:8787','http://first:8787']);
+  assert.equal(list.children[0].children[4].type, 'password');
+  assert.equal(list.children[0].children[4].value, '');
+  view.children[3].listeners.click();
+  assert.equal(JSON.parse(hidden.value).length, 3);
+});

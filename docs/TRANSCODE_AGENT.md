@@ -82,3 +82,22 @@ skip those agents. Verify host GPU binding with your existing passthrough setup.
 On a Linux gaming PC allow `gpu` only and disable sleep. Wake-on-LAN is outside
 this work. Do not use Windows agents.
 
+## Anime Discovery settings
+
+Settings → Transcode defaults to Off, preserving ordinary verification/staging.
+Local uses the same encoder and has its own temp path, device and encoder
+allowlist. Remote uses the displayed agent order; Add, Up and Down edit that
+order. Tokens are saved separately in the existing private secrets store and
+are never returned by the API. Target size defaults to decimal 500 MB per
+24 minutes, scaled by duration. Audio is budgeted before video and 1% is
+reserved for container overhead. Videos already under target are unchanged. Private transcoded outputs use the
+existing Publisher move path within staging, avoiding a second full video copy;
+the torrent source and its normal post-publication cleanup remain unchanged.
+The worker spends at most three encode attempts per file; Retry resets that
+budget. Unavailable, busy, and disk-full agents cause a wait. Agent status
+appears in the existing service bar only in Remote mode.
+
+New installs use the current schemas. Existing installs require the normal
+explicit settings upgrade to v17 and database migration 072 under
+maintenance. These changes do not deploy or migrate a running installation.
+
