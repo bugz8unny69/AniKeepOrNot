@@ -80,6 +80,8 @@ function clearPrivate(message = '') {
   $('history-rows').replaceChildren();
   $('matching-body').replaceChildren(); $('matching-summary').textContent = '';
   $('recognized-rows').replaceChildren(); $('recognized-note').textContent = '';
+  $('bell-items').replaceChildren(); $('bell-note').textContent = ''; state.bellNext = null;
+  $('bell-panel').hidden = true; renderBellCount(0);
   $('access-key').value = '';
   state.search = ''; state.recognizedSearch = ''; clearTimeout(state.searchTimer);
   $('search').value = ''; $('recognized-search').value = '';
@@ -725,10 +727,74 @@ function renderServices() {
 }
 async function loadServices() {
   state.servicesAt = Date.now();
-  try { state.services = (await request(API + '/services')).services; }
+  try {
+    const result = await request(API + '/services');
+    state.services = result.services;
+    if (typeof result.notifications_unread === 'number') renderBellCount(result.notifications_unread);
+  }
   catch (error) { if (error.name === 'AbortError') return; state.services = null; }
   renderServices();
 }
+// The bell: unread count from the service poll; the panel lists the inbox.
+const BELL_ACTIONS = Object.freeze({
+  process_anyway: 'Process anyway', add_release: 'Add torrent/magnet', open_series: 'Open series', open_job: 'Open job',
+});
+function renderBellCount(count) {
+  const badge = $('bell-badge');
+  badge.hidden = !count; badge.textContent = count > 99 ? '99+' : String(count);
+  $('bell').setAttribute('aria-label', count ? `Notifications, ${count} unread` : 'Notifications');
+}
+async function loadBell(more = false) {
+  const query = more && state.bellNext ? `?before_id=${state.bellNext}` : '';
+  try {
+    const result = await request(API + '/notifications' + query);
+    if (!more) $('bell-items').replaceChildren();
+    for (const item of result.items) $('bell-items').appendChild(bellItem(item));
+    state.bellNext = result.next_before_id;
+    $('bell-more').hidden = result.next_before_id === null;
+    renderBellCount(result.unread);
+    $('bell-note').textContent = result.unread ? '' : 'Nothing needs your attention.';
+  } catch (error) { $('bell-note').textContent = error.message; }
+}
+function bellItem(item) {
+  const box = node('article', null, 'bell-item');
+  box.appendChild(node('strong', item.title + (item.count > 1 ? ` ×${item.count}` : '')));
+  box.appendChild(node('p', item.message));
+  box.appendChild(node('small', date(item.last_at_ms), 'muted'));
+  const row = node('div', null, 'inline');
+  for (const action of item.actions) {
+    const button = node('button', BELL_ACTIONS[action] || action, 'secondary'); button.type = 'button';
+    button.addEventListener('click', () => bellAction(item, action, button));
+    row.appendChild(button);
+  }
+  const read = node('button', 'Mark read', 'secondary'); read.type = 'button';
+  read.addEventListener('click', async () => {
+    read.disabled = true;
+    try { const result = await request(`${API}/notifications/${item.notification_id}`, {method: 'DELETE'});
+      renderBellCount(result.unread); box.remove?.(); }
+    catch (error) { read.disabled = false; $('bell-note').textContent = error.message; }
+  });
+  row.appendChild(read);
+  box.appendChild(row);
+  return box;
+}
+async function bellAction(item, action, button) {
+  button.disabled = true;
+  try {
+    const result = await request(`${API}/notifications/${item.notification_id}/actions/${action}`, {method: 'POST', body: {}});
+    closeBell();
+    if (action === 'open_job') await openHistory(result.job_id);
+    else if (action === 'open_series') await openSeries(result.anidb_id);
+    else if (action === 'add_release') {
+      await openSeries(result.anidb_id);
+      const episode = releaseEpisode(result.release_name || '');
+      if (episode) openManualSubmission(result.anidb_id, episode);
+    } else if (action === 'process_anyway') await loadBell();
+  } catch (error) { $('bell-note').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+function openBell() { $('bell-panel').hidden = false; $('bell').setAttribute('aria-expanded', 'true'); loadBell(); }
+function closeBell() { $('bell-panel').hidden = true; $('bell').setAttribute('aria-expanded', 'false'); }
 // Keep needs Sonarr: the reason it cannot run now, or null. The server
 // refuses the same request with the same message.
 function keepBlockedMessage() {
@@ -1444,6 +1510,15 @@ for (const id of ['search', 'recognized-search']) {
   });
 }
 $('refresh-recognized').addEventListener('click', () => loadRecognized());
+$('bell').addEventListener('click', event => { event.stopPropagation(); $('bell-panel').hidden ? openBell() : closeBell(); });
+$('bell-panel').addEventListener('click', event => event.stopPropagation());
+document.addEventListener('click', () => { if (!$('bell-panel').hidden) closeBell(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('bell-panel').hidden) closeBell(); });
+$('bell-more').addEventListener('click', () => loadBell(true));
+$('bell-clear').addEventListener('click', async () => {
+  try { const result = await request(API + '/notifications', {method: 'DELETE'}); renderBellCount(result.unread); await loadBell(); }
+  catch (error) { $('bell-note').textContent = error.message; }
+});
 $('reload-settings').addEventListener('click', async () => {
   if (state.dirty && !confirm(COPY['dashboard.discard'])) return;
   await loadSettings();

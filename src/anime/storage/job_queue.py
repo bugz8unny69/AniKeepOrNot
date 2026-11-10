@@ -304,6 +304,10 @@ class JobQueue:
                 from src.anime.storage.candidate_evidence import save_candidate_evidence
                 save_candidate_evidence(db, claim.job_id, claim.attempt, outcome.candidate_evidence, now)
             records.append(self._transition(db,claim,outcome,now))
+            if db.execute('SELECT state FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()==('NEEDS_REVIEW',):
+                # An episode of a tracked series could not be got: one bell item per series.
+                from src.anime.notifications import job_needs_review
+                job_needs_review(db,claim,now)
             # Failed Sonarr candidates use the existing cancellation worker,
             # never the user-facing Cancel button. Non-Sonarr jobs are untouched.
             if db.execute('SELECT state FROM jobs WHERE job_id=?',

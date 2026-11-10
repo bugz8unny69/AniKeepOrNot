@@ -113,3 +113,11 @@ align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .manual-submission label{display:grid;gap:6px}
 .manual-submission input,.manual-submission textarea,.manual-submission select{width:100%;min-width:0}
 .manual-submission textarea{resize:vertical;overflow-wrap:anywhere}
+
+.bell-wrap{position:relative;display:inline-block;margin-left:auto}
+.bell{position:relative;padding:6px 10px;line-height:0}
+.bell-badge{position:absolute;top:-6px;right:-8px;min-width:18px;padding:1px 5px;border-radius:9px;background:#c0392b;color:#fff;font-size:11px;line-height:16px;text-align:center}
+.bell-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:min(420px,calc(100vw - 32px));max-height:70vh;overflow:auto;padding:12px;border:1px solid var(--border,#3a4556);border-radius:8px;background:var(--panel,#1f2733);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.bell-item{border-top:1px solid var(--border,#3a4556);padding:8px 0}
+.bell-item p{margin:4px 0}
+.bell-item .inline{display:flex;flex-wrap:wrap;gap:6px}

@@ -18,7 +18,7 @@ from src.anime.diagnostics import event
 from src.anime.maintenance import MaintenanceLease, MaintenanceError
 from src.anime.storage.sqlite import SCHEMA
 
-LATEST_VERSION = 70
+LATEST_VERSION = 71
 SQL_DIR = Path(__file__).with_name("sql")
 SCRIPTS = (
     "001_foundation.sql", "002_independent_jobs.sql", "003_incoming_events.sql",
@@ -35,7 +35,7 @@ SCRIPTS = (
     "065_renamed_codes.sql",
     "066_retired_service_codes.sql",
     "067_resources.sql",
-    "068_package_paths.sql", "069_series_accept_search.sql", "070_recognized_series.sql",
+    "068_package_paths.sql", "069_series_accept_search.sql", "070_recognized_series.sql", "071_notifications.sql",
 )
 
 

@@ -125,6 +125,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
                 'DROP TABLE manual_release_submissions;\n'
                 'DROP TABLE identity_candidate_evidence;\n'
                 'DROP TABLE service_status;\n'
+                'DROP TABLE notifications;\n'
                 'DROP TABLE manual_release_archive;\n'
                 'DROP TABLE batch_candidate_stops;\n'
                 'DROP TABLE batch_candidate_events;\n'
@@ -156,6 +157,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR / '068_package_paths.sql').read_text())
             db.executescript((SQL_DIR / '069_series_accept_search.sql').read_text())
             db.executescript((SQL_DIR / '070_recognized_series.sql').read_text())
+            db.executescript((SQL_DIR / '071_notifications.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

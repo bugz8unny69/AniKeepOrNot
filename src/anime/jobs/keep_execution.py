@@ -88,6 +88,9 @@ def library_history(db, claim, value):
             reason_code='KEEP_SERIES_ADDED_NEW_ONLY' if monitor == 'future' else 'KEEP_SERIES_ADDED',
             details=attempt))
     search = (value or {}).get('search')
+    if search == 'FAILED':
+        from src.anime.notifications import keep_search_failed
+        keep_search_failed(db, claim, now)
     if search in ('SENT', 'FAILED'):
         records.append(append_job_history(
             db, job_id=claim.job_id, event_code='KEEP_SEARCH_REQUESTED', component='worker', occurred_at_ms=now,

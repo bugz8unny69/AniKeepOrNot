@@ -29,6 +29,7 @@ from src.anime.search import SearchInvalid, match as search_match, words as sear
 from src.anime.secrets import SecretStore
 from src.anime.storage.job_queue import JobQueue, QueueUnavailable
 from src.anime.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
+from src.anime.storage import notifications as inbox
 from src.anime.storage.management_actions import (ManagementActions, ActionUnavailable, ActionNotFound,
     KeepServiceUnavailable, keep_blocker)
 from src.anime.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
@@ -410,7 +411,13 @@ class Application:
             if path==PREFIX+'/services':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                return 200,service_statuses(configuration.value('storage.database_path')),[]
+                data=service_statuses(configuration.value('storage.database_path'))
+                # The bell's unread count rides on this poll, which runs on every page.
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    data['notifications_unread']=inbox.unread(db)
+                return 200,data,[]
+            if path==PREFIX+'/notifications' or path.startswith(PREFIX+'/notifications/'):
+                return self._notifications(configuration,method,path,query,body)
             if path==PREFIX+'/jobs/bulk':
                 if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -961,6 +968,61 @@ class Application:
                 if newest:return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
         page={'items':items,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
         return {**page,'job':about,'backfill_attempts':attempts} if history else page
+
+    def _notifications(self,configuration,method,path,query,body):
+        """The bell: list, mark read (delete), mark all read, and item actions."""
+        from src.anime.notifications import EVENT_TYPES
+        from src.anime.storage.sqlite import transaction
+        queue=JobQueue(configuration.value('storage.database_path'))
+        if path==PREFIX+'/notifications':
+            if method=='GET':
+                if set(query)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
+                before=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1)
+                limit=page_number(query,'limit',20,1,100)
+                with queue.connection() as db:
+                    db.execute('BEGIN')
+                    rows=inbox.items(db,before_id=before,limit=limit+1);unread=inbox.unread(db)
+                items=[{**row,'actions':list(EVENT_TYPES[row['type']])} for row in rows[:limit]]
+                return 200,{'items':items,'unread':unread,
+                            'next_before_id':items[-1]['notification_id'] if len(rows)>limit else None},[]
+            if method=='DELETE':
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                with queue.connection() as db,transaction(db):deleted=inbox.delete_all(db)
+                return 200,{'deleted':deleted,'unread':0},[]
+            raise ApiError(405,'API_METHOD_INVALID')
+        match=re.fullmatch(PREFIX+r'/notifications/([1-9][0-9]{0,18})(?:/actions/([a-z_]{1,32}))?',path)
+        if not match or query:raise ApiError(404 if not match else 400,'API_ROUTE_NOT_FOUND' if not match else 'API_REQUEST_INVALID')
+        number=int(match[1])
+        if number>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
+        if match[2] is None:
+            if method!='DELETE':raise ApiError(405,'API_METHOD_INVALID')
+            with queue.connection() as db,transaction(db):
+                if not inbox.delete(db,number):raise ApiError(404,'API_ROUTE_NOT_FOUND')
+                unread=inbox.unread(db)
+            return 200,{'deleted':1,'unread':unread},[]
+        if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
+        exact(body,())
+        with queue.connection() as db:
+            db.execute('BEGIN')
+            item=inbox.get(db,number)
+        if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
+        action=match[2]
+        if action not in EVENT_TYPES[item['type']]:raise ApiError(400,'API_REQUEST_INVALID')
+        return self._notification_action(configuration,queue,item,action)
+
+    def _notification_action(self,configuration,queue,item,action):
+        """Each action runs existing code; open_* are links the dashboard follows."""
+        if action=='open_series':
+            if item['anidb_id'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
+            return 200,{'action':action,'anidb_id':item['anidb_id']},[]
+        if action=='open_job':
+            if item['job_id'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
+            return 200,{'action':action,'job_id':item['job_id']},[]
+        if action=='add_release':
+            # The existing manual release form, for this series (and episode when known).
+            return 200,{'action':action,'anidb_id':item['anidb_id'],'release_name':item['release_name']},[]
+        # process_anyway arrives with the webhook refusal (work item P4).
+        raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
 
     def _recognized(self,db,language,match=None):
         where,params=match if match else ('1',[])
