@@ -24,7 +24,7 @@ class SeriesIntakeTests(unittest.TestCase):
             CREATE TABLE management_actions(operation_id INTEGER,action TEXT,job_id INTEGER);
             CREATE TABLE jobs(job_id INTEGER,state TEXT,kind TEXT,payload_json TEXT,last_reason_code TEXT,attempt_count INTEGER,created_at_ms INTEGER);
             CREATE TABLE anime_review_decisions(anidb_id INTEGER,job_id INTEGER,
-                reason_text TEXT,cleanup_state TEXT);
+                reason_text TEXT,cleanup_state TEXT,decision TEXT DEFAULT 'REJECT');
             CREATE TABLE batch_staging_publications(plan_id INTEGER,file_index INTEGER,
                 job_id INTEGER,state TEXT);
             CREATE TABLE batch_episode_reservations(plan_id INTEGER,file_index INTEGER,
@@ -91,7 +91,7 @@ class SeriesIntakeTests(unittest.TestCase):
 
     def test_rejected_series_remains_visible_but_blocks_keep_and_retry(self):
         self.db.execute("INSERT INTO jobs(job_id,state) VALUES(900,'DONE')")
-        self.db.execute("INSERT INTO anime_review_decisions VALUES"
+        self.db.execute("INSERT INTO anime_review_decisions(anidb_id,job_id,reason_text,cleanup_state) VALUES"
                         "(10,900,'Not interested: Not my cup of tea','COMPLETE')")
         info=detail(self.db,10)
         self.assertEqual(info['rejection']['reason'],

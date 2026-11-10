@@ -135,7 +135,7 @@ def detail(db, anidb_id, language='english'):
     }
     rejected = db.execute(
         "SELECT d.job_id,d.reason_text,d.cleanup_state,j.state FROM anime_review_decisions d "
-        "JOIN jobs j ON j.job_id=d.job_id WHERE d.anidb_id=?", (anidb_id,)).fetchone()
+        "JOIN jobs j ON j.job_id=d.job_id WHERE d.anidb_id=? AND d.decision='REJECT'", (anidb_id,)).fetchone()
     result['rejection'] = (None if rejected is None else {
         'job_id': rejected[0], 'reason': rejected[1],
         'cleanup_state': rejected[2], 'job_state': rejected[3]})
