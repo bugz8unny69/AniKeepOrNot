@@ -158,7 +158,8 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 with closing(_open(database, readonly=True, timeout_ms=5000)) as known_db:
                     if known_db.execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION:
                         known = recognized_for_release(known_db, title, season=int(seasons[0]))
-                        if known is not None:
+                        # Without a known TVDB series, the normal path finds the TVDB link.
+                        if known is not None and known["tvdb_series_id"] is not None:
                             if matching is not None:
                                 matching.anidb(known["anidb_id"])
                                 matching.tvdb(known["tvdb_series_id"], (known["title"],))
@@ -337,7 +338,7 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 incomplete("canceled")
             check("identity_verified", "passed", "verified")
             result_anime = {"anidb_id": aid, "tvdb_series_id": tid, "title": anime["title"]}
-            for name in ("english_title", "original_title"):
+            for name in ("english_title", "original_title", "type"):
                 if anime.get(name):
                     result_anime[name] = anime[name]
             return {"schema_version": 2, "anime": result_anime,

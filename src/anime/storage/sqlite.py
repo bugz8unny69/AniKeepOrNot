@@ -187,33 +187,36 @@ CREATE TABLE IF NOT EXISTS recognized_seasons (
  recognized_at_ms INTEGER NOT NULL CHECK(recognized_at_ms>=0),
  PRIMARY KEY(tvdb_series_id,tvdb_season,anidb_id)
 );
+CREATE TABLE IF NOT EXISTS recognized_series (
+ anidb_id INTEGER PRIMARY KEY REFERENCES identified_anime(anidb_id),
+ display_title TEXT NOT NULL CHECK(length(trim(display_title)) BETWEEN 1 AND 512),
+ tvdb_series_id INTEGER CHECK(tvdb_series_id IS NULL OR tvdb_series_id>0),
+ anime_type TEXT CHECK(anime_type IS NULL OR length(trim(anime_type)) BETWEEN 1 AND 64),
+ recognized_at_ms INTEGER NOT NULL CHECK(recognized_at_ms>=0)
+);
 CREATE TABLE IF NOT EXISTS recognized_aliases (
  alias_key TEXT NOT NULL CHECK(length(alias_key) BETWEEN 3 AND 256),
- tvdb_season INTEGER NOT NULL CHECK(tvdb_season>=0),
- tvdb_series_id INTEGER NOT NULL,
- anidb_id INTEGER NOT NULL,
- PRIMARY KEY(alias_key,tvdb_season,tvdb_series_id,anidb_id),
- FOREIGN KEY(tvdb_series_id,tvdb_season,anidb_id)
-  REFERENCES recognized_seasons(tvdb_series_id,tvdb_season,anidb_id)
+ anidb_id INTEGER NOT NULL REFERENCES recognized_series(anidb_id),
+ PRIMARY KEY(alias_key,anidb_id)
 );
-CREATE INDEX IF NOT EXISTS idx_recognized_alias_series ON recognized_aliases(tvdb_series_id,tvdb_season);
+CREATE INDEX IF NOT EXISTS idx_recognized_alias_series ON recognized_aliases(anidb_id);
 
 CREATE TABLE IF NOT EXISTS recognized_episodes (
- tvdb_series_id INTEGER NOT NULL,
- tvdb_season INTEGER NOT NULL,
- anidb_id INTEGER NOT NULL,
+ tvdb_series_id INTEGER CHECK(tvdb_series_id IS NULL OR tvdb_series_id>0),
+ tvdb_season INTEGER CHECK(tvdb_season IS NULL OR tvdb_season>=0),
+ anidb_id INTEGER NOT NULL REFERENCES recognized_series(anidb_id),
  anidb_episode_number INTEGER NOT NULL CHECK(anidb_episode_number>0),
  anidb_episode_id INTEGER NOT NULL CHECK(anidb_episode_id>0),
- tvdb_episode INTEGER NOT NULL CHECK(tvdb_episode>0),
- tvdb_episode_id INTEGER NOT NULL CHECK(tvdb_episode_id>0),
+ tvdb_episode INTEGER CHECK(tvdb_episode IS NULL OR tvdb_episode>0),
+ tvdb_episode_id INTEGER CHECK(tvdb_episode_id IS NULL OR tvdb_episode_id>0),
  evidence_verification_id INTEGER NOT NULL REFERENCES release_verifications(verification_id),
  recognized_at_ms INTEGER NOT NULL CHECK(recognized_at_ms>=0),
  PRIMARY KEY(anidb_id,anidb_episode_number),
  UNIQUE(anidb_episode_id),
  UNIQUE(tvdb_series_id,tvdb_season,tvdb_episode),
  UNIQUE(tvdb_episode_id),
- FOREIGN KEY(tvdb_series_id,tvdb_season,anidb_id)
-  REFERENCES recognized_seasons(tvdb_series_id,tvdb_season,anidb_id)
+ CHECK((tvdb_series_id IS NULL AND tvdb_season IS NULL AND tvdb_episode IS NULL AND tvdb_episode_id IS NULL) OR
+       (tvdb_series_id IS NOT NULL AND tvdb_season IS NOT NULL AND tvdb_episode IS NOT NULL AND tvdb_episode_id IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_recognized_episodes_season ON recognized_episodes(tvdb_series_id,tvdb_season);
 
@@ -1057,6 +1060,11 @@ def persist_identity(db, event_id, candidate, validated_at_ms=None):
         (aid,anime["tvdb_series_id"],anime["title"]))
     upsert_anime_titles(db, aid, anime.get("english_title"),
                        payload.get("attributes", {}).get("romaji_title"))
+    # Identity is verified here, so the series is recognized (work item P2).
+    from src.anime.storage.recognition import remember_identified
+    raw = db.execute("SELECT raw_body FROM incoming_events WHERE event_id=?", (event_id,)).fetchone()
+    remember_identified(db, anidb_id=aid, title=anime["title"][:512].strip(), tvdb_series_id=anime["tvdb_series_id"],
+                        anime_type=anime.get("type"), raw_body=raw[0] if raw else None, when=now)
     rid = db.execute(
         "INSERT INTO identity_results(event_id,anidb_id,schema_version,series_json,validated_at_ms)"
         " VALUES(?,?,?,?,?)",

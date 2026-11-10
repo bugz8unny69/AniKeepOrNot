@@ -81,10 +81,13 @@ class RecognitionTests(unittest.TestCase):
             old.executescript((migrations.SQL_DIR/name).read_text())
         # Copy a complete verified graph into the historical schema.
         self.remember(11,1)
+        # v70 keys aliases by AniDB anime; v25 keyed them by TVDB season.
+        shapes={'recognized_aliases':'SELECT a.alias_key,s.tvdb_season,s.tvdb_series_id,a.anidb_id '
+                                     'FROM recognized_aliases a JOIN recognized_seasons s USING(anidb_id)'}
         for table in ('identified_anime','incoming_events','jobs','identity_results',
                       'identified_episodes','release_verifications','recognized_seasons',
                       'recognized_aliases','recognized_episodes'):
-            rows=self.db.execute('SELECT * FROM '+table).fetchall()
+            rows=self.db.execute(shapes.get(table,'SELECT * FROM '+table)).fetchall()
             if rows:
                 old.executemany('INSERT INTO '+table+' VALUES('+','.join('?' for _ in rows[0])+')',rows)
         old.commit()
@@ -104,7 +107,8 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual(first["anidb_id"],1001)
         self.assertEqual(second["tvdb_series_id"],2001)
         self.assertEqual(second["tvdb_season"],2)
-        self.assertIsNone(recognized_for_release(self.db,"Example Anime - 01"))
+        # P2: one anime per alias is found without a season marker too.
+        self.assertEqual(recognized_for_release(self.db,"Example Anime - 01")["anidb_id"],1001)
         self.assertIsNone(recognized_for_release(self.db,"Unknown Anime S02E01",season=2))
         self.assertEqual(self.db.execute("SELECT count(*) FROM release_verifications").fetchone()[0],2)
         self.assertEqual(self.db.execute("SELECT count(*) FROM recognized_episodes").fetchone()[0],2)

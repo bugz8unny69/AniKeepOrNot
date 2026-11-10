@@ -182,6 +182,8 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
     ver_id = ver_row[0] if ver_row else None
 
     if ver_id is not None:
+        from src.anime.storage.recognition import ensure_series
+        ensure_series(db, aid)
         db.execute(
             "INSERT OR IGNORE INTO recognized_seasons "
             "(tvdb_series_id,tvdb_season,anidb_id,display_title,evidence_verification_id,recognized_at_ms) "
@@ -195,7 +197,13 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
             "WHERE anidb_id=? AND anidb_episode_number=?",
             (aid, anidb_number)
         ).fetchone()
-        if existing_rec is not None:
+        if existing_rec is not None and existing_rec[3] is None:
+            # Recognized without a TVDB placement: this is its placement now.
+            db.execute(
+                "UPDATE recognized_episodes SET tvdb_series_id=?,tvdb_season=?,tvdb_episode=?,tvdb_episode_id=? "
+                "WHERE anidb_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NULL",
+                (tid, target_season, target_episode, tvdb_eid, aid, anidb_number))
+        elif existing_rec is not None:
             if existing_rec != (tid, target_season, target_episode, tvdb_eid):
                 raise KeepReview()
         else:

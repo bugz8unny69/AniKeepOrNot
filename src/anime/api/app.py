@@ -594,37 +594,32 @@ class Application:
             if path==PREFIX+'/' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 return 200,{'version':'v1','resources':['health','settings','credentials','intake','jobs','jobs/{id}/matching','auth/session','auth/password','recognized','search','webhook']},[]
-            season_match=re.fullmatch(PREFIX+r'/recognized/([1-9][0-9]{0,17})/([0-9]{1,3})(?:/([1-9][0-9]{0,17}))?/episodes',path)
-            if season_match:
+            series_match=re.fullmatch(PREFIX+r'/recognized/([1-9][0-9]{0,17})/episodes',path)
+            if series_match:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                tid,season=map(int,season_match.groups()[:2])
-                aid=int(season_match.group(3)) if season_match.group(3) else None
+                aid=int(series_match.group(1))
                 with JobQueue(configuration.value('storage.database_path')).connection() as db:
                     db.execute('BEGIN')
-                    parents=db.execute(
-                        "SELECT anidb_id,display_title FROM recognized_seasons "
-                        "WHERE tvdb_series_id=? AND tvdb_season=?" +
-                        (" AND anidb_id=?" if aid is not None else ""),
-                        (tid,season,aid) if aid is not None else (tid,season)).fetchall()
-                    if len(parents)!=1:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    parent=parents[0]
+                    parent=db.execute("SELECT display_title,tvdb_series_id FROM recognized_series WHERE anidb_id=?",
+                                      (aid,)).fetchone()
+                    if parent is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
                     translated=db.execute(
                         "SELECT english_title,romaji_title FROM anime_title_metadata WHERE anidb_id=?",
-                        (parent[0],)).fetchone()
-                    recognized_title=preferred_title(parent[1],
+                        (aid,)).fetchone()
+                    recognized_title=preferred_title(parent[0],
                         translated[0] if translated else None,
                         translated[1] if translated else None,
                         configuration.value('anime.title_language'))
                     records=db.execute(
-                        "SELECT anidb_episode_number,anidb_episode_id,tvdb_episode,tvdb_episode_id "
-                        "FROM recognized_episodes WHERE tvdb_series_id=? AND tvdb_season=? "
-                        "AND anidb_id=? ORDER BY tvdb_episode LIMIT 501",(tid,season,parent[0])).fetchall()
+                        "SELECT anidb_episode_number,anidb_episode_id,tvdb_season,tvdb_episode,tvdb_episode_id "
+                        "FROM recognized_episodes WHERE anidb_id=? ORDER BY anidb_episode_number LIMIT 501",
+                        (aid,)).fetchall()
                 if len(records)>500:raise ApiError(503,'API_UNAVAILABLE')
-                return 200,{'tvdb_series_id':tid,'season':season,'anidb_id':parent[0],
-                    'title':recognized_title,'items':[{'anidb_episode_number':an,
-                    'anidb_episode_id':ae,'tvdb_episode':te,'tvdb_episode_id':tid_episode}
-                    for an,ae,te,tid_episode in records]},[]
+                return 200,{'anidb_id':aid,'tvdb_series_id':parent[1],'title':recognized_title,
+                    'items':[{'anidb_episode_number':an,'anidb_episode_id':ae,'tvdb_season':ts,
+                              'tvdb_episode':te,'tvdb_episode_id':tid_episode}
+                             for an,ae,ts,te,tid_episode in records]},[]
             if path==PREFIX+'/recognized':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -970,24 +965,20 @@ class Application:
     def _recognized(self,db,language,match=None):
         where,params=match if match else ('1',[])
         rows=db.execute(
-            "SELECT s.tvdb_series_id,s.tvdb_season,s.anidb_id,s.display_title,"
-            "t.english_title,t.romaji_title,"
-            "count(DISTINCT a.alias_key),count(DISTINCT v.anidb_episode_id) "
-            "FROM recognized_seasons s "
-            "LEFT JOIN anime_title_metadata t ON t.anidb_id=s.anidb_id "
-            "LEFT JOIN recognized_aliases a "
-            "ON a.tvdb_series_id=s.tvdb_series_id AND a.tvdb_season=s.tvdb_season AND a.anidb_id=s.anidb_id "
-            "LEFT JOIN recognized_episodes v "
-            "ON v.tvdb_series_id=s.tvdb_series_id AND v.tvdb_season=s.tvdb_season "
-            "AND v.anidb_id=s.anidb_id "
-            "WHERE ("+where+") "
-            "GROUP BY s.tvdb_series_id,s.tvdb_season,s.anidb_id,s.display_title "
-            "ORDER BY s.display_title,s.tvdb_season LIMIT 501",params).fetchall()
+            "SELECT s.anidb_id,s.tvdb_series_id,s.display_title,s.anime_type,t.english_title,t.romaji_title,"
+            "(SELECT count(*) FROM recognized_aliases a WHERE a.anidb_id=s.anidb_id),"
+            "(SELECT count(*) FROM recognized_episodes v WHERE v.anidb_id=s.anidb_id),"
+            "(SELECT count(*) FROM recognized_episodes v WHERE v.anidb_id=s.anidb_id AND v.tvdb_episode_id IS NOT NULL),"
+            "(SELECT group_concat(tvdb_season) FROM (SELECT tvdb_season FROM recognized_seasons r "
+            " WHERE r.anidb_id=s.anidb_id ORDER BY tvdb_season)) "
+            "FROM recognized_series s LEFT JOIN anime_title_metadata t ON t.anidb_id=s.anidb_id "
+            "WHERE ("+where+") ORDER BY s.display_title,s.anidb_id LIMIT 501",params).fetchall()
         if len(rows)>500:raise ApiError(503,'API_UNAVAILABLE')
-        return {'items':[{'tvdb_series_id':tid,'season':season,
-            'anidb_id':aid,'title':preferred_title(title,english,romaji,language),
-            'alias_count':alias_count,'verified_episode_count':ep_count}
-            for tid,season,aid,title,english,romaji,alias_count,ep_count in rows]}
+        return {'items':[{'anidb_id':aid,'tvdb_series_id':tid,
+            'title':preferred_title(title,english,romaji,language),'anime_type':kind,
+            'seasons':[int(x) for x in seasons.split(',')] if seasons else [],
+            'alias_count':alias_count,'verified_episode_count':ep_count,'placed_episode_count':placed}
+            for aid,tid,title,kind,english,romaji,alias_count,ep_count,placed,seasons in rows]}
 
     def _search(self,configuration,query):
         # One route for every page; the scope decides which page's list is filtered.
