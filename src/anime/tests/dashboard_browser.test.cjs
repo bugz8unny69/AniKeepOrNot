@@ -722,3 +722,33 @@ test('manual form shows the server refusal inside the dialog', async () => {
   f.open();
   assert.equal(f.error(), '');
 });
+test('the bell count comes with the service poll, shows 99+, and items mark read', async () => {
+  const h = await harness();
+  let unread = 3;
+  const calls = [];
+  h.ctx.fetch = async (url, options) => {
+    calls.push([options.method, url]);
+    if (url === '/api/v1/services') return response({services: [], notifications_unread: unread});
+    if (url === '/api/v1/notifications') return response({unread: 1, next_before_id: null, items: [
+      {notification_id: 9, type: 'SERIES_EPISODE_TROUBLE', title: 'Episode trouble: Frieren', count: 2,
+       message: 'Frieren: trouble getting episodes 5, 7.', last_at_ms: 1, actions: ['open_series', 'open_job']}]});
+    if (url === '/api/v1/notifications/9') return response({deleted: 1, unread: 0});
+    throw new Error(url);
+  };
+  await h.run('loadServices()');
+  const badge = h.elements.get('bell-badge');
+  assert.equal(badge.hidden, false); assert.equal(badge.textContent, '3');
+  unread = 150; await h.run('loadServices()');
+  assert.equal(badge.textContent, '99+');
+  await h.run('loadBell()');
+  const item = h.elements.get('bell-items').children[0];
+  const text = element => [element.textContent || '', ...element.children.map(text)].join(' ');
+  assert.match(text(item), /Episode trouble: Frieren ×2/);
+  const buttons = item.children[3].children;
+  assert.deepEqual(buttons.map(b => b.textContent), ['Open series', 'Open job', 'Mark read']);
+  await buttons[2].listeners.click();
+  assert.deepEqual(calls.at(-1), ['DELETE', '/api/v1/notifications/9']);
+  assert.equal(badge.hidden, true);
+  h.run('clearPrivate()');
+  assert.equal(h.elements.get('bell-items').children.length, 0);
+});

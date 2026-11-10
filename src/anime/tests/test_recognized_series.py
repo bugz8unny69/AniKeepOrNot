@@ -114,6 +114,8 @@ class RecognizedSeriesMigrationTests(unittest.TestCase):
                          [(2001, 1, 1001, 1, 30001, 1, 40001, 1, 5)])
         self.assertEqual(db.execute('SELECT count(*) FROM recognized_seasons').fetchone()[0], 1)
         self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+        for name in SCRIPTS[70:]:
+            db.executescript((SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         self.addCleanup(fresh.close)
         initialize(fresh)

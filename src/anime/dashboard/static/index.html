@@ -22,6 +22,15 @@
     <div id="service-bar" class="service-bar" role="status" aria-label="Service status" hidden></div>
     <nav aria-label="Main navigation">
       <a class="tab" href="/">Intake</a><a class="tab" href="/jobs">Jobs</a><a class="tab" href="/recognized">Recognized Names</a><a class="tab" href="/settings">Settings</a>
+      <span class="bell-wrap"><button id="bell" type="button" class="secondary bell" aria-haspopup="true" aria-expanded="false" aria-controls="bell-panel" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1z"/></svg>
+        <span id="bell-badge" class="bell-badge" hidden></span></button>
+        <section id="bell-panel" class="bell-panel" role="dialog" aria-label="Notifications" hidden>
+          <div class="toolbar"><h2>Notifications</h2><button id="bell-clear" type="button" class="secondary">Mark all read</button></div>
+          <div id="bell-items"></div>
+          <p id="bell-note" class="muted" role="status"></p>
+          <button id="bell-more" type="button" class="secondary" hidden>Load more</button>
+        </section></span>
     </nav>
     <section id="activity-panel" hidden>
       <h1 id="page-title">Intake</h1><p id="page-description" class="muted"></p>

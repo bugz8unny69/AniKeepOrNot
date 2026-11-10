@@ -427,6 +427,8 @@ def persist_observations(db, claim, value, *, dispatch=False):
                                              WAITING_FOR_DUB)):
             raise BackfillConflict()
     now = integer(time.time_ns() // 1000000)
+    # A search that found nothing usable is trouble for the series (bell item).
+    found_nothing = any(item.status == 'NO_RESULTS' for item in value.observations)
     # Selection is an opt-in side effect of the same fenced worker completion.
     # Keep source URLs out of SQLite and reject stale/unverified identity facts.
     from src.anime.storage.release_selection import select, SelectionConflict
@@ -465,6 +467,9 @@ def persist_observations(db, claim, value, *, dispatch=False):
             (plan.plan_id,item.number,claim.job_id,item.tvdb_episode_id,item.status,
              item.candidates,item.accepted,item.accepted,now)
         )
+    if found_nothing:
+        from src.anime.notifications import series_trouble
+        series_trouble(db, plan.anidb_id, job_id=claim.job_id, now=now)
     return (append_job_history(db,job_id=claim.job_id,
         event_code='EPISODE_DISCOVERY_RECORDED',component='worker',occurred_at_ms=now,
         details={'attempt':claim.attempt}),*routed)
@@ -625,4 +630,6 @@ def persist_candidates_exhausted(db, claim, value):
         "status='NO_RESULTS',observed_at_ms=excluded.observed_at_ms",
         (plan.plan_id, episode, claim.job_id, now)
     )
+    from src.anime.notifications import series_trouble
+    series_trouble(db, plan.anidb_id, job_id=claim.job_id, now=now)
     return ()

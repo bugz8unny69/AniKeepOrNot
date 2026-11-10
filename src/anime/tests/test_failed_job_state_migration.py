@@ -50,6 +50,7 @@ class FailedJobStateMigrationTests(unittest.TestCase):
         upgraded.executescript((SQL_DIR / '068_package_paths.sql').read_text())
         upgraded.executescript((SQL_DIR / '069_series_accept_search.sql').read_text())
         upgraded.executescript((SQL_DIR / '070_recognized_series.sql').read_text())
+        upgraded.executescript((SQL_DIR / '071_notifications.sql').read_text())
         self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], LATEST_VERSION)
         self.assertEqual(_structure(fresh), _structure(upgraded))
 
