@@ -188,6 +188,10 @@ class KeepSonarrTests(unittest.IsolatedAsyncioTestCase):
         aid=fake.selection.anidb_id
         decision=self.rows('SELECT decision,job_id,sonarr_search_sent_at_ms IS NOT NULL FROM anime_review_decisions WHERE anidb_id=?',(aid,))
         self.assertEqual(decision,[('ACCEPT',job,1)])
+        from src.anime.storage.series_intake import detail
+        db=connect(self.database)
+        try:self.assertIsNone(detail(db,aid)['rejection'])            # accepted is not rejected
+        finally:db.close()
         _,again,_=actions.submit(target,'keep')
         self.assertTrue(again['reused']);self.assertEqual(len(fake.searches),1)
 
