@@ -59,6 +59,8 @@ class BatchKeepServiceIntegrationTests(unittest.TestCase):
             'storage.library_root': str(self.library_root),
             'sonarr.base_url': 'http://sonarr.invalid',
             'sonarr.quality_profile_id': 1,
+            'sonarr.long_running_threshold': 100,
+            'sonarr.backfill_long_running': False,
             'sonarr.timeout_seconds': 30,
             'sonarr.staging_root': None,
             'sonarr.library_root': None,

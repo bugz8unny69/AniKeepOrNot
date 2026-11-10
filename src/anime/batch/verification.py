@@ -14,7 +14,7 @@ from src.anime.batch.selection import (
 )
 from src.anime.providers.errors import ProviderInvalidResponse
 from src.anime.providers.http import Credentials
-from src.anime.providers.release_mapping import forward_mappings
+from src.anime.providers.release_mapping import forward_mappings, absolute_lookup
 from src.anime.release_contracts import ReleaseNotReady, ReleaseConflict
 
 
@@ -85,7 +85,8 @@ def verify_batch_files(inventory, *, client, credentials, anidb_id, tvdb_series_
                    for n,eid in catalog.items())
             or len(set(catalog.values())) != len(catalog)):
         raise ProviderInvalidResponse()
-    mappings = forward_mappings(client.mapping_xml(), anidb_id, tvdb_series_id, catalog)
+    mappings = forward_mappings(client.mapping_xml(), anidb_id, tvdb_series_id, catalog,
+                                absolute=absolute_lookup(client, tvdb_series_id, credentials))
     reverse = {}
     for anidb_number, target in mappings.items():
         if target in reverse:

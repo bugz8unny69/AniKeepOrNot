@@ -60,7 +60,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'user_evaluation_checks_v64',  # v65 rebuilds tables whose checks name codes
             None,  # v66 rewrites retired service codes
             'resources',  # v67 records every file, folder and torrent a job creates
-            None)  # v68 rewrites stored src/nextgen paths to src/anime; rename_package: keep
+            None,  # v68 rewrites stored src/nextgen paths to src/anime; rename_package: keep
+            'anime_review_decisions_v69')  # v69 allows ACCEPT and records the Sonarr search
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

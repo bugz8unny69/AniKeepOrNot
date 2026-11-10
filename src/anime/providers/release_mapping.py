@@ -28,12 +28,35 @@ def declared_episode(title):
     return "anidb", None, parsed.episode
 
 
-def forward_mappings(payload, aid, tid, catalog):
+def absolute_index(client, tid, secret):
+    """TVDB absolute number -> (season, episode); a number used twice maps to None."""
+    index={}
+    for page in range(20):
+        records,has_next=client.absolute_page(tid,page,secret)
+        for season,number,absolute in records:
+            index[absolute]=None if absolute in index else (season,number)
+        if not has_next: return index
+    return index
+
+
+def absolute_lookup(client, tid, secret):
+    """The lazy absolute= argument of forward_mappings, or None without TVDB credentials."""
+    return None if secret is None else (lambda: absolute_index(client,tid,secret))
+
+
+def forward_mappings(payload, aid, tid, catalog, *, absolute=None):
     """Resolve regular AniDB numbers through supported explicit mapping rules.
 
     Anime-Lists defines omitted/blank offsets as zero when episode numbers
     align. A mapped TVDB season and authoritative episode catalog are still
-    required. Unknown/split/absolute rules fail closed.
+    required. Unknown/split rules fail closed.
+
+    defaulttvdbseason="a" (long-running series such as One Piece) means TVDB
+    absolute numbering: AniDB episode N is the TVDB episode whose absolute
+    number is N + episodeoffset. absolute is a callable returning the TVDB
+    absolute index (see absolute_index); it is only called for such series. No
+    match, or two TVDB episodes with that absolute number, leaves the episode
+    unmapped. Explicit mapping-list rules still come first.
     """
     root=xml(payload,"anime-list",limit=16777216)
     rows=[node for node in root.findall("anime") if node.get("anidbid")==str(aid)]
@@ -67,8 +90,9 @@ def forward_mappings(payload, aid, tid, catalog):
             rules.append((1,int(start),int(last),target_season,int(offset)))
     default_season,default_offset=node.get("defaulttvdbseason"),node.get("episodeoffset") or "0"
     default=None
-    if re.fullmatch(r"[0-9]{1,3}",default_season or "") and re.fullmatch(r"-?[0-9]{1,5}",default_offset or ""):
-        default=(int(default_season),int(default_offset))
+    if re.fullmatch(r"[0-9]{1,3}|a",default_season or "") and re.fullmatch(r"-?[0-9]{1,5}",default_offset or ""):
+        default=(default_season if default_season=="a" else int(default_season),int(default_offset))
+    index=None
     resolved={}
     for number in catalog:
         applicable=[rule for rule in rules if rule[1]<=number<=rule[2]]
@@ -77,6 +101,11 @@ def forward_mappings(payload, aid, tid, catalog):
             targets={(rule[3],number+rule[4]) for rule in applicable if rule[0]==priority}
             if len(targets)!=1: raise ReleaseConflict()
             target=targets.pop()
+        elif default is not None and default[0]=="a":
+            if absolute is None: continue
+            if index is None: index=absolute()
+            target=index.get(number+default[1])
+            if target is None: continue
         elif default is not None:
             target=(default[0],number+default[1])
         else: continue

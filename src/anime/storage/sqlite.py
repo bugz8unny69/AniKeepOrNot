@@ -418,11 +418,13 @@ CREATE TABLE IF NOT EXISTS anime_review_decisions (
  anidb_id INTEGER PRIMARY KEY REFERENCES identified_anime(anidb_id),
  operation_id INTEGER NOT NULL REFERENCES job_operations(operation_id),
  job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(job_id),
- decision TEXT NOT NULL CHECK(decision='REJECT'),
+ decision TEXT NOT NULL CHECK(decision IN ('REJECT','ACCEPT')),
  cleanup_state TEXT NOT NULL CHECK(cleanup_state IN ('PENDING','COMPLETE')),
  decided_at_ms INTEGER NOT NULL CHECK(decided_at_ms>=0),
  reason_text TEXT CHECK(reason_text IS NULL OR
-   (length(trim(reason_text)) BETWEEN 1 AND 500))
+   (length(trim(reason_text)) BETWEEN 1 AND 500)),
+ sonarr_search_sent_at_ms INTEGER CHECK(sonarr_search_sent_at_ms IS NULL OR
+   (decision='ACCEPT' AND sonarr_search_sent_at_ms>=0))
 );
 
 CREATE TABLE IF NOT EXISTS keep_imports (

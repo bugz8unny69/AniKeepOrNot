@@ -315,6 +315,12 @@ class Clients:
         return self._tvdb(tid,credentials,("episodes_official",page),"/series/"+str(tid)+"/episodes/official?page="+str(page),
                           lambda data:parsing.tvdb_episode_page(data,tid),300)
 
+    def absolute_page(self, tid, page, credentials):
+        """The official episode page read for absolute numbers (long-running series only)."""
+        if type(page) is not int or not 0<=page<20: raise ValueError("invalid episode page")
+        return self._tvdb(tid,credentials,("episodes_absolute",page),"/series/"+str(tid)+"/episodes/official?page="+str(page),
+                          lambda data:parsing.tvdb_absolute_page(data,tid),300)
+
     def mapping_xml(self):
         return self._public("anime_lists","mapping",MAPPING_URL,limit=16777216,gap=60000,
                             validate=lambda value:parsing.xml(value,"anime-list",limit=16777216))

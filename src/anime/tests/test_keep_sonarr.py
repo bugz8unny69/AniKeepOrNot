@@ -31,7 +31,7 @@ class Response(io.BytesIO):
 
 
 class FakeSonarr:
-    def __init__(self):self.selection=None;self.root=None;self.present=True;self.imported=False;self.posts=[];self.payload=None;self.lose_import=False;self.lose_add=False;self.failed=False;self.wrong_destination=False;self.imported_size=None;self.monitored=None;self.puts=[];self.series_path=None
+    def __init__(self):self.selection=None;self.root=None;self.present=True;self.imported=False;self.posts=[];self.payload=None;self.lose_import=False;self.lose_add=False;self.failed=False;self.wrong_destination=False;self.imported_size=None;self.monitored=None;self.puts=[];self.series_path=None;self.searches=[];self.added=[];self.expected_monitor='all';self.roots=None;self.refuse_search=False
     def __call__(self,request,timeout):
         assert request.get_header('X-api-key')=='sonarr-private-key'
         path=urlsplit(request.full_url).path.removeprefix('/api/v3/')
@@ -40,16 +40,23 @@ class FakeSonarr:
         if self.monitored is not None:series.update(monitored=self.monitored,qualityProfileId=7,tags=[3])
         episode={'id':41,'seriesId':31,'tvdbId':self.selection.tvdb_episode_id,'seasonNumber':self.selection.tvdb_season,
                  'episodeNumber':self.selection.tvdb_episode,'hasFile':self.imported,'episodeFileId':51 if self.imported else 0}
+        if path=='command' and body is not None and body.get('name')=='SeriesSearch':
+            assert body=={'name':'SeriesSearch','seriesId':31} and self.imported
+            self.searches.append(body)
+            if self.refuse_search:raise urllib.error.URLError('down')
+            return Response({'id':71})
         if body is not None:self.posts.append(path)
         if path=='system/status':return Response({'version':'4.0.16.1'})
         if path=='qualityprofile':return Response([{'id':1}])
-        if path=='rootfolder':return Response([{'path':str(self.root)}])
+        if path=='rootfolder':return Response([{'path':root} for root in (self.roots or [str(self.root)+'/'])])
         if path=='series/lookup':return Response([{'tvdbId':self.selection.tvdb_series_id,'title':'Test Anime'}])
         if path=='series':
             if body is not None:
                 assert body['tvdbId']==self.selection.tvdb_series_id
                 assert body['addOptions']['searchForMissingEpisodes'] is False
-                assert body['addOptions']['monitor']=='all'
+                assert body['addOptions']['monitor']==self.expected_monitor
+                assert (body['qualityProfileId'],body['rootFolderPath'],body['seriesType'],body['seasonFolder'],body['monitored'])==(1,str(self.root),'anime',True,True)
+                self.added.append(body)
                 self.present=True
                 if self.lose_add:self.lose_add=False;raise urllib.error.URLError('lost reply')
                 return Response(series)
@@ -104,6 +111,29 @@ class KeepSonarrTests(unittest.IsolatedAsyncioTestCase):
         actions=ManagementActions(self.database);_,receipt,_=actions.submit(target,'keep')
         return worker,fake,actions,target,receipt['job_id']
 
+    async def test_keep_is_refused_before_any_job_without_a_quality_profile(self):
+        from src.anime.configuration_schema import for_operation
+        from src.anime.storage.management_actions import KeepServiceUnavailable
+        worker=StageMediaJobTests.worker(self)
+        await self.staged_ready(worker);await worker.attempt()
+        target=self.rows("SELECT job_id FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'")[0][0]
+        current=self.store.read()
+        self.store.update({'storage':{'keep_root':str(self.root/'permanent')},'sonarr':{'base_url':'http://sonarr.invalid','quality_profile_id':0}},
+                          expected_revision=current.revision)
+        latest=self.store.read();configuration=for_operation(latest,latest,component='api')
+        before=self.rows('SELECT count(*) FROM jobs')
+        with self.assertRaises(KeepServiceUnavailable) as caught:
+            ManagementActions(self.database,configuration).submit(target,'keep')
+        self.assertEqual(caught.exception.reason_code,'KEEP_CONFIGURATION_INVALID')
+        self.assertIn('quality profile',caught.exception.detail)
+        self.assertEqual(self.rows('SELECT count(*) FROM jobs'),before)
+        db=connect(self.database)
+        try:
+            capability=ManagementActions(self.database,configuration).capabilities(db,target)['keep']
+        finally:db.close()
+        self.assertFalse(capability['execution_available'])
+        self.assertIn('quality profile',capability['availability_reason']['message'])
+
     async def make_due(self,job):
         db=connect(self.database)
         try:
@@ -143,14 +173,100 @@ class KeepSonarrTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT phase FROM keep_imports'),[('COMPLETE',)])
         self.assertEqual(fake.posts.count('command'),1)
 
-    async def test_missing_sonarr_series_stops_without_creating_it(self):
+    async def test_missing_series_is_added_without_search_then_imported_then_searched_once(self):
         worker,fake,actions,target,job=await self.prepared(present=False)
         await worker.attempt()
-        self.assertEqual(fake.posts,[])
-        self.assertEqual(fake.puts,[])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.rows('SELECT phase FROM keep_imports'),[('COMPLETE',)])
+        self.assertEqual(len(fake.added),1)
+        self.assertIs(fake.added[0]['addOptions']['searchForMissingEpisodes'],False)
+        self.assertEqual(fake.posts,['series','manualimport','command'])     # add, then import
+        self.assertEqual(len(fake.searches),1)                               # then one search
+        self.assertEqual(self.rows("SELECT event_code,reason_code FROM job_history WHERE job_id=? "
+                                   "AND event_code IN ('KEEP_SERIES_ADDED','KEEP_SEARCH_REQUESTED') ORDER BY history_id",(job,)),
+                         [('KEEP_SERIES_ADDED','KEEP_SERIES_ADDED'),('KEEP_SEARCH_REQUESTED','KEEP_SEARCH_SENT')])
+        aid=fake.selection.anidb_id
+        decision=self.rows('SELECT decision,job_id,sonarr_search_sent_at_ms IS NOT NULL FROM anime_review_decisions WHERE anidb_id=?',(aid,))
+        self.assertEqual(decision,[('ACCEPT',job,1)])
+        from src.anime.storage.series_intake import detail
+        db=connect(self.database)
+        try:self.assertIsNone(detail(db,aid)['rejection'])            # accepted is not rejected
+        finally:db.close()
+        _,again,_=actions.submit(target,'keep')
+        self.assertTrue(again['reused']);self.assertEqual(len(fake.searches),1)
+
+    async def test_existing_series_is_not_added_and_its_monitoring_is_unchanged(self):
+        worker,fake,actions,target,job=await self.prepared(monitored=False)
+        await worker.attempt()
+        self.assertEqual(fake.added,[]);self.assertEqual(fake.puts,[])
+        self.assertNotIn('series',fake.posts)
+        self.assertEqual(len(fake.searches),1)
+
+    async def test_lost_add_reply_finds_the_series_without_a_second_post(self):
+        worker,fake,actions,target,job=await self.prepared(present=False,lose_add=True)
+        await worker.attempt()
+        self.assertEqual(self.rows('SELECT phase FROM keep_imports'),[('ADD_UNCERTAIN',)])
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT phase FROM keep_imports'),[('COMPLETE',)])
+        self.assertEqual(len(fake.added),1)
+
+    async def test_a_series_another_keep_job_is_adding_is_found_not_added_again(self):
+        worker,fake,actions,target,job=await self.prepared(present=False)
+        tvdb=fake.selection.tvdb_series_id
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                db.execute("INSERT INTO jobs(kind,payload_json,state,available_at_ms,attempt_count,created_at_ms,updated_at_ms) "
+                           "VALUES('KEEP_MEDIA','{}','RETRY_WAIT',9000000000000,1,1,1)")
+                other=db.execute('SELECT max(job_id) FROM jobs').fetchone()[0]
+                db.execute("INSERT INTO keep_imports VALUES(?,'ADD_UNCERTAIN',?,1)",
+                           (other,json.dumps({'selection':{'tvdb_series_id':tvdb}})))
+        finally:db.close()
+        await worker.attempt()
+        self.assertEqual(fake.added,[])                                     # it waits for the other job
+        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)),
+                         [('RETRY_WAIT','KEEP_IMPORT_WAITING')])
+        fake.present=True                                                   # the other job's add landed
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT phase FROM keep_imports WHERE job_id=?',(job,)),[('COMPLETE',)])
+        self.assertEqual(fake.added,[])
+
+    async def test_root_folder_unknown_to_sonarr_stops_before_any_add(self):
+        worker,fake,actions,target,job=await self.prepared(present=False,roots=['/elsewhere/'])
+        await worker.attempt()
+        self.assertEqual(fake.added,[])
         self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)),
                          [('NEEDS_REVIEW','KEEP_IMPORT_REVIEW')])
+        details=json.loads(self.rows("SELECT details_json FROM job_history WHERE job_id=? AND event_code='NEEDS_REVIEW'",(job,))[0][0])
+        self.assertIn('ROOT_FOLDER_NOT_IN_SONARR',details['failed_check'])
         self.assertTrue(Path(fake.selection.media_path).is_file())
+
+    async def test_failed_search_does_not_fail_keep_and_is_not_resent(self):
+        worker,fake,actions,target,job=await self.prepared(refuse_search=True)
+        await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(len(fake.searches),1)
+        self.assertEqual(self.rows("SELECT reason_code FROM job_history WHERE job_id=? AND event_code='KEEP_SEARCH_REQUESTED'",(job,)),
+                         [('KEEP_SEARCH_FAILED',)])
+
+    async def test_search_waits_for_the_series_last_keep_job(self):
+        worker,fake,actions,target,job=await self.prepared()
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                # Another, unfinished Keep job of the same series' staged work.
+                db.execute("INSERT INTO jobs(kind,payload_json,state,available_at_ms,attempt_count,created_at_ms,updated_at_ms) "
+                           "VALUES('KEEP_MEDIA','{}','NEEDS_REVIEW',0,1,1,1)")
+                other=db.execute('SELECT max(job_id) FROM jobs').fetchone()[0]
+                operation=db.execute('SELECT operation_id FROM management_actions WHERE job_id=?',(job,)).fetchone()[0]
+                db.execute("DELETE FROM management_actions WHERE job_id=?",(job,))
+                db.execute("INSERT INTO management_actions VALUES(?,'KEEP',?,?,1)",(operation,target,other))
+                db.execute("INSERT INTO management_actions VALUES(?,'CLEANUP',?,?,1)",(operation,target,job))
+        finally:db.close()
+        from src.anime.storage.keep_imports import _other_keep_unfinished
+        db=connect(self.database)
+        try:self.assertTrue(_other_keep_unfinished(db,job,fake.selection.anidb_id))
+        finally:db.close()
 
     async def test_keep_preserves_unmonitored_series_settings(self):
         worker,fake,actions,target,job=await self.prepared(monitored=False)
@@ -214,8 +330,8 @@ class SonarrSettingsTests(unittest.TestCase):
             self.assertNotIn('sonarr',doc['settings'])
             with self.assertRaises(ConfigurationError):convert_document({**doc,'settings':{**doc['settings'],'sonarr':{'base_url':'http://sonarr.invalid'}}})
         upgraded=convert_document(doc)
-        self.assertEqual(upgraded.schema_version,15)
-        self.assertEqual(upgraded.revision,doc['revision']+8)
+        self.assertEqual(upgraded.schema_version,16)
+        self.assertEqual(upgraded.revision,doc['revision']+9)
         self.assertEqual(upgraded.value('sonarr.base_url'),'')
         # The HTTP torrent metadata source was explicitly retired in v12, and v15
         # renamed "trial" to "user evaluation". Every other value is unchanged.
@@ -281,3 +397,35 @@ class KeepMigrationTests(unittest.TestCase):
                 self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],version)
                 self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='keep_imports'").fetchone())
             finally:db.close()
+
+
+class LongRunningSeriesTests(unittest.TestCase):
+    """Work item P1 1.4: Sonarr only gets new episodes of long-running series."""
+    def options(self,threshold=100,backfill=False):
+        from src.anime.sonarr import Options
+        return Options('http://sonarr.invalid','/keep','/stage','/keep',1,30,threshold,backfill)
+
+    def test_monitor_mode(self):
+        from src.anime.storage.keep_imports import monitor_mode
+        self.assertEqual(monitor_mode(1000,self.options()),'future')
+        self.assertEqual(monitor_mode(100,self.options()),'future')
+        self.assertEqual(monitor_mode(12,self.options()),'all')
+        self.assertEqual(monitor_mode(1000,self.options(threshold=0)),'all')
+        self.assertEqual(monitor_mode(1000,self.options(backfill=True)),'all')
+        self.assertEqual(monitor_mode(None,self.options()),'all')
+
+    def test_journals_from_before_the_settings_still_load(self):
+        from src.anime.sonarr import Options
+        old=Options('http://sonarr.invalid','/keep','/stage','/keep',1,30).data()
+        del old['long_running_threshold'],old['backfill_long_running']
+        self.assertEqual(Options(**old).long_running_threshold,100)
+
+    def test_highest_episode_comes_from_the_cached_record_or_local_verifications(self):
+        from src.anime.storage.keep_imports import highest_regular_episode
+        db=sqlite3.connect(':memory:');self.addCleanup(db.close)
+        initialize(db)
+        episodes=''.join(f'<episode id="{900+n}"><epno type="1">{n}</epno></episode>' for n in range(1,1001))
+        payload=f'<anime id="69"><episodes>{episodes}<episode id="5"><epno type="2">S1</epno></episode></episodes></anime>'.encode()
+        db.execute("INSERT INTO provider_public_cache VALUES('anidb','anime:69',0,1,?)",(payload,))
+        self.assertEqual(highest_regular_episode(db,69),1000)
+        self.assertIsNone(highest_regular_episode(db,70))

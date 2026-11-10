@@ -14,7 +14,7 @@ import re
 
 from src.anime.settings import COMPONENTS, Settings, parse_settings
 
-CONFIGURATION_VERSION = 15
+CONFIGURATION_VERSION = 16
 MAX_REVISION = (1 << 63) - 1
 MAX_BYTES = 65536
 
@@ -85,6 +85,10 @@ FIELDS = MappingProxyType({
     "sonarr.base_url": FieldDefinition("", "download_endpoint", "next_operation", label="Sonarr address", help_text="HTTP(S) server address for Sonarr v4. Blank turns Keep off."),
     "sonarr.timeout_seconds": FieldDefinition(30, "integer", "next_operation", minimum=1, maximum=60, label="Sonarr timeout"),
     "sonarr.quality_profile_id": FieldDefinition(0, "integer", "next_operation", minimum=0, maximum=2147483647, label="Sonarr quality profile ID", help_text="Required for new series. Zero means unconfigured."),
+    "sonarr.long_running_threshold": FieldDefinition(100, "integer", "next_operation", minimum=0, maximum=100000,
+        label="Long-running series threshold (episodes)", help_text="When Keep adds a series to Sonarr and its AniDB entry has at least this many regular episodes (One Piece, Detective Conan), Sonarr only gets new episodes. 0 turns this off."),
+    "sonarr.backfill_long_running": FieldDefinition(False, "boolean", "next_operation",
+        label="Let Sonarr backfill long-running series", help_text="Not recommended: hundreds of episodes can use a lot of disk space. When on, long-running series are added like any other series and Sonarr searches every missing episode."),
     "sonarr.staging_root": FieldDefinition("", "directory", "next_operation", label="Staging folder as seen by Sonarr", help_text="Blank uses the recorded local staging root."),
     "sonarr.library_root": FieldDefinition("", "directory", "next_operation", label="Permanent folder as seen by Sonarr", help_text="Blank uses the local Keep folder. Local and Sonarr folders must refer to the same storage."),
     "qbittorrent.base_url": FieldDefinition("", "download_endpoint", "next_operation",
@@ -133,7 +137,10 @@ FIELDS = MappingProxyType({
 _V14_NAMES = {"user_evaluation.backfill_count": "trial.backfill_count",
               "user_evaluation.following_count": "trial.following_count",
               "storage.user_evaluation_root": "storage.trial_root"}
-V14_FIELDS = MappingProxyType({_V14_NAMES.get(key, key): spec for key, spec in FIELDS.items()})
+# v16 added the long-running series settings for Keep's Sonarr add.
+_V16_ADDED = ("sonarr.long_running_threshold", "sonarr.backfill_long_running")
+V15_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if key not in _V16_ADDED})
+V14_FIELDS = MappingProxyType({_V14_NAMES.get(key, key): spec for key, spec in V15_FIELDS.items()})
 # The obsolete HTTP metadata-source fields exist only to validate published
 # v7-v11 documents during *explicit* migrations, never in live settings.
 V13_FIELDS = MappingProxyType({key: spec for key, spec in V14_FIELDS.items()
@@ -207,6 +214,9 @@ def validate_values(value, *, fields=FIELDS):
             spec = allowed[section + "." + key]
             if spec.kind == "integer":
                 if type(item) is not int or not spec.minimum <= item <= spec.maximum:
+                    raise ConfigurationError()
+            elif spec.kind == "boolean":
+                if type(item) is not bool:
                     raise ConfigurationError()
             elif spec.kind == "resolution":
                 if type(item) is not int or item not in (720, 1080, 2160):
@@ -618,11 +628,23 @@ def _v14_to_v15(document):
     values = validate_values(document['settings'], fields=V14_FIELDS)
     values['user_evaluation'] = values.pop('trial')
     values['storage']['user_evaluation_root'] = values['storage'].pop('trial_root')
-    return {'schema_version': 15, 'revision': current+1, 'settings': validate_values(values)}
+    return {'schema_version': 15, 'revision': current+1, 'settings': validate_values(values, fields=V15_FIELDS)}
+
+
+def _v15_to_v16(document):
+    """Add the long-running series settings for Keep's Sonarr add, preserving previous configuration."""
+    if (type(document) is not dict or set(document) != {'schema_version', 'revision', 'settings'}
+            or document['schema_version'] != 15):
+        raise ConfigurationError()
+    current = revision(document['revision'])
+    if current == MAX_REVISION:
+        raise ConfigurationError()
+    previous = validate_values(document['settings'], fields=V15_FIELDS)
+    return {'schema_version': 16, 'revision': current+1, 'settings': validate_values(previous)}
 
 
 # Preserve published version shapes and validate before dropping obsolete keys.
-CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14, 14: _v14_to_v15})
+CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14, 14: _v14_to_v15, 15: _v15_to_v16})
 
 
 def convert_document(document):

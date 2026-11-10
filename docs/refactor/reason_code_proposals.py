@@ -663,6 +663,9 @@ EVENTS = {
     'SERVICE_DOWN': ('SERVICE_DOWN', 'A service stopped working; jobs that need it wait.'),
     'SERVICE_RESTORED': ('SERVICE_RESTORED', 'A service is working again; waiting jobs continue.'),
     'SERVICE_STARTUP_REFUSED': ('SERVICE_STARTUP_REFUSED', 'The worker did not start: a required service is not set up correctly.'),
+    # P1: Keep adds the series to the library manager, then asks once for missing episodes.
+    'KEEP_SERIES_ADDED': ('KEEP_SERIES_ADDED', 'Series added to the library manager.'),
+    'KEEP_SEARCH_REQUESTED': ('KEEP_SEARCH_REQUESTED', 'Missing-episode search requested from the library manager.'),
 }
 
 # Codes this refactor adds. (severity, retryable, description, message, action)
@@ -679,6 +682,23 @@ NEW = {
         'This episode search stopped under the old Sonarr-based discovery, which Prowlarr search has replaced.',
         'This search ran under the old episode discovery.',
         'Press Search again to search with the current release search.'),
+    # P1: Keep adds the series to the library manager and asks once for missing episodes.
+    'KEEP_SERIES_ADDED': ('INFO', False,
+        'Keep added this series to the library manager. It monitors every episode and gets the missing ones after the staged episodes are imported.',
+        'Series added to the library manager.',
+        'Nothing to do.'),
+    'KEEP_SERIES_ADDED_NEW_ONLY': ('INFO', False,
+        'Keep added this long-running series to the library manager. Its AniDB entry has at least as many episodes as the long-running threshold, so only new episodes are monitored.',
+        'Long-running: the library manager will only get new episodes.',
+        'Nothing to do. To get older episodes too, turn on "Let Sonarr backfill long-running series" in Settings before Keep, or monitor them in the library manager.'),
+    'KEEP_SEARCH_SENT': ('INFO', False,
+        'Every staged episode of this series is imported, so the library manager was asked once to search for the monitored episodes that are still missing.',
+        'Missing-episode search requested.',
+        'Nothing to do. The library manager handles this series from now on.'),
+    'KEEP_SEARCH_FAILED': ('WARNING', False,
+        'Every staged episode of this series is imported, but the library manager did not start the search for missing episodes. It is not sent again automatically.',
+        'The missing-episode search could not be started.',
+        'Start a search for this series in the library manager.'),
 }
 
 # Retired by this refactor (owner decision, 2026-11-06): no product names in

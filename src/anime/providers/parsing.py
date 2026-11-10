@@ -234,3 +234,21 @@ def tvdb_episode_page(document, tid):
             raise ProviderInvalidResponse()
         records.append((item["id"],season,number))
     return tuple(records),bool(next_page)
+
+
+def tvdb_absolute_page(document, tid):
+    """(season, number, absolute) of each regular episode TVDB numbers absolutely.
+
+    Same official-order page as tvdb_episode_page; specials and episodes
+    without an absolute number are left out.
+    """
+    records,has_next=tvdb_episode_page(document,tid)
+    items=document["data"].get("episodes") if type(document["data"]) is dict else document["data"]
+    absolute={item["id"]:item.get("absoluteNumber") for item in items}
+    result=[]
+    for eid,season,number in records:
+        value=absolute.get(eid)
+        if season==0 or value is None or value==0: continue
+        if type(value) is not int or value<0: raise ProviderInvalidResponse()
+        result.append((season,number,value))
+    return tuple(result),has_next

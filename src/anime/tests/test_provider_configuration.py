@@ -45,7 +45,7 @@ class ProviderConfigurationTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 convert_document({**document,"settings":{**document["settings"],"anidb":{"client_name":"new"}}})
         current = convert_document(third)
-        self.assertEqual((current.schema_version,current.revision),(15,15))
+        self.assertEqual((current.schema_version,current.revision),(16,16))
         self.assertEqual(current.value("anidb.client_name"),"")
         self.assertEqual(current.value("providers.timeout_seconds"),30)
 

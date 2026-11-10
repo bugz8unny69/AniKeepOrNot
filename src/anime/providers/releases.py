@@ -5,7 +5,7 @@ from src.anime.providers.errors import (
 )
 from src.anime.providers.http import Clients, Credentials, Options
 from src.anime.providers.identity import ClientPool, delivery_title
-from src.anime.providers.release_mapping import declared_episode, forward_mappings
+from src.anime.providers.release_mapping import declared_episode, forward_mappings, absolute_lookup
 from src.anime.batch.recognition import release_scope_hint
 from src.anime.release_contracts import VerifiedRelease, ReleaseNotReady, ReleaseConflict
 from src.anime.worker import blocking
@@ -51,7 +51,8 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
         if origin=="anidb":
             if number not in catalog: raise ReleaseNotReady("RELEASE_ANIDB_EPISODE_MISSING")
             try:
-                mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog)
+                mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog,
+                                         absolute=absolute_lookup(client,source.tvdb_series_id,secret))
             except (ReleaseNotReady, ReleaseConflict):
                 mappings={}
             target=mappings.get(number)
@@ -59,7 +60,8 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
                 if cancelled.is_set(): raise ReleaseNotReady()
                 return VerifiedRelease(source,number,catalog[number],None,None,None)
         else:
-            mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog)
+            mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog,
+                                         absolute=absolute_lookup(client,source.tvdb_series_id,secret))
             candidates=[n for n,target in mappings.items() if target==(season,number)]
             if not candidates:
                 # Only explicitly mapped regular AniDB episodes can verify

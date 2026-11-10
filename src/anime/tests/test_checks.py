@@ -52,7 +52,7 @@ class CheckTests(unittest.TestCase):
     def test_here_names_the_calling_line(self):
         import inspect
         line = inspect.currentframe().f_lineno + 1
-        self.assertEqual(here('SERIES_MISSING'), f'src/anime/tests/test_checks.py:{line} test_here_names_the_calling_line SERIES_MISSING')
+        self.assertEqual(here('SERIES_ADD_UNCONFIRMED'), f'src/anime/tests/test_checks.py:{line} test_here_names_the_calling_line SERIES_ADD_UNCONFIRMED')
 
     def test_check_names_fit_history(self):
         from src.anime.reasons import _CHECK
@@ -157,14 +157,14 @@ class CheckNamesAreStableTests(unittest.TestCase):
         import pathlib
         from src.anime.job_report import locate, source
         lines = pathlib.Path('src/anime/keep_service.py').read_text().splitlines()
-        real = next(n for n, text in enumerate(lines, 1) if "here('SERIES_MISSING')" in text)
-        self.assertEqual(locate(f'src/anime/keep_service.py:{real} _run SERIES_MISSING'),
+        real = next(n for n, text in enumerate(lines, 1) if "here('SERIES_ADD_UNCONFIRMED')" in text)
+        self.assertEqual(locate(f'src/anime/keep_service.py:{real} _run SERIES_ADD_UNCONFIRMED'),
                          ('src/anime/keep_service.py', real, None))
-        moved = locate('src/anime/keep_service.py:3 _run SERIES_MISSING')      # recorded before an update
+        moved = locate('src/anime/keep_service.py:3 _run SERIES_ADD_UNCONFIRMED')      # recorded before an update
         self.assertEqual(moved[:2], ('src/anime/keep_service.py', real))
         self.assertIn('recorded at line 3; the code has moved', moved[2])
-        self.assertTrue(any(text.startswith('>>') and "here('SERIES_MISSING')" in text
-                            for text in source('src/anime/keep_service.py:3 _run SERIES_MISSING')))
+        self.assertTrue(any(text.startswith('>>') and "here('SERIES_ADD_UNCONFIRMED')" in text
+                            for text in source('src/anime/keep_service.py:3 _run SERIES_ADD_UNCONFIRMED')))
 
     def test_a_removed_check_or_an_unexpected_error_says_so(self):
         from src.anime.job_report import locate

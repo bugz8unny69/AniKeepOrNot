@@ -22,7 +22,8 @@ def _persist(db,claim,value):
     if value and value.get('shoko'):
         from src.anime.jobs.enrich_shoko_job import enqueue as enqueue_shoko
         enqueue_shoko(db,claim)
-    return (append_job_history(db,job_id=claim.job_id,event_code='KEEP_COMPLETED',reason_code='KEEP_COMPLETE',
+    from src.anime.jobs.keep_execution import library_history
+    return library_history(db,claim,value)+(append_job_history(db,job_id=claim.job_id,event_code='KEEP_COMPLETED',reason_code='KEEP_COMPLETE',
         component='worker',occurred_at_ms=time.time_ns()//1000000,details={'attempt':job_attempt(db,claim.job_id)}),)
 
 

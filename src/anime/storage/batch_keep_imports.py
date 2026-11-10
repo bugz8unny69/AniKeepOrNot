@@ -125,6 +125,9 @@ class BatchKeepJournal:
             raise KeepReview(failed_check=here('DATA_SIZE_EXCEEDED'))
         with self.queue.connection() as db,transaction(db):
             self.guard(db,claim)
+            if phase=='ADD_UNCERTAIN':
+                from src.anime.storage.keep_imports import only_adder
+                only_adder(db,claim.job_id,data)
             if db.execute(
                 'UPDATE batch_keep_imports SET phase=?,data_json=?,updated_at_ms=? '
                 'WHERE job_id=? AND file_index=? AND phase=?',

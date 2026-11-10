@@ -4,8 +4,9 @@ import re
 
 from src.anime.keep_selection import KeepSelection
 from src.anime.acquisition.metadata import safe_path
-from src.anime.sonarr import Client, Options, KeepReview, existing_file
-from src.anime.storage.keep_imports import Journal, check_source
+from src.anime.sonarr import Client, Options, KeepReview, KeepUnavailable, KeepConfiguration, existing_file
+from src.anime.storage.keep_imports import (Journal, check_source, SeriesAddBusy, highest_regular_episode,
+                                         monitor_mode, take_search)
 from src.anime.storage.staging import Journal as StageJournal
 from src.anime.checks import here
 
@@ -35,15 +36,24 @@ class Service:
             except Exception:
                 resolver=None
         phase,data=journal.load(claim,target,self.configuration,resolver=resolver)
-        if phase=='COMPLETE':return True
+        self.completed=None
+        if phase=='COMPLETE':
+            self.completed=data
+            return True
         selection=KeepSelection(**data['selection']);options=Options(**data['options'])
         client=self.client_factory(options,self.secrets.sonarr_api_key())
         version=client.request('system/status')
         if not re.match(r'^4\.',str(version.get('version',''))):raise KeepReview(failed_check=here('VERSION_UNSUPPORTED'))
         series=client.series(selection.tvdb_series_id)
         if phase in ('PLANNED','ADD_UNCERTAIN'):
-            # Keep imports into an existing Sonarr series; it never creates one.
-            if series is None:raise KeepReview(failed_check=here('SERIES_MISSING'))
+            # Keep means Sonarr owns the series from now on: add it when missing.
+            if series is None:
+                if phase=='ADD_UNCERTAIN':
+                    # The add was sent and Sonarr still has no series. Never send it again blindly.
+                    raise KeepReview(failed_check=here('SERIES_ADD_UNCONFIRMED'))
+                series=self._add(client,claim,selection,options,data,guard)
+                if series is None:return False
+                phase='ADD_UNCERTAIN'
             if type(series.get('id')) is not int or series['id']<=0:raise KeepReview(failed_check=here('SERIES_INVALID_ID'))
             path=PurePosixPath(series['path'])
             if not path.is_relative_to(options.library_root) or path==PurePosixPath(options.library_root):raise KeepReview(failed_check=here('SERIES_PATH_OUTSIDE_LIBRARY'))
@@ -86,4 +96,44 @@ class Service:
         except FileNotFoundError:return False
         data['result']=proof
         guard();journal.change(claim,phase,'COMPLETE',data)
+        self.completed=data
         return True
+
+    def _add(self,client,claim,selection,options,data,guard):
+        """Add the series to Sonarr once; None when another Keep job is adding it."""
+        with self.journal.queue.connection() as db:
+            highest=highest_regular_episode(db,selection.anidb_id)
+        monitor=monitor_mode(highest,options)
+        body=client.add_body(selection.tvdb_series_id,monitor)
+        data['series_add']={'monitor':monitor,'highest_episode':highest}
+        guard()
+        # Recorded before the POST: a lost reply is reconciled by TVDB ID, never resent.
+        try:self.journal.change(claim,'PLANNED','ADD_UNCERTAIN',data)
+        except SeriesAddBusy:return None
+        guard()
+        try:added=client.request('series',body=body)
+        except KeepConfiguration:raise
+        except KeepReview:
+            # Sonarr answered and refused, so nothing was added. Retry may add it.
+            self.journal.change(claim,'ADD_UNCERTAIN','PLANNED',data)
+            raise KeepReview(failed_check=here('SERIES_ADD_REJECTED')) from None
+        series=client.series(selection.tvdb_series_id)
+        if series is None or series.get('id')!=added.get('id'):raise KeepReview(failed_check=here('SERIES_ADDED_NOT_FOUND'))
+        return series
+
+    def request_search(self,claim):
+        """After the series' last staged import, ask Sonarr once for missing episodes.
+
+        Returns 'SENT', 'FAILED', or None when another Keep job of the series is
+        still importing or the search was already recorded. A failure never
+        fails the Keep.
+        """
+        data=self.completed
+        if not data or 'series_id' not in data:return None
+        selection=KeepSelection(**data['selection']);options=Options(**data['options'])
+        if not take_search(self.journal.queue,claim,selection.anidb_id):return None
+        try:
+            self.client_factory(options,self.secrets.sonarr_api_key()).search(data['series_id'])
+            return 'SENT'
+        except (KeepReview,KeepUnavailable,OSError,ValueError):
+            return 'FAILED'

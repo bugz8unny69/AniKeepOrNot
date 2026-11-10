@@ -31,9 +31,18 @@ class KeepServiceUnavailable(ActionUnavailable):
         ValueError.__init__(self,self.detail)
 
 
-def keep_blocker(db):
-    """Sonarr's stored status when it rules out a new Keep, else None."""
-    from src.anime.services.status_store import blocking
+def keep_blocker(db,configuration=None):
+    """Sonarr's stored status when it rules out a new Keep, else None.
+
+    Keep adds a missing series with the configured quality profile, so a
+    configured Sonarr without one is refused here too, before any job exists.
+    """
+    from src.anime.services.status_store import blocking, StoredStatus
+    if (configuration is not None and configuration.value('sonarr.base_url')
+            and configuration.value('sonarr.quality_profile_id')<=0):
+        from src.anime.services.base import NOT_CONFIGURED
+        from src.anime.sonarr import PROFILE_MISSING
+        return StoredStatus('sonarr','Sonarr',NOT_CONFIGURED,PROFILE_MISSING,0,0,0)
     return blocking(db,'sonarr')
 
 
@@ -103,7 +112,8 @@ def receipt(db,job_id,*,reused=False):
 
 
 class ManagementActions:
-    def __init__(self,database):
+    def __init__(self,database,configuration=None):
+        self.configuration=configuration
         self.queue=JobQueue(database)
         self.cancellations=CancellationStore(database)
 
@@ -117,7 +127,7 @@ class ManagementActions:
                              (op[0],selected)).fetchone()
             if action=='keep':
                 state=None if not prior else db.execute('SELECT state FROM jobs WHERE job_id=?',(prior[0],)).fetchone()[0]
-                blocked=keep_blocker(db) if needs_sonarr(None if not prior else {'state':state}) else None
+                blocked=keep_blocker(db,self.configuration) if needs_sonarr(None if not prior else {'state':state}) else None
                 if blocked is not None:raise KeepServiceUnavailable(blocked)
             if prior:
                 state=db.execute('SELECT state FROM jobs WHERE job_id=?',(prior[0],)).fetchone()[0]
@@ -262,7 +272,7 @@ class ManagementActions:
             result[name]={'enabled':allowed,'disabled_reason':reason,'job':job}
         result['keep']['execution_available']=True
         result['keep']['availability_reason']=None
-        blocked=keep_blocker(db) if needs_sonarr(result['keep']['job']) else None
+        blocked=keep_blocker(db,self.configuration) if needs_sonarr(result['keep']['job']) else None
         if blocked is not None:
             result['keep']['execution_available']=False
             result['keep']['availability_reason']={**CATALOG.reason(KeepServiceUnavailable(blocked).reason_code),
