@@ -54,7 +54,7 @@ def load_selection(db,target_job_id,*,resolver=None):
     """Read the existing staged manifest, rather than rebuilding names or NFOs."""
     op=operation(db,target_job_id)
     if op[1]!='STAGED':raise KeepSelectionInvalid()
-    source=staged(db,op[0]);require_allowed(db,source[0])
+    source=staged(db,op[0]);require_allowed(db,source[0],keep=True)
     identity=db.execute('SELECT r.anidb_id,r.anidb_episode_id,r.tvdb_series_id,r.tvdb_episode_id,r.tvdb_season,r.tvdb_episode '
         'FROM acquisition_plans p JOIN episode_reservations r USING(reservation_id) WHERE p.plan_id=?',(source[1],)).fetchone()
     if identity is None:raise KeepSelectionInvalid()

@@ -27,6 +27,8 @@ _EVENTS = (
     EventDefinition('KEEP_SERIES_ADDED','job','Series added to the library manager.',True),
     EventDefinition('KEEP_SEARCH_REQUESTED','job','Missing-episode search requested from the library manager.',True),
     EventDefinition('MANAGEMENT_ACTION_RESUMED','job','The action was submitted again after review.'),
+    EventDefinition('SERIES_ACCEPTED','job','Anime accepted; Sonarr handles it from now on.',True,'ANIME_ACCEPTED'),
+    EventDefinition('DELIVERY_REFUSED','job','This delivery is for an anime that was already decided; nothing more was done.',True),
     EventDefinition('SERIES_REJECTED','job','Anime rejected; no more episodes are downloaded.',True,'ANIME_REJECTED'),
     EventDefinition('EPISODE_SEARCH_RESET','job','Failed episode attempts were cleaned up; searching again.'),
     EventDefinition('API_SESSION_CREATED','runtime','Signed in to the dashboard.'),

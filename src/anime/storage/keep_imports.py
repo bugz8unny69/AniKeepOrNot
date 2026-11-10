@@ -21,7 +21,7 @@ class Journal:
         self.queue._owns(db,claim,self.queue.now())
         row=db.execute("SELECT target_job_id FROM management_actions WHERE job_id=? AND action='KEEP'",(claim.job_id,)).fetchone()
         if row is None:raise KeepReview()
-        require_allowed(db,staged(db,operation(db,row[0])[0])[0])
+        require_allowed(db,staged(db,operation(db,row[0])[0])[0],keep=True)
 
     def load(self,claim,target,configuration,*,resolver=None):
         with self.queue.connection() as db,transaction(db):

@@ -14,7 +14,7 @@ def fake_detail(db, aid, language='english'):
     missing = [{'season': 1, 'episode': 2, 'status': series_intake.WAITING_FOR_DUB,
                 'can_retry': True}] if aid % 4 == 0 else []
     return {'title': f'Anime {aid}', 'tvdb_series_id': aid, 'episodes': episodes,
-            'missing': missing, 'rejection': None}
+            'missing': missing, 'rejection': None, 'acceptance': None}
 
 
 class StatusFilterTests(unittest.TestCase):
@@ -46,7 +46,7 @@ class StatusFilterTests(unittest.TestCase):
             self.assertEqual([row['anidb_id'] for row in items], expected, status)
             if status:
                 self.assertTrue(all(row['status'] == status for row in items))
-        self.assertEqual(self.walk('KEPT', 30), [])
+        self.assertEqual(self.walk('ACCEPTED', 30), [])
 
     def test_invalid_status_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -70,7 +70,7 @@ class StatusFilterApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([row['anidb_id'] for row in result['data']['items']], expected, path)
         status, result, _ = await self.request('GET', '/api/v1/intake/series', token=base.ADMIN)
         self.assertEqual(result['data']['items'][0]['status'], 'TRACKING')
-        for path in ('/api/v1/intake/series?status=staged', '/api/v1/intake/series?status=STAGED&status=KEPT',
+        for path in ('/api/v1/intake/series?status=staged', '/api/v1/intake/series?status=STAGED&status=ACCEPTED',
                      '/api/v1/search?scope=jobs&q=frieren&status=STAGED'):
             status, _, _ = await self.request('GET', path, token=base.ADMIN)
             self.assertEqual(status, 400, path)

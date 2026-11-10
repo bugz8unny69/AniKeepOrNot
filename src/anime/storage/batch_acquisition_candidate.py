@@ -61,14 +61,14 @@ def _candidate(db,reservation_job_id,inventory,*,cleanup=False):
         "WHERE r.state='ACTIVE' AND b.info_hash=? AND r.plan_id<>? LIMIT 1",
         (info_hash,plan)).fetchone():
         raise AcquisitionConflict()
-    from src.anime.storage.review_decisions import require_allowed, AnimeRejected
+    from src.anime.storage.review_decisions import require_allowed, AnimeDecided
     aid=db.execute("SELECT b.anidb_id FROM batch_user_evaluation_plans p "
                    "JOIN batch_verifications b USING(batch_id) WHERE p.plan_id=?",
                    (plan,)).fetchone()
     if aid is None:raise AcquisitionConflict()
     if not cleanup:
         try:require_allowed(db,aid[0])
-        except AnimeRejected:raise AcquisitionConflict() from None
+        except AnimeDecided:raise AcquisitionConflict() from None
     selected,indices,probe,budget=[],set(),None,0
     for current_plan,index,episode,current_hash,current_sha,current_anchor,current_total,path,size in rows:
         if ((current_plan,current_hash,current_sha,current_anchor,current_total)!=(plan,info_hash,sha,anchor,total)

@@ -143,9 +143,12 @@ def json_object(payload):
 
 class Clients:
     """Blocking methods: async resolver offloads these, retaining job admission."""
-    def __init__(self, database, options, *, opener=None, store=None, memory=None):
+    def __init__(self, database, options, *, opener=None, store=None, memory=None, cache_only=False):
         if type(options) is not Options: raise ValueError("provider options required")
         self.options = options
+        # cache_only: public reads come from the fresh cache or raise
+        # ProviderCacheMiss; nothing is requested or reserved (webhook check).
+        self.cache_only = cache_only
         self.store = store or ProviderStore(database)
         self.memory = memory or MemoryCache()
         self.open = opener or urllib.request.build_opener(NoRedirect()).open
@@ -178,6 +181,12 @@ class Clients:
             raise
 
     def _public(self, provider, key, url, *, limit, gap, validate):
+        if self.cache_only:
+            from src.anime.providers.errors import ProviderCacheMiss
+            cached = self.store.public_get(provider,key)
+            if cached is None: raise ProviderCacheMiss()
+            validate(cached)
+            return cached
         cached,token = self.store.reserve(provider,gap,cache_key=key)
         if cached is not None:
             # Cached bytes remain input, not an exemption from verification.

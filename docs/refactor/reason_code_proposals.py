@@ -665,6 +665,9 @@ EVENTS = {
     'SERVICE_STARTUP_REFUSED': ('SERVICE_STARTUP_REFUSED', 'The worker did not start: a required service is not set up correctly.'),
     # P1: Keep adds the series to the library manager, then asks once for missing episodes.
     'KEEP_SERIES_ADDED': ('KEEP_SERIES_ADDED', 'Series added to the library manager.'),
+    # P4: Keep is a series decision (Accept); decided series are refused.
+    'SERIES_ACCEPTED': ('SERIES_ACCEPTED', 'Anime accepted; Sonarr handles it from now on.'),
+    'DELIVERY_REFUSED': ('DELIVERY_REFUSED', 'This delivery is for an anime that was already decided; nothing more was done.'),
     'KEEP_SEARCH_REQUESTED': ('KEEP_SEARCH_REQUESTED', 'Missing-episode search requested from the library manager.'),
 }
 
@@ -682,6 +685,11 @@ NEW = {
         'This episode search stopped under the old Sonarr-based discovery, which Prowlarr search has replaced.',
         'This search ran under the old episode discovery.',
         'Press Search again to search with the current release search.'),
+    # P4: Keep is a series decision.
+    'ANIME_ACCEPTED': ('INFO', False,
+        'Someone pressed Keep for this anime, so Sonarr handles it from now on and Anime Discovery does no more work for it.',
+        'This anime was accepted; Sonarr handles it.',
+        'Nothing to do. If this delivery was a different anime, open it under the bell and press Process anyway.'),
     # P1: Keep adds the series to the library manager and asks once for missing episodes.
     'KEEP_SERIES_ADDED': ('INFO', False,
         'Keep added this series to the library manager. It monitors every episode and gets the missing ones after the staged episodes are imported.',

@@ -30,6 +30,7 @@ from src.anime.secrets import SecretStore
 from src.anime.storage.job_queue import JobQueue, QueueUnavailable
 from src.anime.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
 from src.anime.storage import notifications as inbox
+from src.anime.decided_series import webhook_decision, notify_refused, REASONS as DECISION_REASONS
 from src.anime.storage.management_actions import (ManagementActions, ActionUnavailable, ActionNotFound,
     KeepServiceUnavailable, keep_blocker)
 from src.anime.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
@@ -358,7 +359,17 @@ class Application:
             desired=self.store.read();configuration=for_operation(desired,self.startup,component='api')
             configure_logging(configuration.logging_settings(),'api',logger=self.logger)
             with MaintenanceGate(configuration.value('storage.database_path')).operation():
+                # A decided series is refused here from local data only; anything
+                # unknown, ambiguous or undecided is queued exactly as before.
+                try:decided=webhook_decision(configuration,normalized)
+                except Exception:
+                    self.logger.debug('Webhook decision check skipped',exc_info=True);decided=None
                 with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    if decided is not None:
+                        from src.anime.storage.sqlite import transaction
+                        with transaction(db):notify_refused(db,*decided,normalized)
+                        # 200, so autobrr never retries; no event and no job.
+                        return 200,{'accepted':False,'reason_code':DECISION_REASONS[decided[1]]},[]
                     event_id,job_id=accept_event_and_job(db,'autobrr',normalized,kind='IDENTIFY_ANIME',payload={},component='api',logger=self.logger)
             return 202,{'event_id':event_id,'job_id':job_id},[]
         check_origin(headers,self.origin)
@@ -1021,8 +1032,16 @@ class Application:
         if action=='add_release':
             # The existing manual release form, for this series (and episode when known).
             return 200,{'action':action,'anidb_id':item['anidb_id'],'release_name':item['release_name']},[]
-        # process_anyway arrives with the webhook refusal (work item P4).
-        raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
+        # process_anyway: the delivery exactly as the webhook would have queued it,
+        # skipping the decision check for this one delivery (work item P4 4.5).
+        if item['raw_body'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
+        with queue.connection() as db:
+            event_id,job_id=accept_event_and_job(db,'autobrr',bytes(item['raw_body']),kind='IDENTIFY_ANIME',
+                                                 payload={'process_anyway':True},component='api',logger=self.logger)
+        from src.anime.storage.sqlite import transaction
+        with queue.connection() as db,transaction(db):
+            inbox.delete(db,item['notification_id'])
+        return 202,{'action':action,'event_id':event_id,'job_id':job_id},[]
 
     def _recognized(self,db,language,match=None):
         where,params=match if match else ('1',[])
