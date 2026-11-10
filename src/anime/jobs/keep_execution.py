@@ -39,6 +39,12 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
             if not await blocking(service.run, context.claim, target, context.cancelled):
                 return Outcome('defer', 'KEEP_IMPORT_WAITING', delay_ms=30000)
         value = {'refresh': bool(context.configuration.value('jellyfin.base_url'))}
+        # Every import of this job is done: the series' last Keep asks Sonarr once
+        # for the missing episodes. A failed search never fails the Keep.
+        request_search = getattr(service, 'request_search', None)
+        searched = None if request_search is None else await blocking(request_search, context.claim)
+        if searched is not None:
+            value['search'] = searched
         if shoko:
             # Optional Shoko enrichment currently has a single-file journal.
             value['shoko'] = bool(context.configuration.value('shoko.base_url'))
@@ -62,3 +68,28 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
         return Outcome('review', 'KEEP_IMPORT_REVIEW', facts=facts)
     except OSError:
         return Outcome('retry', 'SERVICE_UNAVAILABLE', facts=service_facts('sonarr'))
+
+
+def library_history(db, claim, value):
+    """History for what Keep changed in Sonarr: a series it added, and the search."""
+    import time
+    from src.anime.history import job_attempt, append_job_history
+    now = time.time_ns() // 1000000
+    attempt = {'attempt': job_attempt(db, claim.job_id)}
+    records = []
+    added = db.execute(
+        "SELECT json_extract(data_json,'$.series_add.monitor') FROM keep_imports WHERE job_id=? "
+        "UNION ALL SELECT json_extract(data_json,'$.series_add.monitor') FROM batch_keep_imports WHERE job_id=?",
+        (claim.job_id, claim.job_id)).fetchall()
+    monitor = next((row[0] for row in added if row[0] is not None), None)
+    if monitor is not None:
+        records.append(append_job_history(
+            db, job_id=claim.job_id, event_code='KEEP_SERIES_ADDED', component='worker', occurred_at_ms=now,
+            reason_code='KEEP_SERIES_ADDED_NEW_ONLY' if monitor == 'future' else 'KEEP_SERIES_ADDED',
+            details=attempt))
+    search = (value or {}).get('search')
+    if search in ('SENT', 'FAILED'):
+        records.append(append_job_history(
+            db, job_id=claim.job_id, event_code='KEEP_SEARCH_REQUESTED', component='worker', occurred_at_ms=now,
+            reason_code='KEEP_SEARCH_SENT' if search == 'SENT' else 'KEEP_SEARCH_FAILED', details=attempt))
+    return tuple(records)

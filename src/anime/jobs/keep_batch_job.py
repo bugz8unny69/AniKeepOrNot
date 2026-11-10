@@ -17,7 +17,7 @@ DEFINITION=HandlerDefinition(KIND,'Keep verified batch episodes in the permanent
 
 
 def _persist(db,claim,value):
-    if type(value) is not dict or set(value)!={'refresh'}:
+    if type(value) is not dict or set(value)-{'search'}!={'refresh'}:
         raise CompletionRejected(Outcome('review','KEEP_IMPORT_REVIEW'))
     row=db.execute(
         "SELECT target_job_id,operation_id FROM management_actions "
@@ -37,7 +37,8 @@ def _persist(db,claim,value):
     if value['refresh']:
         from src.anime.jobs.refresh_jellyfin_job import enqueue
         enqueue(db,claim)
-    return (append_job_history(
+    from src.anime.jobs.keep_execution import library_history
+    return library_history(db,claim,value)+(append_job_history(
         db,job_id=claim.job_id,event_code='KEEP_COMPLETED',
         reason_code='KEEP_COMPLETE',component='worker',
         occurred_at_ms=time.time_ns()//1000000,

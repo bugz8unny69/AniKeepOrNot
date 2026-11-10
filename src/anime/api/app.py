@@ -447,13 +447,13 @@ class Application:
                     return 202,{'job_id':job,'state':'PENDING','status_url':location,
                         'history_url':location+'/history','reused':receipt.outcome=='ALREADY_QUEUED',
                         'notification':CATALOG.reason('MANAGEMENT_JOB_SUBMITTED')},[(b'location',location.encode())]
-                actions=ManagementActions(configuration.value('storage.database_path'))
+                actions=ManagementActions(configuration.value('storage.database_path'),configuration)
                 if action=='cancellation' and method=='GET':
                     with actions.queue.connection() as db:
                         db.execute('BEGIN')
                         row=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code FROM jobs WHERE job_id=?',(job,)).fetchone()
                         if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                        data=self._job(actions.queue,db,row)
+                        data=self._job(actions.queue,db,row,configuration=configuration)
                         return 200,{**data['cancellation'],'actions':data['actions']},[]
                 if action in ('keep','cancel','cleanup') and method=='POST':
                     exact(body,())
@@ -587,7 +587,7 @@ class Application:
                     db.execute('BEGIN')
                     row=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code FROM jobs WHERE job_id=?',(job,)).fetchone()
                     if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    return 200,self._job(queue,db,row,language=configuration.value('anime.title_language')),[]
+                    return 200,self._job(queue,db,row,language=configuration.value('anime.title_language'),configuration=configuration),[]
             if path==PREFIX+'/search':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._search(configuration,query),[]
@@ -657,11 +657,11 @@ class Application:
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
                         targets=series_keep_targets(db,aid,body['operation_ids'])
-                        blocked=keep_blocker(db)
+                        blocked=keep_blocker(db,configuration)
                     # Refuse the whole request with the reason; never report
                     # every acquisition as "failed" because Sonarr is down.
                     if blocked is not None:raise KeepServiceUnavailable(blocked)
-                    actions=ManagementActions(configuration.value('storage.database_path'))
+                    actions=ManagementActions(configuration.value('storage.database_path'),configuration)
                     submitted=[];failed=[]
                     # Each existing Keep is durable; report partial submissions.
                     for job in targets:
@@ -962,7 +962,7 @@ class Application:
                 ordering=' ORDER BY job_id DESC' if newest else ' ORDER BY job_id'
                 rows=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code '
                                 'FROM jobs WHERE '+' AND '.join(criteria)+ordering+' LIMIT ?',(*values,limit+1)).fetchall()
-                items=[self._job(queue,db,r,language=configuration.value('anime.title_language')) for r in rows[:limit]]
+                items=[self._job(queue,db,r,language=configuration.value('anime.title_language'),configuration=configuration) for r in rows[:limit]]
                 if newest:return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
         page={'items':items,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
         return {**page,'job':about,'backfill_attempts':attempts} if history else page
@@ -1020,7 +1020,7 @@ class Application:
                 'JOIN jobs j ON j.job_id=(SELECT MAX(m.job_id) FROM job_operation_members m WHERE m.operation_id=o.operation_id) '
                 'WHERE o.operation_id<? AND NOT EXISTS (SELECT 1 FROM management_actions a WHERE a.job_id=j.job_id) '
                 'ORDER BY o.operation_id DESC LIMIT ?',(before,limit+1)).fetchall()
-            items=[self._job(queue,db,row[1:],language=configuration.value('anime.title_language')) for row in rows[:limit]]
+            items=[self._job(queue,db,row[1:],language=configuration.value('anime.title_language'),configuration=configuration) for row in rows[:limit]]
         return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
 
     @staticmethod
@@ -1116,9 +1116,9 @@ class Application:
         return [{'season':season,'episode':episode} for season,episode in records[:100]
                 if type(season) is int and type(episode) is int]
 
-    def _job(self,queue,db,row,language='english'):
+    def _job(self,queue,db,row,language='english',configuration=None):
         op=db.execute('SELECT o.operation_id,o.state,o.cleanup_state,o.reason_code FROM job_operations o JOIN job_operation_members m USING(operation_id) WHERE m.job_id=?',(row[0],)).fetchone()
-        actions=ManagementActions(queue.database).capabilities(db,row[0])
+        actions=ManagementActions(queue.database,configuration).capabilities(db,row[0])
         actions['retry']=retry_capability(db,row[0])
         context=db.execute('SELECT j.created_at_ms,e.received_at_ms,CASE WHEN length(e.raw_body)<=65536 THEN e.raw_body ELSE NULL END '
                            'FROM jobs j LEFT JOIN incoming_events e ON e.event_id=j.event_id WHERE j.job_id=?',(row[0],)).fetchone()

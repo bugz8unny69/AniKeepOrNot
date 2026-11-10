@@ -1,7 +1,7 @@
 """Resolve verified TVDB placement at Keep time for unmapped staged episodes."""
 import time
 import urllib.error
-from src.anime.providers.release_mapping import forward_mappings
+from src.anime.providers.release_mapping import forward_mappings, absolute_lookup
 from src.anime.providers.identity import ClientPool, Clients
 from src.anime.providers.configuration import options_from_configuration
 from src.anime.providers.errors import (
@@ -51,7 +51,8 @@ def resolve_tvdb_placement(db, aid, eid, tid, target_job_id, *, client=None, sec
                     break
         if anidb_number is None:
             return None
-        mappings = forward_mappings(client.mapping_xml(), aid, tid, catalog)
+        mappings = forward_mappings(client.mapping_xml(), aid, tid, catalog,
+                                    absolute=absolute_lookup(client, tid, secret))
     except (ProviderUnavailable, TimeoutError, OSError, urllib.error.URLError) as exc:
         raise KeepUnavailable() from exc
     except (ProviderAuthenticationFailed, ProviderConfigurationError) as exc:

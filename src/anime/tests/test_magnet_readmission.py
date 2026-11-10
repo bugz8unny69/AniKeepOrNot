@@ -144,6 +144,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR/'066_retired_service_codes.sql').read_text())
             db.executescript((SQL_DIR / '067_resources.sql').read_text())
             db.executescript((SQL_DIR / '068_package_paths.sql').read_text())
+            db.executescript((SQL_DIR / '069_series_accept_search.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

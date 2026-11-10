@@ -8,7 +8,7 @@ import datetime
 
 from src.anime.acquisition.prowlarr_search import EpisodeCatalog, EpisodeTarget
 from src.anime.providers.errors import ProviderInvalidResponse
-from src.anime.providers.release_mapping import forward_mappings
+from src.anime.providers.release_mapping import forward_mappings, absolute_lookup
 
 
 def tvdb_episode_ids(client, tid, secret, cancelled=None):
@@ -44,7 +44,8 @@ def build_catalog(client, aid, tid, secret=None, *, today=None):
     placements = {}
     if tid is not None:
         try:
-            mappings = forward_mappings(client.mapping_xml(), aid, tid, episodes)
+            mappings = forward_mappings(client.mapping_xml(), aid, tid, episodes,
+                                            absolute=absolute_lookup(client, tid, secret))
         except Exception:
             mappings = {}
         try:

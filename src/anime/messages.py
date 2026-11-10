@@ -24,6 +24,8 @@ class EventDefinition:
 _EVENTS = (
     EventDefinition('EPISODE_RESERVATIONS_RELEASED','job','Canceled episodes were released after cleanup.',True,'CANCELED_RESERVATIONS_RELEASED'),
     EventDefinition('KEEP_COMPLETED','job','Episode kept in the library.',True),
+    EventDefinition('KEEP_SERIES_ADDED','job','Series added to the library manager.',True),
+    EventDefinition('KEEP_SEARCH_REQUESTED','job','Missing-episode search requested from the library manager.',True),
     EventDefinition('MANAGEMENT_ACTION_RESUMED','job','The action was submitted again after review.'),
     EventDefinition('SERIES_REJECTED','job','Anime rejected; no more episodes are downloaded.',True,'ANIME_REJECTED'),
     EventDefinition('EPISODE_SEARCH_RESET','job','Failed episode attempts were cleaned up; searching again.'),

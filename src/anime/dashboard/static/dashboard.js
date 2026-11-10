@@ -1051,7 +1051,11 @@ function settingInput(path, definition, value) {
     }
     input.value = value;
   } else if (definition.type === 'levels') input.value = JSON.stringify(value, null, 2);
-  else {
+  else if (definition.type === 'boolean') {
+    // The value mirrors the box, so change detection and saving stay value-based.
+    input.type = 'checkbox'; input.checked = value === true; input.value = String(value === true);
+    input.addEventListener('change', () => { input.value = String(input.checked); });
+  } else {
     input.type = definition.type === 'integer' ? 'number' : 'text'; input.value = String(value);
     if (definition.minimum !== null) input.min = String(definition.minimum);
     if (definition.maximum !== null) input.max = String(definition.maximum);
@@ -1140,7 +1144,8 @@ function wireSectionForm(form, section) {
           let value;
           try {
             value = input.dataset.kind === 'levels' ? JSON.parse(input.value) :
-              input.dataset.kind === 'integer' ? Number(input.value) : input.value;
+              input.dataset.kind === 'integer' ? Number(input.value) :
+              input.dataset.kind === 'boolean' ? input.value === 'true' : input.value;
           } catch { throw new Error(COPY['dashboard.invalid_value']); }
           values[input.name.split('.')[1]] = value;
         }
