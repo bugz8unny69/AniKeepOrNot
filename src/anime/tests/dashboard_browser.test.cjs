@@ -762,6 +762,17 @@ test('transcode health shows the alive count and partial availability in yellow'
   assert.match(chip.title, /busy/);
 });
 
+test('staged transcode batch is shown above jobs and hidden on Intake', async () => {
+  const h = await harness();
+  h.run("state.page='jobs'; state.jobs=[]; state.transcodeBatch={state:'RUNNING',done:37,skipped:0,failed:2,total:200,current_file:'Episode 40.mkv'}; renderJobs();");
+  const panel = h.elements.get('transcode-batch');
+  assert.equal(panel.hidden, false);
+  assert.match(panel.children[0].textContent, /39\/200/);
+  assert.match(panel.children[1].textContent, /Episode 40.mkv.*2 failed/);
+  h.run("state.page='intake'; renderJobs();");
+  assert.equal(panel.hidden, true);
+});
+
 test('remote agents can be added and reordered without returning stored tokens', async () => {
   const h = await harness();
   const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},['http://first:8787','http://second:8787'])");

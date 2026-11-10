@@ -830,6 +830,7 @@ class Application:
         return COOKIE+'='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+('0' if clear else str(self.sessions.ttl))+('; Secure' if secure else '')
 
     def _jobs(self,configuration,path,query,match=None):
+        transcode_batch=None
         episode_keys={'anidb_id','season','episode'}
         selected=set(query)&episode_keys
         if selected and selected!=episode_keys:raise ApiError(400,'API_REQUEST_INVALID')
@@ -986,9 +987,11 @@ class Application:
                 ordering=' ORDER BY job_id DESC' if newest else ' ORDER BY job_id'
                 rows=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code '
                                 'FROM jobs WHERE '+' AND '.join(criteria)+ordering+' LIMIT ?',(*values,limit+1)).fetchall()
+                from src.anime.transcode_batch import status as transcode_status
+                transcode_batch=transcode_status(db)
                 items=[self._job(queue,db,r,language=configuration.value('anime.title_language'),configuration=configuration) for r in rows[:limit]]
-                if newest:return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
-        page={'items':items,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
+                if newest:return {'items':items,'transcode_batch':transcode_batch,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
+        page={'items':items,'transcode_batch':transcode_batch,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
         return {**page,'job':about,'backfill_attempts':attempts} if history else page
 
     def _notifications(self,configuration,method,path,query,body):
@@ -1034,6 +1037,8 @@ class Application:
 
     def _notification_action(self,configuration,queue,item,action):
         """Each action runs existing code; open_* are links the dashboard follows."""
+        if action=='open_jobs':
+            return 200,{'action':action},[]
         if action=='open_series':
             if item['anidb_id'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
             return 200,{'action':action,'anidb_id':item['anidb_id']},[]

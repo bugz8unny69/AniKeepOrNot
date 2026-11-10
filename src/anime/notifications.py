@@ -29,6 +29,7 @@ EVENT_TYPES = {
     'API_REJECTION': ('process_anyway', 'add_release', 'open_series'),
     'SERIES_EPISODE_TROUBLE': ('open_series', 'open_job'),
     'KEEP_SEARCH_FAILED': ('open_job',),
+    'TRANSCODE_BATCH_DONE': ('open_jobs',),
 }
 
 

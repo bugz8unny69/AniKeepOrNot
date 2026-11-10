@@ -103,6 +103,12 @@ class Resources:
         return self._record('STAGED_FILE', path=_path(path), size=_size(size), parent_id=source_id,
                             operation='STAGED')
 
+    def replace_staged(self, path, replacement, size):
+        """Refresh a staged file after an atomic transcode, preserving its origin."""
+        return self.db.execute("UPDATE resources SET path=?,size=?,updated_at_ms=? WHERE job_id=? "
+                               "AND kind='STAGED_FILE' AND path=? AND state='PRESENT'",
+                               (_path(replacement),_size(size),self.now,self.job_id,_path(path))).rowcount
+
     def library(self, path, size, *, source_id=None):
         """A copy imported to the library at Keep. It belongs to the user now."""
         resource = self._record('LIBRARY_FILE', path=_path(path), size=_size(size), parent_id=source_id,

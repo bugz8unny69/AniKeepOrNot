@@ -82,7 +82,7 @@ skip those agents. Verify host GPU binding with your existing passthrough setup.
 On a Linux gaming PC allow `gpu` only and disable sleep. Wake-on-LAN is outside
 this work. Do not use Windows agents.
 
-## Anime Discovery settings
+## Anime Discovery settings and staged batches
 
 Settings → Transcode defaults to Off, preserving ordinary verification/staging.
 Local uses the same encoder and has its own temp path, device and encoder
@@ -98,6 +98,20 @@ budget. Unavailable, busy, and disk-full agents cause a wait. Agent status
 appears in the existing service bar only in Remote mode.
 
 New installs use the current schemas. Existing installs require the normal
-explicit settings upgrade to v17 and database migration 072 under
+explicit settings upgrade to v17 and database migrations 072/073 under
 maintenance. These changes do not deploy or migrate a running installation.
 
+`adm transcode staged [--series ANIDB_ID] [--dry-run] [--yes]` queues a
+one-way batch and exits. Without `--yes` it asks for confirmation. Dry run only
+lists videos over the current target and estimates savings. A second batch is
+refused while one is active. `adm transcode status` and the Jobs page show the
+same counters. The ordinary worker runs the batch in the background, reusing
+the same agents/slots, with pipeline work taking priority. The batch's single
+row stores a JSON progress list and rename receipts to recover across restarts;
+it creates no per-file jobs or job-history rows. Each result is published by
+an atomic rename, then the staging manifest, receipt, cleanup file identity,
+and resource size are updated together. MP4 sources become MKV paths, retaining
+their episode NFO. Keep/Reject work prevents replacement of affected files.
+A completed batch sends one bell notification with a link to Jobs and failed
+file names. Lower the target and queue another batch to shrink staged files
+again. Originals are not recoverable.

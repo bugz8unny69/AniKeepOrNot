@@ -64,7 +64,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'anime_review_decisions_v69',  # v69 allows ACCEPT and records the Sonarr search
             'recognized_series',  # v70 keys Recognized names by AniDB anime
             'notifications',  # v71 adds the notification inbox
-            'transcode_media')  # v72 records transcode attempts/results
+            'transcode_media',  # v72 records transcode attempts/results
+            'transcode_batches')  # v73 adds staged batches
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

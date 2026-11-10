@@ -94,6 +94,7 @@ class Worker:
         self._running = False
         self._closed = False
         self._last_cleanup_review_scan = None
+        self._transcode_batch_task = None
         self._control_pool = ThreadPoolExecutor(max_workers=4,thread_name_prefix="nextgen-control")
 
     async def _io(self, callable_, *args, **kwargs):
@@ -517,6 +518,19 @@ class Worker:
         except (MaintenanceBusy, MaintenancePending):
             return
 
+    async def _run_transcode_batches(self):
+        from src.anime.transcode_batch import run_batch
+        while not self._halt_claims.is_set():
+            try:
+                configuration = await self._io(self.config.operation,self.startup,component="worker")
+                worked = await blocking(run_batch,configuration,self._secrets,self._halt_claims)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._log_error(exc)
+                worked = False
+            await asyncio.sleep(1)
+
     async def run(self, *, on_ready=None):
         if self._running or self._closed:
             raise RuntimeError("worker cannot be started in its current state")
@@ -533,6 +547,9 @@ class Worker:
                         ready = True
                         if on_ready is not None:
                             on_ready()
+                    if self._secrets is not None and (self._transcode_batch_task is None or self._transcode_batch_task.done()):
+                        if self._transcode_batch_task is not None: self._transcode_batch_task.result()
+                        self._transcode_batch_task = asyncio.create_task(self._run_transcode_batches())
                     while len(self._tasks) < self.concurrency and not self._stop.is_set():
                         task = asyncio.create_task(self.attempt())
                         self._tasks.add(task)
@@ -557,7 +574,7 @@ class Worker:
             self.stop()
             # Drain even on failure/cancellation; retain admission until threads
             # are finished. No forced lease release or external replay here.
-            tasks = tuple(self._tasks)
+            tasks = tuple(self._tasks) + ((self._transcode_batch_task,) if self._transcode_batch_task is not None else ())
             try:
                 if tasks:
                     await settle(tasks)
