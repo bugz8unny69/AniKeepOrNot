@@ -11,11 +11,11 @@ DEFINITION=HandlerDefinition(KIND,'Reserve episode for acquisition')
 
 
 def _persist(db,claim,value):
-    from src.anime.storage.review_decisions import require_allowed, AnimeRejected
+    from src.anime.storage.review_decisions import require_allowed, AnimeDecided
     try:
         require_allowed(db,value.anidb_id)
         return (persist_reservation(db,claim,value),)
-    except AnimeRejected as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
+    except AnimeDecided as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
     except EpisodeStaged:raise CompletionRejected(Outcome('skip',activity_code='SKIPPED_DUPLICATE')) from None
     except EpisodeReserved as exc:
         facts = {}

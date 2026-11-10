@@ -23,11 +23,11 @@ class BatchEvaluationCompletion:
 def _persist(db,claim,value):
     if type(value) is not BatchEvaluationCompletion or value.evaluation_job_id!=claim.job_id:
         raise ValueError('Batch trial completion does not match its job')
-    from src.anime.storage.review_decisions import require_allowed, AnimeRejected
+    from src.anime.storage.review_decisions import require_allowed, AnimeDecided
     try:
         require_allowed(db,value.proposal.source.anidb_id)
         return (persist_batch_user_evaluation(db,claim,value.proposal),)
-    except AnimeRejected as exc:
+    except AnimeDecided as exc:
         raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
     except (UserEvaluationConflict,SizeLimitExceeded,SizeEvidenceMissing) as exc:
         raise CompletionRejected(Outcome('review',exc.reason_code)) from None

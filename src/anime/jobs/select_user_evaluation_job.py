@@ -28,7 +28,7 @@ class EvaluationCompletion:
 def _persist(db,claim,value,*,discovery_kind=None):
     if type(value) is not EvaluationCompletion or value.evaluation_job_id!=claim.job_id:
         raise ValueError('episode selection completion does not match its job')
-    from src.anime.storage.review_decisions import require_allowed, AnimeRejected
+    from src.anime.storage.review_decisions import require_allowed, AnimeDecided
     try:
         require_allowed(db,value.proposal.source.anidb_id)
         receipts=(persist_user_evaluation(db,claim,value.proposal),)
@@ -44,7 +44,7 @@ def _persist(db,claim,value,*,discovery_kind=None):
             try: receipts+=schedule_first(db,claim,value.proposal.source,kind=discovery_kind)
             except BackfillConflict:raise CompletionRejected(Outcome('review','EPISODE_DISCOVERY_PLAN_CONFLICT')) from None
         return receipts
-    except AnimeRejected as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
+    except AnimeDecided as exc:raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
     except UserEvaluationConflict as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
 
 

@@ -371,3 +371,69 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
         return await blocking(identify, request, configuration, cancelled, matching)
 
     return resolve
+
+
+def cached_anidb_id(database, options, title, *, threshold_pct=90, client=None):
+    """The AniDB anime of a release name from local data only, or None (work item P4).
+
+    The resolver's steps up to the AniDB ID, cache-only: the manual identity
+    match, Recognized names, AniDB title candidates scored against the cached
+    title list, and the cached anime record's title-agreement check. It skips
+    Anime-Lists, TVDB and season redirection, so a release that would need a
+    season redirect (S02+ without a sequel title) is unknown. A missing or
+    expired cache entry is unknown too; nothing is ever fetched.
+    """
+    from src.anime.providers.errors import ProviderCacheMiss
+    from src.anime.storage.manual_identity import for_release
+    try:
+        seasons = _release_seasons(title)
+        aliases, episode = release_title(title)
+        if not aliases or len({int(value) for value in seasons}) > 1:
+            return None
+        season = int(seasons[0]) if seasons else None
+        manual = for_release(database, title, season)
+        if manual is not None:
+            return manual["anime"]["anidb_id"]
+        with closing(_open(database, readonly=True, timeout_ms=5000)) as known_db:
+            if known_db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
+                return None
+            known = recognized_for_release(known_db, title, season=season)
+        if known is not None:
+            return known["anidb_id"]
+        alternate = None
+        if any(int(value) > 1 for value in seasons):
+            sequel = explicit_sequel_alias(title, aliases)
+            if sequel is None:
+                return None                      # needs Anime-Lists season redirection
+            aliases = [sequel]
+        else:
+            alternate = explicit_sequel_alias(title, aliases)
+        if client is None:
+            if options is None:
+                return None                      # no AniDB client settings: no title-list step
+            client = Clients(database, options, cache_only=True)
+        variants, _, _ = generate_title_variants(title, seasons=seasons, episode=episode)
+        candidates = client.title_candidates(aliases)
+        if not candidates and alternate is not None:
+            candidates = client.title_candidates([alternate])
+        if not candidates:
+            others = [v.text for v in variants if v.text not in aliases]
+            if others:
+                candidates.update(client.title_candidates(others))
+        else:
+            others = [v.text for v in variants if v.text not in aliases]
+            if others:
+                for key, value in client.title_candidates(others).items():
+                    candidates[key] = tuple(dict.fromkeys((*candidates.get(key, ()), *value)))
+        if not candidates:
+            return None
+        scoring = rank_and_select_candidates(candidates, variants, threshold_pct, release_season=season)
+        if scoring.selected is None:
+            return None
+        aid = scoring.selected.anidb_id
+        anime = client.anime(aid)
+        if not {norm(x) for x in anime["titles"]} & {norm(x) for x in candidates[aid]}:
+            return None
+        return aid
+    except (ProviderCacheMiss, ProviderInvalidResponse, IdentityNotReady, IdentityConflict, ValueError):
+        return None

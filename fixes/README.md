@@ -143,3 +143,15 @@ After installing this update, run the documented title-backfill dry run first.
 Do not use `--apply` if it reports a genuine content/hash mismatch or a
 foreign edited NFO. Successful `--apply` still backs up the database and
 holds exclusive maintenance while files and receipts are updated.
+
+
+## One-time: mark already-kept series as Accepted
+
+Keep is now a series decision (Accepted): the series shows as Accepted in Intake
+and no more work happens for it. Series kept before this change have no
+decision. Preview (read-only), then apply:
+
+```sh
+sudo python3 /opt/anime-discovery/current/fixes/accept_kept_series.py
+sudo python3 /opt/anime-discovery/current/fixes/accept_kept_series.py --apply
+```

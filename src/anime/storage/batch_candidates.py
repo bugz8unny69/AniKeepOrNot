@@ -605,7 +605,8 @@ def _legacy_disposition(db, operation_id):
 
 
 def _anime_rejected(db, anidb_id):
-    return db.execute("SELECT 1 FROM anime_review_decisions WHERE anidb_id=? AND decision='REJECT'",
+    # Any decision (Reject or Accept) ends work for the series.
+    return db.execute("SELECT 1 FROM anime_review_decisions WHERE anidb_id=?",
                       (anidb_id,)).fetchone() is not None
 
 

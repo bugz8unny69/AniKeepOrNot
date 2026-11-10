@@ -62,7 +62,7 @@ class BatchKeepJournal:
         if len(selected)!=1:
             raise KeepReview(failed_check=here('FILE_NOT_FOUND'))
         row=selected[0]
-        require_allowed(db,row[4])
+        require_allowed(db,row[4],keep=True)
         return action[0],row
 
     def load(self,claim,target,configuration,*,resolver=None):

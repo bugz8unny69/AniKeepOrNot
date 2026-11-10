@@ -27,11 +27,11 @@ def _persist(db,claim,value):
     if (type(value) is not BatchReservationCompletion
             or value.reservation_job_id!=claim.job_id):
         raise ValueError('Batch reservation completion does not match the claiming job')
-    from src.anime.storage.review_decisions import require_allowed, AnimeRejected
+    from src.anime.storage.review_decisions import require_allowed, AnimeDecided
     try:
         require_allowed(db,value.source.anidb_id)
         return (persist_batch_reservations(db,claim,value.source),)
-    except AnimeRejected as exc:
+    except AnimeDecided as exc:
         raise CompletionRejected(Outcome('hold',exc.reason_code)) from None
     except EpisodeReserved as exc:
         facts = {}

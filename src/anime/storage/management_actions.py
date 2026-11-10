@@ -174,8 +174,8 @@ class ManagementActions:
             now=self.queue.now()
             if action=='keep':
                 if op[1]!='STAGED':raise ActionUnavailable()
-                if db.execute('SELECT 1 FROM anime_review_decisions d JOIN episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=?',(op[0],)).fetchone():raise ActionUnavailable()
-                if db.execute('SELECT 1 FROM anime_review_decisions d JOIN batch_episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=?',(op[0],)).fetchone():raise ActionUnavailable()
+                if db.execute('SELECT 1 FROM anime_review_decisions d JOIN episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=? AND d.decision=\'REJECT\'',(op[0],)).fetchone():raise ActionUnavailable()
+                if db.execute('SELECT 1 FROM anime_review_decisions d JOIN batch_episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=? AND d.decision=\'REJECT\'',(op[0],)).fetchone():raise ActionUnavailable()
             else:
                 if action=='cancel':
                     try:_,audits=self.cancellations.request_in_transaction(db,job_id)
@@ -219,6 +219,10 @@ class ManagementActions:
                 payload={'target_job_id':job_id},available_at_ms=now)
             db.execute('INSERT INTO management_actions VALUES(?,?,?,?,?)',(op[0],selected,job_id,control,now))
             records.append(audit)
+            if selected=='KEEP':
+                # Keep is a series decision: Accepted. Sonarr handles the series from now on.
+                from src.anime.storage.series_intake import accept_series
+                records.extend(accept_series(db,self.queue.database,op[0],control,now))
             data=receipt(db,control)
         return 202,data,tuple(records)
 
@@ -237,8 +241,8 @@ class ManagementActions:
                         "ORDER BY CASE j.state WHEN 'RUNNING' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END,j.job_id LIMIT 1",
                         (op[0],)).fetchone()
         result={}
-        rejected=(db.execute('SELECT 1 FROM anime_review_decisions d JOIN episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=?',(op[0],)).fetchone() is not None or
-                  db.execute('SELECT 1 FROM anime_review_decisions d JOIN batch_episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=?',(op[0],)).fetchone() is not None)
+        rejected=(db.execute('SELECT 1 FROM anime_review_decisions d JOIN episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=? AND d.decision=\'REJECT\'',(op[0],)).fetchone() is not None or
+                  db.execute('SELECT 1 FROM anime_review_decisions d JOIN batch_episode_reservations r ON r.anidb_id=d.anidb_id JOIN job_operation_members m ON m.job_id=r.owner_job_id WHERE m.operation_id=? AND d.decision=\'REJECT\'',(op[0],)).fetchone() is not None)
         from src.anime.storage.reservation_release import active
         release_pending=op[1]=='CANCELED' and op[2]=='COMPLETE' and active(db,op[0])
         for name,enabled in (('keep',op[1]=='STAGED' and not rejected),('cancel',cancelable),

@@ -36,6 +36,9 @@ class IdentityRequest:
 class IdentifiedSeries:
     event_id: int
     series_json: str = field(repr=False)
+    # 'ACCEPT' or 'REJECT' when the series is already decided: the delivery is
+    # refused after identity (work item P4 4.4), with no successor.
+    decided: str | None = None
 
     def __post_init__(self):
         integer(self.event_id,positive=True)
@@ -74,7 +77,32 @@ def _persist(db, claim, result):
         _, audit = persist_identity(db,claim.event_id,result.data())
     except (IdentityConflict, IdentityNotReady) as exc:
         raise CompletionRejected(Outcome("review",exc.reason_code)) from None
-    return () if audit is None else (audit,)
+    records = () if audit is None else (audit,)
+    if result.decided is not None:
+        import time
+        from src.anime.decided_series import REASONS, notify_refused
+        from src.anime.history import append_job_history, job_attempt
+        aid = result.data()["anime"]["anidb_id"]
+        raw = db.execute("SELECT raw_body FROM incoming_events WHERE event_id=?", (claim.event_id,)).fetchone()[0]
+        now = time.time_ns() // 1000000
+        notify_refused(db, aid, result.decided, raw, job_id=claim.job_id, now=now)
+        records += (append_job_history(db, job_id=claim.job_id, event_code="DELIVERY_REFUSED",
+                                       reason_code=REASONS[result.decided], component="worker", occurred_at_ms=now,
+                                       details={"attempt": job_attempt(db, claim.job_id)}),)
+    return records
+
+
+def _decided(database, anidb_id):
+    db = None
+    try:
+        db = _open(database,readonly=True,timeout_ms=5000)
+        from src.anime.storage.review_decisions import decision
+        return decision(db, anidb_id)
+    except (sqlite3.Error, OSError, MigrationError):
+        raise QueueUnavailable() from None
+    finally:
+        if db is not None:
+            db.close()
 
 
 def registration(resolve, *, release_kind=None):
@@ -96,7 +124,9 @@ def registration(resolve, *, release_kind=None):
     async def execute(context):
         # The delivery is the durable source. Never accept a candidate schema,
         # verified flag, executable name or alternate event ID from payload.
-        if context.data() != {} or context.claim.event_id is None:
+        # "Process anyway" from the bell skips the decision check for this one delivery.
+        payload = context.data()
+        if payload not in ({}, {"process_anyway": True}) or context.claim.event_id is None:
             return Outcome("review", "JOB_PAYLOAD_INVALID")
         trace = MatchingTrace()
         def evidence():
@@ -119,7 +149,11 @@ def registration(resolve, *, release_kind=None):
             return Outcome("review", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         try:
             validated = AnimeSeries.from_dict(candidate)
-            result = IdentifiedSeries(request.event_id, payload_json(validated.to_dict()))
+            decided = None
+            if not payload.get("process_anyway"):
+                decided = await blocking(_decided, context.configuration.value("storage.database_path"),
+                                         validated.to_dict()["anime"]["anidb_id"])
+            result = IdentifiedSeries(request.event_id, payload_json(validated.to_dict()), decided)
         except (ValueError, TypeError, RecursionError, OverflowError):
             return Outcome("review", "IDENTITY_INVALID", matching=evidence(), candidate_evidence=trace.candidate_evidence)
         return Outcome(value=result, matching=evidence(), candidate_evidence=trace.candidate_evidence)
@@ -127,7 +161,7 @@ def registration(resolve, *, release_kind=None):
     def route(result):
         if type(result) is not IdentifiedSeries:
             raise ValueError("invalid identity completion")
-        if release_kind is None:
+        if release_kind is None or result.decided is not None:
             return ()
         # Series identity never authorizes acquisition. The next job must prove
         # exact episode coverage; resolve the immutable snapshot by event/anime.

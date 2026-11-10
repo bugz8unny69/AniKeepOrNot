@@ -9,13 +9,31 @@ from src.anime.acquisition.metadata import AcquisitionConflict
 from src.anime.staging import StagingReview, disjoint
 
 
-class AnimeRejected(AcquisitionConflict):
+class AnimeDecided(AcquisitionConflict):
+    """The series has a decision (Reject or Accept): no more work happens for it."""
+
+
+class AnimeRejected(AnimeDecided):
     reason_code='ANIME_REJECTED'
     def __init__(self):ValueError.__init__(self,'This anime was rejected; automatic acquisition is stopped.')
 
 
-def require_allowed(db,anidb_id):
-    if db.execute("SELECT 1 FROM anime_review_decisions WHERE anidb_id=? AND decision='REJECT'",(anidb_id,)).fetchone():raise AnimeRejected()
+class AnimeAccepted(AnimeDecided):
+    reason_code='ANIME_ACCEPTED'
+    def __init__(self):ValueError.__init__(self,'This anime was accepted; Sonarr handles it.')
+
+
+def decision(db,anidb_id):
+    """'REJECT', 'ACCEPT' or None."""
+    row=db.execute("SELECT decision FROM anime_review_decisions WHERE anidb_id=?",(anidb_id,)).fetchone()
+    return None if row is None else row[0]
+
+
+def require_allowed(db,anidb_id,*,keep=False):
+    """Refuse work for a decided series. Keep (keep=True) still runs for an accepted one."""
+    found=decision(db,anidb_id)
+    if found=='REJECT':raise AnimeRejected()
+    if found=='ACCEPT' and not keep:raise AnimeAccepted()
 
 
 def staged(db,operation_id):

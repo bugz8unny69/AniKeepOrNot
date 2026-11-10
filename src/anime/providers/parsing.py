@@ -30,8 +30,36 @@ def positive_text(value):
     return int(value)
 
 
-def title_matches(payload, aliases, *, threshold_pct=50):
+_TITLE_INDEX = [None, None]   # (digest, index): the parsed AniDB title list, kept in memory.
+
+
+def title_index(payload):
+    """The AniDB title list parsed once per distinct payload: ((aid, titles, normed), ...).
+
+    Parsing the whole list is most of a title lookup; the webhook check (work item
+    P4) reuses it until the cached list changes.
+    """
+    import hashlib
+    digest = hashlib.blake2b(payload, digest_size=16).digest() if type(payload) is bytes else None
+    if digest is not None and _TITLE_INDEX[0] == digest:
+        return _TITLE_INDEX[1]
     root = xml(payload, "animetitles")
+    index, seen = [], set()
+    for node in root.findall("anime"):
+        aid = positive_text(node.get("aid"))
+        if aid in seen:
+            raise ProviderInvalidResponse()
+        seen.add(aid)
+        titles = tuple((item.text or "").strip() for item in node.findall("title") if (item.text or "").strip())
+        if titles:
+            index.append((aid, titles, tuple(norm(title) for title in titles)))
+    index = tuple(index)
+    _TITLE_INDEX[:] = [digest, index]
+    return index
+
+
+def title_matches(payload, aliases, *, threshold_pct=50):
+    index = title_index(payload)
     wanted_texts = [a.text if hasattr(a, "text") else str(a) for a in aliases if a]
     wanted_norms = {norm(t) for t in wanted_texts if norm(t)}
     if not wanted_norms:
@@ -44,18 +72,10 @@ def title_matches(payload, aliases, *, threshold_pct=50):
 
     from difflib import SequenceMatcher
     found = {}
-    for node in root.findall("anime"):
-        aid = positive_text(node.get("aid"))
-        if aid in found:
-            raise ProviderInvalidResponse()
-        titles = tuple((item.text or "").strip() for item in node.findall("title") if (item.text or "").strip())
-        if not titles:
-            continue
-
-        is_match = any(norm(title) in wanted_norms for title in titles)
+    for aid, titles, normed in index:
+        is_match = any(nt in wanted_norms for nt in normed)
         if not is_match and threshold_pct is not None and wanted_words:
-            for title in titles:
-                nt = norm(title)
+            for nt in normed:
                 if not nt:
                     continue
                 if any(w in nt for w in wanted_words):

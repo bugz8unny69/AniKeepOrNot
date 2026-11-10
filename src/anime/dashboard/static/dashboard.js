@@ -410,7 +410,7 @@ async function submitSelected() {
   }
 }
 const INTAKE_STATUS = Object.freeze({
-  REJECTED: 'Rejected', STAGED: 'Ready to Keep', WAITING_FOR_DUB: 'Waiting for dub', KEPT: 'Kept', TRACKING: 'Tracking',
+  REJECTED: 'Rejected', ACCEPTED: 'Accepted', STAGED: 'Ready to Keep', WAITING_FOR_DUB: 'Waiting for dub', TRACKING: 'Tracking',
 });
 function openManualSubmission(anidbId, episode) {
   state.manualTarget = {anidbId, season: episode.season, episode: episode.episode};
@@ -439,11 +439,9 @@ function renderSeries() {
     td('—');
     td().appendChild(node('strong', series.title));
     td(series.staged_count + ' staged');
-    td().appendChild(node('span', INTAKE_STATUS[series.status] || (series.rejection ? 'Rejected' :
-      series.staged_count ? 'Ready to Keep' : series.waiting_for_dub ? 'Waiting for dub' :
-      series.kept_count ? 'Kept' : 'Tracking'),
-      'status ' + (series.rejection ? 'blocked' :
-        series.staged_count || (series.kept_count && !series.waiting_for_dub) ? 'completed' : 'waiting')));
+    td().appendChild(node('span', INTAKE_STATUS[series.status] || 'Tracking',
+      'status ' + (series.status === 'REJECTED' ? 'blocked' :
+        ['ACCEPTED', 'STAGED'].includes(series.status) ? 'completed' : 'waiting')));
     td(series.missing_count + ' not staged');
     const actions = td();
     const open = node('button', 'View series', 'secondary');
