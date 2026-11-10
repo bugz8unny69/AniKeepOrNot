@@ -21,6 +21,7 @@ from src.anime.jobs.reserve_episode_job import KIND as RESERVE_KIND, registratio
 from src.anime.jobs.prepare_acquisition_job import KIND as PREPARE_KIND, registration as prepare_registration
 from src.anime.jobs.submit_torrent_job import KIND as SUBMIT_KIND, registration as submit_registration
 from src.anime.jobs.download_torrent_job import KIND as DOWNLOAD_KIND, registration as download_registration
+from src.anime.jobs.transcode_media_job import KIND as TRANSCODE_KIND, registration as transcode_registration
 from src.anime.jobs.verify_media_job import KIND as MEDIA_KIND, registration as media_registration
 from src.anime.jobs.stage_user_evaluation_media_job import KIND as STAGE_KIND, registration as stage_registration
 from src.anime.jobs.management import registrations as management_registrations
@@ -105,7 +106,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                     legacy_bootstrap=make_bootstrap(secrets) if default_reader or backfill_acquire else None),
                                                 submit_registration(read_metainfo,secrets,transfer_kind=DOWNLOAD_KIND,
                                                     discovery_kind=BACKFILL_KIND if backfill else None),
-                                                download_registration(secrets,verification_kind=MEDIA_KIND),media_registration(staging_kind=STAGE_KIND),stage_registration())
+                                                download_registration(secrets,verification_kind=MEDIA_KIND),media_registration(staging_kind=STAGE_KIND,transcode_kind=TRANSCODE_KIND),transcode_registration(secrets),stage_registration(secrets=secrets))
     # Batch jobs share trusted hash-only metadata and the same ownership safeguards.
     batch_handlers = (
         batch_reserve_registration(submission_kind=BATCH_SUBMIT_KIND),
@@ -116,7 +117,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
         batch_probe_registration(read_batch_metainfo,unlock_kind=BATCH_UNLOCK_KIND),
         batch_unlock_registration(read_batch_metainfo,secrets,next_kind=BATCH_EPISODE_KIND),
         batch_episode_registration(read_batch_metainfo,staging_kind=BATCH_STAGE_KIND),
-        batch_stage_registration(),
+        batch_stage_registration(secrets=secrets),
         batch_prowlarr_registration(secrets),
     )
     registry = Registry((registration(resolve,release_kind=RELEASE_KIND if release_kind is None else release_kind),

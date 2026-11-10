@@ -37,6 +37,7 @@ class CredentialStatus:
     jellyfin_configured: bool = False
     shoko_configured: bool = False
     prowlarr_configured: bool = False
+    transcode_agents: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,13 @@ def _value(value):
     return value
 
 
+def _transcode_tokens(value):
+    from src.anime.services.transcode import agent_url
+    if type(value) is not dict or len(value) > 32: raise SecretStorageError()
+    try: return {agent_url(key): _value(token) for key, token in value.items()}
+    except ValueError: raise SecretStorageError() from None
+
+
 def _read(fd, *, owned=True):
     """Parse secrets.json. Writers require ownership; read-only callers do not.
 
@@ -91,7 +99,7 @@ def _read(fd, *, owned=True):
     try:
         document = decode(raw)
         if (type(document) is not dict or set(document)!={"schema_version","revision","credentials"}
-                or type(document["schema_version"]) is not int or document["schema_version"] not in (1,2,3,4,5,6,7,8)
+                or type(document["schema_version"]) is not int or document["schema_version"] not in (1,2,3,4,5,6,7,8,9)
                 or type(document["credentials"]) is not dict):raise SecretStorageError()
         version=document['schema_version']
         expected={'tvdb_api_key'} if version==1 else {'tvdb_api_key','qbittorrent_username','qbittorrent_password'}
@@ -101,6 +109,7 @@ def _read(fd, *, owned=True):
         if version>=5:expected|={'jellyfin_api_key'}
         if version>=6:expected|={'shoko_api_key'}
         if version>=8:expected|={'prowlarr_api_key'}
+        if version>=9:expected|={'transcode_tokens'}
         if set(document['credentials'])!=expected:raise SecretStorageError()
         values={'tvdb_api_key':_value(document['credentials']['tvdb_api_key']),
                 'qbittorrent_username':'','qbittorrent_password':'','webhook_token':'','management_token':'','sonarr_api_key':'','jellyfin_api_key':'','shoko_api_key':'','prowlarr_api_key':''}
@@ -111,6 +120,7 @@ def _read(fd, *, owned=True):
         if version>=5:values['jellyfin_api_key']=_value(document['credentials']['jellyfin_api_key'])
         if version>=6:values['shoko_api_key']=_value(document['credentials']['shoko_api_key'])
         if version>=8:values['prowlarr_api_key']=_value(document['credentials']['prowlarr_api_key'])
+        values['transcode_tokens'] = _transcode_tokens(document['credentials'].get('transcode_tokens', {}))
         return revision(document['revision']),values,version
     except (ValueError,TypeError,KeyError):
         raise SecretStorageError() from None
@@ -132,6 +142,7 @@ def _publish(fd, current_revision, values, *, version=2):
     if version>=5:keys|={'jellyfin_api_key'}
     if version>=6:keys|={'shoko_api_key'}
     if version>=8:keys|={'prowlarr_api_key'}
+    if version>=9:keys|={'transcode_tokens'}
     raw = (json.dumps({"schema_version":version,"revision":current_revision,
                        "credentials":{key:values[key] for key in keys}},sort_keys=True)+"\n").encode()
     try:
@@ -155,7 +166,7 @@ def _download_values(username,password):
 
 def _status(number,values):
     return CredentialStatus(number,bool(values['tvdb_api_key']),bool(values['qbittorrent_username'] and values['qbittorrent_password']),
-                            bool(values.get('webhook_token')),False,bool(values.get('sonarr_api_key')),bool(values.get('jellyfin_api_key')),bool(values.get('shoko_api_key')),bool(values.get('prowlarr_api_key')))
+                            bool(values.get('webhook_token')),False,bool(values.get('sonarr_api_key')),bool(values.get('jellyfin_api_key')),bool(values.get('shoko_api_key')),bool(values.get('prowlarr_api_key')),tuple(sorted(k for k,v in values.get('transcode_tokens',{}).items() if v)))
 
 
 class SecretStore:
@@ -168,7 +179,7 @@ class SecretStore:
                 _private_directory(fd, owned=False)
                 return _read(fd, owned=False)
         except FileNotFoundError:
-            return 0,{'tvdb_api_key':'','qbittorrent_username':'','qbittorrent_password':'','webhook_token':'','management_token':'','sonarr_api_key':'','jellyfin_api_key':'','shoko_api_key':'','prowlarr_api_key':''},2
+            return 0,{'tvdb_api_key':'','qbittorrent_username':'','qbittorrent_password':'','webhook_token':'','management_token':'','sonarr_api_key':'','jellyfin_api_key':'','shoko_api_key':'','prowlarr_api_key':'','transcode_tokens':{}},2
         except OSError:
             raise SecretStorageError() from None
 
@@ -209,14 +220,14 @@ class SecretStore:
     def initialize(self, tvdb_api_key='', *, qbittorrent_username='', qbittorrent_password='', webhook_token='', management_token='', sonarr_api_key='', jellyfin_api_key='', shoko_api_key='', prowlarr_api_key=''):
         if management_token:raise SecretStorageError()
         values={'tvdb_api_key':_value(tvdb_api_key),**_download_values(qbittorrent_username,qbittorrent_password),
-                **_access_values(webhook_token,management_token),'sonarr_api_key':_value(sonarr_api_key),'jellyfin_api_key':_value(jellyfin_api_key),'shoko_api_key':_value(shoko_api_key),'prowlarr_api_key':_value(prowlarr_api_key)}
+                **_access_values(webhook_token,management_token),'sonarr_api_key':_value(sonarr_api_key),'jellyfin_api_key':_value(jellyfin_api_key),'shoko_api_key':_value(shoko_api_key),'prowlarr_api_key':_value(prowlarr_api_key),'transcode_tokens':{}}
         try:
             with _writer(self.directory) as fd:
                 _private_directory(fd)
                 try:_read(fd)
                 except FileNotFoundError:pass
                 else:raise ConfigurationConflict()
-                durable=_publish(fd,1,values,version=8)
+                durable=_publish(fd,1,values,version=9)
         except OSError:raise SecretStorageError() from None
         return SecretUpdateResult(_status(1,values),True,durable,
                                   None if durable else 'CONFIGURATION_DURABILITY_UNCONFIRMED')
@@ -232,7 +243,7 @@ class SecretStore:
                 _access_values(values['webhook_token'],values['management_token'])
                 if values==old:return SecretUpdateResult(_status(number,old),False,True)
                 number=revision(number+1)
-                durable=_publish(fd,number,values,version=8)
+                durable=_publish(fd,number,values,version=9)
         except OSError:raise SecretStorageError() from None
         return SecretUpdateResult(_status(number,values),True,durable,
                                   None if durable else 'CONFIGURATION_DURABILITY_UNCONFIRMED')
@@ -286,3 +297,17 @@ class SecretStore:
 
     def update_prowlarr_api_key(self,value,*,expected_revision):
         return self._update({'prowlarr_api_key':_value(value)},expected_revision=expected_revision)
+
+    def transcode_token(self, agent):
+        from src.anime.services.transcode import agent_url
+        _, values, _ = self._current()
+        return values.get('transcode_tokens', {}).get(agent_url(agent), '')
+
+    def update_transcode_token(self, agent, token, *, expected_revision):
+        from src.anime.services.transcode import agent_url
+        _, values, _ = self._current()
+        tokens = dict(values.get('transcode_tokens', {}))
+        key = agent_url(agent)
+        if token: tokens[key] = _value(token)
+        else: tokens.pop(key, None)
+        return self._update({'transcode_tokens': _transcode_tokens(tokens)}, expected_revision=expected_revision)

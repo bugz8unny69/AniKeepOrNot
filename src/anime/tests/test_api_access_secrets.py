@@ -23,12 +23,12 @@ class ApiAccessSecretsTests(unittest.TestCase):
     def test_fresh_install_has_no_management_token(self):
         self.store.initialize("provider-key", qbittorrent_username="user",
                               qbittorrent_password="pass")
-        self.assertEqual(self.raw()["schema_version"], 8)
+        self.assertEqual(self.raw()["schema_version"], 9)
         self.assertNotIn("management_token", self.raw()["credentials"])
         self.assertFalse(self.store.status().management_configured)
         result = self.store.update_webhook_token("w" * 43, expected_revision=1)
         self.assertTrue(result.status.webhook_configured)
-        self.assertEqual(self.raw()["schema_version"], 8)
+        self.assertEqual(self.raw()["schema_version"], 9)
         self.assertEqual(self.store.access_credentials().webhook_token, "w" * 43)
         self.assertNotIn("w" * 43, repr(self.store.status()))
         self.assertNotIn("w" * 43, repr(self.store.access_credentials()))

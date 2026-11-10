@@ -50,7 +50,7 @@ class UserEvaluationWindowTests(unittest.TestCase):
             document=CONVERSIONS[version](document)
             self.assertNotIn('trial',document['settings'])
         current=convert_document(document)
-        self.assertEqual((current.schema_version,current.revision),(16,16))
+        self.assertEqual((current.schema_version,current.revision),(17,17))
         self.assertEqual(current.value('user_evaluation.backfill_count'),6)
         self.assertEqual(current.value('user_evaluation.following_count'),1)
         with self.assertRaises(ConfigurationError):

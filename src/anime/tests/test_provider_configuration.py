@@ -45,7 +45,7 @@ class ProviderConfigurationTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 convert_document({**document,"settings":{**document["settings"],"anidb":{"client_name":"new"}}})
         current = convert_document(third)
-        self.assertEqual((current.schema_version,current.revision),(16,16))
+        self.assertEqual((current.schema_version,current.revision),(17,17))
         self.assertEqual(current.value("anidb.client_name"),"")
         self.assertEqual(current.value("providers.timeout_seconds"),30)
 
@@ -306,5 +306,5 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('DOWNLOAD_TORRENT',composed.registry.entries)
         self.assertEqual(composed.registry.entries['SUBMIT_TORRENT'].successor_kinds,('DOWNLOAD_TORRENT',))
         self.assertEqual(composed.registry.entries['DOWNLOAD_TORRENT'].successor_kinds,('VERIFY_MEDIA',))
-        self.assertEqual(composed.registry.entries['VERIFY_MEDIA'].successor_kinds,('STAGE_USER_EVALUATION_MEDIA',))
+        self.assertEqual(composed.registry.entries['VERIFY_MEDIA'].successor_kinds,('STAGE_USER_EVALUATION_MEDIA','TRANSCODE_MEDIA'))
         self.assertEqual(composed.registry.entries['RESERVE_EPISODE'].successor_kinds,('PREPARE_ACQUISITION',))

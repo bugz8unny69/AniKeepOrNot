@@ -1,6 +1,8 @@
 """Copy verified viewing videos; Keep and library refresh remain separate."""
 import logging
 
+from src.transcode_agent.encode import EncodeError
+from src.anime.services.transcode import TranscodeWaiting, TranscodeFailed
 from src.anime.acquisition.media import MediaInvalid
 from src.anime.acquisition.metadata import AcquisitionConflict, MetadataInvalid, SourceMissing
 from src.anime.acquisition.settings import SizeEvidenceMissing, DownloadConfigurationError
@@ -39,7 +41,7 @@ def _persist(db,claim,value):
     except REVIEW as exc:raise CompletionRejected(Outcome('review',exc.reason_code)) from None
 
 
-def registration(*,publisher_factory=Publisher,journal_factory=Journal):
+def registration(*,publisher_factory=Publisher,journal_factory=Journal,secrets=None):
     async def execute(context):
         def failure(exc,kind,reason):
             exception(context.logger,'OPERATION_FAILED',exc,level=logging.WARNING,
@@ -55,6 +57,9 @@ def registration(*,publisher_factory=Publisher,journal_factory=Journal):
             verification=integer(payload['verification_job_id'],positive=True)
         except (ValueError,TypeError):return Outcome('review','JOB_PAYLOAD_INVALID')
         def run():
+            if secrets is not None:
+                from src.anime.storage.transcode import prepare
+                prepare(context,verification,secrets,batch=False)
             journal=journal_factory(context.configuration.value('storage.database_path'))
             publisher=publisher_factory(journal,context.claim,context.cancelled)
             with journal.lock(context.claim):
@@ -63,6 +68,10 @@ def registration(*,publisher_factory=Publisher,journal_factory=Journal):
                 journal.guard(context.claim)
                 return {'verification_job_id':verification,'receipts':receipts,'refresh':bool(context.configuration.value('jellyfin.base_url'))}
         try:return Outcome(value=await blocking(run))
+        except TranscodeWaiting:
+            return Outcome('defer','TRANSCODE_WAITING',delay_ms=10000)
+        except (TranscodeFailed,EncodeError) as exc:
+            return Outcome('review','TRANSCODE_FAILED',facts={'service_detail':str(exc)[:500]})
         except StagingBusy as exc:return Outcome('defer',exc.reason_code,delay_ms=1000)
         except FileExistsError as exc:return failure(exc,'review','STAGING_REVIEW')
         except (StagingUnavailable,OSError) as exc:return failure(exc,'retry','STAGING_UNAVAILABLE')

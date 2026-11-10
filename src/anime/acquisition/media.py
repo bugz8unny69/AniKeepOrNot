@@ -1,6 +1,6 @@
 """Read-only verification of one pinned selected file; never copies or deletes."""
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -90,7 +90,7 @@ def probe(fd,flag,*,executable='/usr/bin/ffprobe',timeout=60):
     command=[executable,'-v','error','-max_alloc','67108864',
         '-protocol_whitelist','file,pipe','-format_whitelist','matroska,webm,mov,mp4,m4a,3gp,3g2,mj2',
         '-probesize','10000000','-analyzeduration','10000000',
-        '-show_entries','format=format_name,duration:stream=index,codec_type,codec_name,width,height:stream_tags=language:stream_disposition=comment',
+        '-show_entries','format=format_name,duration:stream=index,codec_type,codec_name,width,height,channels,bit_rate,profile:stream_tags=language,BPS,BPS-eng,title:stream_disposition=comment',
         '-of','json','/proc/self/fd/'+str(fd)]
     try:
         process=subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
@@ -187,6 +187,7 @@ class VerifiedMedia:
     sha256: str
     duration_ms: int
     languages: tuple
+    probe_info: dict | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         from src.anime.history import integer
@@ -229,7 +230,8 @@ def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_
                     if before[2]!=selected.size:raise MediaInvalid()
                     media_hash=media_fingerprint(fd,selected.size,before)
                     cancelled(flag)
-                    duration,languages=parse_probe(read_probe(fd,flag),PurePosixPath(selected.path).suffix.lower(),audio)
+                    raw_probe=read_probe(fd,flag)
+                    duration,languages=parse_probe(raw_probe,PurePosixPath(selected.path).suffix.lower(),audio)
                     cancelled(flag)
                     if signature(os.fstat(fd))!=before:raise MediaInvalid()
                     # Rewalk the absolute path: renamed roots/parents cannot pass
@@ -239,7 +241,7 @@ def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_
                         with parent(current,selected.path) as (latest,leaf):
                             if signature(os.stat(leaf,dir_fd=latest,follow_symlinks=False))!=before:raise MediaInvalid()
                     return VerifiedMedia(intent.plan.preparation_job_id,download_job_id,intent.plan.plan_id,
-                        intent.fingerprint,record.fingerprint,selected.path,root_sig,before,media_hash,duration,languages)
+                        intent.fingerprint,record.fingerprint,selected.path,root_sig,before,media_hash,duration,languages,probe_info=json.loads(raw_probe))
                 finally:os.close(fd)
     except CancellationError:raise MediaInvalid() from None
     except OSError:raise MediaUnavailable() from None

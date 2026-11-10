@@ -53,7 +53,7 @@ class RefreshTests(unittest.TestCase):
             doc=CONVERSIONS[version](doc)
             self.assertNotIn('jellyfin',doc['settings'])
         current=convert_document(doc)
-        self.assertEqual(current.schema_version,16)
+        self.assertEqual(current.schema_version,17)
         self.assertEqual(current.value('jellyfin.base_url'),'')
         with self.assertRaises(ConfigurationError):
             convert_document({**doc,'settings':{**doc['settings'],'jellyfin':{}}})
@@ -65,7 +65,7 @@ class RefreshTests(unittest.TestCase):
             self.assertEqual(store.sonarr_api_key(),'sonarr-key')
             store.update_tvdb_api_key('tvdb-key',expected_revision=2)
             self.assertEqual(store.jellyfin_api_key(),'jellyfin-key')
-            self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],8)
+            self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],9)
             store.update_jellyfin_api_key('',expected_revision=3)
             self.assertFalse(store.status().jellyfin_configured)
 

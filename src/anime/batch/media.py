@@ -5,6 +5,7 @@ fd-relative, no-follow traversal and the same bounded ffprobe parser as the
 single-episode verifier, without pretending a pack is a single Manifest.
 """
 import os
+import json
 from pathlib import PurePosixPath
 
 from src.anime.acquisition.cleanup import directory, parent
@@ -105,7 +106,8 @@ def verify_batch_episode_file(intent,record,unlock_job_id,file_index,flag,*,
                     if before[2]!=selected.size:raise MediaInvalid()
                     media_hash=media_fingerprint(fd,selected.size,before)
                     cancelled(flag)
-                    duration,languages=parse_probe(read_probe(fd,flag),suffix,audio)
+                    raw_probe=read_probe(fd,flag)
+                    duration,languages=parse_probe(raw_probe,suffix,audio)
                     cancelled(flag)
                     if signature(os.fstat(fd))!=before:raise MediaInvalid()
                     with directory(root) as fresh:
@@ -119,6 +121,6 @@ def verify_batch_episode_file(intent,record,unlock_job_id,file_index,flag,*,
                         intent.candidate.reservation_job_id,unlock_job_id,
                         intent.candidate.plan_id,intent.fingerprint,
                         record.intent.fingerprint,selected.path,root_sig,before,
-                        media_hash,duration,languages)
+                        media_hash,duration,languages,probe_info=json.loads(raw_probe))
                 finally:os.close(fd)
     except OSError:raise MediaUnavailable() from None

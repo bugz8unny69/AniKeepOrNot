@@ -881,6 +881,19 @@ CREATE TABLE IF NOT EXISTS batch_candidate_stops (
 CREATE INDEX IF NOT EXISTS idx_batch_candidate_stops_operation ON batch_candidate_stops(operation_id);
 
 
+CREATE TABLE IF NOT EXISTS transcode_media (
+ verification_job_id INTEGER PRIMARY KEY REFERENCES jobs(job_id),
+ job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+ retry_history_id INTEGER NOT NULL DEFAULT 0,
+ step TEXT NOT NULL DEFAULT 'Waiting for transcoder',
+ output_root TEXT,
+ evidence_json TEXT CHECK(evidence_json IS NULL OR json_valid(evidence_json))
+);
+CREATE TABLE IF NOT EXISTS media_probe_details (
+ verification_job_id INTEGER PRIMARY KEY REFERENCES jobs(job_id),
+ probe_json TEXT NOT NULL CHECK(json_valid(probe_json))
+);
 CREATE TABLE IF NOT EXISTS notifications (
  notification_id INTEGER PRIMARY KEY,
  type TEXT NOT NULL CHECK(type IN ('API_REJECTION','SERIES_EPISODE_TROUBLE','KEEP_SEARCH_FAILED')),

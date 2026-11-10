@@ -51,6 +51,8 @@ def persist_batch_episode_media(db,claim,file_index,media):
     if (file is None or file!=(media.relative_path,media.file_signature[2],
                               media.preparation_job_id)):
         raise MediaInvalid()
+    if media.probe_info is not None:
+        db.execute('INSERT OR IGNORE INTO media_probe_details VALUES(?,?)',(claim.job_id,json.dumps(media.probe_info)))
     evidence=media.json()
     if len(evidence.encode())>65536:raise MediaInvalid()
     old=db.execute(

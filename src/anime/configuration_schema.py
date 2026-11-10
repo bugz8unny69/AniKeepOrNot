@@ -14,7 +14,7 @@ import re
 
 from src.anime.settings import COMPONENTS, Settings, parse_settings
 
-CONFIGURATION_VERSION = 16
+CONFIGURATION_VERSION = 17
 MAX_REVISION = (1 << 63) - 1
 MAX_BYTES = 65536
 
@@ -69,6 +69,14 @@ class FieldDefinition:
 # Register new fields with their actual component; do not expose speculative
 # provider/acquisition controls before those components define their semantics.
 FIELDS = MappingProxyType({
+    "transcode.mode": FieldDefinition("off", "transcode_mode", "next_operation", label="Mode"),
+    "transcode.encoders": FieldDefinition("gpu,cpu", "transcode_encoders", "next_operation", label="Local encoders"),
+    "transcode.tmp": FieldDefinition("/var/tmp", "directory", "next_operation", label="Local temp path", help_text="Only its transcode-agent subfolder is used. Use a separate parent from any standalone agent."),
+    "transcode.vaapi_device": FieldDefinition("/dev/dri/renderD128", "path", "next_operation", label="VAAPI device"),
+    "transcode.target_mb": FieldDefinition(500, "integer", "next_operation", minimum=1, maximum=1000000, label="Target MB per 24 minutes"),
+    "transcode.retries": FieldDefinition(2, "integer", "next_operation", minimum=0, maximum=10, label="Retries per agent"),
+    "transcode.retry_seconds": FieldDefinition(10, "integer", "next_operation", minimum=1, maximum=300, label="Retry delay (seconds)"),
+    "transcode.agents": FieldDefinition((), "transcode_agents", "next_operation", label="Remote agents"),
     "anime.title_language": FieldDefinition("english", "title_language", "next_operation",
         label="Anime title language", help_text="English or Japanese (Romaji). Changes display names only."),
     "identity.match_threshold_pct": FieldDefinition(90, "integer", "next_operation", minimum=50, maximum=100,
@@ -139,7 +147,8 @@ _V14_NAMES = {"user_evaluation.backfill_count": "trial.backfill_count",
               "storage.user_evaluation_root": "storage.trial_root"}
 # v16 added the long-running series settings for Keep's Sonarr add.
 _V16_ADDED = ("sonarr.long_running_threshold", "sonarr.backfill_long_running")
-V15_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if key not in _V16_ADDED})
+V16_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if not key.startswith("transcode.")})
+V15_FIELDS = MappingProxyType({key: spec for key, spec in V16_FIELDS.items() if key not in _V16_ADDED})
 V14_FIELDS = MappingProxyType({_V14_NAMES.get(key, key): spec for key, spec in V15_FIELDS.items()})
 # The obsolete HTTP metadata-source fields exist only to validate published
 # v7-v11 documents during *explicit* migrations, never in live settings.
@@ -160,12 +169,16 @@ def revision(value):
 
 
 def _freeze(value):
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
     if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze(item) for key, item in value.items()})
     return value
 
 
 def _plain(value):
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
     if isinstance(value, Mapping):
         return {key: _plain(item) for key, item in value.items()}
     return value
@@ -215,6 +228,20 @@ def validate_values(value, *, fields=FIELDS):
             if spec.kind == "integer":
                 if type(item) is not int or not spec.minimum <= item <= spec.maximum:
                     raise ConfigurationError()
+            elif spec.kind == "transcode_mode":
+                if item not in ("off", "local", "remote"): raise ConfigurationError()
+            elif spec.kind == "transcode_encoders":
+                from src.transcode_agent.encode import parse_encoders
+                try: item = ','.join(parse_encoders(item))
+                except ValueError: raise ConfigurationError() from None
+            elif spec.kind == "transcode_agents":
+                from src.anime.services.transcode import agent_url
+                if type(item) is not list or len(item) > 32: raise ConfigurationError()
+                try:
+                    if any(type(a) is not str for a in item): raise ValueError()
+                    item = [agent_url(a) for a in item]
+                    if len(set(item)) != len(item): raise ValueError()
+                except ValueError: raise ConfigurationError() from None
             elif spec.kind == "boolean":
                 if type(item) is not bool:
                     raise ConfigurationError()
@@ -640,11 +667,18 @@ def _v15_to_v16(document):
     if current == MAX_REVISION:
         raise ConfigurationError()
     previous = validate_values(document['settings'], fields=V15_FIELDS)
-    return {'schema_version': 16, 'revision': current+1, 'settings': validate_values(previous)}
+    return {'schema_version': 16, 'revision': current+1, 'settings': validate_values(previous, fields=V16_FIELDS)}
 
 
 # Preserve published version shapes and validate before dropping obsolete keys.
-CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14, 14: _v14_to_v15, 15: _v15_to_v16})
+def _v16_to_v17(document):
+    if type(document) is not dict or set(document) != {'schema_version', 'revision', 'settings'} or document['schema_version'] != 16:
+        raise ConfigurationError()
+    previous = validate_values(document['settings'], fields=V16_FIELDS)
+    return {'schema_version': 17, 'revision': revision(document['revision'])+1, 'settings': validate_values(previous)}
+
+
+CONVERSIONS = MappingProxyType({0: _v0_to_v1, 1: _v1_to_v2, 2: _v2_to_v3, 3: _v3_to_v4, 4: _v4_to_v5, 5: _v5_to_v6, 6: _v6_to_v7, 7: _v7_to_v8, 8: _v8_to_v9, 9: _v9_to_v10, 10: _v10_to_v11, 11: _v11_to_v12, 12: _v12_to_v13, 13: _v13_to_v14, 14: _v14_to_v15, 15: _v15_to_v16, 16: _v16_to_v17})
 
 
 def convert_document(document):

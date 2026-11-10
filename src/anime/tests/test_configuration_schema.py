@@ -75,7 +75,7 @@ class ConfigurationSchemaTests(unittest.TestCase):
         migrated = convert_document(old)
         self.assertEqual(old, original)
         self.assertEqual(source_version(old), 0)
-        self.assertEqual(migrated.revision, 16)
+        self.assertEqual(migrated.revision, 17)
         self.assertEqual(migrated.value("logging.level"), "DEBUG")
         self.assertEqual(migrated.value("logging.components")["worker"], "TRACE")
         self.assertEqual(convert_document(migrated.to_document()), migrated)
@@ -160,7 +160,7 @@ class UserEvaluationSettingsRenameTests(unittest.TestCase):
         original = copy.deepcopy(source)
         current = convert_document(source)
         self.assertEqual(source, original)
-        self.assertEqual((current.schema_version, current.revision), (16, 9))  # v15, then v16 adds settings
+        self.assertEqual((current.schema_version, current.revision), (17, 10))  # v15 rename, v16 Keep settings, v17 transcode settings
         self.assertEqual((current.value('user_evaluation.backfill_count'), current.value('user_evaluation.following_count'),
                           current.value('storage.user_evaluation_root'), current.value('storage.keep_root')),
                          (3, 2, '/media/evaluation', '/media/keep'))
