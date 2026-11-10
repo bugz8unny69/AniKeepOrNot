@@ -24,7 +24,7 @@ The refactor deletes unused code and renames things, while `NextGen` keeps the o
 | Module attributes resolve | `module.X` through an imported `src.anime` module where `X` no longer exists. |
 | Patch targets resolve | `mock.patch('src.anime....X')` strings pointing at something that no longer exists. |
 
-It scans `src/anime` (tests included), `fixes/` and the Python scripts in `bin/`.
+It scans `src/anime` (tests included), the standalone `src/transcode_agent` package (T1), `fixes/` and the Python scripts in `bin/`. The transcode agent remains independent of `src/anime` so it can deploy on its own.
 
 Replaying the `1c785beb` sync with every conflict resolved in NextGen's favour, the test reported:
 - `audio_tagged()` and `prowlarr_search._release()` defined again;
