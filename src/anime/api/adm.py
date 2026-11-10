@@ -7,6 +7,9 @@ import sys
 
 
 def main():
+    if sys.argv[1:2] == ["transcode"]:
+        from src.anime.transcode_cli import main as transcode
+        sys.exit(transcode(sys.argv[2:]))
     if sys.argv[1:2] == ["report"]:
         # Read-only diagnostics straight from the database; the API need not run.
         from src.anime.job_report import main as report

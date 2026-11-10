@@ -220,7 +220,15 @@ function relatedJobsButton(anidbId, episode) {
   return button;
 }
 function renderJobs() {
-  if (state.page === 'intake') { renderSeries(); return; }
+  if (state.page === 'intake') { $('transcode-batch').hidden = true; renderSeries(); return; }
+  const batchPanel = $('transcode-batch');
+  const batch = state.transcodeBatch;
+  batchPanel.hidden = !batch || !['QUEUED', 'RUNNING'].includes(batch.state);
+  batchPanel.replaceChildren();
+  if (batch) {
+    batchPanel.appendChild(node('strong', `Transcoding staged videos: ${batch.done + batch.skipped + batch.failed}/${batch.total}`));
+    batchPanel.appendChild(node('p', `${batch.current_file || 'Waiting for transcoder'} · ${batch.failed} failed`));
+  }
   const tbody = $('job-rows'); tbody.replaceChildren();
   const filter = $('status-filter').value;
   const jobs = state.jobs.filter(job => state.page === 'jobs' || !filter || job.state === filter);
@@ -696,7 +704,7 @@ async function loadActivity() {
       }
       const data = await request(path);
       if (generation !== state.generation || !state.csrf) return;
-      state.jobs = data.items; state.next = data.next_before_id ?? null; renderJobs();
+      state.jobs = data.items; state.transcodeBatch = data.transcode_batch; state.next = data.next_before_id ?? null; renderJobs();
       $('no-jobs').textContent = state.search || (state.page === 'intake' && $('intake-filter').value)
         ? 'No matches.' : 'No items on this page.';
       $('live-indicator').textContent = '● Live'; $('live-indicator').className = 'status running';
@@ -742,7 +750,7 @@ async function loadServices() {
 }
 // The bell: unread count from the service poll; the panel lists the inbox.
 const BELL_ACTIONS = Object.freeze({
-  process_anyway: 'Process anyway', add_release: 'Add torrent/magnet', open_series: 'Open series', open_job: 'Open job',
+  process_anyway: 'Process anyway', add_release: 'Add torrent/magnet', open_series: 'Open series', open_job: 'Open job', open_jobs: 'Open jobs page',
 });
 function renderBellCount(count) {
   const badge = $('bell-badge');
@@ -788,7 +796,8 @@ async function bellAction(item, action, button) {
   try {
     const result = await request(`${API}/notifications/${item.notification_id}/actions/${action}`, {method: 'POST', body: {}});
     closeBell();
-    if (action === 'open_job') await openHistory(result.job_id);
+    if (action === 'open_jobs') { state.page = 'jobs'; await resetJobsPage(); }
+    else if (action === 'open_job') await openHistory(result.job_id);
     else if (action === 'open_series') await openSeries(result.anidb_id);
     else if (action === 'add_release') {
       await openSeries(result.anidb_id);
