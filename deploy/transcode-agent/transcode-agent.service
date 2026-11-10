@@ -1,0 +1,21 @@
+[Unit]
+Description=Anime Discovery transcode agent (VAAPI/x265 over HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=transcode
+Group=transcode
+SupplementaryGroups=render video
+WorkingDirectory=/opt/transcode-agent
+EnvironmentFile=/etc/transcode-agent.env
+ExecStart=/usr/bin/python3 -m src.transcode_agent
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

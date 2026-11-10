@@ -19,6 +19,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 LEDGER = ROOT / 'docs' / 'refactor' / 'removed.json'
 PACKAGE = ROOT / 'src' / 'anime'
+# T1 is a standalone deployable package, explicitly separate from src/anime.
+PACKAGES = (PACKAGE, ROOT / 'src' / 'transcode_agent')
 
 DECIDE = ('NextGen is the source of truth. If NextGen really uses this again, keep '
           "NextGen's behaviour: restore it, and remove or change its entry in "
@@ -31,7 +33,7 @@ _BUILTINS = set(dir(builtins)) | _MODULE_DUNDERS
 
 def _python_files():
     """NextGen (with its tests), fixes/ and the Python scripts in bin/."""
-    files = [p for p in PACKAGE.rglob('*.py') if '__pycache__' not in p.parts]
+    files = [p for package in PACKAGES for p in package.rglob('*.py') if '__pycache__' not in p.parts]
     files += [p for p in (ROOT / 'fixes').rglob('*.py') if '__pycache__' not in p.parts]
     for path in sorted((ROOT / 'bin').iterdir()):
         if path.is_file() and path.read_bytes()[:64].startswith(b'#!') and b'python' in path.read_bytes()[:64]:
@@ -49,16 +51,17 @@ def _rel(path):
 
 def _module_index():
     index = {}
-    for path in PACKAGE.rglob('*.py'):
-        if '__pycache__' in path.parts:
-            continue
-        parts = list(path.relative_to(ROOT).with_suffix('').parts)
-        if parts[-1] == '__init__':
-            parts.pop()
-        index['.'.join(parts)] = path
-    for folder in [PACKAGE, *PACKAGE.rglob('*')]:   # Packages without __init__.py too.
-        if folder.is_dir() and folder.name != '__pycache__':
-            index.setdefault('.'.join(folder.relative_to(ROOT).parts), None)
+    for package in PACKAGES:
+        for path in package.rglob('*.py'):
+            if '__pycache__' in path.parts:
+                continue
+            parts = list(path.relative_to(ROOT).with_suffix('').parts)
+            if parts[-1] == '__init__':
+                parts.pop()
+            index['.'.join(parts)] = path
+        for folder in [package, *package.rglob('*')]:
+            if folder.is_dir() and folder.name != '__pycache__':
+                index.setdefault('.'.join(folder.relative_to(ROOT).parts), None)
     index.setdefault('src', None)
     return index
 
