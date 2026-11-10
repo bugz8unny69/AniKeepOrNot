@@ -102,8 +102,10 @@ class RecordedOnARealRunTests(unittest.IsolatedAsyncioTestCase):
     async def test_staging_run_records_the_chain(self):
         stage = self._Stage.test_verified_copy_metadata_and_done_commit_with_staged_milestone
         for name in dir(self._Stage):                     # helpers the staging test uses
-            if not name.startswith('test_') and not hasattr(self, name):
-                setattr(self, name, getattr(self._Stage, name).__get__(self))
+            helper = getattr(self._Stage, name)
+            # Only methods: another test run may leave plain attributes on the class.
+            if not name.startswith('test_') and not hasattr(self, name) and callable(helper) and hasattr(helper, '__get__'):
+                setattr(self, name, helper.__get__(self))
         await stage(self)
         rows = self.rows('SELECT kind,parent_id,state FROM resources ORDER BY resource_id')
         kinds = [k for k, _, _ in rows]

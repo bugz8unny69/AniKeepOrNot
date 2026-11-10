@@ -85,8 +85,7 @@ SCOPES = {
     'recognized': Scope(
         fields=(
             "s.display_title {like}",
-            "EXISTS (SELECT 1 FROM recognized_aliases x WHERE x.tvdb_series_id=s.tvdb_series_id "
-            "AND x.tvdb_season=s.tvdb_season AND x.anidb_id=s.anidb_id AND x.alias_key {like})",
+            "EXISTS (SELECT 1 FROM recognized_aliases x WHERE x.anidb_id=s.anidb_id AND x.alias_key {like})",
             "EXISTS (SELECT 1 FROM anime_title_metadata t WHERE t.anidb_id=s.anidb_id "
             "AND (t.english_title {like} OR t.romaji_title {like}))",
         ),

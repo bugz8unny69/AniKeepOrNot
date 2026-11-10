@@ -62,6 +62,7 @@ class AniDBFirstMigrationTests(unittest.TestCase):
         self.db.executescript((SQL_DIR / '067_resources.sql').read_text())
         self.db.executescript((SQL_DIR / '068_package_paths.sql').read_text())
         self.db.executescript((SQL_DIR / '069_series_accept_search.sql').read_text())
+        self.db.executescript((SQL_DIR / '070_recognized_series.sql').read_text())
         return self.db
 
     def test_runner_applies_the_step_with_validation(self):

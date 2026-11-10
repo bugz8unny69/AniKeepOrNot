@@ -101,6 +101,16 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             # Install the published v46 table shape with this nonempty journal,
             # then exercise the real upgrade before attempting readmission.
             before=db.execute('SELECT * FROM sonarr_magnet_intents').fetchall()
+            # v70 re-keyed Recognized names; put back their v69 (and v46) shape.
+            v69=sqlite3.connect(':memory:')
+            for name in SCRIPTS[:69]:v69.executescript((SQL_DIR/name).read_text())
+            recognized=[sql+';' for (sql,) in v69.execute(
+                "SELECT sql FROM sqlite_master WHERE tbl_name IN ('recognized_aliases','recognized_episodes') "
+                "AND sql IS NOT NULL ORDER BY type DESC")]
+            v69.close()
+            db.executescript('PRAGMA foreign_keys=OFF;BEGIN IMMEDIATE;DROP TABLE recognized_aliases;'
+                             'DROP TABLE recognized_episodes;DROP TABLE recognized_series;'
+                             +'\n'.join(recognized)+'COMMIT;PRAGMA foreign_keys=ON;')
             ddl=(SQL_DIR/'045_sonarr_magnet_intents.sql').read_text()
             ddl=ddl[ddl.index('CREATE TABLE sonarr_magnet_intents ('):]
             ddl=ddl[:ddl.index('\n);')+3].replace('sonarr_magnet_intents (','magnet_v46 (',1)
@@ -145,6 +155,7 @@ class MagnetReadmissionTests(unittest.IsolatedAsyncioTestCase):
             db.executescript((SQL_DIR / '067_resources.sql').read_text())
             db.executescript((SQL_DIR / '068_package_paths.sql').read_text())
             db.executescript((SQL_DIR / '069_series_accept_search.sql').read_text())
+            db.executescript((SQL_DIR / '070_recognized_series.sql').read_text())
             self.assertEqual(db.execute('SELECT * FROM magnet_intents').fetchall(),before)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
         finally:db.close()

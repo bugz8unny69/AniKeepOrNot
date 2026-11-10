@@ -61,7 +61,7 @@ def load_selection(db,target_job_id,*,resolver=None):
     aid, eid, tid, tvdb_eid, season, ep = identity
     if tvdb_eid is None or season is None or ep is None:
         known = db.execute('SELECT tvdb_episode_id, tvdb_season, tvdb_episode FROM recognized_episodes '
-                           'WHERE anidb_id=? AND anidb_episode_id=?', (aid, eid)).fetchone()
+                           'WHERE anidb_id=? AND anidb_episode_id=? AND tvdb_episode_id IS NOT NULL', (aid, eid)).fetchone()
         if known is not None:
             tvdb_eid, season, ep = known
         elif resolver is not None:

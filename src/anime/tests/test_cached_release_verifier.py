@@ -30,6 +30,7 @@ class CachedReleaseVerifierTests(unittest.IsolatedAsyncioTestCase):
         db.execute("INSERT INTO identified_episodes VALUES(30013,1001)")
         db.execute("INSERT INTO release_verifications VALUES(1,1,1,1001,?,'DECLARED_SINGLE_EPISODE',13,30013,2001,2,1,40001,'official',1000)",('a'*64,))
         db.execute("INSERT INTO recognized_seasons VALUES(2001,2,1001,'Example Anime',1,1000)")
+        db.execute("INSERT INTO recognized_series VALUES(1001,'Example Anime',2001,NULL,1000)")
         db.execute("INSERT INTO recognized_episodes VALUES(2001,2,1001,13,30013,1,40001,1,1000)")
         db.commit()
         db.close()

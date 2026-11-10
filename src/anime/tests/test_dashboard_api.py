@@ -39,12 +39,14 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,200)
         self.assertEqual(len(result['data']['items']),2)
         self.assertEqual([item['verified_episode_count'] for item in result['data']['items']],[1,1])
+        self.assertEqual([item['seasons'] for item in result['data']['items']],[[1],[1]])
         for aid,eid in ((1001,10011),(1002,10013)):
-            status,result,_=await self.request('GET',f'/api/v1/recognized/2001/1/{aid}/episodes',token=ADMIN)
+            status,result,_=await self.request('GET',f'/api/v1/recognized/{aid}/episodes',token=ADMIN)
             self.assertEqual(status,200)
             self.assertEqual(result['data']['anidb_id'],aid)
             self.assertEqual([row['anidb_episode_id'] for row in result['data']['items']],[eid])
-        status,_,_=await self.request('GET','/api/v1/recognized/2001/1/episodes',token=ADMIN)
+            self.assertEqual([row['tvdb_season'] for row in result['data']['items']],[1])
+        status,_,_=await self.request('GET','/api/v1/recognized/9999/episodes',token=ADMIN)
         self.assertEqual(status,404)
 
     async def test_public_shell_and_assets_contain_no_private_data_and_have_strict_csp(self):

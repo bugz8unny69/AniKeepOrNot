@@ -75,10 +75,13 @@ def persist_release(db, claim, value):
                 value.anidb_episode_number,value.anidb_episode_id,source.tvdb_series_id,value.tvdb_season,
                 value.tvdb_episode,value.tvdb_episode_id,integer(time.time_ns()//1000000)))
 
-    if value.tvdb_season is not None and value.tvdb_episode is not None and value.tvdb_episode_id is not None:
-        try:
-            remember_verified_release(db,verification_id=cursor.lastrowid,source=source,season=value.tvdb_season)
-            remember_verified_episode(db,verification_id=cursor.lastrowid)
-        except RecognitionConflict:
-            # Contradictory season identity is not silently reclassified.
-            raise ReleaseConflict() from None
+    placed=value.tvdb_season is not None and value.tvdb_episode is not None and value.tvdb_episode_id is not None
+    try:
+        # Recognized even without a TVDB placement (MAPPING_MISSING): series,
+        # alias and AniDB episode; the placement is a label added when known.
+        remember_verified_release(db,verification_id=cursor.lastrowid,source=source,
+                                  season=value.tvdb_season if placed else None)
+        remember_verified_episode(db,verification_id=cursor.lastrowid)
+    except RecognitionConflict:
+        # Contradictory season identity is not silently reclassified.
+        raise ReleaseConflict() from None

@@ -727,8 +727,11 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
                     (self.tid, self.aid, japanese, verification),
                 )
                 db.execute(
-                    "INSERT INTO recognized_aliases(alias_key,tvdb_season,tvdb_series_id,anidb_id) "
-                    "VALUES(?,1,?,?)", (compact, self.tid, self.aid)
+                    "INSERT OR IGNORE INTO recognized_series(anidb_id,display_title,tvdb_series_id,recognized_at_ms) "
+                    "VALUES(?,?,?,1000)", (self.aid, japanese, self.tid)
+                )
+                db.execute(
+                    "INSERT INTO recognized_aliases(alias_key,anidb_id) VALUES(?,?)", (compact, self.aid)
                 )
                 db.execute(
                     "INSERT INTO anime_title_metadata(anidb_id,english_title,romaji_title) "
@@ -795,8 +798,11 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
                     (self.tid, self.aid, japanese, verification),
                 )
                 db.execute(
-                    "INSERT INTO recognized_aliases(alias_key,tvdb_season,tvdb_series_id,anidb_id) "
-                    "VALUES(?,1,?,?)", (compact, self.tid, self.aid)
+                    "INSERT OR IGNORE INTO recognized_series(anidb_id,display_title,tvdb_series_id,recognized_at_ms) "
+                    "VALUES(?,?,?,1000)", (self.aid, japanese, self.tid)
+                )
+                db.execute(
+                    "INSERT INTO recognized_aliases(alias_key,anidb_id) VALUES(?,?)", (compact, self.aid)
                 )
                 db.execute(
                     "INSERT INTO episode_release_selections(plan_id,anidb_episode_number,"

@@ -3,7 +3,7 @@
 The source now includes an explicit local setup/maintenance CLI, a composed worker
 entry point and systemd examples under `deploy/nextgen/`. They have not been
 installed or run here. Configuration is v10, secrets support a fresh v7 schema (older schemas readable) and SQLite
-uses v26. Recognized Names saves verified webhook release aliases and exact episode placements automatically in the verification transaction. Multiple AniDB works may share a TVDB season. Shared aliases remain ambiguous and fall through to normal identity resolution. Episode details are scoped to the selected AniDB work. Existing Anime Discovery databases require the explicit maintenance upgrade; v26 preserves v25 recognition evidence. This does not import data from the older application.
+uses v26. Recognized Names keeps every series (AniDB anime) Anime Discovery has identified, including OVAs and movies, from the moment its identity is verified, with its AniDB title and the release-name alias. Verified AniDB episodes are added with their TVDB placement as an optional label (v70). Multiple AniDB works may share a TVDB season. Shared aliases remain ambiguous unless a season, OVA, movie or ONA tag in the release narrows them; otherwise they fall through to normal identity resolution. Episode details are scoped to the selected AniDB work. Existing Anime Discovery databases require the explicit maintenance upgrade; v26 preserves v25 recognition evidence. This does not import data from the older application.
 No service starts, schema upgrades or media operations happen on Python import.
 
 For the interactive or unattended installer and native upgrades, see [INSTALLER.md](../../deploy/nextgen/INSTALLER.md).

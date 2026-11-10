@@ -1286,8 +1286,9 @@ async function loadRecognized() {
     table.replaceChildren();
     for (const item of result.items) {
       const tr = node('tr');
-      for (const value of [item.title, item.season, item.anidb_id, item.tvdb_series_id,
-        item.alias_count, item.verified_episode_count]) {
+      const seasons = item.seasons.length ? item.seasons.map(n => `S${String(n).padStart(2, '0')}`).join(', ') : '—';
+      for (const value of [item.title, item.anime_type || '—', item.anidb_id, item.tvdb_series_id ?? '—', seasons,
+        item.alias_count, `${item.verified_episode_count} (${item.placed_episode_count} on TVDB)`]) {
         tr.appendChild(node('td', value));
       }
       const action = node('td');
@@ -1299,19 +1300,20 @@ async function loadRecognized() {
         button.disabled = true;
         detail = node('tr');
         const cell = node('td');
-        cell.colSpan = 7;
-        cell.textContent = 'Loading verified episode placements…';
+        cell.colSpan = 8;
+        cell.textContent = 'Loading recognized episodes…';
         detail.appendChild(cell);
         tr.after(detail);
         try {
-          const data = await request(`${API}/recognized/${item.tvdb_series_id}/${item.season}/${item.anidb_id}/episodes`);
+          const data = await request(`${API}/recognized/${item.anidb_id}/episodes`);
           if (generation !== state.generation || !state.csrf) return;
           cell.replaceChildren();
-          const summary = node('p', `${data.items.length} verified episode placements`);
+          const summary = node('p', `${data.items.length} recognized episodes`);
           cell.appendChild(summary);
           for (const episode of data.items) {
-            cell.appendChild(node('p',
-              `AniDB #${episode.anidb_episode_id} (episode ${episode.anidb_episode_number}) → TVDB S${String(item.season).padStart(2,'0')}E${String(episode.tvdb_episode).padStart(2,'0')} (#${episode.tvdb_episode_id})`));
+            const placed = episode.tvdb_episode_id === null ? 'no TVDB placement yet'
+              : `TVDB S${String(episode.tvdb_season).padStart(2,'0')}E${String(episode.tvdb_episode).padStart(2,'0')} (#${episode.tvdb_episode_id})`;
+            cell.appendChild(node('p', `AniDB #${episode.anidb_episode_id} (episode ${episode.anidb_episode_number}) → ${placed}`));
           }
           button.textContent = 'Hide episodes';
           button.disabled = false;
@@ -1326,8 +1328,8 @@ async function loadRecognized() {
       table.appendChild(tr);
     }
     $('recognized-note').textContent = result.items.length
-      ? `${result.items.length} verified series/season identities`
-      : state.recognizedSearch ? 'No matches.' : 'No verified series/season identities yet.';
+      ? `${result.items.length} recognized series`
+      : state.recognizedSearch ? 'No matches.' : 'No recognized series yet.';
   } catch (error) {
     $('recognized-note').textContent = error.message;
   }

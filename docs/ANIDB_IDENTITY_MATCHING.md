@@ -200,8 +200,8 @@ Operator sovereignty is preserved through a strict multi-layer resolution order:
    - If an operator has assigned an explicit mapping for a release title and season via the Dashboard or API (`POST /api/v1/jobs/{id}/manual-match`), this mapping is returned immediately.
    - Automatic candidate discovery and scoring are bypassed.
    - Manual mappings are never overwritten by automatic matching.
-2. **Recognized Names & Seasons (`recognized_seasons`):**
-   - If an existing verified observation exists for the normalized release title and season, it is reused.
+2. **Recognized Names (`recognized_series`, `recognized_aliases`, `recognized_seasons`):**
+   - Aliases map to the AniDB anime. For a release with a season marker, a unique alias match whose verified TVDB season is that season is reused. Without a season marker, identity still takes the normal path.
 3. **Automatic Candidate Discovery & Scoring:**
    - Evaluated only when neither a manual match nor an existing recognized season exists.
 

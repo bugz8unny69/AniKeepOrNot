@@ -8,6 +8,7 @@ from src.anime.tests import test_api_v1 as base
 ADMIN, WEB = base.ADMIN, base.WEB
 SEASON = ("INSERT INTO recognized_seasons(tvdb_series_id,tvdb_season,anidb_id,display_title,"
           "evidence_verification_id,recognized_at_ms) VALUES(?,1,?,?,1,1)")
+SERIES = "INSERT INTO recognized_series(anidb_id,display_title,tvdb_series_id,recognized_at_ms) VALUES(?,?,?,1)"
 
 
 class SearchWordsTests(unittest.TestCase):
@@ -92,8 +93,8 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_intake_scope_returns_series_rows_by_title_or_alias(self):
         self.seed(("INSERT INTO identified_anime VALUES(1001,2001,'Sousou no Frieren')",),
                   ("INSERT INTO identified_anime VALUES(1002,2002,'Dandadan')",),
-                  (SEASON, (2001, 1001, 'Sousou no Frieren')),
-                  ("INSERT INTO recognized_aliases VALUES('frieren beyond journeys end',1,2001,1001)",))
+                  (SEASON, (2001, 1001, 'Sousou no Frieren')), (SERIES, (1001, 'Sousou no Frieren', 2001)),
+                  ("INSERT INTO recognized_aliases VALUES('frieren beyond journeys end',1001)",))
         status, data = await self.search('scope=intake&q=journeys')
         self.assertEqual(status, 200)
         self.assertEqual([item['anidb_id'] for item in data['items']], [1001])
@@ -108,14 +109,14 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_recognized_scope_matches_title_or_alias_only_in_recognized(self):
         self.seed(("INSERT INTO identified_anime VALUES(1001,2001,'Sousou no Frieren')",),
                   ("INSERT INTO identified_anime VALUES(1002,2002,'Dandadan')",),
-                  (SEASON, (2001, 1001, 'Sousou no Frieren')), (SEASON, (2002, 1002, 'Dandadan')),
-                  ("INSERT INTO recognized_aliases VALUES('frieren beyond journeys end',1,2001,1001)",))
+                  (SEASON, (2001, 1001, 'Sousou no Frieren')), (SERIES, (1001, 'Sousou no Frieren', 2001)), (SEASON, (2002, 1002, 'Dandadan')), (SERIES, (1002, 'Dandadan', 2002)),
+                  ("INSERT INTO recognized_aliases VALUES('frieren beyond journeys end',1001)",))
         await self.webhook('Sousou no Frieren - 05', 'c' * 40)
         status, data = await self.search('scope=recognized&q=journeys')
         self.assertEqual(status, 200)
-        self.assertEqual(data['items'], [{'tvdb_series_id': 2001, 'season': 1, 'anidb_id': 1001,
-                                          'title': 'Sousou no Frieren', 'alias_count': 1,
-                                          'verified_episode_count': 0}])
+        self.assertEqual(data['items'], [{'tvdb_series_id': 2001, 'seasons': [1], 'anidb_id': 1001,
+                                          'title': 'Sousou no Frieren', 'anime_type': None, 'alias_count': 1,
+                                          'verified_episode_count': 0, 'placed_episode_count': 0}])
         status, data = await self.search('scope=recognized&q=2002')
         self.assertEqual([item['anidb_id'] for item in data['items']], [1002])
         status, full, _ = await self.request('GET', '/api/v1/recognized', token=ADMIN)
@@ -125,7 +126,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_english_title_is_searchable_and_displayed(self):
         self.seed(("INSERT INTO identified_anime VALUES(1001,2001,'Sousou no Frieren')",),
                   ("INSERT INTO anime_title_metadata VALUES(1001,'Frieren: Beyond Journey''s End',NULL)",),
-                  (SEASON, (2001, 1001, 'Sousou no Frieren')))
+                  (SEASON, (2001, 1001, 'Sousou no Frieren')), (SERIES, (1001, 'Sousou no Frieren', 2001)))
         for scope in ('intake', 'recognized'):
             status, data = await self.search(f'scope={scope}&q=beyond')
             self.assertEqual(status, 200)

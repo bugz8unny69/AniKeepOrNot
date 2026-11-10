@@ -477,7 +477,7 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
                         if sel_row:
                             out(f'Saved selection: TVDB S{sel_row[0]:02d}E{sel_row[1]:02d} (TVDB ID {sel_row[2]}) · hash {sel_row[3][:8]}…')
                         rec_row = db.execute(
-                            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM recognized_episodes WHERE anidb_id=? AND anidb_episode_number=?",
+                            "SELECT tvdb_season, tvdb_episode, tvdb_episode_id FROM recognized_episodes WHERE anidb_id=? AND anidb_episode_number=? AND tvdb_episode_id IS NOT NULL",
                             (aid, ep)
                         ).fetchone()
                         if rec_row and (not sel_row or rec_row != sel_row[:3]):

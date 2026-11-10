@@ -127,7 +127,9 @@ def anime_record(payload, aid):
     english = translated("en")
     romaji = translated("x-jat")
     native = translated("ja")
+    kind = (root.findtext("type") or "").strip()
     return {"anidb_id": aid, "title": main[0], "titles": tuple(titles),
+            "type": kind if 1 <= len(kind) <= 64 else None,
             "english_title": english.text.strip() if english is not None else None,
             "romaji_title": romaji.text.strip() if romaji is not None else None,
             "original_title": native.text.strip() if native is not None else None}
