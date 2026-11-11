@@ -12,6 +12,7 @@ from src.anime.jobs.stage_user_evaluation_media_job import registration as stage
 from src.anime.jobs.transcode_media_job import registration as transcode_registration
 from src.anime.services import transcode as client
 from src.anime.staging import Publisher
+from src.transcode_agent import AGENT_VERSION
 from src.anime.tests import test_stage_media_job as fixture
 from src.anime.tests import test_torrent_transfer as transfer_fixture
 from src.anime.tests.test_media_verification import probe_bytes
@@ -52,7 +53,7 @@ class TranscodePipelineTests(unittest.IsolatedAsyncioTestCase):
         original = source.read_bytes()
         def run(remote, source, output, rate, audio, flag, report, started):
             started(); output.write_bytes(b'smaller-dual-audio'); report('Receiving result')
-        with patch.object(client.Remote, 'health', return_value={'busy':False,'free_bytes':10000000}), \
+        with patch.object(client.Remote, 'health', return_value={'busy':False,'free_bytes':10000000,'agent_version':AGENT_VERSION}), \
              patch.object(client.Remote, 'run', run), patch.object(client.encode, 'check'), \
              patch.object(client, 'target_bytes', return_value=1), patch.object(client, 'video_kbps', return_value=100):
             await worker.attempt()

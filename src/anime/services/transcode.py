@@ -11,8 +11,9 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
+from src.anime import APP_NAME
 from src.anime.acquisition.media import cancelled
-from src.transcode_agent import encode
+from src.transcode_agent import AGENT_VERSION, encode
 
 CHUNK = 1024 * 1024
 _SLOTS = threading.Condition()
@@ -27,6 +28,35 @@ class TranscodeWaiting(RuntimeError):
 
 class TranscodeFailed(RuntimeError):
     reason_code = 'TRANSCODE_FAILED'
+
+    def __init__(self, message, *, status=None):
+        super().__init__(message)
+        self.status = status          # The agent's HTTP status, when it answered with one.
+
+
+def agent_name(address):
+    try: return urlsplit(agent_url(address)).netloc
+    except ValueError: return str(address)[:80]
+
+
+def compatibility(address, health):
+    """None when this agent may take new work; otherwise one sentence saying what to update.
+
+    The rule is an exact match with this worker's AGENT_VERSION. An agent from
+    before versions existed reports none and counts as older.
+    """
+    name = agent_name(address)
+    if 'agent_version' not in health:
+        return f'Agent {name} reports no version (an older agent); this worker requires version {AGENT_VERSION}. Update this agent.'
+    version = health['agent_version']
+    if type(version) is not int or version < 0:
+        return f'Agent {name} reports an unreadable version; this worker requires version {AGENT_VERSION}. Update this agent.'
+    if version < AGENT_VERSION:
+        return f'Agent {name} is version {version}; this worker requires version {AGENT_VERSION}. Update this agent.'
+    if version > AGENT_VERSION:
+        return (f'Agent {name} is version {version}; this worker supports version {AGENT_VERSION}. '
+                f'Update {APP_NAME} to use this agent.')
+    return None
 
 
 def agent_url(value):
@@ -108,7 +138,7 @@ class Remote:
             response = conn.getresponse()
             body = response.read(65537)
             if response.status != 200 or len(body) > 65536:
-                raise TranscodeFailed(f'Agent returned HTTP {response.status}')
+                raise TranscodeFailed(f'Agent returned HTTP {response.status}', status=response.status)
             return json.loads(body)
         finally: conn.close()
 
@@ -205,6 +235,7 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
     output.parent.mkdir(parents=True, exist_ok=True)
     candidates = ('local',) if mode == 'local' else configuration.value('transcode.agents')
     last_error = 'No agent available'
+    update_required = []      # Reachable agents refused for their version: why the job waits.
     with pipeline_priority(batch) as acquired_slot:
         for address in candidates:
             cancelled(flag)
@@ -228,7 +259,12 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                     alive = False
                     for retry in range(configuration.value('transcode.retries')+1):
                         try:
+                            # Checked right before every upload: a worker upgrade never trusts an older answer.
                             health = remote.health()
+                            problem = compatibility(address, health)
+                            if problem:
+                                update_required.append(problem)   # No upload, no attempt spent.
+                                break
                             alive = not health['busy'] and health['free_bytes'] >= source.stat().st_size * 1.5
                             break
                         except (OSError, ValueError, KeyError, http.client.HTTPException, TranscodeFailed):
@@ -273,5 +309,9 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
             # Retry another pass through the configured agents, retaining the same budget.
             return transcode(source, output, configuration, secrets, flag, info=info, batch=batch,
                              report=report, started=started, attempts=attempts, remote_factory=remote_factory)
+    if update_required:
+        message = ' '.join(update_required)[:500]
+        report(message)
+        raise TranscodeWaiting(message)
     report('Waiting for transcoder')
     raise TranscodeWaiting('Waiting for transcoder')
