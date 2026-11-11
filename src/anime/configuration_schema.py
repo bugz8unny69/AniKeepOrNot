@@ -73,7 +73,7 @@ FIELDS = MappingProxyType({
     "transcode.encoders": FieldDefinition("gpu,cpu", "transcode_encoders", "next_operation", label="Local encoders"),
     "transcode.tmp": FieldDefinition("/var/tmp", "directory", "next_operation", label="Local temp path", help_text="Only its transcode-agent subfolder is used. Use a separate parent from any standalone agent."),
     "transcode.vaapi_device": FieldDefinition("/dev/dri/renderD128", "path", "next_operation", label="VAAPI device"),
-    "transcode.target_mb": FieldDefinition(500, "integer", "next_operation", minimum=1, maximum=1000000, label="Target MB per 24 minutes"),
+    "transcode.target_mb": FieldDefinition(500, "integer", "next_operation", minimum=1, maximum=1000000, label="Target MB per video", help_text="Each transcoded video aims for this size, whatever its length. Videos already smaller are left unchanged."),
     "transcode.retries": FieldDefinition(2, "integer", "next_operation", minimum=0, maximum=10, label="Retries per agent"),
     "transcode.retry_seconds": FieldDefinition(10, "integer", "next_operation", minimum=1, maximum=300, label="Retry delay (seconds)"),
     "transcode.agents": FieldDefinition((), "transcode_agents", "next_operation", label="Remote agents"),

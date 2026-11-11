@@ -17,6 +17,9 @@ class Secrets:
     def transcode_token(self, address): return 'test-token'
 
 
+# Larger than the 1 MB target these tests configure, so the video is transcoded.
+OVER_TARGET = b'x' * 1_000_001
+
 def config(**values):
     return ConfigurationSnapshot(1, {'transcode': {'mode': 'remote', 'target_mb': 1, 'retries': 0,
                                 'agents': ['http://first:8787', 'http://second:8787'], **values}})
@@ -25,8 +28,9 @@ def config(**values):
 def test_bitrate_audio_and_version_defaults():
     info = {'duration': 1440, 'streams': [{'codec_type': 'audio', 'codec_name': 'aac', 'bit_rate': '128000'},
                                           {'codec_type': 'audio', 'codec_name': 'flac', 'channels': 2}]}
-    assert client.video_kbps(info, 500) == 2494
-    assert client.target_bytes(720, 500) == 250_000_000
+    assert client.video_kbps(info, 500) == 2494                    # 24 minutes.
+    assert client.video_kbps({**info, 'duration': 2880}, 500) == 1119  # 48 minutes: same size, about half the rate.
+    assert client.target_bytes(500) == 500_000_000                  # Per video, not per length.
     current = convert_document({'schema_version': 16, 'revision': 7, 'settings': {}})
     assert current.schema_version == 17 and current.revision == 8
     assert current.value('transcode.mode') == 'off'
@@ -49,7 +53,7 @@ def test_tokens_remain_private(tmp_path):
 
 def test_failover_wait_and_three_attempts(tmp_path):
     source, output = tmp_path/'source', tmp_path/'result'
-    source.write_bytes(b'x'*4096)
+    source.write_bytes(OVER_TARGET)
     info = {'duration': 1, 'streams': []}
     calls, attempts = [], []
     class Remote:
@@ -59,7 +63,7 @@ def test_failover_wait_and_three_attempts(tmp_path):
         def __init__(self, address, token): self.address = address
         def health(self):
             if self.all_down or 'first' in self.address: raise ConnectionError()
-            return {'busy': False, 'free_bytes': 100000}
+            return {'busy': False, 'free_bytes': 10**9}
         def run(self, source, output, rate, audio, flag, report, started):
             calls.append(self.address)
             started()
@@ -105,7 +109,7 @@ def test_remote_wire_hash_and_download(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     source, output = tmp_path/'source', tmp_path/'result'
-    source.write_bytes(b'x'*4096)
+    source.write_bytes(OVER_TARGET)
     remote = client.Remote(f'127.0.0.1:{server.server_port}', 'test-token')
     try:
         remote.run(source, output, 100, 128, threading.Event(), lambda _: None, lambda: None)
@@ -132,7 +136,7 @@ def test_agent_health(alive, status):
 
 def test_local_disk_waits_without_spending_attempt(tmp_path):
     source, output = tmp_path/'source', tmp_path/'result'
-    source.write_bytes(b'x'*4096)
+    source.write_bytes(OVER_TARGET)
     attempts = []
     with patch.object(client.encode, 'free_bytes', return_value=1):
         with pytest.raises(client.TranscodeWaiting):
@@ -144,12 +148,12 @@ def test_local_disk_waits_without_spending_attempt(tmp_path):
 
 def test_agent_dies_after_upload_then_next_agent_used(tmp_path):
     source, output = tmp_path/'source', tmp_path/'result'
-    source.write_bytes(b'x'*4096)
+    source.write_bytes(OVER_TARGET)
     attempts = []
     class Remote:
         token = 'test'
         def __init__(self, address, token): self.address = address
-        def health(self): return {'busy':False,'free_bytes':100000}
+        def health(self): return {'busy':False,'free_bytes':10**9}
         def run(self, source, output, rate, audio, flag, report, started):
             started(); attempts.append(self.address)
             if 'first' in self.address: raise client.TranscodeFailed('HTTP 404: agent restarted')

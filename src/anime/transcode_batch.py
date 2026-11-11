@@ -63,7 +63,7 @@ def dry_run(db, configuration, anidb_id=None):
         path = Path(item['root'])/item['relative']
         try: size = path.stat().st_size
         except FileNotFoundError: continue
-        target = target_bytes(item['duration'], configuration.value('transcode.target_mb'))
+        target = target_bytes(configuration.value('transcode.target_mb'))
         if size > target: result.append({'path': str(path), 'size': size, 'target': target, 'saved': size-target})
     return result
 
@@ -147,7 +147,7 @@ def _one(queue, batch, index, item, config, secrets, stop, *, client=transcode):
             temporary.unlink(missing_ok=True)
             before = signature(os.stat(name, dir_fd=folder, follow_symlinks=False))
             if before[2:4] != tuple(item['file'][2:4]): raise TranscodeFailed('Staged source changed')
-            if before[2] <= target_bytes(item['duration'], config.value('transcode.target_mb')):
+            if before[2] <= target_bytes(config.value('transcode.target_mb')):
                 _edit(queue, batch, index, state='skipped')
                 return
             cancelled(stop)
