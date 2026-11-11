@@ -279,8 +279,8 @@ class ReexecTests(unittest.TestCase):
     def test_main_runs_the_new_installer_on_the_fetched_checkout_once(self):
         seen = {}
 
-        def run(command, env):
-            seen['command'], seen['env'] = command, env
+        def run(command, env, cwd):
+            seen['command'], seen['env'], seen['cwd'] = command, env, cwd
             return subprocess.CompletedProcess(command, 0)
         with patch.object(installer, 'resolve', return_value={}), \
                 patch.object(installer, 'apply', side_effect=installer.Reexec(self.checkout, 'f' * 40)), \
@@ -291,7 +291,125 @@ class ReexecTests(unittest.TestCase):
         self.assertEqual(command[1], str(self.checkout / 'bin/anime-discovery-install'))
         self.assertEqual(command[2:], ['--upgrade', '--source-dir', str(self.checkout), '--revision', 'f' * 40])
         self.assertEqual(seen['env'][installer.REEXEC_ENV], '1')
+        self.assertEqual(seen['cwd'], '/')                                 # Never the caller's folder.
         self.assertFalse(self.checkout.exists())                           # The fetched copy is removed.
+
+
+class DurableUpgradeTests(base.InstallerOrchestrationTests):
+    """Outages, hang-ups and early failures must not leave the install half-done or down."""
+    for _name in [n for n in dir(base.InstallerOrchestrationTests) if n.startswith('test_')]:
+        locals()[_name] = None
+    del _name
+
+    API = 'anime-discovery-api.service'
+
+    def running_api(self, fail=None):
+        """systemctl reports the API active; `fail(args)` may raise for one step."""
+        def execute(args, **kwargs):
+            args = [str(x) for x in args]
+            if fail:
+                fail(args)
+            if args[:3] == ['systemctl', 'is-active', '--quiet']:
+                self.events.append(args)
+                return subprocess.CompletedProcess(args, 0 if args[3] == self.API else 3, '', '')
+            return self.execute(args, **kwargs)
+        return execute
+
+    def test_a_brief_network_outage_is_retried(self):
+        attempts = []
+
+        def fail(args):
+            if 'pip' in args:
+                attempts.append(args)
+                if len(attempts) == 1:
+                    raise RuntimeError('pip exited with status 1; detail: temporary failure in name resolution')
+        with self.patches(), patch.object(installer.time, 'sleep') as sleep, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            result = installer.apply(self.options, self.args, self.running_api(fail))
+        self.assertEqual(len(attempts), 2)
+        sleep.assert_called_once_with(installer.RETRY_DELAYS[0])
+        self.assertIn('retrying', out.getvalue())
+        self.assertTrue(result['installed'])
+
+    def test_a_lasting_outage_fails_and_removes_the_half_built_release(self):
+        releases = self.root / 'releases'
+        (releases / ('b' * 32)).mkdir(parents=True)
+        (self.root / 'current').symlink_to(releases / ('b' * 32))
+
+        attempts = []
+
+        def fail(args):
+            if 'pip' in args:
+                attempts.append(args)
+                raise RuntimeError('pip exited with status 1')
+        with self.patches(), patch.object(installer.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaisesRegex(RuntimeError, 'pip'):
+            installer.apply(self.options, self.args, self.running_api(fail))
+        self.assertEqual(len(attempts), len(installer.RETRY_DELAYS) + 1)
+        self.assertEqual(self.releases(), ['b' * 32])                     # Only the running release is left.
+        self.assertEqual(os.readlink(self.root / 'current'), str(releases / ('b' * 32)))
+        self.assertFalse(any(e[:2] == ['systemctl', 'stop'] for e in self.events))
+
+    def test_failure_before_the_database_changes_restarts_what_was_running(self):
+        self.args.upgrade, self.args.start = True, 'preserve'
+        self.args.settings_file = self.folder / 'missing-settings.json'   # Fails after services stop.
+        with self.patches(), contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(OSError):
+            installer.apply(self.options, self.args, self.running_api())
+        self.assertIn(['systemctl', 'start', self.API], self.events)
+        self.assertNotIn('prepare', [e[1] for e in self.events if e[:1] == ['native']])
+        self.assertIn('restarting', out.getvalue())
+        self.assertFalse((self.state / 'installer' / 'installation.pending.json').exists())
+        self.assertEqual(self.releases(), [])                              # Candidate removed.
+
+    def test_failure_after_the_database_changes_keeps_services_stopped_and_the_release(self):
+        self.args.upgrade, self.args.start = True, 'preserve'
+
+        def service(release, options, command, payload, execute):
+            self.events.append(['native', command])
+            if command == 'render':
+                raise RuntimeError('simulated failure after migration')
+            return {'local_ready': True}
+        with self.patches(service), self.assertRaises(RuntimeError):
+            installer.apply(self.options, self.args, self.running_api())
+        self.assertNotIn(['systemctl', 'start', self.API], self.events)
+        self.assertEqual(len(self.releases()), 1)                          # Only code that runs the new schema.
+
+    def releases(self):
+        return sorted(p.name for p in (self.root / 'releases').iterdir())
+
+
+class DurableOutputTests(unittest.TestCase):
+    def test_a_closed_terminal_does_not_stop_the_run_and_the_log_keeps_everything(self):
+        class Gone(io.StringIO):
+            def write(self, text):
+                raise OSError(5, 'Input/output error')
+        log = io.StringIO()
+        stream = installer.DurableStream(Gone(), log)
+        stream.write('Stopping services...\n')
+        stream.flush()
+        stream.write('Upgraded.\n')
+        self.assertEqual(log.getvalue(), 'Stopping services...\nUpgraded.\n')
+        self.assertFalse(stream.isatty())
+
+    def test_hang_ups_are_ignored_during_a_run_and_restored_after(self):
+        before = installer.signal.getsignal(installer.signal.SIGHUP)
+        with patch.object(installer.os, 'geteuid', return_value=1000):
+            with installer.durable_run({'state_dir': '/nonexistent'}):
+                self.assertIs(installer.signal.getsignal(installer.signal.SIGHUP), installer.signal.SIG_IGN)
+                self.assertIsInstance(installer.sys.stdout, installer.DurableStream)
+        self.assertEqual(installer.signal.getsignal(installer.signal.SIGHUP), before)
+        self.assertNotIsInstance(installer.sys.stdout, installer.DurableStream)
+
+    def test_root_runs_are_logged_privately(self):
+        with tempfile.TemporaryDirectory() as temp:
+            metadata = Path(temp) / 'installer'
+            metadata.mkdir()
+            with patch.object(installer.os, 'geteuid', return_value=0), contextlib.redirect_stdout(io.StringIO()):
+                with installer.durable_run({'state_dir': temp}):
+                    print('Preparing candidate source...')
+            log = metadata / 'last-run.log'
+            self.assertIn('Preparing candidate source...', log.read_text())
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
 
 class DatabaseBackupTests(unittest.TestCase):

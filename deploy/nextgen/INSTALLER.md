@@ -32,7 +32,7 @@ Each install or upgrade is a folder named after its date, branch and commit, and
 
 A `--source-dir` install is labelled `local`. Installing the same commit twice adds `-2`, `-3`. The new version is built completely (source and virtual environment) before the services stop, then `current` is switched in one step; a virtual environment cannot be moved, which is why each version keeps its own folder.
 
-After a successful install or upgrade, only the running version and the one before it are kept. Older versions, leftovers of interrupted runs and their unit backups are deleted. A failed upgrade deletes nothing.
+After a successful install or upgrade, only the running version and the one before it are kept. Older versions, leftovers of interrupted runs and their unit backups are deleted. A failed upgrade never touches installed versions. Its own half-built version is removed if the failure came before the database changed, and kept otherwise, because it is then the only code that can run the upgraded database.
 
 Each database upgrade first saves a copy beside the database (`anime-discovery.sqlite.before-vN-<id>.sqlite`). After a successful database upgrade only the two newest copies are kept.
 
@@ -123,7 +123,13 @@ sudo systemctl enable --now anime-discovery-worker.service
 
 `--start preserve` is the default and retains running/stopped choices on upgrade. `--start none`, `api`, or `all` overrides it. Starting all requires worker readiness. `--enable` enables the selected component services for boot; existing enablement is retained.
 
-If setup or activation fails, AniKeepOrNot remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; rollback is never automatic (see Rollback).
+### When an upgrade fails or is interrupted
+
+- **Network trouble:** `git clone`, `git fetch` and `pip install` are retried twice (after 5 and 20 seconds) before the upgrade gives up. Nothing is stopped while the new version is being built.
+- **A dropped SSH session** does not stop an upgrade: hang-ups are ignored and output continues into `/var/lib/anime-discovery/installer/last-run.log` (root-only, replaced on every run). Read it to see how the run ended.
+- **The shell's folder** does not matter. Commands run from `/`, so a shell left in a release folder that an upgrade deleted still works. Relative path arguments are resolved against the folder they were typed in.
+- **Failure before the database changes:** services that were running are started again on the current version, and nothing else has changed.
+- **Failure after the database changes:** AniKeepOrNot remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; rollback is never automatic (see Rollback).
 
 No live installation has been performed by the implementation tests. Follow `src/anime/SERVICE_SETUP.md` for host validation: password setup/login, verified webhook intake appearing in Recognized Names, worker crash isolation, API recovery followed by worker restart, mount access, and provider connectivity.
 

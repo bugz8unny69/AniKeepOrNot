@@ -414,3 +414,43 @@ class InstallerOrchestrationTests(unittest.TestCase):
             return subprocess.CompletedProcess(args,0,'a'*40,'')
         with self.assertRaises(ValueError):installer.extract_checkout(self.folder/'source',release,None,execute)
         self.assertFalse((self.folder/'outside').exists())
+
+
+class DeletedWorkingDirectoryTests(unittest.TestCase):
+    """An upgrade deletes old releases; a shell sitting in one must not break the next run."""
+
+    def setUp(self):
+        self.home = os.getcwd()
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ['rm', '-rf', str(self.folder)])
+        self.addCleanup(os.chdir, self.home)
+        self.source = self.folder / 'source'
+        for command in (['git', 'init', '-q', str(self.source)],
+                        ['git', '-C', str(self.source), '-c', 'user.name=t', '-c', 'user.email=t@t',
+                         'commit', '-q', '--allow-empty', '-m', 'first']):
+            subprocess.run(command, check=True)
+
+    def enter_deleted_folder(self):
+        gone = self.folder / 'old-release'
+        gone.mkdir()
+        os.chdir(gone)
+        gone.rmdir()
+
+    def test_clone_works_when_the_callers_folder_was_deleted(self):
+        self.enter_deleted_folder()
+        target = self.folder / 'incoming'
+        installer.run(['git', 'clone', '--no-checkout', '--', 'file://' + str(self.source), str(target)])
+        self.assertTrue((target / '.git').is_dir())
+
+    def test_relative_paths_are_made_absolute_against_the_typed_folder(self):
+        os.chdir(self.folder)
+        args = installer.parser().parse_args(['--source-dir', 'source', '--root', 'opt'])
+        installer.absolute_paths(args)
+        self.assertEqual(args.source_dir, self.source)
+        self.assertEqual(args.root, str(self.folder / 'opt'))
+
+    def test_relative_paths_from_a_deleted_folder_fail_clearly(self):
+        self.enter_deleted_folder()
+        args = installer.parser().parse_args(['--source-dir', 'source'])
+        with self.assertRaisesRegex(ValueError, 'current folder no longer exists.*--source-dir'):
+            installer.absolute_paths(args)
