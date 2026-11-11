@@ -89,7 +89,7 @@ Local uses the same encoder and has its own temp path, device and encoder
 allowlist. Remote uses the displayed agent order; Add, Up and Down edit that
 order. Tokens are saved separately in the existing private secrets store and
 are never returned by the API. Target size defaults to decimal 500 MB per
-24 minutes, scaled by duration. Audio is budgeted before video and 1% is
+video, whatever its length: a longer video gets a lower bitrate. Audio is budgeted before video and 1% is
 reserved for container overhead. Videos already under target are unchanged. Private transcoded outputs use the
 existing Publisher move path within staging, avoiding a second full video copy;
 the torrent source and its normal post-publication cleanup remain unchanged.

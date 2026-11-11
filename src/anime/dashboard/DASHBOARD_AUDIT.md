@@ -62,7 +62,7 @@ The tables retain the baseline labels/findings for comparison; Works describes t
 | transcode.encoders | Local encoders | Its Settings section | PATCH /settings (transcode.encoders) | yes | No independent control problem | keep |
 | transcode.tmp | Local temp path | Its Settings section | PATCH /settings (transcode.tmp) | yes | No independent control problem | keep |
 | transcode.vaapi_device | VAAPI device | Its Settings section | PATCH /settings (transcode.vaapi_device) | yes | No independent control problem | keep |
-| transcode.target_mb | Target MB per 24 minutes | Its Settings section | PATCH /settings (transcode.target_mb) | yes | No independent control problem | keep |
+| transcode.target_mb | Target MB per video | Its Settings section | PATCH /settings (transcode.target_mb) | yes | No independent control problem | keep |
 | transcode.retries | Retries per agent | Its Settings section | PATCH /settings (transcode.retries) | yes | No independent control problem | keep |
 | transcode.retry_seconds | Retry delay (seconds) | Its Settings section | PATCH /settings (transcode.retry_seconds) | yes | No independent control problem | keep |
 | transcode.agents | Remote agents | Its Settings section | PATCH /settings (transcode.agents) | yes | No independent control problem | keep |

@@ -40,13 +40,15 @@ def agent_url(value):
     return value.rstrip('/')
 
 
-def target_bytes(duration, mb=500):
-    return int(mb * 1_000_000 * duration / (24 * 60))
+def target_bytes(mb=500):
+    """The size every transcoded video aims for, whatever its length (decimal MB)."""
+    return int(mb * 1_000_000)
 
 
 def video_kbps(info, mb=500):
+    # The whole target spread over this video's length; a longer video gets a lower bitrate.
     # Reserve 1% of the total budget for the container, after accounting for every audio track.
-    budget = target_bytes(info['duration'], mb) * 8 / info['duration'] / 1000
+    budget = target_bytes(mb) * 8 / info['duration'] / 1000
     rate = int(budget * .99 - encode.audio_kbps(info['streams']))
     if rate <= 0: raise TranscodeFailed('Target size is too small for the audio tracks')
     return rate
@@ -196,7 +198,7 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
     mode = configuration.value('transcode.mode')
     if mode == 'off': return False
     info = info or encode.probe(source)
-    if source.stat().st_size <= target_bytes(info['duration'], configuration.value('transcode.target_mb')):
+    if source.stat().st_size <= target_bytes(configuration.value('transcode.target_mb')):
         return False
     if attempts >= 3: raise TranscodeFailed('Transcode failed on all agents: attempt limit reached')
     rate = video_kbps(info, configuration.value('transcode.target_mb'))
