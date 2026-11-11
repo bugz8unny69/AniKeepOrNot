@@ -1196,51 +1196,82 @@ async function openMatching(jobId) {
   }
 }
 
+function newAgentToken() {
+  const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
+  return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+// One block per agent: its address and its token, saved together by the
+// section's Save button. Stored tokens are never sent back to the browser.
 function agentSettings(path, definition, values) {
-  const wrapper = node('div', null, 'setting-field');
+  const wrapper = node('div', null, 'setting-field agent-settings');
   wrapper.appendChild(node('span', settingLabel(definition.label || path)));
   const input = node('input'); input.type = 'hidden'; input.name = path;
   input.dataset.kind = 'transcode_agents'; input.value = JSON.stringify(values);
   input.dataset.original = input.value; wrapper.appendChild(input);
-  const list = node('div'); wrapper.appendChild(list);
-  const agents = [...values];
-  const tokenConfigured = address => state.credentials?.transcode_agents?.includes((address.includes('://') ? address : 'http://' + address).replace(/\/$/, ''));
-  const sync = () => { input.value = JSON.stringify(agents); refreshDirty(); };
+  const list = node('div', null, 'agent-list'); wrapper.appendChild(list);
+  // With no agents yet, show one empty block to fill in; it is saved only once it has an address.
+  const agents = values.length ? [...values] : [''];
+  const tokens = agents.map(() => '');
+  const shown = agents.map(() => '');   // A saved, generated token stays visible until the page reloads, to copy it.
+  const tokenConfigured = address => Boolean(address.trim()) && Boolean(state.credentials?.transcode_agents?.includes(
+    (address.includes('://') ? address : 'http://' + address).replace(/\/$/, '')));
+  const sync = () => { input.value = JSON.stringify(agents.filter(address => address.trim())); refreshDirty(); };
   const render = () => {
     list.replaceChildren();
     agents.forEach((address, index) => {
-      const row = node('div', null, 'credential-input');
-      const host = node('input'); host.value = address; host.placeholder = 'host:port';
-      host.setAttribute('aria-label', 'Agent host and port');
-      host.addEventListener('input', () => { agents[index] = host.value; sync(); }); row.appendChild(host);
+      const card = node('div', null, 'agent-card');
+      card.appendChild(node('strong', agents.length > 1 ? `Agent ${index + 1}` : 'Agent'));
+      const hostField = node('label', null, 'agent-row'); hostField.appendChild(node('span', 'Address'));
+      const host = node('input'); host.value = address; host.placeholder = '192.168.1.50:8787';
+      host.setAttribute('aria-label', 'Agent address'); hostField.appendChild(host); card.appendChild(hostField);
+      const tokenField = node('label', null, 'agent-row'); tokenField.appendChild(node('span', 'Token'));
+      const token = node('input'); token.type = tokens[index] ? 'text' : 'password'; token.autocomplete = 'new-password';
+      token.value = tokens[index]; token.dataset.agentToken = 'true'; token._agent = () => agents[index];
+      token.setAttribute('aria-label', 'Agent token'); tokenField.appendChild(token);
+      const generate = node('button', 'Generate', 'secondary'); generate.type = 'button';
+      tokenField.appendChild(generate); card.appendChild(tokenField);
+      const status = node('small', '', 'muted'); card.appendChild(status);
+      const help = node('div', null, 'agent-token-help'); card.appendChild(help);
+      const describe = () => {
+        status.textContent = tokens[index] ? 'New token: Save changes stores it.' :
+          tokenConfigured(agents[index]) ? 'Token is set. Type or generate a new one to replace it.' :
+          'No token yet. Generate one, or paste the token from the agent.';
+        help.replaceChildren();
+        const value = tokens[index] || shown[index];
+        if (!value) return;
+        help.appendChild(node('small', 'Put this line in /etc/transcode-agent.env on the agent, then run: systemctl restart transcode-agent', 'muted'));
+        const line = node('code', 'TRANSCODE_TOKEN=' + value); help.appendChild(line);
+        const copy = node('button', 'Copy', 'secondary'); copy.type = 'button';
+        copy.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(line.textContent); copy.textContent = buttonLabel('Copied'); }
+          catch { copy.textContent = buttonLabel('Select and copy the line'); }
+        });
+        help.appendChild(copy);
+      };
+      host.addEventListener('input', () => { agents[index] = host.value; sync(); describe(); });
+      token.addEventListener('input', () => { tokens[index] = token.value; describe(); refreshDirty(); });
+      generate.addEventListener('click', () => {
+        tokens[index] = token.value = newAgentToken(); token.type = 'text'; describe(); refreshDirty();
+      });
+      token._saved = () => { shown[index] = token.type === 'text' ? tokens[index] : ''; tokens[index] = token.value = ''; token.type = 'password'; describe(); };
+      const actions = node('div', null, 'inline');
       for (const [caption, delta] of [['Up', -1], ['Down', 1]]) {
         const button = node('button', caption, 'secondary'); button.type = 'button';
         button.hidden = index + delta < 0 || index + delta >= agents.length;
-        button.addEventListener('click', () => { [agents[index], agents[index + delta]] = [agents[index + delta], agents[index]]; sync(); render(); });
-        row.appendChild(button);
+        button.addEventListener('click', () => {
+          for (const items of [agents, tokens, shown]) [items[index], items[index + delta]] = [items[index + delta], items[index]];
+          sync(); render();
+        });
+        actions.appendChild(button);
       }
       const remove = node('button', 'Remove', 'secondary'); remove.type = 'button';
-      remove.addEventListener('click', () => { agents.splice(index, 1); sync(); render(); }); row.appendChild(remove);
-      const token = node('input'); token.type = 'password'; token.autocomplete = 'new-password';
-      token.setAttribute('aria-label', 'Agent token');
-      token.placeholder = tokenConfigured(address) ? 'Token is set' : 'Token is not set';
-      row.appendChild(token);
-      const save = node('button', 'Save token', 'secondary'); save.type = 'button';
-      save.addEventListener('click', async () => {
-        save.disabled = true;
-        try {
-          const result = await request(API + '/credentials/transcode', {method: 'PATCH', body: {
-            expected_revision: state.credentials.revision, agent: agents[index], token: token.value}});
-          state.credentials = result.status; token.value = '';
-          token.placeholder = tokenConfigured(agents[index]) ? 'Token is set' : 'Token is not set';
-        } catch (error) { displayError(error); }
-        finally { save.disabled = false; }
-      });
-      row.appendChild(save); list.appendChild(row);
+      remove.addEventListener('click', () => { for (const items of [agents, tokens, shown]) items.splice(index, 1); sync(); render(); });
+      actions.appendChild(remove); card.appendChild(actions);
+      describe(); list.appendChild(card);
     });
   };
   const add = node('button', 'Add agent', 'secondary'); add.type = 'button';
-  add.addEventListener('click', () => { agents.push(''); sync(); render(); }); wrapper.appendChild(add);
+  add.addEventListener('click', () => { for (const items of [agents, tokens, shown]) items.push(''); sync(); render(); }); wrapper.appendChild(add);
   render(); return wrapper;
 }
 
@@ -1308,12 +1339,13 @@ function settingChanged(input) { return input.value !== input.dataset.original; 
 function credentialChanged(input) { return input.dataset.loaded === 'true' && input.value !== input._original; }
 function refreshDirty() {
   const forms = [...$('settings-fields').querySelectorAll('form.integration')];
+  const tokenTyped = form => [...form.querySelectorAll('[data-agent-token]')].some(input => input.value);
   state.dirty = forms.some(form => [...form.querySelectorAll('[data-kind]')].some(settingChanged) ||
-    [...form.querySelectorAll('[data-secret]')].some(credentialChanged));
+    [...form.querySelectorAll('[data-secret]')].some(credentialChanged) || tokenTyped(form));
   for (const form of forms) {
     if (form._saveButton && !form._saving) {
       form._saveButton.disabled = ![...form.querySelectorAll('[data-kind]')].some(settingChanged) &&
-        ![...form.querySelectorAll('[data-secret]')].some(credentialChanged);
+        ![...form.querySelectorAll('[data-secret]')].some(credentialChanged) && !tokenTyped(form);
       form._saveButton.title = form._saveButton.disabled ? 'Edit a field in this section before saving.' : BUTTON_HINTS.save;
     }
   }
@@ -1360,11 +1392,15 @@ function wireSectionForm(form, section) {
     const secretInputs = [...form.querySelectorAll('[data-secret]')];
     const changedSettings = settingsInputs.filter(settingChanged);
     const changedSecrets = secretInputs.filter(credentialChanged);
-    if (!changedSettings.length && !changedSecrets.length) return;
+    const agentTokens = [...form.querySelectorAll('[data-agent-token]')].filter(input => input.value);
+    if (!changedSettings.length && !changedSecrets.length && !agentTokens.length) return;
+    if (agentTokens.some(input => !input._agent().trim())) {
+      result.textContent = 'Enter the agent address before saving its token.'; return;
+    }
     form._saving = true;
     save.disabled = true;
     result.textContent = '';
-    for (const input of [...settingsInputs, ...secretInputs]) input.disabled = true;
+    for (const input of [...settingsInputs, ...secretInputs, ...agentTokens]) input.disabled = true;
     let settingsSaved = false;
     try {
       if (changedSettings.length) {
@@ -1397,11 +1433,17 @@ function wireSectionForm(form, section) {
         result.textContent = saved.durability_confirmed ? 'saved' :
           COPY['dashboard.saved_unconfirmed'];
       }
+      for (const input of agentTokens) {
+        const saved = await request(API + '/credentials/transcode', {method: 'PATCH', body: {
+          expected_revision: state.credentials.revision, agent: input._agent(), token: input.value}});
+        state.credentials = saved.status; input._saved();
+        result.textContent = 'saved';
+      }
     } catch (error) {
       result.textContent = (settingsSaved ? 'Settings saved, but credentials were not saved: ' : '') + error.message;
     } finally {
       form._saving = false;
-      for (const input of settingsInputs) input.disabled = false;
+      for (const input of [...settingsInputs, ...agentTokens]) input.disabled = false;
       for (const input of secretInputs) input.disabled = input.dataset.loaded !== 'true';
       refreshDirty();
     }

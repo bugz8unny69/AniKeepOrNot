@@ -57,3 +57,6 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--font)}.trace
 .bell-item{border-top:1px solid var(--border);padding:.6rem 0}.bell-item p{margin:.25rem 0}.help-shortcuts{display:grid;grid-template-columns:5rem 1fr;gap:.3rem}.help-shortcuts dt{color:var(--accent)}.help-shortcuts dd{margin:0}
 @media(max-width:650px){.container,.container.jobs-wide{padding:.7rem}.panel{padding:.7rem}.setting-field{grid-template-columns:1fr}.setting-field small{grid-column:1}.trace-grid{grid-template-columns:1fr}.tab{padding:.3rem}.toolbar{align-items:flex-start}.match-trace{padding:.7rem}.jobs-table{min-width:700px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+.agent-settings{align-items:start}.agent-list{display:grid;gap:.8rem}.agent-card{display:grid;gap:.45rem;border:1px solid var(--border);padding:.7rem}
+.agent-row{display:grid;grid-template-columns:5.5rem minmax(0,1fr) auto;gap:.5rem;align-items:center}.agent-row input{width:100%;min-width:0}
+.agent-token-help{display:grid;gap:.3rem;justify-items:start}.agent-token-help code{color:var(--ok);overflow-wrap:anywhere;user-select:all}
