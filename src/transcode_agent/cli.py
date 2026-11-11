@@ -10,7 +10,7 @@ import signal
 import sys
 import threading
 
-from src.transcode_agent import encode, version_text
+from src.transcode_agent import encode, in_archive, version_text
 
 ENVIRONMENT = """configuration (environment variables, normally from the service's environment file):
   TRANSCODE_LISTEN        host:port to listen on (default 0.0.0.0:8787)
@@ -73,6 +73,13 @@ def parser(prog='adm server agent'):
     p.add_argument('--version', action='store_true', help='print the agent version and build revision')
     commands = p.add_subparsers(dest='command', metavar='command')
     commands.add_parser('run', help='run the HTTP agent in the foreground (the default)')
+    if in_archive():
+        return p                    # Building an archive needs an AniKeepOrNot installation or checkout.
+    pack = commands.add_parser('pack', help='build the one-file agent archive adm-agent.pyz from this installation',
+                               description='Build adm-agent.pyz: the agent only, ready to copy to an agent machine. '
+                               'Writes PATH and PATH.sha256 (the SHA-256 checks the copy arrived intact; it does '
+                               'not prove who built it).')
+    pack.add_argument('--output', default='adm-agent.pyz', metavar='PATH', help='archive path (default ./adm-agent.pyz)')
     return p
 
 
@@ -80,5 +87,16 @@ def main(argv=None, prog='adm server agent'):
     args = parser(prog).parse_args(argv)
     if args.version:
         print(version_text())
+        return 0
+    if args.command == 'pack':
+        from src.transcode_agent.pack import PackError, pack
+        try:
+            built = pack(args.output)
+        except (PackError, OSError) as exc:
+            print(f'pack failed: {exc}', file=sys.stderr)
+            return 1
+        print(f"Built {built['path']}\n  agent version {built['agent_version']}, revision {built['revision']}\n"
+              f"  sha256 {built['sha256']} (also in {built['path']}.sha256)\n"
+              f"Copy it to the agent machine, then run: sudo ./{os.path.basename(built['path'])} server agent install")
         return 0
     return run()

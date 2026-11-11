@@ -51,6 +51,16 @@ def build_info():
     return _build
 
 
+def in_archive():
+    """True when running from adm-agent.pyz (it carries build.json)."""
+    try:
+        return pkgutil.get_data(__name__, BUILD_RESOURCE) is not None
+    except OSError:
+        return False
+
+
 def version_text():
     info = build_info()
-    return f"transcode agent version {info['agent_version']} (build {info['revision'][:12]})"
+    revision = info['revision']
+    short = revision[:12] + ('+modified' if revision.endswith('+modified') else '')
+    return f"transcode agent version {info['agent_version']} (build {short})"

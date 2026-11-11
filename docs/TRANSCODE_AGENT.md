@@ -40,6 +40,24 @@ revision, and `adm server agent --help` lists the settings. `python -m
 src.transcode_agent` is the same command. Stopping it (SIGTERM/SIGINT) cancels
 any encode, so no ffmpeg process outlives the agent.
 
+## One-file agent archive
+
+`adm server agent pack --output ./adm-agent.pyz` builds the agent as one
+executable file with Python's `zipapp`, from the installation or checkout it
+runs in; no network or CI is needed. It contains only the agent modules
+(unchanged), the archive entry point, the service and environment templates and
+`build.json` (agent version, source revision, per-file SHA-256). Credentials,
+settings, databases, media, `.git` and tests are never read. A source revision
+ending in `+modified` means the packed agent files had uncommitted changes.
+
+`adm-agent.pyz.sha256` is written next to it: `sha256sum -c adm-agent.pyz.sha256`
+on the agent machine confirms the copy arrived intact. It does not prove who
+built the file; transfer it over a channel you trust (for example `scp`).
+
+The agent machine needs Python 3.11+ and ffmpeg/ffprobe, nothing else:
+`./adm-agent.pyz server agent --version` and `./adm-agent.pyz server agent --help`
+work anywhere; only `server agent` commands are in the archive.
+
 ## Agent versions
 
 Each agent reports `agent_version` in `/health`. The worker uses only agents
