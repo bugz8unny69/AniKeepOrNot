@@ -28,6 +28,7 @@ ARCHIVE_FILES = {
     'src/transcode_agent/cli.py': 'src/transcode_agent/cli.py',
     'src/transcode_agent/encode.py': 'src/transcode_agent/encode.py',
     'src/transcode_agent/server.py': 'src/transcode_agent/server.py',
+    'src/transcode_agent/install.py': 'src/transcode_agent/install.py',
     'src/transcode_agent/templates/transcode-agent.service': 'deploy/transcode-agent/transcode-agent.service',
     'src/transcode_agent/templates/transcode-agent.env.example': 'deploy/transcode-agent/transcode-agent.env.example',
 }
