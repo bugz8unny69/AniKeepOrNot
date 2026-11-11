@@ -4,6 +4,8 @@ Coordinates with MaintenanceGate and reuses request_review_retry / ManagementAct
 Never performs ad-hoc SQL updates or resets attempt counters.
 Preview is read-only; the apply subcommand explicitly requests mutations.
 """
+
+from src.anime import APP_NAME
 import argparse
 from datetime import datetime
 import json
@@ -456,7 +458,7 @@ def main(argv=None):
                         r['manual'],
                         ', '.join(str(i) for i in r['sample_ids']),
                     ])
-                print('\nAnime Discovery — Stopped Jobs Recovery Summary\n')
+                print(f'\n{APP_NAME} — Stopped Jobs Recovery Summary\n')
                 print(format_table(headers, rows))
                 print(f'\nTotal stopped: {total_stopped} | Eligible for safe recovery: {total_eligible} | Manual action required: {total_manual}\n')
                 if total_eligible > 0:
@@ -547,7 +549,7 @@ def main(argv=None):
             if is_json:
                 print(json.dumps(res, indent=2))
             else:
-                print('\nAnime Discovery — Recovery Execution\n')
+                print(f'\n{APP_NAME} — Recovery Execution\n')
                 if res['backup_path']:
                     print(f'Database backup created: {res["backup_path"]}')
                 if res['recovered']:

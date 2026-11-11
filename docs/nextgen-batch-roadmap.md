@@ -1,4 +1,4 @@
-# Anime Discovery NextGen — Batch/OVA implementation tracker
+# AniKeepOrNot NextGen — Batch/OVA implementation tracker
 
 Updated: 2026-10-26. Target branch: NextGen.
 Reference: legacy batch-selection design on develop.

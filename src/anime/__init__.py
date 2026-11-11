@@ -1,1 +1,3 @@
-"""Anime Discovery NextGen: isolated, opt-in implementation namespace."""
+"""AniKeepOrNot: isolated application namespace."""
+
+APP_NAME = "AniKeepOrNot"

@@ -1,4 +1,6 @@
 """Exact public asset allowlist. Never serve a caller-supplied filesystem path."""
+
+from src.anime import APP_NAME
 from pathlib import Path
 from html import escape
 
@@ -32,13 +34,13 @@ def address_mismatch(origin):
     Do not reflect the caller's Host header or proxy-supplied URLs.
     """
     safe=escape(origin,quote=True)
-    return ('''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    return (f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Dashboard address mismatch · Anime Discovery</title></head><body>
-<main><h1>Anime Discovery dashboard address mismatch</h1>
+<title>Dashboard address mismatch · {APP_NAME}</title></head><body>
+<main><h1>{APP_NAME} dashboard address mismatch</h1>
 <p>The address opened in your browser does not match the address configured for this dashboard.</p>
-<p>Configured address: <a href="'''+safe+'''">'''+safe+'''</a></p>
-<p>If you normally open Anime Discovery through a reverse proxy, configure its public origin
+<p>Configured address: <a href="'''+safe+'''">'''+safe+f'''</a></p>
+<p>If you normally open {APP_NAME} through a reverse proxy, configure its public origin
 to that browser-facing HTTPS address, including any nonstandard port, then restart the API.
 Do not change the browser address to an internal loopback address from another computer.</p>
 </main></body></html>''').encode('utf-8')

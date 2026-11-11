@@ -1,4 +1,4 @@
-"""Recognized Names: every series (AniDB anime) Anime Discovery understands.
+"""Recognized Names: every series (AniDB anime) AniKeepOrNot understands.
 
 A series is remembered once its identity is verified (IDENTIFY_ANIME), with
 its AniDB title and the release-name alias. Episodes are remembered by AniDB

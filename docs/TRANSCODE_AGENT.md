@@ -1,7 +1,7 @@
 # Transcode agent
 
 Linux only. The agent uses Python's standard library and host ffmpeg/ffprobe;
-`src/transcode_agent` never imports Anime Discovery. The worker's Local mode
+`src/transcode_agent` never imports AniKeepOrNot. The worker's Local mode
 uses the same `encode.py` implementation. All traffic uses HTTP over TCP.
 
 ## Install
@@ -82,7 +82,7 @@ skip those agents. Verify host GPU binding with your existing passthrough setup.
 On a Linux gaming PC allow `gpu` only and disable sleep. Wake-on-LAN is outside
 this work. Do not use Windows agents.
 
-## Anime Discovery settings and staged batches
+## AniKeepOrNot settings and staged batches
 
 Settings → Transcode defaults to Off, preserving ordinary verification/staging.
 Local uses the same encoder and has its own temp path, device and encoder

@@ -1,5 +1,5 @@
 [Unit]
-Description=Anime Discovery transcode agent (VAAPI/x265 over HTTP)
+Description=AniKeepOrNot transcode agent (VAAPI/x265 over HTTP)
 After=network-online.target
 Wants=network-online.target
 

@@ -112,7 +112,7 @@ examined before mutation.
 
 ## Production observations supplied 2026-10-20 (read-only screenshot)
 
-The Anime Discovery Jobs/Acquisition Activity page shows two `NEEDS_REVIEW`
+The AniKeepOrNot Jobs/Acquisition Activity page shows two `NEEDS_REVIEW`
 **notifications**, not two acquisition jobs. The dashboard explicitly says
 "No acquisition job was created" for each. Neither qBittorrent ownership nor
 live torrent existence was checked.
@@ -163,7 +163,7 @@ download of a batch with unmapped episode files.
   mapping so batches can add an owned magnet normally, collect its file list, and immediately pause before applying file priorities.
   Introduce durable states such as `WAITING_FILE_MANIFEST` and
   `EXCLUDED_OUT_OF_SCOPE` rather than reusing the single-episode approval.
-- For a verified multi-file batch, add the torrent in the Anime Discovery
+- For a verified multi-file batch, add the torrent in the AniKeepOrNot
   category with its ownership marker and let it start. Poll `torrents/files`
   about once per second; as soon as the manifest is available, pause that
   exact torrent. Plan E01 first, set and verify all file priorities, then
@@ -358,7 +358,7 @@ closed without guessing or downloading additional files.
 
 ## Approved architecture: upstream discovery and immutable trial windows
 
-**Autobrr owns release discovery.** Anime Discovery must NEVER search for
+**Autobrr owns release discovery.** AniKeepOrNot must NEVER search for
 another release because a torrent already submitted to qBittorrent has
 unclear episode numbers. The unapproved alternate-pack fallback module
 and its tests have been removed.
@@ -434,7 +434,7 @@ unsafe paths, and incomplete manifests. No guessing from the `Batch` tag.
 
 ## Required before integration
 
-1. **Torrent intake:** Add new, verified magnets running with Anime Discovery
+1. **Torrent intake:** Add new, verified magnets running with AniKeepOrNot
    category and durable ownership marker. Poll every ~1 second for the file
    list, then pause the exact torrent immediately when it appears. Allow
    limited incidental payload while fetching metadata. Never change an

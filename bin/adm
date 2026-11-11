@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Anime Discovery administration through the API's Unix socket."""
+"""Local AniKeepOrNot administration through the API's Unix socket."""
 from pathlib import Path
 import sys
 

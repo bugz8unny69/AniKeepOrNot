@@ -2,7 +2,7 @@
 
 The master service remains the only systemd service. Its child worker uses
 SQLite leases and a bounded exponential retry delay (up to 60 minutes).
-Operators can now act on waiting jobs from **Anime Discovery → Jobs**:
+Operators can now act on waiting jobs from **AniKeepOrNot → Jobs**:
 
 - **Retry Now**: available for `DEFERRED` acquisition and one-time search
   jobs. Moves the job back to `READY` immediately; the master worker picks

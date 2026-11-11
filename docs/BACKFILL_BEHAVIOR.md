@@ -67,7 +67,7 @@ re-verifies a size-rejected source against current configurable limits.
      Season 1 query priority stays unchanged when the numbers coincide.
    - Franchise and sequel base queries (`Base 01`, `Base SxxEyy`).
    Indexer throttling and rate limiting remain Prowlarr's responsibility;
-   Anime Discovery does not add an internal rate limiter, honoring HTTP 429
+   AniKeepOrNot does not add an internal rate limiter, honoring HTTP 429
    `Retry-After` headers and transient backoffs directly. A query returning
    an already-failed hash proceeds to subsequent queries. In fallback mode,
    searching stops early once the target candidate hash is located; for initial

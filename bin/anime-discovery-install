@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Install/upgrade Anime Discovery. Interactive by default; --yes uses explicit flags/defaults.
+"""Install/upgrade AniKeepOrNot. Interactive by default; --yes uses explicit flags/defaults.
 
 This standalone launcher needs only Python's standard library. It provisions a
 versioned release, uses native setup commands as the service user, and preserves
 existing settings/credentials. It never imports the legacy operational database.
 """
+
+# The installed bootstrapper also runs without an application checkout.
+try:
+    from src.anime import APP_NAME
+except ModuleNotFoundError:
+    APP_NAME = __doc__.splitlines()[0].split()[1].rstrip('.')
 import argparse
 import contextlib
 import fcntl
@@ -151,7 +157,7 @@ def parser():
                    'Without it the new branch starts with an empty database. Each branch keeps its own settings and database.')
     p.add_argument('--source-dir',type=Path,help='Use tracked files from an existing local Git checkout instead of fetching.')
     p.add_argument('--revision',help='Exact Git commit to install; defaults to the selected branch head.')
-    p.add_argument('--database',type=Path,help='New Anime Discovery database path; existing configuration always wins.')
+    p.add_argument('--database',type=Path,help=f'New {APP_NAME} database path; existing configuration always wins.')
     p.add_argument('--settings-file',type=Path,help='Initial native settings object.')
     p.add_argument('--webhook-key-file',type=Path)
     p.add_argument('--admin-password-file',type=Path,help='Provision a fresh administrator through ADM after API startup. Existing passwords are preserved.')
@@ -191,7 +197,7 @@ def resolve(args):
     # installation asks the operator to choose paths and a public origin.
     interactive=not(args.yes or args.upgrade or args.rollback)
     if interactive:
-        for name,label in [('root','Application folder'),('config_dir','Anime Discovery config folder'),('user','Service account')]:
+        for name,label in [('root','Application folder'),('config_dir',f'{APP_NAME} config folder'),('user','Service account')]:
             if getattr(args,name) is None:options[name]=input(label+' ['+options[name]+']: ').strip() or options[name]
     for name in ('root','state_dir','config_dir','destination','unit_dir'):
         value=options[name]
@@ -225,10 +231,10 @@ def resolve(args):
         options['database']=options['new_database']
     elif existing.exists():
         doc=private_json(existing)
-        if 'schema_version' not in doc:raise ValueError('Choose a separate fresh Anime Discovery configuration directory; legacy conversion is unsupported.')
+        if 'schema_version' not in doc:raise ValueError(f'Choose a separate fresh {APP_NAME} configuration directory; legacy conversion is unsupported.')
         options['database']=doc.get('settings',{}).get('storage',{}).get('database_path',options['database'])
     if (args.upgrade or args.rollback) and options['switch']!='new' and not existing.exists():
-        raise ValueError('Upgrade needs an existing native Anime Discovery configuration.')
+        raise ValueError(f'Upgrade needs an existing native {APP_NAME} configuration.')
     return options
 
 
@@ -393,7 +399,7 @@ def apply(options,args,execute=run):
             'installed_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},sort_keys=True)+'\n').encode(),0o644)
         pkg=package_dir(release)
         for required in (pkg/'__main__.py',pkg/'install_support.py','bin/anime-discovery-install','bin/adm'):
-            if not (release/required).is_file():raise ValueError('Selected source does not contain the Anime Discovery installer.')
+            if not (release/required).is_file():raise ValueError(f'Selected source does not contain the {APP_NAME} installer.')
         execute([options['python'],'-m','venv',str(release/'.venv')])
         execute([str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
         # Build first; stop only once the candidate is ready for local setup.
@@ -401,7 +407,7 @@ def apply(options,args,execute=run):
         previous=os.readlink(root/'current') if (root/'current').is_symlink() else None
         had_config=(config/'settings.json').exists()
         atomic_file(metadata/'installation.pending.json',(json.dumps({'candidate':str(release),'previous_release':previous,'revision':revision},sort_keys=True)+'\n').encode(),0o600)
-        print('Stopping Anime Discovery services for local setup...',flush=True)
+        print(f'Stopping {APP_NAME} services for local setup...',flush=True)
         installed=[name for name in ('anime-discovery.target',*SERVICES)
             if execute(['systemctl','show','--property=LoadState','--value',name],check=False).stdout.strip() not in ('','not-found')]
         setup_started=True
@@ -608,7 +614,7 @@ def main(argv=None):
                 print('Newer release kept as the previous one: '+Path(result['previous_release']).name)
                 print('Restarted services: '+(', '.join(result['started_services']) or 'none'))
             return 0
-        if not args.yes and not args.upgrade and input('Install Anime Discovery with these paths? [y/N]: ').strip().lower() not in ('y','yes'):return 0
+        if not args.yes and not args.upgrade and input(f'Install {APP_NAME} with these paths? [y/N]: ').strip().lower() not in ('y','yes'):return 0
         try:
             with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
                 result=apply(options,args)
@@ -619,7 +625,7 @@ def main(argv=None):
         else:
             started=result.get('started_services',[])
             if args.upgrade:
-                print('\nAnime Discovery upgraded successfully.')
+                print(f'\n{APP_NAME} upgraded successfully.')
                 print('Revision: '+result['revision'])
                 if started:
                     print('Restarted services: '+', '.join(started))
@@ -642,7 +648,7 @@ def main(argv=None):
                 if result.get('removed_releases'):
                     print('Removed old releases: '+', '.join(result['removed_releases']))
             else:
-                print('\nAnime Discovery installation completed successfully.')
+                print(f'\n{APP_NAME} installation completed successfully.')
                 print('Configuration: '+options['config_dir'])
                 print('Existing settings and credentials were preserved.')
                 if started:

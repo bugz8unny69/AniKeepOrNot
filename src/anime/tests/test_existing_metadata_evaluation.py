@@ -38,7 +38,7 @@ class FakeQb:
 
 
 def existing(state='stoppedUP', files=FILES):
-    # Someone else's torrent: another category, no Anime Discovery tag.
+    # Someone else's torrent: another category, no AniKeepOrNot tag.
     return Observation(DIGEST, state, '/downloads/other', 'tv', (), False, files)
 
 
