@@ -2,7 +2,7 @@
 
 Baseline: D1 commit e7840c08. Local Firefox against 127.0.0.1:12080, using a throwaway SQLite database, synthetic identities/staged media, and the real API. No background acquisition/cleanup worker or production service was run. Browser control inventories were captured for twelve views, with follow-up checks for generated settings. API side effects in this audit mean queued operations and local test-state changes; they do not claim provider/production execution.
 
-The Works column describes control/route behavior. A disabled control with a valid reason is checked as a control, not an executed destructive action. Conditional evidence/recovery forms are additionally checked with the existing synthetic browser/API fixtures. D4 records a final verification pass below.
+The tables retain the baseline labels/findings for comparison; Works describes the final D4 control/route behavior. A disabled control with a valid reason is checked as a control, not an executed destructive action. Conditional evidence/recovery forms are additionally checked with the existing synthetic browser/API fixtures. D4 records a final verification pass below.
 
 ## Intake
 
@@ -12,27 +12,28 @@ The Works column describes control/route behavior. A disabled control with a val
 | Search | Search | Intake | applySearch -> GET /api/v1/search?scope=intake | yes | Shared with Jobs | keep |
 | Intake filter | Show | Intake | GET /api/v1/intake/series?status=… | yes | Shares a panel with unrelated job controls | keep |
 | Open series | View series | One per anime | openSeries -> GET /api/v1/intake/series/{id} | yes | Long label; no hint | rename: details |
-| Refresh | Refresh | Intake and Jobs | loadActivity | yes | Duplicates live polling | remove |
 | Pagination | Previous / Next | Activity list | loadActivity with before_id | yes | Disabled without explanation; shared across pages | rename: previous / next |
+
+| Help | ? | Signed in | showHelp -> help-dialog | yes | Same hints as each visible button | keep |
+| Shortcuts | 1–4 / Esc ? | Outside editable inputs | Native navigation, page search focus, top dialog/bell close | yes | Input shortcuts are ignored | keep |
 
 ## Jobs
 
 | Control | Label today | When shown | What it calls (route / function) | Works? | Problem | Proposal |
 |---|---|---|---|---|---|---|
 | Search | Search | Jobs | GET /api/v1/search?scope=jobs | yes | Shared Intake controls | keep |
-| Status filter | All statuses…Completed jobs/Canceled | Jobs | GET /api/v1/jobs?state=… | partly | Overlaps visibility checkboxes; FAILED absent | fix |
-| Completed toggle | Show completed | Jobs | GET /api/v1/jobs?show_completed=… | yes | Duplicates status filter | merge: status select |
-| Canceled toggle | Show canceled | Jobs | GET /api/v1/jobs?show_canceled=… | yes | Duplicates status filter | merge: status select |
+| Status filter | All statuses…Completed jobs/Canceled | Jobs | GET /api/v1/jobs?state=… | yes | Overlaps visibility checkboxes; FAILED absent | fix |
 | Row selection | Select job #… | Jobs | state.selected / renderBulkControls | yes | No explanation on select-all when unavailable | keep |
 | Page selection | Select jobs on this page | Jobs | select-page change handler | yes | State is not explained | keep |
-| Bulk action selector | Retry eligible / Cancel / Cleanup | Selection exists | submitSelected | yes | Extra step before applying action | merge: explicit action buttons |
-| Bulk submit | Apply to selected | Selection exists | POST /jobs/bulk or /jobs/{id}/{action} | yes | One button selects unrelated actions | fix |
+| Bulk actions | retry / cancel / cleanup | Selection exists | POST /jobs/bulk or /jobs/{id}/{action} | yes | Replaced by separate confirmed action buttons | fix |
 | Clear selection | Clear | Selection exists | state.selected.clear | yes | Ambiguous label | rename: clear selection |
 | Release expansion | Release details | Job has a release | details element | yes | Raw diagnostics spread across table | rename: details |
-| Keep or follow-up | Keep / Retry download cleanup / Retry staging cleanup / Retry Shoko metadata | Capability exists | POST /jobs/{id}/keep | partly | Same endpoint/label represents unrelated actions | fix |
+| Keep | keep | Staged import can run or a fixable service problem explains why not | POST /jobs/{id}/keep | yes | D4 hides this after import completion | fix |
+| Retry cleanup | retry cleanup | Individual download/staging cleanup stopped | GET /jobs/{followup}; POST /jobs/{followup}/retry after confirm | yes | D4 targets the selected follow-up without importing again | fix |
+| Retry Shoko | retry shoko | Optional metadata job stopped | GET /jobs/{followup}; POST /jobs/{followup}/retry | yes | D4 targets metadata independently of cleanup/import | fix |
 | Cancel | Cancel | Not staged | POST /jobs/{id}/cancel | yes | Shown disabled when inapplicable | rename: cancel |
 | Cleanup | Cleanup | Canceled work | POST /jobs/{id}/cleanup | yes | Disabled controls and inconsistent case | rename: cleanup |
-| Retry | Retry | Needs review | POST /jobs/{id}/retry | partly | Failed jobs can be retried by API but have no button | fix |
+| Retry | Retry | Needs review | POST /jobs/{id}/retry | yes | Failed jobs can be retried by API but have no button | fix |
 | Matching details | Matching details | Delivery jobs | GET /jobs/{id}/matching | yes | Missing evidence gives an explanatory empty state | rename: details |
 | Episode coverage | Episode coverage | VERIFY_RELEASE | GET /jobs/{id}/coverage | yes | No hint | rename: coverage |
 | History | History | Every job | GET /jobs/{id}/history | yes | No hint | rename: history |
@@ -43,16 +44,15 @@ The Works column describes control/route behavior. A disabled control with a val
 | Control | Label today | When shown | What it calls (route / function) | Works? | Problem | Proposal |
 |---|---|---|---|---|---|---|
 | Search | Search | Names page | GET /api/v1/search?scope=recognized | yes | No keyboard focus shortcut | keep |
-| Refresh | Refresh recognized names | Names page | loadRecognized | yes | Duplicates live intent; page does not start polling | remove |
 | Episode details | Episodes / Hide episodes | Recognized row | GET /recognized/{id}/episodes | yes | Label changes; long returned type/status codes | rename: details |
 
 ## Settings
 
 | Control | Label today | When shown | What it calls (route / function) | Works? | Problem | Proposal |
 |---|---|---|---|---|---|---|
+| Settings search | Search sections | Settings | filterSettings, local section filter | yes | Slash focuses the section search | keep |
 | Section disclosure | Section names | Settings | details toggle; credentials reveal on eligible integrations | yes | Internal section names and inconsistent casing | rename: plain section titles |
 | Section save | Save changes | Every section | PATCH /settings and /credentials/{integration} | yes | Disabled until edits; no consistent hint | rename: save |
-| Refresh | Refresh settings | Settings | loadSettings with discard confirmation | yes | Can discard edits; duplicates live intent | remove |
 | Credential reveal | Eye icon | Integration open | POST /credentials/{integration}/reveal, local visibility toggle | yes | Needs stable visibility label/hint | rename: visibility |
 | Agent list | Add agent / Up / Down / Remove | Transcode section | Local list; PATCH /settings on save | yes | Separate token save is not explained | rename: add / up / down / remove |
 | Agent token | Save token | One per agent | PATCH /credentials/transcode | yes | No title | rename: save token |
@@ -114,7 +114,7 @@ The Works column describes control/route behavior. A disabled control with a val
 | Close | Close | Dialog open | dialog.close | yes | No hint | rename: close |
 | Related jobs | Related jobs | Placed episode | navigateEpisodeJobs -> /jobs#anidb_id=… | yes | Different words for history/navigation | rename: jobs |
 | Open job | View job | Missing episode with acquisition | /jobs#job=… | yes | No hint | rename: details |
-| Retry acquisition | Retry acquisition | Retryable acquisition / prior size rejection | POST /jobs/{id}/retry or /intake/series/{id}/backfill/{episode}/acquire | yes | Same label spans distinct recovery routes | rename: retry / retry acquisition |
+| Retry acquisition | Retry acquisition | Retryable acquisition / prior size rejection | POST /jobs/{id}/retry or /intake/series/{id}/backfill/{episode}/acquire | yes | Same label spans distinct recovery routes | rename: retry / acquire |
 | Try next release | Try next release | Stopped candidate can cancel | POST /jobs/{id}/cancel | yes | Actually cancels the current candidate | rename: cancel |
 | Search | Search / Search again / Retry search | Retryable missing episode | Search-again dialog -> POST backfill/{episode}/retry | yes | One action has three names | rename: search again |
 | Manual submission opener | Submit release | Eligible missing episode | openManualSubmission | yes | No hint | rename: submit release |
@@ -159,7 +159,7 @@ The Works column describes control/route behavior. A disabled control with a val
 | Open/close bell | Bell icon + unread badge | Signed in | GET /notifications | yes | No title; Esc is handled separately | keep |
 | Mark all read | Mark all read | Bell open | DELETE /notifications | yes | Needs stable hint | rename: mark all read |
 | More notifications | Load more | More inbox entries | GET /notifications?before_id=… | yes | No hint | rename: more |
-| Notification links | Open series / Open job / Open jobs page | Event action supports it | POST /notifications/{id}/actions/{action}; local navigation | partly | Open jobs page changes state but not visible page panels/URL | fix |
+| Notification links | Open series / Open job / Open jobs page | Event action supports it | POST /notifications/{id}/actions/{action}; local navigation | yes | Open jobs page changes state but not visible page panels/URL | fix |
 | Process anyway | Process anyway | Rejected webhook event | POST notification action | yes | Bypasses a decision; needs explicit confirm | fix |
 | Add release | Add torrent/magnet | Rejection supports manual source | Open manual form for selected series | yes | Different words for same submission | rename: submit release |
 | Mark read | Mark read | Every notification | DELETE /notifications/{id} | yes | No hint | rename: mark read |
@@ -168,7 +168,7 @@ The Works column describes control/route behavior. A disabled control with a val
 
 | Control | Label today | When shown | What it calls (route / function) | Works? | Problem | Proposal |
 |---|---|---|---|---|---|---|
-| Health chip | Service name + Available/Unknown/etc. | Signed in | GET /services, saved health only | partly | No health tick starts on Settings/Names; too much chip text | fix |
+| Health chip | Service name + Available/Unknown/etc. | Signed in | GET /services, saved health only | yes | No health tick starts on Settings/Names; too much chip text | fix |
 | Agent count | Agents alive N/M | Remote mode only | Saved transcode aggregate | yes | Correct green/yellow/red logic; verbose display | rename: agents N/M |
 
 ## Sign-in
@@ -179,7 +179,7 @@ The Works column describes control/route behavior. A disabled control with a val
 | Sign in | Sign in | Signed out | POST /auth/session | yes | No hint | rename: sign in |
 | Sign out | Sign out | Signed in | DELETE /auth/session | yes | No hint | rename: sign out |
 
-## Dead code and redundant behavior
+## Dead code and redundant behavior (resolved in D4)
 
 - `renderJobs` returns immediately for Intake, so its later `state.page === intake` status branch is unreachable.
 - The `held = true` branch in the search-again handler is unconditional. Remove the dead alternative and keep the dialog.
@@ -187,7 +187,7 @@ The Works column describes control/route behavior. A disabled control with a val
 - CSS `.forms`, `.actions`, `.hide-mobile`, and `input.long` have no current dashboard markup users. The duplicated `.job-release` and `.job-details` rules should be consolidated.
 - Every existing request-producing function has a caller; no unrelated API endpoint is proposed for deletion.
 
-## Errors and leaked internal details
+## Errors and leaked internal details (resolved in D4)
 
 - Valid local navigation, settings reads, recognized-episode reads, history, matching, and canceled filtering returned usable responses. Missing matching evidence is an explanatory state, not a route failure.
 - There is no direct Retry capability for `CLEANUP_KEPT_MEDIA` / `ENRICH_SHOKO_METADATA`; follow-ups are hidden behind the Keep endpoint. D4 should allow these existing guarded retry requests instead of adding new API routes.
@@ -197,4 +197,10 @@ The Works column describes control/route behavior. A disabled control with a val
 
 ## D4 final verification
 
-Pending: update every retained control to yes after the final local browser verification; record removed controls explicitly.
+Removed controls: all three page refresh buttons, completed/canceled visibility checkboxes, the bulk action selector, and the generic bulk submit button. Their retained replacements appear in the tables above. The unreachable Intake job branch, unconditional search-again branch, unused page-filter/discard copy, dead CSS selectors and duplicate style rules are removed.
+
+Final local Firefox verification used the actual API at `127.0.0.1:12080` and a new throwaway database: thirteen captured views, search and empty states, numeric navigation and search focus, History and Matching dialogs, Help text matching button titles, canceled-only filtering, bulk cancel dismissal and confirmed selection clearing, series rejection dismissal, per-section setting save with inline `saved`, unsaved edits surviving polling, credential visibility, inbox clearing, sign-out, and a 390px viewport with tables scrolling inside their panels. Every static and dynamically generated button in these views has a nonempty hint. The palette uses only local system fonts and has no inline styles/scripts; the original CSP is unchanged.
+
+Conditional controls and recovery states use synthetic DOM/API fixtures plus Python storage/worker fixtures in the final local batch. Those fixtures check each independent cleanup/Shoko target, stale retry snapshots, lease/cancellation guards, cleanup retry preserving a completed import, destructive-action confirmations, search-again cache choices, settings fields and credentials, agent order, matching evidence and manual submissions. Provider effects run only through the existing fake transports against temporary media. No production services, databases, media, torrents or Sonarr are touched.
+
+All baseline `partly` findings are resolved: a single status filter, separate import/cleanup/metadata controls, Failed retry visibility, actual Jobs navigation from the bell, and polling dispatched to the current page on all four pages. Settings polling preserves dirty/focused forms and unchanged Names polls preserve expanded episode details. Failures show sentences, with raw job diagnostics in an explicit details disclosure. Local batch results are recorded in the PR descriptions.

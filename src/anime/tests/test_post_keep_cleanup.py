@@ -98,3 +98,25 @@ class PostKeepCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(cleanup,)),[('RETRY_WAIT',)])
         self.assertTrue(Path(fake.selection.media_path).is_file())
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(keep,)),[('DONE',)])
+
+    async def test_direct_review_retry_resumes_only_cleanup_and_keeps_the_import(self):
+        from src.anime.storage.review_retry import request_review_retry, capability
+        from src.anime.storage.sqlite import connect, transaction
+        worker,fake,actions,target,keep,cleanup = await self.cleanup_ready()
+        permanent = fake.root/'Series'/'episode.mkv'
+        saved = permanent.read_bytes()
+        permanent.unlink()
+        await worker.attempt()
+        with connect(self.database) as db, transaction(db):
+            db.execute("UPDATE jobs SET state='NEEDS_REVIEW' WHERE job_id=?",(cleanup,))
+            attempt,reason = db.execute('SELECT attempt_count,last_reason_code FROM jobs WHERE job_id=?', (cleanup,)).fetchone()
+            self.assertTrue(capability(db,cleanup)['enabled'])
+        permanent.write_bytes(saved)
+        receipt = request_review_retry(self.database,cleanup,expected_attempt=attempt,expected_reason=reason)
+        self.assertEqual(receipt.job_id,cleanup)
+        await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(cleanup,)),[('DONE',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(keep,)),[('DONE',)])
+        self.assertEqual(fake.posts.count('command'),1)
+        self.assertEqual(permanent.read_bytes(),saved)
+        self.assertFalse(Path(fake.selection.media_path).exists())

@@ -12,9 +12,13 @@ from src.anime.reasons import get_reason
 from src.anime.storage.job_queue import JobQueue
 from src.anime.storage.sqlite import transaction
 
-# Deliberate allowlist: independent acquisition steps, not management decisions,
-# cleanup jobs, or independent post-Keep follow-ups with their own resume path.
-RETRY_KINDS = frozenset((
+# Deliberate allowlist: independent steps and journaled post-Keep follow-ups.
+# Management decisions still use their own guarded resume path.
+FOLLOWUP_KINDS = frozenset((
+    'CLEANUP_KEPT_MEDIA', 'CLEANUP_BATCH_KEPT_MEDIA',
+    'CLEANUP_BATCH_DOWNLOAD', 'ENRICH_SHOKO_METADATA',
+))
+RETRY_KINDS = FOLLOWUP_KINDS | frozenset((
     'IDENTIFY_ANIME', 'VERIFY_RELEASE', 'SELECT_USER_EVALUATION', 'RESERVE_EPISODE', 'DISCOVER_EPISODE_RELEASES',
     'RESET_EPISODE_SEARCH',
     'DISCOVER_BATCH_PROWLARR',
@@ -45,6 +49,7 @@ class RetryReceipt:
 
 def _retryable_state(kind, state, reason):
     return state in ('NEEDS_REVIEW', 'FAILED') or (
+        kind in FOLLOWUP_KINDS and state == 'BLOCKED') or (
         # Waiting for dub: Retry is "Search again".
         kind == 'DISCOVER_EPISODE_RELEASES' and state == 'ON_HOLD'
         and reason == 'WAITING_FOR_DUB') or (

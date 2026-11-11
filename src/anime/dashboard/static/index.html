@@ -8,68 +8,62 @@
   <script src="/assets/dashboard.js" defer></script>
 </head>
 <body><main class="container jobs-wide">
-  <header><span class="brand" id="console-prompt" aria-label="AniKeepOrNot">anikeepornot:~/intake$</span><button id="sign-out" class="secondary" hidden>Sign out</button></header>
+  <header><span class="brand" id="console-prompt" aria-label="AniKeepOrNot">anikeepornot:~/intake$</span><button id="sign-out" class="secondary" hidden title="End this dashboard session.">sign out</button></header>
   <p id="notice" class="notice" role="status" aria-live="polite"></p>
   <section id="login-panel" class="panel" hidden>
     <h1>Sign in</h1><p class="muted">Enter your administrator password to open the dashboard.</p>
     <form id="login-form" class="integration">
       <label for="access-key">Administrator password</label>
       <input id="access-key" type="password" autocomplete="current-password" required maxlength="256" spellcheck="false">
-      <button type="submit">Sign in</button>
+      <button type="submit" title="Sign in using your administrator password.">sign in</button>
     </form>
   </section>
   <div id="workspace" hidden>
     <div id="service-bar" class="service-bar" role="status" aria-label="Service status" hidden></div>
     <nav aria-label="Main navigation">
       <a class="tab" href="/">[1] intake</a><a class="tab" href="/jobs">[2] jobs</a><a class="tab" href="/recognized">[3] names</a><a class="tab" href="/settings">[4] settings</a>
-      <span class="bell-wrap"><button id="bell" type="button" class="secondary bell" aria-haspopup="true" aria-expanded="false" aria-controls="bell-panel" aria-label="Notifications">
+      <span class="bell-wrap"><button id="bell" type="button" class="secondary bell" aria-haspopup="true" aria-expanded="false" aria-controls="bell-panel" aria-label="Notifications" title="Open or close unread notifications.">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1z"/></svg>
         <span id="bell-badge" class="bell-badge" hidden></span></button>
         <section id="bell-panel" class="bell-panel" role="dialog" aria-label="Notifications" hidden>
-          <div class="toolbar"><h2>Notifications</h2><button id="bell-clear" type="button" class="secondary">Mark all read</button></div>
+          <div class="toolbar"><h2>Notifications</h2><button id="bell-clear" type="button" class="secondary" title="Mark all notifications as read.">mark all read</button></div>
           <div id="bell-items"></div>
           <p id="bell-note" class="muted" role="status"></p>
-          <button id="bell-more" type="button" class="secondary" hidden>Load more</button>
+          <button id="bell-more" type="button" class="secondary" hidden title="Load older notifications.">more</button>
         </section></span>
       <button id="help-open" type="button" title="Show keyboard shortcuts and help for this page.">?</button>
     </nav>
-    <section id="activity-panel" hidden>
-      <h1 id="page-title">Intake</h1><p id="page-description" class="muted"></p>
-      <section class="panel">
-        <div class="toolbar"><h2 id="activity-title">Incoming anime</h2><div class="inline">
-          <span class="status" id="live-indicator" role="status">Loading…</span>
-          <label id="search-label">Search <input id="search" type="search" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Search this page"></label>
-          <label id="status-filter-label">Status <select id="status-filter"><option value="">All statuses</option>
-            <option value="PENDING">Queued</option><option value="RUNNING">Running</option>
-            <option value="RETRY_WAIT">Waiting</option><option value="ON_HOLD">On hold</option>
-            <option value="NEEDS_REVIEW">Needs review</option><option value="BLOCKED">Blocked</option>
-            <option value="DONE">Completed jobs</option><option value="CANCELED">Canceled</option>
-          </select></label>
-          <label id="intake-filter-label" hidden>Show <select id="intake-filter"><option value="">All anime</option>
-            <option value="STAGED">Staged (ready to Keep)</option><option value="WAITING_FOR_DUB">Waiting for dub</option>
-            <option value="TRACKING">Tracking</option><option value="ACCEPTED">Accepted</option><option value="REJECTED">Rejected</option>
-          </select></label>
-          <label id="completed-toggle-label"><input type="checkbox" id="show-completed"> Show completed</label>
-          <label id="canceled-toggle-label"><input type="checkbox" id="show-canceled"> Show canceled</label>
-          <button id="refresh" class="secondary">Refresh</button>
-        </div></div>
-        <p id="page-note" class="muted"></p>
-        <div id="bulk-actions" class="inline" hidden>
-          <span id="selection-count" role="status">0 selected</span>
-          <label>Action <select id="bulk-action"><option value="retry">Retry eligible</option><option value="cancel">Cancel</option><option value="cleanup">Cleanup</option></select></label>
-          <button id="bulk-submit" type="button" disabled>Apply to selected</button>
-          <button id="bulk-clear" type="button" class="secondary">Clear</button>
-        </div>
-        <div id="transcode-batch" class="panel" hidden aria-live="polite"></div>
-        <table class="jobs-table"><thead><tr><th id="bulk-heading" hidden><input type="checkbox" id="select-page" aria-label="Select jobs on this page" title="Select jobs on this page"></th><th id="activity-col-received">Received</th><th id="activity-col-series">Release / Anime</th><th id="activity-col-staged">Job</th><th id="activity-col-status">Status</th><th id="activity-col-backfill">Activity details</th><th id="activity-col-actions">Actions</th></tr></thead><tbody id="job-rows"></tbody></table>
-        <div id="no-jobs" class="empty" hidden>No items on this page.</div>
-        <div class="page-controls"><button id="previous-page" class="secondary">Previous</button><button id="next-page" class="secondary">Next</button></div>
+    <span class="status waiting" id="live-indicator" role="status">paused (reconnecting)</span>
+    <section id="intake-panel" hidden>
+      <h1>intake</h1><p class="muted">Follow incoming anime through processing and staging.</p>
+      <section class="panel"><div class="toolbar"><h2>incoming anime</h2><div class="inline">
+        <label>Search <input id="intake-search" type="search" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Search anime"></label>
+        <label>Show <select id="intake-filter"><option value="">All anime</option><option value="STAGED">Staged</option><option value="WAITING_FOR_DUB">Waiting for dub</option><option value="TRACKING">Tracking</option><option value="ACCEPTED">Accepted</option><option value="REJECTED">Rejected</option></select></label>
+      </div></div>
+      <p class="muted">Open a series to review staged and missing episodes.</p>
+      <div class="table-scroll"><table class="jobs-table"><thead><tr><th>Received</th><th>Series</th><th>Staged</th><th>Status</th><th>Backfill</th><th>Actions</th></tr></thead><tbody id="intake-rows"></tbody></table></div>
+      <p id="intake-empty" class="empty" hidden>No staged anime. New episodes appear here once downloaded and staged.</p>
+      <div class="page-controls"><button id="intake-previous" type="button" title="Load the previous page.">previous</button><button id="intake-next" type="button" title="Load the next page.">next</button></div>
+      </section>
+    </section>
+    <section id="jobs-panel" hidden>
+      <h1>jobs</h1><p class="muted">Track jobs and their recorded history. Status updates every five seconds.</p>
+      <section class="panel"><div class="toolbar"><h2>job activity</h2><div class="inline">
+        <label>Search <input id="search" type="search" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Release, anime, activity or #id" aria-label="Search jobs"></label>
+        <label>Status <select id="status-filter"><option value="">Active</option><option value="ALL">All, including completed and canceled</option><option value="PENDING">Queued</option><option value="RUNNING">Running</option><option value="RETRY_WAIT">Waiting</option><option value="ON_HOLD">On hold</option><option value="NEEDS_REVIEW">Needs review</option><option value="BLOCKED">Blocked</option><option value="FAILED">Failed</option><option value="DONE">Completed</option><option value="CANCELED">Canceled</option></select></label>
+      </div></div>
+      <p id="page-note" class="muted"></p>
+      <div id="bulk-actions" class="inline" hidden><span id="selection-count" role="status">0 selected</span><button id="bulk-retry" type="button" title="Retry selected eligible jobs from the step that failed.">retry</button><button id="bulk-cancel" type="button" class="danger" title="Cancel selected acquisitions and permanently remove their owned download files.">cancel</button><button id="bulk-cleanup" type="button" class="danger" title="Resume permanent cleanup of selected canceled acquisitions.">cleanup</button><button id="bulk-clear" type="button" title="Clear the selected jobs without changing them.">clear selection</button></div>
+      <div id="transcode-batch" class="panel" hidden aria-live="polite"></div>
+      <div class="table-scroll"><table class="jobs-table"><thead><tr><th><input type="checkbox" id="select-page" aria-label="Select jobs on this page" title="Select jobs on this page."></th><th>Received</th><th>Release / Anime</th><th>Job</th><th>Status</th><th>Activity details</th><th>Actions</th></tr></thead><tbody id="job-rows"></tbody></table></div>
+      <p id="no-jobs" class="empty" hidden>No active jobs. New work appears here when an episode is submitted.</p>
+      <div class="page-controls"><button id="previous-page" type="button" title="Load the previous page.">previous</button><button id="next-page" type="button" title="Load the next page.">next</button></div>
       </section>
     </section>
     <section id="recognized-panel" hidden>
       <h1>Recognized Names</h1>
       <p class="muted">Every series (AniDB anime) AniKeepOrNot has identified, including OVAs and movies, with its verified episodes. The TVDB series and seasons are shown when known. Each new episode still requires independent verification.</p>
-      <div class="inline"><button id="refresh-recognized" class="secondary">Refresh recognized names</button>
+      <div class="inline">
       <label>Search <input id="recognized-search" type="search" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Search names or aliases" aria-label="Search recognized names"></label></div>
       <section class="panel">
         <table class="jobs-table"><thead><tr><th>Series</th><th>Type</th><th>AniDB ID</th><th>TVDB ID</th><th>TVDB seasons</th><th>Aliases</th><th>Verified episodes</th><th>Details</th></tr></thead>
@@ -79,23 +73,23 @@
     </section>
     <section id="settings-panel" hidden>
       <h1>Settings</h1><p class="muted">Changes apply to new operations. Some infrastructure settings require a restart.</p>
-      <button id="reload-settings" class="secondary">Refresh settings</button>
+      <label>Search sections <input id="settings-search" type="search" maxlength="100" aria-label="Search settings sections"></label>
       <p id="restart-notice" role="status"></p>
       <div id="settings-fields"></div>
       <section class="panel"><h2>Security</h2><form id="password-form" class="integration">
         <label>Current password <input name="current_password" type="password" autocomplete="current-password" required></label>
         <label>New password <input name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
         <label>Confirm new password <input name="confirm_password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
-        <button type="submit">Change password</button><p id="password-result" role="status"></p>
+        <button type="submit" title="Change the administrator password and end this session.">change password</button><p id="password-result" role="status"></p>
       </form></section>
     </section>
   </div>
   <dialog id="series-dialog" class="match-trace" aria-labelledby="series-title">
-    <div class="toolbar"><h2 id="series-title">Series</h2><button id="series-close" class="secondary" type="button">Close</button></div>
+    <div class="toolbar"><h2 id="series-title">Series</h2><button id="series-close" class="secondary" type="button" title="Close this dialog.">close</button></div>
     <p id="series-description" class="muted"></p>
     <section class="trace-section"><h3>Staged episodes</h3>
       <table><thead><tr><th>Episode</th><th>Status</th><th>Actions</th></tr></thead><tbody id="series-episodes"></tbody></table>
-      <p id="series-episodes-empty" class="muted" hidden>No staged episodes yet.</p>
+      <p id="series-episodes-empty" class="muted" hidden>No staged episodes. Downloaded and verified episodes appear here.</p>
     </section>
     <section class="trace-section"><h3>Backfill and continue</h3>
       <table><thead><tr><th>Episode</th><th>Result</th><th>Action</th></tr></thead><tbody id="series-missing"></tbody></table>
@@ -123,8 +117,8 @@
         </label>
         <p id="series-manual-error" class="notice error" role="alert"></p>
         <div class="inline">
-          <button id="series-manual-submit" type="submit">Submit candidate</button>
-          <button id="series-manual-dismiss" type="button" class="secondary">Dismiss</button>
+          <button id="series-manual-submit" type="submit" title="Submit this release as a separate episode candidate.">submit</button>
+          <button id="series-manual-dismiss" type="button" class="secondary" title="Close the release submission form.">close</button>
         </div>
       </form>
     </section>
@@ -141,13 +135,13 @@
         placeholder="Why are you rejecting this anime?"></textarea>
     </section>
     <div class="inline">
-      <button id="series-reject" type="button" class="danger">Reject series</button>
-      <span id="series-keep-tooltip" class="action-tooltip"><button id="series-keep" type="button">Keep all staged</button></span>
-      <button id="series-reject-history" type="button" class="secondary" hidden>Rejection history</button>
+      <button id="series-reject" type="button" class="danger" title="Reject this series and permanently remove its owned staging and download files.">reject</button>
+      <span id="series-keep-tooltip" class="action-tooltip"><button id="series-keep" type="button" title="Import all staged acquisitions in this series into the permanent library.">keep</button></span>
+      <button id="series-reject-history" type="button" class="secondary" hidden title="Open the history of this series rejection.">history</button>
     </div>
   </dialog>
   <dialog id="matching-dialog" class="match-trace" aria-labelledby="matching-title">
-    <div class="toolbar"><h2 id="matching-title">Matching details</h2><button id="matching-close" class="secondary" type="button">Close</button></div>
+    <div class="toolbar"><h2 id="matching-title">Matching details</h2><button id="matching-close" class="secondary" type="button" title="Close this dialog.">close</button></div>
     <p id="matching-summary" class="muted" role="status"></p>
     <div id="matching-body"></div>
   </dialog>
@@ -155,17 +149,17 @@
     <form method="dialog">
       <h2 id="search-again-title">Search again — <span id="search-again-episode"></span></h2>
       <p>Try a saved magnet first. If none is eligible, search Prowlarr for new releases.</p>
-      <label class="inline"><input id="search-again-delete" type="checkbox"> Delete cache</label>
+      <label class="inline"><input id="search-again-delete" type="checkbox" title="Permanently discard cached magnets for this episode before searching again."> Delete cache</label>
       <p class="muted">Checked: delete saved magnets for this episode and search Prowlarr for new releases. Previous failure history is preserved.</p>
       <div class="inline">
-        <button type="submit" value="search">Search again</button>
-        <button type="submit" value="cancel" class="secondary">Cancel</button>
+        <button type="submit" value="search" title="Search saved and new releases for this episode.">search again</button>
+        <button type="submit" value="cancel" class="secondary" title="Close this dialog.">close</button>
       </div>
     </form>
   </dialog>
   <dialog id="history-dialog" class="match-trace" aria-labelledby="history-title">
-    <div class="toolbar"><h2 id="history-title">Job history</h2><button id="history-close" class="secondary">Close</button></div>
-    <div id="history-rows"></div><button id="history-more" class="secondary" hidden>Load more</button>
+    <div class="toolbar"><h2 id="history-title">Job history</h2><button id="history-close" class="secondary" title="Close this dialog.">close</button></div>
+    <div id="history-rows"></div><button id="history-more" class="secondary" hidden title="Load older history entries.">more</button>
   </dialog>
   <dialog id="help-dialog" class="match-trace" aria-labelledby="help-title">
     <div class="toolbar"><h2 id="help-title">help</h2><button id="help-close" type="button" title="Close the help panel.">close</button></div>

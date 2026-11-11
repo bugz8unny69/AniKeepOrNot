@@ -141,13 +141,34 @@ class ReviewRetryTests(unittest.TestCase):
         db.close()
         with self.assertRaises(RetryNotAllowed):self.retry()
 
-    def test_acquisition_only_allowlist_covers_batch_and_single_steps(self):
+    def test_followup_retry_preserves_the_job_and_rejects_leases_and_canceled_scopes(self):
+        for kind in ('CLEANUP_KEPT_MEDIA', 'CLEANUP_BATCH_KEPT_MEDIA',
+                     'CLEANUP_BATCH_DOWNLOAD', 'ENRICH_SHOKO_METADATA'):
+            for state in ('NEEDS_REVIEW', 'BLOCKED', 'FAILED'):
+                with self.subTest(kind=kind, state=state):
+                    db = connect(self.database)
+                    with transaction(db):
+                        db.execute("UPDATE jobs SET kind=?,state=?,last_reason_code='JOB_RETRY_EXHAUSTED',"
+                                   "lease_token=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (kind,state,self.job))
+                        self.assertTrue(capability(db,self.job)['enabled'])
+                    db.close()
+                    self.assertEqual(self.retry().job_id,self.job)
+            db = connect(self.database)
+            with transaction(db):
+                db.execute("UPDATE jobs SET state='RUNNING',lease_token='claimed',lease_expires_at_ms=999999 "
+                           "WHERE job_id=?", (self.job,))
+                self.assertFalse(capability(db,self.job)['enabled'])
+            db.close()
+            with self.assertRaises(RetryNotAllowed): self.retry()
+        self.assertEqual(self.rows('SELECT count(*) FROM jobs'),[(1,)])
+
+    def test_retry_allowlist_covers_steps_without_repeating_management_decisions(self):
         for kind in ('IDENTIFY_ANIME','VERIFY_RELEASE','SUBMIT_TORRENT',
                      'DOWNLOAD_TORRENT','STAGE_USER_EVALUATION_MEDIA','SUBMIT_BATCH',
                      'TRANSFER_BATCH','VERIFY_BATCH_EPISODE','STAGE_BATCH_EPISODE'):
             self.assertIn(kind,RETRY_KINDS)
         for kind in ('KEEP_MEDIA','KEEP_BATCH','REJECT_SERIES',
-                     'CLEANUP_CANCELED_OPERATION','CLEANUP_BATCH_DOWNLOAD'):
+                     'CLEANUP_CANCELED_OPERATION'):
             self.assertNotIn(kind,RETRY_KINDS)
         db=connect(self.database)
         with transaction(db):
