@@ -792,6 +792,36 @@ test('remote agents can be added and reordered without returning stored tokens',
 });
 
 
+test('transcode shows only the fields the selected mode uses', async () => {
+  const h = await harness();
+  const shown = JSON.parse(h.run(`
+    const definitions = {
+      'transcode.mode': {type: 'transcode_mode', label: 'Mode', minimum: null, maximum: null, help: ''},
+      'transcode.encoders': {type: 'transcode_encoders', label: 'Local encoders', minimum: null, maximum: null, help: ''},
+      'transcode.tmp': {type: 'directory', label: 'Local temp path', minimum: null, maximum: null, help: ''},
+      'transcode.vaapi_device': {type: 'path', label: 'VAAPI device', minimum: null, maximum: null, help: ''},
+      'transcode.target_mb': {type: 'integer', label: 'Target MB', minimum: 1, maximum: 1000000, help: ''},
+      'transcode.retries': {type: 'integer', label: 'Retries per agent', minimum: 0, maximum: 10, help: ''},
+      'transcode.retry_seconds': {type: 'integer', label: 'Retry delay', minimum: 1, maximum: 300, help: ''},
+      'transcode.agents': {type: 'transcode_agents', label: 'Remote agents'},
+    };
+    const values = {'transcode.mode': 'off', 'transcode.encoders': 'gpu,cpu', 'transcode.tmp': '/var/tmp',
+      'transcode.vaapi_device': '/dev/dri/renderD128', 'transcode.target_mb': 500, 'transcode.retries': 2,
+      'transcode.retry_seconds': 10, 'transcode.agents': []};
+    const rows = new Map(Object.entries(definitions).map(([path, d]) => [path, settingInput(path, d, values[path])]));
+    transcodeModeFields(rows);
+    const visible = () => [...rows].filter(([, row]) => !row.hidden).map(([path]) => path);
+    const mode = rows.get('transcode.mode')._input;
+    const result = {off: visible()};
+    for (const value of ['local', 'remote', 'off']) { mode.value = value; mode.listeners.change(); result[value] = visible(); }
+    result.tmpKept = rows.get('transcode.tmp')._input.value;
+    JSON.stringify(result)`));
+  assert.deepEqual(shown.off, ['transcode.mode']);
+  assert.deepEqual(shown.local, ['transcode.mode', 'transcode.encoders', 'transcode.tmp', 'transcode.vaapi_device', 'transcode.target_mb']);
+  assert.deepEqual(shown.remote, ['transcode.mode', 'transcode.target_mb', 'transcode.retries', 'transcode.retry_seconds', 'transcode.agents']);
+  assert.equal(shown.tmpKept, '/var/tmp');   // Hidden fields keep their values.
+});
+
 test('console shortcuts navigate, focus search, and respect typing', async () => {
   const h = await harness(); const visited = [];
   h.ctx.location.assign = url => visited.push(url);
