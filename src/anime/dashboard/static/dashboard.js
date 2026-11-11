@@ -1244,6 +1244,24 @@ function agentSettings(path, definition, values) {
   render(); return wrapper;
 }
 
+// Transcode shows only what the chosen mode uses. Hidden fields keep their
+// values and are saved unchanged, so switching modes back loses nothing.
+const TRANSCODE_MODE_FIELDS = {
+  off: [],
+  local: ['transcode.encoders', 'transcode.tmp', 'transcode.vaapi_device', 'transcode.target_mb'],
+  remote: ['transcode.agents', 'transcode.target_mb', 'transcode.retries', 'transcode.retry_seconds'],
+};
+function transcodeModeFields(rows) {
+  const mode = rows.get('transcode.mode')?._input;
+  if (!mode) return;
+  const show = () => {
+    const visible = TRANSCODE_MODE_FIELDS[mode.value] || [];
+    for (const [path, row] of rows) if (path !== 'transcode.mode') row.hidden = !visible.includes(path);
+  };
+  mode.addEventListener('change', () => { show(); refreshDirty(); });
+  show();
+}
+
 function settingLabel(value) { return String(value).replaceAll('.', ' / ').replaceAll('_', ' '); }
 function settingInput(path, definition, value) {
   const label = node('label', null, 'setting-field'); label.appendChild(node('span', settingLabel(definition.label || path)));
@@ -1271,7 +1289,7 @@ function settingInput(path, definition, value) {
     if (definition.type === 'integer') { input.step = '1'; input.required = true; }
   }
   input.dataset.original = input.value;
-  label.appendChild(input);
+  label._input = input; label.appendChild(input);
   label.appendChild(node('small', definition.help + (definition.apply_mode === 'restart' ? ' Requires a restart.' : ''), 'muted'));
   return label;
 }
@@ -1412,10 +1430,13 @@ async function loadSettings(poll = false) {
       const panel = node('details', null, 'panel'); panel.dataset.section = section; panel.open = opened.has(section);
       panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section === 'transcode' ? 'Transcode' : settingLabel(section)));
       const form = node('form', null, 'integration'); form.autocomplete = 'off';
+      const rows = new Map();
       for (const [path, definition] of Object.entries(settings.fields)) {
         if (!path.startsWith(section + '.')) continue;
-        form.appendChild(settingInput(path, definition, settings.desired.settings[section][path.split('.')[1]]));
+        const row = settingInput(path, definition, settings.desired.settings[section][path.split('.')[1]]);
+        rows.set(path, row); form.appendChild(row);
       }
+      if (section === 'transcode') transcodeModeFields(rows);
       panel.appendChild(form); container.appendChild(panel);
     }
     renderCredentials(state.settingsVersion);
