@@ -22,6 +22,7 @@ import pwd
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -73,6 +74,20 @@ def private_json(path):
         data=json.loads(stream.read(65537))
     if type(data) is not dict:raise ValueError('Expected a JSON object.')
     return data
+
+
+# Network steps (git and pip) are retried after these pauses, in seconds.
+RETRY_DELAYS=(5,20)
+
+def with_retries(execute,args,*,cleanup=None):
+    """Run a network step, retrying a brief outage instead of failing the whole upgrade."""
+    for attempt,delay in enumerate((*RETRY_DELAYS,None),1):
+        try:return execute(args)
+        except RuntimeError as exc:
+            if delay is None:raise
+            print(f'{Path(str(args[0])).name} failed (attempt {attempt}): {str(exc).splitlines()[0]}; retrying in {delay}s...',flush=True)
+            if cleanup:cleanup()
+            time.sleep(delay)
 
 
 def atomic_file(path,content,mode):
@@ -368,6 +383,9 @@ def apply(options,args,execute=run):
     if info.st_uid!=0 or info.st_mode&0o077:raise ValueError('Installer state folder must be private and root-owned.')
     lock=os.open(metadata/'.installer.lock',os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
     setup_started=False
+    incoming=release=None
+    database_changed=switched=False
+    active=[]
     previous_umask=os.umask(0o022)  # Source/venv readable by the non-root service account.
     try:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -383,8 +401,10 @@ def apply(options,args,execute=run):
         print('Preparing candidate source and Python environment...',flush=True)
         if args.source_dir:revision=extract_checkout(args.source_dir,incoming,args.revision,execute)
         else:
-            incoming.rmdir();execute(['git','clone','--no-checkout','--',options['source'],str(incoming)])
-            execute(['git','-C',str(incoming),'fetch','--depth=1','--no-tags','origin',args.revision or options['ref']])
+            incoming.rmdir()
+            with_retries(execute,['git','clone','--no-checkout','--',options['source'],str(incoming)],
+                         cleanup=lambda:shutil.rmtree(incoming,ignore_errors=True))
+            with_retries(execute,['git','-C',str(incoming),'fetch','--depth=1','--no-tags','origin',args.revision or options['ref']])
             revision=execute(['git','-C',str(incoming),'rev-parse','FETCH_HEAD']).stdout.strip()
             execute(['git','-C',str(incoming),'checkout','--detach',revision])
         if not re.fullmatch('[a-f0-9]{40,64}',revision):raise ValueError('Source did not resolve to an exact revision.')
@@ -403,7 +423,7 @@ def apply(options,args,execute=run):
         for required in (pkg/'__main__.py',pkg/'install_support.py','bin/anime-discovery-install','bin/adm'):
             if not (release/required).is_file():raise ValueError(f'Selected source does not contain the {APP_NAME} installer.')
         execute([options['python'],'-m','venv',str(release/'.venv')])
-        execute([str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
+        with_retries(execute,[str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
         # Build first; stop only once the candidate is ready for local setup.
         active=[name for name in SERVICES if execute(['systemctl','is-active','--quiet',name],check=False).returncode==0]
         previous=os.readlink(root/'current') if (root/'current').is_symlink() else None
@@ -443,6 +463,7 @@ def apply(options,args,execute=run):
             for key,label in [('webhook_token','Webhook key')]:
                 if key not in access:access[key]=getpass.getpass(label+' (blank generates a new key): ')
         payload={**options,'settings':settings,'access':access}
+        database_changed=True   # prepare upgrades the database and settings; the old release may no longer run.
         service_call(release,options,'prepare',payload,execute)
         units=service_call(release,options,'render',options,execute)
         # Preserve the pre-upgrade runtime state. Never start a worker that was
@@ -458,7 +479,7 @@ def apply(options,args,execute=run):
             if old.exists():shutil.copyfile(old,backup/name)
             atomic_file(old,body.encode(),0o644)
         pointer=root/('.current-'+release.name);pointer.symlink_to(release)
-        os.replace(pointer,root/'current')
+        os.replace(pointer,root/'current');switched=True
         execute(['systemctl','daemon-reload'])
         if args.enable and selected:execute(['systemctl','enable',*selected])
         if selected:
@@ -506,13 +527,28 @@ def apply(options,args,execute=run):
         for name in ('installer.json','installation.json','installation.pending.json'):
             (root/name).unlink(missing_ok=True)
         return result
+    except Reexec:
+        raise                   # main() runs the fetched installer on this checkout, then removes it.
     except BaseException:
+        if not switched and not database_changed:
+            # The candidate never became current and nothing depends on it:
+            # remove it rather than leave a half-built folder. Once the database
+            # was upgraded it is the only code that can run it, so it stays.
+            for folder in (incoming,release):
+                if folder is not None and not folder.is_symlink():shutil.rmtree(folder,ignore_errors=True)
         if setup_started and locals().get('branch_state'):
             # The new branch's folder and database were created by this run and never used.
             folder,database=branch_state
             shutil.rmtree(folder,ignore_errors=True)
             for suffix in ('','-wal','-shm','-journal'):Path(str(database)+suffix).unlink(missing_ok=True)
-        if setup_started:
+        if setup_started and not database_changed:
+            # Nothing the running release depends on changed yet (release pointer,
+            # unit files, database, settings): bring back what was running.
+            (metadata/'installation.pending.json').unlink(missing_ok=True)
+            if active:
+                print('Setup failed before the database was changed; restarting '+', '.join(active)+' on the current release.',flush=True)
+                execute(['systemctl','start',*active],check=False)
+        elif setup_started:
             # Schema may have advanced: never restart older source or restore a
             # database automatically. Retain pending metadata for the next run.
             execute(['systemctl','stop','anime-discovery.target',*SERVICES],check=False)
@@ -624,11 +660,66 @@ def absolute_paths(args):
             value=getattr(args,n)
             setattr(args,n,type(value)(os.path.join(base,str(value))))
 
+class DurableStream:
+    """Copies output to the run log and keeps going when the terminal disappears.
+
+    A dropped SSH session closes the terminal; a plain print would then raise
+    and abort an upgrade after its services were stopped."""
+    def __init__(self,stream,log):self.stream,self.log=stream,log
+    def write(self,text):
+        if self.log is not None:
+            try:self.log.write(text);self.log.flush()
+            except OSError:pass
+        if self.stream is not None:
+            try:self.stream.write(text)
+            except OSError:self.stream=None      # The terminal is gone; the log keeps the rest.
+        return len(text)
+    def flush(self):
+        if self.stream is not None:
+            try:self.stream.flush()
+            except OSError:self.stream=None
+    def isatty(self):
+        try:return self.stream is not None and self.stream.isatty()
+        except OSError:return False
+    def __getattr__(self,name):return getattr(self.stream or sys.__stdout__,name)
+
+
+@contextlib.contextmanager
+def durable_run(options):
+    """Ignore hang-ups and log the run to <state>/installer/last-run.log (root runs only)."""
+    log=None
+    metadata=Path(options.get('state_dir') or DEFAULTS['state_dir'])/'installer'
+    if os.geteuid()==0 and metadata.is_dir() and not metadata.is_symlink():
+        try:
+            log=os.fdopen(os.open(metadata/'last-run.log',os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600),'w')
+            log.write(time.strftime('%Y-%m-%dT%H:%M:%S%z')+' '+shlex.join(sys.argv)+'\n')
+        except OSError:log=None
+    hangup=signal.signal(signal.SIGHUP,signal.SIG_IGN)   # Inherited by the re-run installer too.
+    streams=sys.stdout,sys.stderr
+    sys.stdout,sys.stderr=DurableStream(sys.stdout,log),DurableStream(sys.stderr,log)
+    try:yield
+    finally:
+        sys.stdout,sys.stderr=streams
+        signal.signal(signal.SIGHUP,hangup)
+        if log is not None:log.close()
+
+
 def main(argv=None):
     args=parser().parse_args(argv)
     try:
         absolute_paths(args)
         options=resolve(args)
+    except (OSError,ValueError,RuntimeError,KeyError) as exc:
+        label='Rollback' if args.rollback else 'Upgrade' if args.upgrade else 'Installation'
+        print(f'{label} failed: {type(exc).__name__}: {exc}',file=sys.stderr)
+        return 1
+    with durable_run(options):
+        return _run(args,argv,options)
+
+
+def _run(args,argv,options):
+    args=parser().parse_args(argv)
+    try:
         if args.rollback:
             with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
                 result=rollback(options,args)
