@@ -9,6 +9,12 @@ import sys
 
 
 def main():
+    if sys.argv[1:2] == ["server"]:
+        # The transcode agent; the same handlers run inside adm-agent.pyz.
+        if sys.argv[2:3] != ["agent"]:
+            sys.exit("usage: adm server agent [command] ... (see adm server agent --help)")
+        from src.transcode_agent.cli import main as agent
+        sys.exit(agent(sys.argv[3:]))
     if sys.argv[1:2] == ["transcode"]:
         from src.anime.transcode_cli import main as transcode
         sys.exit(transcode(sys.argv[2:]))
@@ -26,7 +32,7 @@ def main():
         sys.exit(services(sys.argv[2:]))
     parser = argparse.ArgumentParser(
         description=f"{APP_NAME} local administration",
-        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health)",
+        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health) | adm server agent ... (the transcode agent)",
     )
     parser.add_argument("command", choices=("set-password",))
     parser.add_argument("--socket", default="/run/anime-discovery/admin.sock")

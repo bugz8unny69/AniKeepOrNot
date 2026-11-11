@@ -32,10 +32,18 @@ returns 507 before the body is read. Finished jobs expire after one hour.
 One encode runs at a time. Keep this service on a trusted LAN or use HTTPS
 through a reverse proxy; a bearer token does not encrypt a plain HTTP transfer.
 
+## Running the agent
+
+`adm server agent` runs the agent in the foreground with the environment
+settings below; `adm server agent --version` prints its agent version and build
+revision, and `adm server agent --help` lists the settings. `python -m
+src.transcode_agent` is the same command. Stopping it (SIGTERM/SIGINT) cancels
+any encode, so no ffmpeg process outlives the agent.
+
 ## API
 
 Every request uses `Authorization: Bearer TOKEN`.
-`GET /health` returns `encoders`, `busy`, and `free_bytes`.
+`GET /health` returns `encoders`, `busy`, `free_bytes`, `agent_version` and `build_revision`.
 `POST /jobs` accepts the file body with `Content-Length`, `X-Sha256`, and
 `X-Video-Kbps`. `X-Max-Audio` describes the worker's computed audio budget;
 audio encoding itself follows the stream rules below. A hash mismatch returns

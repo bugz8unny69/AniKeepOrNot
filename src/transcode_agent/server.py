@@ -3,7 +3,7 @@
 Standard library only; nothing here imports src.anime. See TRANSCODE_AGENT.md.
 
 Routes (every request needs `Authorization: Bearer <TRANSCODE_TOKEN>`):
-  GET    /health             {encoders, busy, free_bytes}
+  GET    /health             {encoders, busy, free_bytes, agent_version, build_revision}
   POST   /jobs               body: the video. Headers X-Sha256, X-Video-Kbps.
                              507 when free space < 1.5 x Content-Length (before
                              reading the body), 409 while busy, 422 on a hash
@@ -27,7 +27,7 @@ import threading
 import time
 import uuid
 
-from src.transcode_agent import encode
+from src.transcode_agent import encode, build_info
 
 SUBFOLDER = 'transcode-agent'
 SPACE_FACTOR = 1.5
@@ -82,7 +82,19 @@ class Agent:
         return encode.free_bytes(self.folder)
 
     def health(self):
-        return {'encoders': list(self.encoders), 'busy': self.busy(), 'free_bytes': self.free_bytes()}
+        info = build_info()
+        return {'encoders': list(self.encoders), 'busy': self.busy(), 'free_bytes': self.free_bytes(),
+                'agent_version': info['agent_version'], 'build_revision': info['revision']}
+
+    def shutdown(self, timeout_s=30):
+        """Stop: cancel every encode (its ffmpeg is killed) and wait for the threads. No child outlives the agent."""
+        with self.lock:
+            jobs = list(self.jobs.values())
+        for job in jobs:
+            job['cancelled'].set()
+        for job in jobs:
+            if job['thread'] is not None:
+                job['thread'].join(timeout_s)
 
     def enough_space(self, content_length):
         return self.free_bytes() >= content_length * SPACE_FACTOR
