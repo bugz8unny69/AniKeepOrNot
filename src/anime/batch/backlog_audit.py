@@ -33,7 +33,7 @@ from src.anime.storage.batch_candidates import (
 
 BATCH_KINDS = ('VERIFY_RELEASE', 'EVALUATE_BATCH', 'RESERVE_BATCH', 'SUBMIT_BATCH', 'TRANSFER_BATCH',
                'VERIFY_BATCH_PROBE', 'UNLOCK_BATCH', 'VERIFY_BATCH_EPISODE', 'STAGE_BATCH_EPISODE')
-# Journals that record which torrents Anime Discovery owns: (table, marker column).
+# Journals that record which torrents AniKeepOrNot owns: (table, marker column).
 _JOURNALS = (('batch_metadata_admissions', 'ownership_marker'),
              ('batch_torrent_submissions', 'ownership_marker'),
              ('magnet_intents', 'marker'))
@@ -51,7 +51,7 @@ def observe_torrents(client, digests):
 
 def torrent_ownership(db, digest, observation):
     """OWNED when a journal owns this exact torrent; UNCERTAIN when a journal or
-    an Anime Discovery tag points at it but ownership cannot be proven;
+    an AniKeepOrNot tag points at it but ownership cannot be proven;
     FOREIGN otherwise. Consolidation never touches FOREIGN or UNCERTAIN."""
     journaled = False
     for table, marker in _JOURNALS:

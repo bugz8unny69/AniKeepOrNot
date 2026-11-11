@@ -1,9 +1,15 @@
-"""Interactive, zero-flag Anime Discovery homelab installer.
+"""Interactive, zero-flag AniKeepOrNot homelab installer.
 
 Run with sudo from the extracted release archive or a checkout. All application runtime
 preferences are stored in settings.json and secrets.json, never environment
 variables or worker command-line switches.
 """
+
+# The installed bootstrapper also runs without an application checkout.
+try:
+    from src.anime import APP_NAME
+except ModuleNotFoundError:
+    APP_NAME = __doc__.splitlines()[0].split()[2].rstrip('.')
 import copy
 import getpass
 import grp
@@ -56,7 +62,7 @@ def _existing_setup(account):
         if ask("Existing secrets.json permissions are too open; restrict to 0600? (yes/no)","no").lower()!="yes":
             raise ValueError("secrets.json must be mode 0600 before adopting configuration")
         os.chmod(secrets_file,0o600)
-    print("Found existing Anime Discovery configuration; keeping both files.")
+    print(f"Found existing {APP_NAME} configuration; keeping both files.")
     preview=migrate(CONFIG_DIR,apply=False)
     if not preview["ready"]:
         raise ValueError("Existing configuration needs review: "+
@@ -99,7 +105,7 @@ def _existing_setup(account):
 def _new_setup(account):
     download=Path(ask("Existing qBittorrent download directory",
                       "/mnt/media/Torrents/anime")).expanduser().resolve()
-    trial=Path(ask("Existing Anime Discovery staging directory",
+    trial=Path(ask(f"Existing {APP_NAME} staging directory",
                    "/mnt/media/Anime")).expanduser().resolve()
     if not download.is_dir() or not trial.is_dir() or download==trial:
         raise ValueError("Download and staging directories must exist and be different")
@@ -177,7 +183,7 @@ def main():
         raise ValueError("Expected media GID 1002; found "+str(media.gr_gid)+". Check the VM group configuration")
     if username not in media.gr_mem and account.pw_gid!=media.gr_gid:
         raise ValueError("Service account must belong to media (GID 1002) before installation")
-    print("Installing Anime Discovery for account:",username,"and media GID:",media.gr_gid)
+    print(f"Installing {APP_NAME} for account:",username,"and media GID:",media.gr_gid)
     if not os.access(ROOT,os.X_OK):
         raise ValueError("Application directory not accessible")
     config=_existing_setup(account) if existing else _new_setup(account)
@@ -195,17 +201,17 @@ def main():
     os.chown(db_path,account.pw_uid,account.pw_gid)
 
     media_group="SupplementaryGroups=media\n"
-    service="""[Unit]
-Description=Anime Discovery dashboard, Autobrr intake and acquisition workers
+    service=f"""[Unit]
+Description={APP_NAME} dashboard, Autobrr intake and acquisition workers
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User={user}
-Group={group}
-{media_group}WorkingDirectory={root}
-ExecStart={python} {root}/src/legacy/anime-discovery-live.py
+User={{user}}
+Group={{group}}
+{{media_group}}WorkingDirectory={{root}}
+ExecStart={{python}} {{root}}/src/legacy/anime-discovery-live.py
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -217,7 +223,7 @@ WantedBy=multi-user.target
     SERVICE.write_text(service,encoding="utf-8")
     subprocess.run(["systemctl","daemon-reload"],check=True)
     subprocess.run(["systemctl","enable","--now","anime-discovery.service"],check=True)
-    print("Anime Discovery service started; open http://SERVER-IP:"+
+    print(f"{APP_NAME} service started; open http://SERVER-IP:"+
           str(config["settings"]["web"]["port"])+"/")
     print("Dashboard username: anime ; use your separate admin password")
     print("Use: systemctl status anime-discovery.service")

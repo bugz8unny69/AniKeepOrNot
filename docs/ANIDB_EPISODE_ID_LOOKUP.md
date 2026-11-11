@@ -2,7 +2,7 @@
 
 Anime-Lists supplies an AniDB anime ID and rules to translate AniDB episode
 numbers into TVDB seasons and episodes. It does **not** contain AniDB's internal
-episode record ID (eid). Before trial acquisition, Anime Discovery verifies
+episode record ID (eid). Before trial acquisition, AniKeepOrNot verifies
 the Anime-Lists / TVDB result and retrieves eid from an AniDB anime episode
 catalog, independently of Shoko.
 

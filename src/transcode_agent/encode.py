@@ -1,7 +1,7 @@
 """The one encoder: probe a video, plan its streams, run ffmpeg, check the result.
 
 Standard library only; nothing here imports src.anime. The agent's server
-(server.py) and Anime Discovery's Local transcode mode both call transcode().
+(server.py) and AniKeepOrNot's Local transcode mode both call transcode().
 
 What an encode does (work item T1 1.3):
 * keeps every stream (`-map 0`): subtitles, attachments (ASS fonts), stream

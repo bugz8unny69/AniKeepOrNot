@@ -26,7 +26,7 @@ class ExistingMetadata:
     inventory: ObservedBatchInventory = field(repr=False)
     state: str
     category: str
-    # Informational provenance: the Anime Discovery ownership tag the torrent
+    # Informational provenance: the AniKeepOrNot ownership tag the torrent
     # carries, if any. Never used to authorize anything.
     ownership_tag: str | None
 

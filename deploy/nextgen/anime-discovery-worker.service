@@ -1,7 +1,7 @@
 [Unit]
 StartLimitIntervalSec=300
 StartLimitBurst=5
-Description=Anime Discovery acquisition and media worker
+Description=AniKeepOrNot acquisition and media worker
 PartOf=anime-discovery.target
 Requires=anime-discovery-api.service
 BindsTo=anime-discovery-api.service

@@ -1,4 +1,4 @@
-# Project Guidelines: Anime Discovery
+# Project Guidelines: AniKeepOrNot
 
 ## Core Engineering Principles
 

@@ -1,7 +1,7 @@
 [Unit]
 StartLimitIntervalSec=300
 StartLimitBurst=5
-Description=Anime Discovery management API
+Description=AniKeepOrNot management API
 PartOf=anime-discovery.target
 Wants=network-online.target
 After=network-online.target

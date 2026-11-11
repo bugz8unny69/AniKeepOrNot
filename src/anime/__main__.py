@@ -1,4 +1,6 @@
 """Explicit local setup/maintenance and worker entry point; no work on import."""
+
+from src.anime import APP_NAME
 import argparse
 import asyncio
 from contextlib import contextmanager
@@ -89,7 +91,7 @@ def check_local(directory,*,worker=False):
 
 
 def parser():
-    result=argparse.ArgumentParser(description='Anime Discovery NextGen local service tools')
+    result=argparse.ArgumentParser(description=f'{APP_NAME} NextGen local service tools')
     commands=result.add_subparsers(dest='command',required=True)
     for name in ('init','check','worker','config-preview','config-upgrade','database-preview','database-upgrade'):
         command=commands.add_parser(name)

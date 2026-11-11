@@ -1,6 +1,6 @@
 # Service health
 
-Anime Discovery depends on several external services. This package gives each service one **adapter**, keeps them in a **registry**, and tracks their health with one **monitor**. Nothing outside this package keeps its own list of services.
+AniKeepOrNot depends on several external services. This package gives each service one **adapter**, keeps them in a **registry**, and tracks their health with one **monitor**. Nothing outside this package keeps its own list of services.
 
 | Service | Adapter | How health is checked | At worker startup |
 |---|---|---|---|

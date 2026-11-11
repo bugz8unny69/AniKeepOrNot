@@ -75,7 +75,7 @@ def _series_of_job(db, job_id):
 
 
 def _trouble_episodes(db, anidb_id):
-    """AniDB episodes of the series that Anime Discovery could not get, as things stand."""
+    """AniDB episodes of the series that AniKeepOrNot could not get, as things stand."""
     return sorted({row[0] for row in db.execute(
         "SELECT r.anidb_episode_number FROM episode_discovery_results r JOIN user_evaluation_plans p USING(plan_id) "
         "WHERE p.anidb_id=? AND r.status='NO_RESULTS' "

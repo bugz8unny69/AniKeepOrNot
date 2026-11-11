@@ -1,6 +1,6 @@
 # qBittorrent ownership and Keep cleanup
 
-Anime Discovery deduplicates qBittorrent submissions by the **exact info hash** from
+AniKeepOrNot deduplicates qBittorrent submissions by the **exact info hash** from
 the webhook. It never uses title similarity or category names to decide that a
 torrent belongs to it. For newly submitted torrents it creates (if necessary)
 the fixed qBittorrent category `anime-discovery` and submits a unique tag
@@ -10,9 +10,9 @@ exact-hash inventory response reports both this category and the matching tag.
 
 The provenance states are:
 
-- `OWNED`: observed as an Anime Discovery add with the random marker, and
+- `OWNED`: observed as an AniKeepOrNot add with the random marker, and
   read back from the qBittorrent inventory
-- `EXTERNAL`: the exact hash already existed before Anime Discovery added
+- `EXTERNAL`: the exact hash already existed before AniKeepOrNot added
   anything; the application never retags or recategorizes that existing torrent
 - `UNCERTAIN`: legacy torrent, missing/changed marker, or unverified result
   after a failed, interrupted, or raced submission

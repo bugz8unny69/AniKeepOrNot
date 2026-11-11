@@ -1,4 +1,4 @@
-# Anime Discovery NextGen — Validation Barrier Register
+# AniKeepOrNot NextGen — Validation Barrier Register
 
 Prepared: 2026-11-03  
 Branch: `fix/validation-simplification`  

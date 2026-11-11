@@ -1,11 +1,11 @@
-# Anime Discovery
+# AniKeepOrNot
 
-Private development repository for the Anime Discovery homelab application.
+Private development repository for the AniKeepOrNot homelab application.
 
 ## Status
 **Homelab dashboard, installer, Autobrr intake and acquisition daemon; VM installation not yet verified.**
 
-GitHub commits do not automatically deploy to the Anime Discovery VM.
+GitHub commits do not automatically deploy to the AniKeepOrNot VM.
 
 ## Scope
 Autobrr webhook ingestion, canonical anime identity, controller and episode tracking, qBittorrent verification and acquisition, dashboard and authentication, safe staging, rejection enforcement, and administrative CLI.

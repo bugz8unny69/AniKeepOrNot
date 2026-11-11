@@ -35,7 +35,7 @@ Keep means Sonarr owns the series from now on. Keep does three things, in order:
    otherwise be downloaded again. The time is recorded first on the series'
    ACCEPT decision (`anime_review_decisions.sonarr_search_sent_at_ms`), so it
    is never sent twice. A failed search does not fail the Keep; it is recorded in
-   History as `KEEP_SEARCH_FAILED`. After that, Anime Discovery does nothing more
+   History as `KEEP_SEARCH_FAILED`. After that, AniKeepOrNot does nothing more
    for the series.
 
 **Long-running series.** AniDB splits normal shows into one entry per season;
@@ -44,7 +44,7 @@ episodes in one entry. When Keep adds a series whose highest regular AniDB
 episode is at least `sonarr.long_running_threshold` (default 100; 0 turns the
 rule off), it is added with `monitor: "future"`, so Sonarr only gets new
 episodes. The number comes from the cached AniDB record, or else from the
-episodes Anime Discovery verified for it; no request is made. The Settings
+episodes AniKeepOrNot verified for it; no request is made. The Settings
 option "Let Sonarr backfill long-running series" (`sonarr.backfill_long_running`,
 off) adds them with `monitor: "all"` like any other series. Not recommended:
 hundreds of episodes can use a lot of disk space. Kept episodes are imported by

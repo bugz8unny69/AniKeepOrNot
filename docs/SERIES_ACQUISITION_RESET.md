@@ -3,7 +3,7 @@
 ## What happens when you press Reset Acquisitions?
 
 This is a **series-scoped replay of saved verified Autobrr intake**, not a
-new discovery search. Anime Discovery already persists the original
+new discovery search. AniKeepOrNot already persists the original
 `notifications` row, the torrent infohash and magnet in
 `daemon_jobs.payload_json`, the TVDB/AniDB identity and episode approval.
 

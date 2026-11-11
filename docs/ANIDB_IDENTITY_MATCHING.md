@@ -1,4 +1,4 @@
-# Anime Discovery NextGen — AniDB Identity Matching & Candidate Ranking
+# AniKeepOrNot NextGen — AniDB Identity Matching & Candidate Ranking
 
 **Status:** Implemented (Schema v59, Migration `059_identity_candidate_evidence.sql`)  
 **Target:** NextGen  

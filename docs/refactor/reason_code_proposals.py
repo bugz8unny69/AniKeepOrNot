@@ -687,7 +687,7 @@ NEW = {
         'Press Search again to search with the current release search.'),
     # P4: Keep is a series decision.
     'ANIME_ACCEPTED': ('INFO', False,
-        'Someone pressed Keep for this anime, so Sonarr handles it from now on and Anime Discovery does no more work for it.',
+        'Someone pressed Keep for this anime, so Sonarr handles it from now on and AniKeepOrNot does no more work for it.',
         'This anime was accepted; Sonarr handles it.',
         'Nothing to do. If this delivery was a different anime, open it under the bell and press Process anyway.'),
     # P1: Keep adds the series to the library manager and asks once for missing episodes.

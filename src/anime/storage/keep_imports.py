@@ -109,7 +109,7 @@ def highest_regular_episode(db,anidb_id):
     """The highest regular AniDB episode number known locally; never a request.
 
     The cached AniDB record decides when it is still cached. Otherwise the
-    highest episode Anime Discovery verified for this anime is used.
+    highest episode AniKeepOrNot verified for this anime is used.
     """
     from src.anime.providers.parsing import episode_catalog
     from src.anime.providers.errors import ProviderInvalidResponse
