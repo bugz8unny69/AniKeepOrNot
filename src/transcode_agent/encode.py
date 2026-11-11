@@ -12,8 +12,9 @@ What an encode does (work item T1 1.3):
 * encodes the video as HEVC 10-bit Main10 at the given bitrate: VAAPI
   (hevc_vaapi) when "gpu" is allowed, libx265 two-pass when "cpu" is allowed.
   GPU first; when it fails and cpu is allowed, the file is encoded on the CPU.
-* probes the output: same number of audio and subtitle streams and
-  attachments as the source, duration within one second, or the job fails.
+* probes the output: same number of video, audio and subtitle streams and
+  attachments as the source, the first video stream HEVC Main 10, duration
+  within one second, or the job fails.
 """
 import json
 import math
@@ -269,13 +270,27 @@ def transcode(source, output, *, video_kbps, encoders=('gpu', 'cpu'), vaapi_devi
 
 
 def check(*, source_info, output, ffprobe='ffprobe'):
-    """The output keeps every audio, subtitle and attachment stream and the duration."""
+    """The output is the encode the contract promises, or it is removed.
+
+    It keeps every video, audio, subtitle and attachment stream and the duration,
+    and its first video stream is HEVC Main 10 (the one stream the encode
+    re-encodes; the rest are copied). An audio-only file never passes for a video.
+    """
+    before = counts(source_info['streams'])
+    if not before['video']:
+        _remove(output)
+        raise EncodeError('the source has no video stream to encode')
     result = probe(output, ffprobe=ffprobe)
-    before, after = counts(source_info['streams']), counts(result['streams'])
-    for kind in ('audio', 'subtitle', 'attachment'):
+    after = counts(result['streams'])
+    for kind in ('video', 'audio', 'subtitle', 'attachment'):
         if before[kind] != after[kind]:
             _remove(output)
             raise EncodeError(f'output has {after[kind]} {kind} streams, the source has {before[kind]}')
+    video = next(stream for stream in result['streams'] if stream.get('codec_type') == 'video')
+    if video.get('codec_name') != 'hevc' or video.get('profile') != 'Main 10':
+        _remove(output)
+        raise EncodeError(f"output video is {video.get('codec_name')} {video.get('profile') or ''}".rstrip()
+                          + ', expected hevc Main 10')
     if abs(result['duration'] - source_info['duration']) > 1.0:
         _remove(output)
         raise EncodeError(f'output duration {result["duration"]:.2f}s differs from source {source_info["duration"]:.2f}s')

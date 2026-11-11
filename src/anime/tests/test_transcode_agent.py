@@ -17,7 +17,7 @@ from src.transcode_agent.server import Agent, make_server
 
 
 def test_order_fallback_and_validation(tmp_path):
-    info = {'duration': 2, 'streams': [{'codec_type': 'video'}]}
+    info = {'duration': 2, 'streams': [{'codec_type': 'video', 'codec_name': 'hevc', 'profile': 'Main 10'}]}
     calls = []
     def run(command, duration, progress):
         calls.append(command)
@@ -30,9 +30,25 @@ def test_order_fallback_and_validation(tmp_path):
         with pytest.raises(encode.EncodeError, match='VRAM'):
             encode.transcode('in', tmp_path/'out', video_kbps=100, encoders=('gpu',), run=run)
         assert len(calls) == 1
-    with patch.object(encode, 'probe', return_value={'duration': 2, 'streams': []}):
+    hevc = {'codec_type': 'video', 'codec_name': 'hevc', 'profile': 'Main 10'}
+    source = {'duration': 2, 'streams': [{'codec_type': 'video', 'codec_name': 'h264'}, {'codec_type': 'audio'}]}
+    with patch.object(encode, 'probe', return_value={'duration': 2, 'streams': [hevc]}):
         with pytest.raises(encode.EncodeError, match='audio streams'):
-            encode.check(source_info={'duration': 2, 'streams': [{'codec_type': 'audio'}]}, output=tmp_path/'out')
+            encode.check(source_info=source, output=tmp_path/'out')
+    # An audio-only result never passes for a video.
+    with patch.object(encode, 'probe', return_value={'duration': 2, 'streams': [{'codec_type': 'audio'}]}):
+        with pytest.raises(encode.EncodeError, match='0 video streams, the source has 1'):
+            encode.check(source_info=source, output=tmp_path/'out')
+    # The re-encoded stream must be what the contract promises.
+    for wrong, message in (({**hevc, 'profile': 'Main'}, 'hevc Main, expected hevc Main 10'),
+                           ({'codec_type': 'video', 'codec_name': 'h264', 'profile': 'High'}, 'h264 High')):
+        with patch.object(encode, 'probe', return_value={'duration': 2, 'streams': [wrong, {'codec_type': 'audio'}]}):
+            with pytest.raises(encode.EncodeError, match=message):
+                encode.check(source_info=source, output=tmp_path/'out')
+    with pytest.raises(encode.EncodeError, match='no video stream'):
+        encode.check(source_info={'duration': 2, 'streams': [{'codec_type': 'audio'}]}, output=tmp_path/'out')
+    with patch.object(encode, 'probe', return_value={'duration': 2, 'streams': [hevc, {'codec_type': 'audio'}]}):
+        assert encode.check(source_info=source, output=tmp_path/'out')['streams'][0] == hevc
 
 
 def test_http_contract_and_scoped_wipe(tmp_path):
@@ -152,3 +168,17 @@ def test_real_encode_keeps_streams(tmp_path, encoder):
 
     assert next(s for s in result['streams'] if s['codec_type']=='subtitle')['disposition']['forced'] == 1
     assert next(s for s in result['streams'] if s['codec_type']=='audio')['disposition']['default'] == 1
+
+
+@pytest.mark.skipif(not shutil.which('ffmpeg') or not shutil.which('ffprobe'), reason='ffmpeg/ffprobe unavailable')
+def test_real_audio_only_mkv_is_rejected_for_a_video_source(tmp_path):
+    """The shared check, used by Local mode, the agent and the receiving worker, refuses an audio-only result."""
+    source, result = tmp_path/'source.mkv', tmp_path/'result.mkv'
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x96:rate=10:duration=2',
+                    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-c:v', 'ffv1', '-c:a', 'flac', str(source)],
+                   check=True, capture_output=True, timeout=30)
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(source), '-map', '0:a', '-c', 'copy', str(result)],
+                   check=True, capture_output=True, timeout=30)
+    with pytest.raises(encode.EncodeError, match='0 video streams, the source has 1'):
+        encode.check(source_info=encode.probe(source), output=result)
+    assert not result.exists()                                    # A rejected result is removed.
