@@ -1,7 +1,8 @@
-"""Offline agent contract checks, plus a real CPU stream-preservation encode."""
+"""Offline agent contracts and real CPU/VAAPI stream-preservation encodes."""
 import hashlib
 import http.client
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -93,16 +94,44 @@ def test_expiration(tmp_path):
     assert agent.status(job) is None
 
 
+def _usable_vaapi_device():
+    """Skip optional hardware coverage when no accessible Main10 encoder works."""
+    configured = os.environ.get('TRANSCODE_VAAPI_DEVICE')
+    devices = [Path(configured)] if configured else sorted(Path('/dev/dri').glob('renderD*'))
+    reasons = []
+    for device in devices:
+        if not os.access(device, os.R_OK | os.W_OK):
+            reasons.append(f'{device}: not accessible')
+            continue
+        command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error',
+                   '-vaapi_device', str(device), '-f', 'lavfi',
+                   '-i', 'color=size=320x192:rate=1:duration=1',
+                   '-vf', 'format=p010,hwupload', '-c:v', 'hevc_vaapi',
+                   '-profile:v', 'main10', '-b:v', '100k', '-frames:v', '1', '-f', 'null', '-']
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            reasons.append(f'{device}: {exc}')
+            continue
+        if result.returncode == 0:
+            return str(device)
+        reasons.append(f'{device}: {result.stderr.strip()[-300:]}')
+    pytest.skip('no usable HEVC Main10 VAAPI GPU: ' + ('; '.join(reasons) or 'no render devices'))
+
+
 @pytest.mark.skipif(not shutil.which('ffmpeg') or not shutil.which('ffprobe'), reason='ffmpeg/ffprobe unavailable')
-def test_real_cpu_keeps_streams(tmp_path):
+@pytest.mark.parametrize('encoder', ['cpu', 'gpu'], ids=['cpu', 'vaapi'])
+def test_real_encode_keeps_streams(tmp_path, encoder):
+    available = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True).stdout
+    required = 'libx265' if encoder == 'cpu' else 'hevc_vaapi'
+    if required not in available or 'libopus' not in available: pytest.skip('required encoders unavailable')
+    device = _usable_vaapi_device() if encoder == 'gpu' else encode.DEFAULT_VAAPI_DEVICE
     font = next(iter(Path('/usr/share/fonts').rglob('*.ttf')), None)
     if font is None: pytest.skip('no test font installed')
-    available = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True).stdout
-    if 'libx265' not in available or 'libopus' not in available: pytest.skip('required encoders unavailable')
     sub = tmp_path/'test.ass'
     sub.write_text('[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,Hello\n')
     source, output = tmp_path/'source.mkv', tmp_path/'result.mkv'
-    command = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=10:duration=2',
+    command = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x192:rate=10:duration=2',
                '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=2',
                '-i', str(sub), '-map', '0:v', '-map', '1:a', '-map', '2:a', '-map', '3:s',
                '-c:v', 'ffv1', '-c:a:0', 'flac', '-c:a:1', 'aac', '-c:s', 'ass',
@@ -110,8 +139,13 @@ def test_real_cpu_keeps_streams(tmp_path):
                '-disposition:a:0', 'default', '-disposition:s:0', 'forced',
                '-attach', str(font), '-metadata:s:t', 'mimetype=application/x-truetype-font', str(source)]
     subprocess.run(command, check=True, capture_output=True, timeout=30)
-    encode.transcode(source, output, video_kbps=100, encoders=('cpu',), workdir=tmp_path)
+    encoded = encode.transcode(source, output, video_kbps=100, encoders=(encoder,),
+                               vaapi_device=device, workdir=tmp_path)
+    assert encoded['encoder'] == encoder
     result = encode.probe(output)
+    video = next(s for s in result['streams'] if s['codec_type'] == 'video')
+    assert video['codec_name'] == 'hevc'
+    assert video['profile'] == 'Main 10'
     assert encode.counts(result['streams']) == {'video': 1, 'audio': 2, 'subtitle': 1, 'attachment': 1}
     assert [s['codec_name'] for s in result['streams'] if s['codec_type'] == 'audio'] == ['opus', 'aac']
     assert [s.get('tags', {}).get('language') for s in result['streams'] if s['codec_type'] == 'audio'] == ['jpn', 'eng']
