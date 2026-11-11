@@ -39,6 +39,6 @@ class ServiceRegistry:
 
 
 def default_registry():
-    """The built-in adapters for every service Anime Discovery uses today."""
+    """The built-in adapters for every service AniKeepOrNot uses today."""
     from src.anime.services.adapters import builtin_adapters
     return ServiceRegistry(builtin_adapters())

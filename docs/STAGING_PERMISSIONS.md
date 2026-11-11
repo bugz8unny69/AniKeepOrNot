@@ -1,6 +1,6 @@
 # Anime-Trial staging ownership and group access
 
-Anime Discovery's trial staging originally copied into a `tempfile.mkstemp`
+AniKeepOrNot's trial staging originally copied into a `tempfile.mkstemp`
 file, which defaults to mode `0600`; hard-linking that inode into the
 final `Season 01/S01E01.mkv` retained the private mode and prevented
 Jellyfin from accessing the file through its shared media group.

@@ -1,4 +1,4 @@
-# Anime Discovery NextGen — architecture
+# AniKeepOrNot NextGen — architecture
 
 **Canonical product flow:** **Intake → Evaluate → Download → Verify → Stage → Review → Keep or Reject.**
 

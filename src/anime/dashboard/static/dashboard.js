@@ -1,3 +1,4 @@
+const APP_NAME = 'AniKeepOrNot';
 /* Reuses the legacy jobs-table DOM rendering and schema-driven settings pattern.
  * Private data and actions travel only through /api/v1/. No legacy endpoints.
  */
@@ -1492,6 +1493,7 @@ function queueSearch() {
   state.searchTimer = setTimeout(applySearch, 250);
 }
 async function showWorkspace() {
+  document.title = ({intake: 'Intake', jobs: 'Jobs', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
   await loadServices();
   $('activity-panel').hidden = state.page === 'settings' || state.page === 'recognized';

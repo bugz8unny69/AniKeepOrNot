@@ -1,4 +1,4 @@
-# Anime Discovery — Project Status
+# AniKeepOrNot — Project Status
 Updated: 2026-10-18
 
 ## Repository checkpoint

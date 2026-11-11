@@ -33,6 +33,6 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" dist/* \
-            --title "Anime Discovery $RELEASE_TAG" \
+            --title "AniKeepOrNot $RELEASE_TAG" \
             --notes "VM-ready source archive for first installation. Includes deploy/install-homelab.py, admin CLI, and SHA256SUMS. Private repository: authenticate to download release assets. Never contains VM settings or secrets." \
             --target "$GITHUB_SHA"

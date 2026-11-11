@@ -1,4 +1,6 @@
 """Local privileged password recovery through the API's Unix socket."""
+
+from src.anime import APP_NAME
 import argparse
 import getpass
 import json
@@ -23,7 +25,7 @@ def main():
         from src.anime.services.check import main as services
         sys.exit(services(sys.argv[2:]))
     parser = argparse.ArgumentParser(
-        description="Anime Discovery local administration",
+        description=f"{APP_NAME} local administration",
         epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health)",
     )
     parser.add_argument("command", choices=("set-password",))

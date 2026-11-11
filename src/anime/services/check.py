@@ -7,6 +7,8 @@ startup when they are not set up or reject the login. Exit status: 0 when every 
 service is down, not set up, rejected the credentials or is unsupported,
 2 when the settings themselves cannot be read.
 """
+
+from src.anime import APP_NAME
 import argparse
 import json
 import sys
@@ -44,7 +46,7 @@ def _table(states, registry):
 
 def main(argv=None, *, out=print, registry=None):
     parser = argparse.ArgumentParser(prog='adm services',
-                                     description='Check the external services Anime Discovery depends on.')
+                                     description=f'Check the external services {APP_NAME} depends on.')
     parser.add_argument('--config-dir', default=cli_config_dir())
     sub = parser.add_subparsers(dest='action', required=True)
     run = sub.add_parser('check', help='Check each service once and print its status')

@@ -30,7 +30,7 @@ system and a section's `credential` key.
 Only configured integrations with existing safe probe logic have a
 `test_connection=True` control. AniDB does not expose that control: a test
 button should not consume the API's scarce request budget. Register your
-AniDB HTTP API client outside Anime Discovery, then enter the client name
+AniDB HTTP API client outside AniKeepOrNot, then enter the client name
 and version in the AniDB section of the dashboard.
 
 Saving validates the entire file and persists it atomically. Dashboard-visible

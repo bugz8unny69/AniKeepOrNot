@@ -112,7 +112,7 @@ To recover an old operation whose actual workers are already stopped:
 
 1. Review `sudo adm report job --id <cleanup-job-id>`.
 2. Restart `anime-discovery-worker.service` to release locks held by
-   that process; verify no other Anime Discovery instance still uses the
+   that process; verify no other AniKeepOrNot instance still uses the
    same database.
 3. Old Needs Review states caused solely by the removed timeout are
    requeued automatically when the operation lock can be acquired. If it

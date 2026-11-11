@@ -1,6 +1,6 @@
 """Service health contract: statuses, probe results and the adapter base class.
 
-Every external service Anime Discovery depends on (qBittorrent, Prowlarr,
+Every external service AniKeepOrNot depends on (qBittorrent, Prowlarr,
 Sonarr, Jellyfin, Shoko, AniDB, TVDB, Anime-Lists) is described by one
 adapter. Adding a service means writing one adapter and registering it; see
 README.md in this package.

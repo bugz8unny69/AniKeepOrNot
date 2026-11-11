@@ -1,4 +1,6 @@
 """Explicit API entry point; no auto-initialize, migrate, provider or worker start."""
+
+from src.anime import APP_NAME
 import argparse
 import getpass
 import ipaddress
@@ -19,7 +21,7 @@ class TransportFilter(logging.Filter):
 
 
 def main():
-    parser=argparse.ArgumentParser(description='Anime Discovery NextGen API')
+    parser=argparse.ArgumentParser(description=f'{APP_NAME} NextGen API')
     parser.add_argument('command',choices=('serve','init-access'))
     parser.add_argument('--config-dir',required=True)
     parser.add_argument('--public-origin',help='Exact browser origin; HTTPS behind a trusted proxy, or local loopback HTTP.')

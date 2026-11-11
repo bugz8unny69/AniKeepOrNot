@@ -1,5 +1,5 @@
 [Unit]
-Description=Anime Discovery
+Description=AniKeepOrNot
 Wants=anime-discovery-api.service anime-discovery-worker.service
 After=network-online.target remote-fs.target
 

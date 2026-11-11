@@ -1,6 +1,6 @@
 # Unified identity triage — lab rollout
 
-This integration performs a bounded first-pass lookup for unmatched Autobrr releases in the **unified Anime Discovery database**, not the older standalone inbox.
+This integration performs a bounded first-pass lookup for unmatched Autobrr releases in the **unified AniKeepOrNot database**, not the older standalone inbox.
 
 ## Sequence
 

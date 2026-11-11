@@ -1,4 +1,4 @@
-# Anime Discovery installation and upgrades
+# AniKeepOrNot installation and upgrades
 
 Run the standalone `bin/anime-discovery-install` from a reviewed checkout. It uses Python's standard library, asks questions by default, and accepts switches for unattended operation. Python 3.11+, git, runuser, systemd and Python venv/pip are required. Use `--install-system-deps` to install dependencies with apt-get on Debian/Ubuntu; this is never implied by `--yes`.
 
@@ -102,7 +102,7 @@ For example, NextGen and `refactor` share migrations 001–061. A NextGen databa
 
 `--copy-db-data` needs an installer that knows it: on an older installation, run `--upgrade` once first, so the current branch's installer is updated.
 
-Existing native settings, credentials, administrator password, and configured database path are preserved. Native configuration and database upgrades run explicitly with the services stopped, using the maintenance preview/backup contracts. Legacy configuration and databases are not imported. Use a separate fresh Anime Discovery directory.
+Existing native settings, credentials, administrator password, and configured database path are preserved. Native configuration and database upgrades run explicitly with the services stopped, using the maintenance preview/backup contracts. Legacy configuration and databases are not imported. Use a separate fresh AniKeepOrNot directory.
 
 Fresh installations start only the API. The API and worker are separate Type=notify services with 60-second event-loop watchdogs. The worker waits for API readiness and stops when the API stops; worker failure leaves the API running. Restart the worker explicitly after API recovery. Units include configured media mount dependencies and write paths; the installer does not create, move or recursively change ownership of media directories.
 
@@ -123,7 +123,7 @@ sudo systemctl enable --now anime-discovery-worker.service
 
 `--start preserve` is the default and retains running/stopped choices on upgrade. `--start none`, `api`, or `all` overrides it. Starting all requires worker readiness. `--enable` enables the selected component services for boot; existing enablement is retained.
 
-If setup or activation fails, Anime Discovery remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; rollback is never automatic (see Rollback).
+If setup or activation fails, AniKeepOrNot remains stopped and `installation.pending.json` identifies the candidate and previous release. Existing units are backed up under `unit-backups`. Do not point old code at a database whose schema has advanced. Correct the cause and rerun; rollback is never automatic (see Rollback).
 
 No live installation has been performed by the implementation tests. Follow `src/anime/SERVICE_SETUP.md` for host validation: password setup/login, verified webhook intake appearing in Recognized Names, worker crash isolation, API recovery followed by worker restart, mount access, and provider connectivity.
 

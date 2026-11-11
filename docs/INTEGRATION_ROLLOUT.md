@@ -37,7 +37,7 @@ Shoko file/episode linkage remains read-only and fail-closed until the 5.3.3.0 A
 - Sonarr quality profile display name: `Anime`; numeric profile ID must be discovered from the server before enabling.
 - Shoko Server: 5.3.3.0; internal Swagger UI at `https://shoko.arr.internal/swagger/`. API schema inaccessible from this execution environment; no Shoko write action approved.
 
-**Requested KEEP policy:** Import existing staged trial episodes into Sonarr's permanent root. User also wants original trial files and the original Anime Discovery torrent payload removed. **This is now implemented behind the confirmation monitor, but has not been tested against the real VM.** The monitor deletes original data only after Sonarr file and torrent payload verification. Before cleanup, independently verify actual Sonarr episode-file records, on-disk destination files, and torrent ownership. Adding a series in Sonarr does not automatically transfer management of an existing qBittorrent torrent. Never delete that torrent on the assumption Sonarr adopted it; coordinate the torrent client and ownership handoff explicitly. Leave NFS data unchanged on timeout, unclear ownership, ambiguous episode mapping, or partial import.
+**Requested KEEP policy:** Import existing staged trial episodes into Sonarr's permanent root. User also wants original trial files and the original AniKeepOrNot torrent payload removed. **This is now implemented behind the confirmation monitor, but has not been tested against the real VM.** The monitor deletes original data only after Sonarr file and torrent payload verification. Before cleanup, independently verify actual Sonarr episode-file records, on-disk destination files, and torrent ownership. Adding a series in Sonarr does not automatically transfer management of an existing qBittorrent torrent. Never delete that torrent on the assumption Sonarr adopted it; coordinate the torrent client and ownership handoff explicitly. Leave NFS data unchanged on timeout, unclear ownership, ambiguous episode mapping, or partial import.
 
 **Important:** Sonarr's root folder and trial folder must be distinct. Confirm the exact trial root and ensure both services resolve the same staged file path for Manual Import. This is a deployment prerequisite, not an assumed path mapping.
 
@@ -55,14 +55,14 @@ Exact documented link write, **not enabled**:
 - `POST /api/v3/File/{fileID}/Link` with JSON object `{"EpisodeIDs":[<Shoko internal episode ID>]}`, not the AniDB episode ID.
 - `POST /api/v3/File/{fileID}/LinkFromSeries` requires `SeriesID`, `RangeStart`, and `RangeEnd`; prefer exact ID-based linking to avoid fuzzy episode ranges.
 
-Shoko also exposes destructive endpoints including `DELETE /File/{fileID}`, `DELETE /File/Location`, and `GET /Action/SyncMyList` (documented as irreversible AniDB synchronization). Anime Discovery must never invoke these in any automatic workflow.
+Shoko also exposes destructive endpoints including `DELETE /File/{fileID}`, `DELETE /File/Location`, and `GET /Action/SyncMyList` (documented as irreversible AniDB synchronization). AniKeepOrNot must never invoke these in any automatic workflow.
 
 The feature-branch `anime_shoko_v3.py` client performs only authenticated GETs and prepares a `writes_enabled:false` link plan. API calls and source paths still require VM validation and NFS path mapping. Do not enable automatic Shoko writes until episode IDs and file references have been verified against read-only live responses.
 
 
 ## Post-Keep Shoko reconciliation implementation status (2026-10-19)
 
-The feature branch now starts `anime_shoko_handoff_monitor.py` only when Shoko and Sonarr are enabled. After a series reaches `KEPT`, the monitor reconstructs its Anime Discovery provenance, **revalidates the exact Sonarr episode destination and recovery hash**, persists one Shoko handoff record per notification and polls Shoko with GET requests only. These records survive restarts and do not resubmit Sonarr imports.
+The feature branch now starts `anime_shoko_handoff_monitor.py` only when Shoko and Sonarr are enabled. After a series reaches `KEPT`, the monitor reconstructs its AniKeepOrNot provenance, **revalidates the exact Sonarr episode destination and recovery hash**, persists one Shoko handoff record per notification and polls Shoko with GET requests only. These records survive restarts and do not resubmit Sonarr imports.
 
 **Explicit blocking gap:** The existing verified identity cache and `identity.series_map` prove TVDB and **AniDB anime/series** identity, not an exact AniDB episode identifier. Season/episode ordering differs between TVDB and AniDB (including specials). The monitor therefore reports `NEEDS_EPISODE_IDENTITY` rather than inventing a mapping. `record_verified_episode` requires explicit, separately verified provenance-bound AniDB *episode* ID.
 
@@ -80,7 +80,7 @@ Both components consume central configuration from `load_config()`: Sonarr's `se
 
 ### Installed-system upgrade and settings migration
 
-For an **existing** Anime Discovery installation, do not rerun `deploy/install-homelab.py`. Once a tested release is approved and published, run `anime-discovery-admin upgrade`, then `anime-discovery-admin settings migrate` to preview missing keys and `anime-discovery-admin settings migrate --apply` to back up `settings.json` and insert only missing defaults. `secrets.json` is deliberately **not** modified by migration; prior `web_token`, `ntfy_token`, `tvdb_api_key`, `sonarr_api_key` and `shoko_api_key` values remain intact.
+For an **existing** AniKeepOrNot installation, do not rerun `deploy/install-homelab.py`. Once a tested release is approved and published, run `anime-discovery-admin upgrade`, then `anime-discovery-admin settings migrate` to preview missing keys and `anime-discovery-admin settings migrate --apply` to back up `settings.json` and insert only missing defaults. `secrets.json` is deliberately **not** modified by migration; prior `web_token`, `ntfy_token`, `tvdb_api_key`, `sonarr_api_key` and `shoko_api_key` values remain intact.
 
 New integrations default **disabled**. To supply missing API credentials after migration, use `anime-discovery-admin settings configure-integration sonarr`, `... shoko`, `... tvdb`, or `... ntfy`; entering a blank credential preserves any existing key. No AniDB credential exists in this configuration schema: `identity.series_map[*].anidb_id` is a catalog identifier, not a secret. The installer inherits the same central defaults, so fresh installs include the settings sections without auto-generating credentials.
 
@@ -89,7 +89,7 @@ Do not run these upgrade instructions until the feature branch has completed CI 
 
 ### Final lifecycle decision: Shoko is never a Keep or cleanup blocker
 
-This section supersedes earlier notes about gating cleanup on Shoko. **Only successful Sonarr ManualImport, exact independent destination verification, and qB ownership/source checks** determine whether original Anime Discovery trial media and torrent data can be cleaned up. When Shoko is enabled, the finalizer attempts to persist post-import provenance, but failures in Shoko status collection do not change the successful Sonarr outcome. It never deletes any permanent Sonarr file.
+This section supersedes earlier notes about gating cleanup on Shoko. **Only successful Sonarr ManualImport, exact independent destination verification, and qB ownership/source checks** determine whether original AniKeepOrNot trial media and torrent data can be cleaned up. When Shoko is enabled, the finalizer attempts to persist post-import provenance, but failures in Shoko status collection do not change the successful Sonarr outcome. It never deletes any permanent Sonarr file.
 
 Shoko reconciliation is a separate best-effort retry workflow after Keep. Issues requiring manual action (`NEEDS_EPISODE_IDENTITY`, `UNRECOGNIZED_NEEDS_REVIEW`, `AMBIGUOUS_SHOKO_FILE`) trigger a deduplicated, best-effort NTFY warning using the existing configured server/topic/token. Delivery failure never blocks Keep. No Shoko VFS/Jellyfin verification is required. An exact verified AniDB *episode* identity remains mandatory before any future link write; identifying the AniDB series alone is not sufficient. Automatic Shoko link execution is not enabled yet.
 

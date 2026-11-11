@@ -1,4 +1,4 @@
-# Anime Discovery — NextGen development handoff
+# AniKeepOrNot — NextGen development handoff
 
 > **Authoritative architecture decision: 2026-10-22.** NextGen is built fresh in `src/anime/`. There is **no migration**, compatibility bridge, legacy SQLite reader or transitional data assembler. Legacy `src/legacy/` is reference material for domain lessons and regression tests only.
 >
