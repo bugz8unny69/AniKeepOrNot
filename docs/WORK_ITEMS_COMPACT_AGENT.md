@@ -1,6 +1,13 @@
 # Work items: ADM server agent distributed as one .pyz
 
-Status: proposed implementation plan, revised to use ADM and zipapp. These commands are proposed; they are not implemented yet. No running installation is changed by this document.
+Status: implemented on branches agent/0-validate-video through agent/5-acceptance (one PR per item, stacked, all targeting `develop`). No running installation was changed.
+
+Where the implementation differs from this plan:
+
+- Update-required feedback uses the service bar (status UNSUPPORTED, a sentence per agent) and the waiting job's detail. No bell notification was added: a new notification type needs a database migration, and the service bar already persists and changes only when the status changes.
+- The agent installer has its own small helpers (atomic writes, retries, health waits) in `src/transcode_agent/install.py`. `bin/anime-discovery-install` is a standalone script that must run without the application, so neither can import the other.
+- Real systemd verification on the development machine used a transient `systemd-run --user` unit (opt-in test, `AGENT_SYSTEMD_TESTS=1`): crash restart and ffmpeg cleanup on stop. Full system- and user-scope installs are covered with fake system commands only; no disposable systemd host was available.
+- Settings -> Transcode -> Remote (item 4) already had Address/Token fields with Generate from PR #333; this work only points its hints at `server agent token`.
 
 ## Outcome and proposed operator flow
 
