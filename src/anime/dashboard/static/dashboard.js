@@ -11,25 +11,56 @@ const COPY = Object.freeze({
   'dashboard.request_failed': 'The request could not be completed.',
   'dashboard.uncertain': 'The response could not be confirmed. Refresh the job status before trying again.',
   'dashboard.submitting': 'Submitting the job.',
-  'dashboard.confirm_cancel': 'Cancel this unfinished acquisition and clean up its owned download files?',
-  'dashboard.confirm_cleanup': 'Continue cleanup for this canceled acquisition?',
+  'dashboard.confirm_cancel': 'Cancel this acquisition and permanently remove its owned download files; this cannot be undone?',
+  'dashboard.confirm_cleanup': 'Permanently remove the remaining owned files for this canceled acquisition; this cannot be undone?',
   'dashboard.not_available': 'This action is not available.',
-  'dashboard.settings_saved': 'Settings saved. New operations will use these values.',
   'dashboard.restart': 'Settings saved. A service restart is required for some changes.',
   'dashboard.saved_unconfirmed': 'Changes were saved, but storage durability needs review.',
-  'dashboard.credentials_saved': 'Credentials saved.',
   'dashboard.invalid_value': 'Check the setting value before saving.',
   'dashboard.no_history': 'No history has been recorded yet.',
   'dashboard.staged': 'Staged for viewing. Choose Keep when it is available.',
-  'dashboard.scope': 'Intake groups releases by anime. Open a series to review staged and missing episodes.',
-  'dashboard.page_filter': 'The status filter applies to this page.',
   'dashboard.bulk_limit': 'Select at most 100 jobs at a time.',
-  'dashboard.discard': 'Discard unsaved changes and refresh settings?',
 });
 const $ = id => document.getElementById(id);
+const BUTTON_LABELS = Object.freeze({
+  'Submit release': 'add release', 'Save match and retry': 'save match',
+  'View series': 'details', 'Matching details': 'details', 'Episode coverage': 'coverage',
+  'View job': 'jobs', 'Related jobs': 'jobs', 'Episodes': 'details',
+  'Retry acquisition': 'retry', 'Try next release': 'cancel', 'Search': 'search again',
+  'Retry search': 'search again', 'Save changes': 'save', 'Add torrent/magnet': 'add release',
+  'Open series': 'series', 'Open job': 'history', 'Open jobs page': 'jobs',
+});
+const BUTTON_HINTS = Object.freeze({
+  keep: 'Import the staged acquisition into the permanent library.',
+  retry: 'Retry this job from the step that failed.',
+  cancel: 'Cancel this acquisition and permanently remove its owned download files.',
+  cleanup: 'Resume permanent cleanup of this canceled acquisition.',
+  'retry cleanup': 'Retry this stopped cleanup without repeating the library import.',
+  'retry shoko': 'Retry optional Shoko metadata without repeating the library import.',
+  details: 'Open or close the details for this item.',
+  coverage: 'Open the verified episode coverage for this release.',
+  history: 'Open this job’s recorded history.', jobs: 'Open related jobs on the Jobs page.',
+  series: 'Open the series and its staged and missing episodes.',
+  'search again': 'Search saved and new releases for this episode.',
+  'save match': 'Save this verified mapping and retry identification.',
+  save: 'Save the changes in this section.', close: 'Close this panel.',
+  'add release': 'Submit a torrent or magnet as a separate episode candidate.',
+  'process anyway': 'Queue this release despite its notification warning.',
+  'mark read': 'Mark this notification as read.',
+  up: 'Move this agent one place earlier.', down: 'Move this agent one place later.',
+  remove: 'Remove this agent from the unsaved configuration.',
+  'add agent': 'Add an agent to the unsaved configuration.',
+  'save token': 'Save this agent token.',
+  acquire: 'Retry the previous size-rejected release using current size limits.',
+});
+function buttonLabel(text) { return BUTTON_LABELS[text] || String(text).toLowerCase(); }
+function buttonHint(label) { return BUTTON_HINTS[label] || 'Activate ' + label + '.'; }
 const node = (tag, text, cls) => {
   const el = document.createElement(tag);
   if (text !== undefined && text !== null) el.textContent = String(text);
+  if (tag === 'button') {
+    el.textContent = buttonLabel(text || ''); el.type = 'button'; el.title = buttonHint(el.textContent);
+  }
   if (cls) el.className = cls;
   return el;
 };
@@ -51,7 +82,7 @@ const state = {
   })(),
   search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams((location.hash || '').slice(1)).get('job') || '')
     ? '#' + new URLSearchParams((location.hash || '').slice(1)).get('job') : '',
-  recognizedSearch: '', searchTimer: null,
+  recognizedSearch: '', recognizedSignature: null, searchTimer: null,
   services: null, servicesAt: 0,
 };
 // Status bar: what each service state looks like and says.
@@ -77,18 +108,19 @@ function clearPrivate(message = '') {
   state.historyJob = null; state.historyVersion += 1;
   state.matchingJob = null; state.matchingVersion += 1;
   state.services = null; state.servicesAt = 0; renderServices();
-  $('job-rows').replaceChildren(); $('settings-fields').replaceChildren();
+  $('intake-rows').replaceChildren(); $('job-rows').replaceChildren(); $('settings-fields').replaceChildren();
   $('history-rows').replaceChildren();
   $('matching-body').replaceChildren(); $('matching-summary').textContent = '';
   $('recognized-rows').replaceChildren(); $('recognized-note').textContent = '';
   $('bell-items').replaceChildren(); $('bell-note').textContent = ''; state.bellNext = null;
   $('bell-panel').hidden = true; renderBellCount(0);
   $('access-key').value = '';
-  state.search = ''; state.recognizedSearch = ''; clearTimeout(state.searchTimer);
-  $('search').value = ''; $('recognized-search').value = '';
+  state.search = ''; state.recognizedSearch = ''; state.recognizedSignature = null; clearTimeout(state.searchTimer);
+  $('intake-search').value = ''; $('search').value = ''; $('recognized-search').value = '';
   if ($('history-dialog').open) $('history-dialog').close();
   if ($('matching-dialog').open) $('matching-dialog').close();
   if ($('series-dialog').open) $('series-dialog').close();
+  if ($('help-dialog').open) $('help-dialog').close();
   document.title = 'Sign in · ' + APP_NAME;
   $('console-prompt').textContent = APP_NAME.toLowerCase() + ':~/signin$';
   $('workspace').hidden = true; $('sign-out').hidden = true; $('login-panel').hidden = false;
@@ -137,7 +169,7 @@ function actionButton(job, action, label) {
   const explanation = submitting ? COPY['dashboard.submitting'] :
     capability?.disabled_reason?.message || capability?.availability_reason?.message;
   const wrapper = node('span', null, 'action-tooltip');
-  const button = node('button', label, action === 'cancel' ? 'danger' : 'secondary');
+  const button = node('button', label, ['cancel', 'cleanup'].includes(action) || buttonLabel(label) === 'retry cleanup' ? 'danger' : 'secondary');
   button.type = 'button'; button.disabled = !enabled;
   if (!enabled) {
     wrapper.tabIndex = 0; wrapper.dataset.disabled = 'true';
@@ -153,7 +185,7 @@ async function submitAction(job, action) {
   const capability = job.actions?.[action];
   if (!capability?.enabled || capability.execution_available === false) return;
   if (action === 'cancel' && !confirm(COPY['dashboard.confirm_cancel'])) return;
-  if (action === 'cleanup' && !confirm(COPY['dashboard.confirm_cleanup'])) return;
+  if ((action === 'cleanup' || action === 'retry' && job.kind?.startsWith('CLEANUP_')) && !confirm(COPY['dashboard.confirm_cleanup'])) return;
   state.pending.add(job.cancellation.operation_id); renderJobs();
   try {
     const body = action === 'retry' ? {expected_attempt: job.attempt_count, expected_reason: job.reason?.code} : {};
@@ -233,8 +265,7 @@ function renderJobs() {
     batchPanel.appendChild(node('p', `${batch.current_file || 'Waiting for transcoder'} · ${batch.failed} failed`));
   }
   const tbody = $('job-rows'); tbody.replaceChildren();
-  const filter = $('status-filter').value;
-  const jobs = state.jobs.filter(job => state.page === 'jobs' || !filter || job.state === filter);
+  const jobs = state.jobs;
   $('no-jobs').hidden = jobs.length !== 0;
   for (const job of jobs) {
     const tr = node('tr');
@@ -271,7 +302,7 @@ function renderJobs() {
       release.title = job.release_name;
       title.appendChild(release);
       const expanded = node('details', null, 'job-details');
-      const summary = node('summary', 'Release details');
+      const summary = node('summary', 'details');
       expanded.appendChild(summary);
       expanded.appendChild(node('p', job.release_name, 'job-release-full'));
       expanded.appendChild(node('small', targets.length ?
@@ -291,7 +322,6 @@ function renderJobs() {
     }
     td().appendChild(node('span', `#${job.job_id} · ${job.transcode_step || job.label?.message || 'Job'}`));
     const status = td(); status.appendChild(statusBadge(job));
-    if (state.page === 'intake') status.appendChild(node('small', job.acquisition_status.message, 'muted job-note'));
     const details = td();
     if (job.reason) {
       details.appendChild(node('p', job.reason.message));
@@ -304,11 +334,16 @@ function renderJobs() {
         FILES: 'Cleaning leftover files', COMPLETE: 'Cleanup completed'
       };
       details.appendChild(node('small',
-        `Cleanup: ${phases[job.cleanup_progress.phase] || job.cleanup_progress.phase} · Last advanced ${date(job.cleanup_progress.since_ms)}`,
+        `Cleanup: ${phases[job.cleanup_progress.phase] || 'Cleanup needs attention'} · Last advanced ${date(job.cleanup_progress.since_ms)}`,
         'muted'));
     }
     if (job.size_detail) details.appendChild(node('p', job.size_detail));
-    if (job.failed_detail) details.appendChild(node('small', job.failed_detail + ` · run: sudo adm report job --id ${job.job_id}`, 'muted'));
+    if (job.failed_detail || job.reason?.code) {
+      const technical = node('details', null, 'technical-details');
+      technical.appendChild(node('summary', 'details'));
+      technical.appendChild(node('pre', [job.reason?.code, job.failed_detail].filter(Boolean).join('\n')));
+      details.appendChild(technical);
+    }
     const activeAction = ['cleanup', 'keep'].map(name => job.actions?.[name]?.job).find(Boolean);
     if (activeAction) {
       details.appendChild(node('p', `Job #${activeAction.job_id}: ${activeAction.status.message}`));
@@ -332,17 +367,27 @@ function renderJobs() {
       }
     }
     const actions = td();
-    if (job.actions?.keep && 'execution_available' in job.actions.keep) {
-      const cleanup = job.actions?.keep?.job?.post_keep_cleanup;
-      const retryCleanup = cleanup && ['NEEDS_REVIEW', 'BLOCKED'].includes(cleanup.state);
-      const retryDownload = name => ['NEEDS_REVIEW', 'BLOCKED'].includes(job.actions?.[name]?.job?.download_cleanup?.state);
-      const retryShoko = ['NEEDS_REVIEW', 'BLOCKED'].includes(job.actions?.keep?.job?.optional_shoko?.state);
-      actions.appendChild(actionButton(job, 'keep', retryDownload('keep') ? 'Retry download cleanup' : retryCleanup ? 'Retry staging cleanup' : retryShoko ? 'Retry Shoko metadata' : 'Keep'));
-      if (job.cancellation.state !== 'STAGED') actions.appendChild(actionButton(job, 'cancel', 'Cancel'));
-      if (job.cancellation.state === 'CANCELED' || job.cancellation.state === 'CANCEL_REQUESTED') actions.appendChild(actionButton(job, 'cleanup', 'Cleanup'));
+    const keep = job.actions?.keep;
+    if (keep?.enabled && keep.execution_available !== false && !keep.job?.completion && keep.job?.state !== 'DONE') {
+      actions.appendChild(actionButton(job, 'keep', 'keep'));
+    } else if (keep && !keep.job?.completion && keep.job?.state !== 'DONE' && job.cancellation.state === 'STAGED') {
+      actions.appendChild(actionButton(job, 'keep', 'keep'));
     }
-    if (job.state === 'NEEDS_REVIEW' && job.actions?.retry) {
-      actions.appendChild(actionButton(job, 'retry', 'Retry'));
+    for (const name of ['cancel', 'cleanup']) {
+      if (job.actions?.[name]?.enabled) actions.appendChild(actionButton(job, name, name));
+    }
+    const followups = [keep?.job?.download_cleanup, keep?.job?.post_keep_cleanup, keep?.job?.optional_shoko];
+    for (const followup of followups) {
+      if (!followup || !['NEEDS_REVIEW', 'BLOCKED', 'FAILED'].includes(followup.state)) continue;
+      const shoko = followup === keep?.job?.optional_shoko;
+      const button = node('button', shoko ? 'retry shoko' : 'retry cleanup', shoko ? 'secondary' : 'danger');
+      if (!shoko) button.title = 'Retry ' + (followup === keep?.job?.download_cleanup ? 'download' : 'staging') + ' cleanup for job #' + followup.job_id + ' without repeating the library import.';
+      button.disabled = state.pending.has(job.cancellation.operation_id) || state.bulkSubmitting;
+      button.addEventListener('click', () => retryFollowup(job, followup, shoko));
+      actions.appendChild(button);
+    }
+    if (['NEEDS_REVIEW', 'FAILED', 'BLOCKED', 'ON_HOLD'].includes(job.state) && job.actions?.retry?.enabled) {
+      actions.appendChild(actionButton(job, 'retry', job.kind === 'ENRICH_SHOKO_METADATA' ? 'retry shoko' : job.kind?.startsWith('CLEANUP_') ? 'retry cleanup' : 'retry'));
     }
     if (job.event_id && !job.is_management_action) {
       const matching = node('button', 'Matching details', 'secondary');
@@ -364,13 +409,31 @@ function renderJobs() {
   $('next-page').disabled = state.next === null;
   if (state.page === 'jobs') renderBulkControls();
 }
+async function retryFollowup(parent, followup, shoko = false) {
+  const operation = parent.cancellation.operation_id;
+  if (state.pending.has(operation) || state.bulkSubmitting) return;
+  if (!shoko && !confirm('Retry permanent removal of this cleanup job’s owned files; deleted files cannot be recovered?')) return;
+  state.pending.add(operation); renderJobs();
+  try {
+    const job = await request(`${API}/jobs/${followup.job_id}`);
+    if (!job.actions?.retry?.enabled) throw new Error('This recovery is no longer available; check its history.');
+    await request(`${API}/jobs/${followup.job_id}/retry`, {method: 'POST', body: {
+      expected_attempt: job.attempt_count, expected_reason: job.reason?.code
+    }});
+    notice(shoko ? 'Shoko metadata retry queued.' : 'Cleanup retry queued.');
+  } catch (error) { displayError(error); }
+  finally {
+    if (state.loading) await state.loading;
+    state.pending.delete(operation);
+    if (state.csrf) await loadActivity();
+  }
+}
 function renderBulkControls() {
   if (state.page !== 'jobs') return;
   const count = state.selected.size;
   $('bulk-actions').hidden = count === 0;
   $('selection-count').textContent = count + ' selected (max 100)';
-  $('bulk-submit').disabled = !count || state.bulkSubmitting;
-  $('bulk-action').disabled = state.bulkSubmitting;
+  for (const name of ['retry', 'cancel', 'cleanup']) $('bulk-' + name).disabled = !count || state.bulkSubmitting;
   $('bulk-clear').disabled = state.bulkSubmitting;
   const onPage = state.jobs;
   $('select-page').disabled = state.bulkSubmitting || !onPage.length;
@@ -383,12 +446,12 @@ async function resetJobsPage() {
   state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
   await loadActivity();
 }
-async function submitSelected() {
+async function submitSelected(action) {
   if (state.bulkSubmitting || !state.csrf || state.page !== 'jobs' || !state.selected.size) return;
   const ids = [...state.selected];
-  const action = $('bulk-action').value;
   if (!['retry', 'cancel', 'cleanup'].includes(action)) return;
-  if (!confirm(`Apply ${action} to ${ids.length} selected jobs? Existing lifecycle and cleanup checks still apply.`)) return;
+  const effect = action === 'retry' ? 'retry eligible failed steps; already performed effects remain' : action === 'cancel' ? 'cancel acquisitions and permanently remove their owned files; deletion cannot be undone' : 'permanently remove remaining owned files; deletion cannot be undone';
+  if (!confirm(`For ${ids.length} selected jobs, ${effect}?`)) return;
   state.bulkSubmitting = true; renderJobs();
   let successful = 0, failed = 0, submitted = null;
   try {
@@ -442,8 +505,8 @@ function manualSubmissionButton(anidbId, episode) {
   return button;
 }
 function renderSeries() {
-  const tbody = $('job-rows'); tbody.replaceChildren();
-  $('no-jobs').hidden = state.jobs.length !== 0;
+  const tbody = $('intake-rows'); tbody.replaceChildren();
+  $('intake-empty').hidden = state.jobs.length !== 0;
   for (const series of state.jobs) {
     const tr = node('tr');
     const td = value => { const cell = node('td', value); tr.appendChild(cell); return cell; };
@@ -461,8 +524,8 @@ function renderSeries() {
     actions.appendChild(open);
     tbody.appendChild(tr);
   }
-  $('previous-page').disabled = state.previous.length === 0;
-  $('next-page').disabled = state.next === null;
+  $('intake-previous').disabled = state.previous.length === 0;
+  $('intake-next').disabled = state.next === null;
 }
 async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
   if (state.seriesBusy) return;
@@ -514,8 +577,9 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       if (item.manual_submission_count) result.appendChild(node('small',
         item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
       if (item.reason_code) {
-        result.appendChild(node('small', item.reason_code === 'TORRENT_METADATA_TIMEOUT'
-          ? 'Torrent metadata timed out' : item.reason_code.replaceAll('_', ' ').toLowerCase(), 'muted job-note'));
+        const technical = node('details', null, 'technical-details');
+        technical.appendChild(node('summary', 'details'));
+        technical.appendChild(node('pre', item.reason_code)); result.appendChild(technical);
       }
       if (item.waiting_job_ids?.length) {
         result.appendChild(node('small', item.waiting_job_ids.length + ' competing release(s) on hold', 'muted job-note'));
@@ -548,8 +612,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
                   throw new Error('This job action is no longer available. Refresh Intake.');
                 }
                 if (name === 'cancel' && !confirm(
-                  'Cancel this failed release and safely clean up its resources? ' +
-                  'After reservation release, one waiting release will be tried.')) return;
+                  'Cancel this release and permanently remove its owned downloads so another release can be tried; deletion cannot be undone?')) return;
                 const body = name === 'retry'
                   ? {expected_attempt: job.attempt_count, expected_reason: job.reason?.code} : {};
                 const receipt = await request(API + '/jobs/' + item.job_id + '/' + name,
@@ -564,12 +627,12 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         }
       }
       if (item.can_retry_size) {
-        const acquire = node('button', 'Retry acquisition', 'secondary');
+        const acquire = node('button', 'acquire', 'secondary');
         acquire.type = 'button';
         acquire.title = 'Recheck the prior size-rejected release against the current size settings after safe cleanup.';
         acquire.addEventListener('click', async () => {
           if (state.seriesBusy) return;
-          if (!confirm('Retry the previous size-rejected release using current size limits? Any old ownership will be cleaned up first.')) return;
+          if (!confirm('Retry this release with current size limits and permanently clean up its old owned downloads first; deletion cannot be undone?')) return;
           state.seriesBusy = true; acquire.disabled = true;
           try {
             const receipt = await request(API + '/intake/series/' + anidbId +
@@ -582,22 +645,21 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         action.appendChild(acquire);
       }
       if (item.can_retry) {
-        const retry = node('button', item.status === 'NOT_SEARCHED' ? 'Search' :
-          (item.status === 'WAITING_FOR_DUB' || item.status === 'NO_RESULTS') ? 'Search again' : 'Retry search', 'secondary');
+        const retry = node('button', 'search again', 'secondary');
         retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (state.seriesBusy) return;
-          const held = true; // Even a first/anchor search may optionally retire stale owners.
-          let deleteCache = true;
-          if (held) {
+          let deleteCache;
+          {
             $('search-again-episode').textContent = missingLabel(item);
             $('search-again-delete').checked = item.status === 'CANDIDATES';
             const choice = $('search-again-dialog');
-            choice.showModal();
+            choice.returnValue = ''; choice.showModal();
             const confirmed = await new Promise(resolve => {
               choice.addEventListener('close', () => resolve(choice.returnValue === 'search'), {once: true});
             });
             if (!confirmed) return;
+            if ($('search-again-delete').checked && !confirm('Permanently delete saved release magnets for this episode and search again; the cache deletion cannot be undone?')) return;
             deleteCache = $('search-again-delete').checked;
             if (item.status === 'CANDIDATES' && !deleteCache) {
               notice('Previously selected candidates require Delete cache before a fresh search.', true);
@@ -608,7 +670,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           try {
             const data = await request(API + '/intake/series/' + anidbId +
               '/backfill/' + item.anidb_episode + '/retry',
-              {method: 'POST', body: held ? {delete_cache: deleteCache} : {}});
+              {method: 'POST', body: {delete_cache: deleteCache}});
             notice('Backfill ' + (data.reused ? 'already queued' : 'submitted') + '.');
             dialog.close(); await loadActivity();
           } catch (error) { displayError(error); }
@@ -638,9 +700,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       const reason = $('series-reject-reason').value;
       const note = $('series-reject-note').value;
       const count = series.reject_operations.length;
-      if (!confirm('Reject ' + series.title + '?\n\nThis blocks future Intake, cancels pending ' +
-        'acquisitions, and removes ' + count + ' staged acquisition(s) and their owned torrents. ' +
-        'Permanent library media is untouched.')) return;
+      if (!confirm('Reject ' + series.title + ', block future Intake, and permanently remove ' + count + ' staged acquisition(s) and their owned downloads; deletion cannot be undone?')) return;
       state.seriesBusy = true; reject.disabled = true;
       try {
         const result = await request(API + '/intake/series/' + anidbId + '/reject', {
@@ -654,12 +714,11 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
     const keep = $('series-keep'), keepTip = $('series-keep-tooltip');
     const keepBlocked = series.keep_operations.length ? keepBlockedMessage() : null;
     keep.disabled = !!series.rejection || series.keep_operations.length === 0 || !!keepBlocked;
-    keepTip.hidden = !!series.rejection;
-    keepTip.title = keep.title = keepBlocked || '';
+    keepTip.hidden = !!series.rejection || !series.keep_operations.length;
+    keepTip.title = keep.title = keepBlocked || 'Import all staged acquisitions in this series into the permanent library.';
     keepTip.tabIndex = keepBlocked ? 0 : -1;
     keepTip.dataset.disabled = keepBlocked ? 'true' : 'false';
-    keep.textContent = 'Keep all staged (' + series.keep_operations.length + ' acquisition' +
-      (series.keep_operations.length === 1 ? '' : 's') + ')';
+    keep.textContent = 'keep';
     keep.onclick = async () => {
       if (state.seriesBusy || !series.keep_operations.length) return;
       state.seriesBusy = true; keep.disabled = true;
@@ -701,19 +760,19 @@ async function loadActivity() {
           }
         }
         const filter = $('status-filter').value;
-        if (filter) path += '&state=' + encodeURIComponent(filter);
-        path += '&show_completed=' + Number($('show-completed').checked);
-        path += '&show_canceled=' + Number($('show-canceled').checked);
+        if (filter && filter !== 'ALL') path += '&state=' + encodeURIComponent(filter);
+        path += '&show_completed=' + Number(['ALL', 'DONE'].includes(filter));
+        path += '&show_canceled=' + Number(['ALL', 'CANCELED'].includes(filter));
       }
       const data = await request(path);
       if (generation !== state.generation || !state.csrf) return;
       state.jobs = data.items; state.transcodeBatch = data.transcode_batch; state.next = data.next_before_id ?? null; renderJobs();
-      $('no-jobs').textContent = state.search || (state.page === 'intake' && $('intake-filter').value)
-        ? 'No matches.' : 'No items on this page.';
-      $('live-indicator').textContent = '● Live'; $('live-indicator').className = 'status running';
+      $(state.page === 'intake' ? 'intake-empty' : 'no-jobs').textContent = state.search || (state.page === 'intake' && $('intake-filter').value)
+        ? 'No matches. Change the search or filter to see more items.' : state.page === 'intake' ? 'No staged anime. New episodes appear here once downloaded and staged.' : 'No jobs in this view. Change the status filter or submit an episode.';
+      liveStatus(true);
     } catch (error) {
       if (generation === state.generation) {
-        $('live-indicator').textContent = 'Updates paused'; $('live-indicator').className = 'status waiting';
+        liveStatus(false);
         displayError(error);
       }
     }
@@ -795,11 +854,12 @@ function bellItem(item) {
   return box;
 }
 async function bellAction(item, action, button) {
+  if (action === 'process_anyway' && !confirm('Queue this warned release for processing; any resulting downloads must be canceled separately?')) return;
   button.disabled = true;
   try {
     const result = await request(`${API}/notifications/${item.notification_id}/actions/${action}`, {method: 'POST', body: {}});
     closeBell();
-    if (action === 'open_jobs') { state.page = 'jobs'; await resetJobsPage(); }
+    if (action === 'open_jobs') location.assign('/jobs');
     else if (action === 'open_job') await openHistory(result.job_id);
     else if (action === 'open_series') await openSeries(result.anidb_id);
     else if (action === 'add_release') {
@@ -818,10 +878,23 @@ function keepBlockedMessage() {
   const sonarr = state.services?.find(item => item.service === 'sonarr');
   return !sonarr || sonarr.stale || ['UP', 'UNKNOWN'].includes(sonarr.status) ? null : sonarr.message;
 }
+function liveStatus(connected) {
+  $('live-indicator').textContent = connected ? 'live' : 'paused (reconnecting)';
+  $('live-indicator').className = 'status ' + (connected ? 'running' : 'waiting');
+}
+async function refreshPage() {
+  if (!state.csrf || document.hidden) return;
+  if (state.page === 'recognized') await loadRecognized(true);
+  else if (state.page === 'settings') await loadSettings(true);
+  else await loadActivity();
+}
 async function tick() {
-  if (state.csrf && !document.hidden && Date.now() - state.servicesAt >= 30000) await loadServices();
-  if (state.csrf && state.page !== 'settings' && !document.hidden) await loadActivity();
-  if (state.csrf) state.timer = setTimeout(tick, 5000);
+  try {
+    if (state.csrf && !document.hidden && Date.now() - state.servicesAt >= 30000) await loadServices();
+    await refreshPage();
+  } finally {
+    if (state.csrf) state.timer = setTimeout(tick, 5000);
+  }
 }
 async function openHistory(jobId) {
   state.historyJob = jobId; state.historyCursor = 0; state.historyNext = null; state.historyVersion += 1;
@@ -876,7 +949,7 @@ async function loadHistory() {
     }
     if (data.job?.target_job_id && !state.historyCursor) {
       const line = node('p', `Works on Job #${data.job.target_job_id}. Its history: `, 'muted');
-      const open = node('button', `Job #${data.job.target_job_id}`, 'secondary'); open.type = 'button';
+      const open = node('button', 'history', 'secondary'); open.type = 'button';
       open.addEventListener('click', () => openHistory(data.job.target_job_id));
       line.appendChild(open); $('history-rows').appendChild(line);
     }
@@ -1068,8 +1141,8 @@ async function openMatching(jobId) {
     const failedCheck = (ev.checks || []).find(c => c.status === 'failed');
     if (failedCheck) {
       const banner = node('div', null, 'trace-card');
-      banner.appendChild(node('strong', `Blocking check: ${MATCHING_STEPS[failedCheck.step] || failedCheck.step}`));
-      if (failedCheck.note) banner.appendChild(node('p', MATCHING_NOTES[failedCheck.note] || failedCheck.note, 'muted'));
+      banner.appendChild(node('strong', `Blocking check: ${MATCHING_STEPS[failedCheck.step] || 'Verification needs review'}`));
+      if (failedCheck.note) banner.appendChild(node('p', MATCHING_NOTES[failedCheck.note] || 'Open the recorded evidence for technical details.', 'muted'));
       checks.appendChild(banner);
     }
     if (!ev.checks?.length) checks.appendChild(node('p', 'No checks were recorded.', 'muted'));
@@ -1125,7 +1198,7 @@ async function openMatching(jobId) {
 
 function agentSettings(path, definition, values) {
   const wrapper = node('div', null, 'setting-field');
-  wrapper.appendChild(node('span', definition.label));
+  wrapper.appendChild(node('span', settingLabel(definition.label || path)));
   const input = node('input'); input.type = 'hidden'; input.name = path;
   input.dataset.kind = 'transcode_agents'; input.value = JSON.stringify(values);
   input.dataset.original = input.value; wrapper.appendChild(input);
@@ -1142,7 +1215,7 @@ function agentSettings(path, definition, values) {
       host.addEventListener('input', () => { agents[index] = host.value; sync(); }); row.appendChild(host);
       for (const [caption, delta] of [['Up', -1], ['Down', 1]]) {
         const button = node('button', caption, 'secondary'); button.type = 'button';
-        button.disabled = index + delta < 0 || index + delta >= agents.length;
+        button.hidden = index + delta < 0 || index + delta >= agents.length;
         button.addEventListener('click', () => { [agents[index], agents[index + delta]] = [agents[index + delta], agents[index]]; sync(); render(); });
         row.appendChild(button);
       }
@@ -1171,8 +1244,9 @@ function agentSettings(path, definition, values) {
   render(); return wrapper;
 }
 
+function settingLabel(value) { return String(value).replaceAll('.', ' / ').replaceAll('_', ' '); }
 function settingInput(path, definition, value) {
-  const label = node('label', null, 'setting-field'); label.appendChild(node('span', definition.label));
+  const label = node('label', null, 'setting-field'); label.appendChild(node('span', settingLabel(definition.label || path)));
   if (definition.type === 'transcode_agents') return agentSettings(path, definition, value);
   const input = node(['title_language', 'transcode_mode', 'transcode_encoders'].includes(definition.type) ? 'select' :
     definition.type === 'levels' ? 'textarea' : 'input');
@@ -1189,7 +1263,7 @@ function settingInput(path, definition, value) {
   else if (definition.type === 'boolean') {
     // The value mirrors the box, so change detection and saving stay value-based.
     input.type = 'checkbox'; input.checked = value === true; input.value = String(value === true);
-    input.addEventListener('change', () => { input.value = String(input.checked); });
+    input.addEventListener('change', () => { input.value = String(input.checked); refreshDirty(); });
   } else {
     input.type = definition.type === 'integer' ? 'number' : 'text'; input.value = String(value);
     if (definition.minimum !== null) input.min = String(definition.minimum);
@@ -1222,6 +1296,7 @@ function refreshDirty() {
     if (form._saveButton && !form._saving) {
       form._saveButton.disabled = ![...form.querySelectorAll('[data-kind]')].some(settingChanged) &&
         ![...form.querySelectorAll('[data-secret]')].some(credentialChanged);
+      form._saveButton.title = form._saveButton.disabled ? 'Edit a field in this section before saving.' : BUTTON_HINTS.save;
     }
   }
 }
@@ -1248,7 +1323,8 @@ function credentialEye(button, visible) {
   }
   button.appendChild(svg);
   button.setAttribute('aria-label', visible ? 'Hide value' : 'Show value');
-  button.setAttribute('title', visible ? 'Hide value' : 'Show value');
+  button.title = 'Show or hide this credential on this screen.';
+  button.setAttribute('title', button.title);
   button.setAttribute('aria-pressed', String(visible));
 }
 function wireSectionForm(form, section) {
@@ -1290,7 +1366,7 @@ function wireSectionForm(form, section) {
         for (const input of changedSettings) input.dataset.original = input.value;
         settingsSaved = true;
         result.textContent = !saved.durability_confirmed ? COPY['dashboard.saved_unconfirmed'] :
-          saved.restart_fields.length ? COPY['dashboard.restart'] : COPY['dashboard.settings_saved'];
+          saved.restart_fields.length ? 'saved — a service restart is required.' : 'saved';
       }
       if (changedSecrets.length) {
         if (!secretInputs.every(input => input.dataset.loaded === 'true'))
@@ -1300,7 +1376,7 @@ function wireSectionForm(form, section) {
         const saved = await request(API + '/credentials/' + section, {method: 'PATCH', body: payload});
         state.credentials = saved.status;
         for (const input of secretInputs) input._original = input.value;
-        result.textContent = saved.durability_confirmed ? COPY['dashboard.settings_saved'] :
+        result.textContent = saved.durability_confirmed ? 'saved' :
           COPY['dashboard.saved_unconfirmed'];
       }
     } catch (error) {
@@ -1313,17 +1389,28 @@ function wireSectionForm(form, section) {
     }
   });
 }
-async function loadSettings() {
-  const view = ++state.settingsVersion;
+async function loadSettings(poll = false) {
+  if (poll && (state.dirty || document.activeElement?.closest?.("#settings-panel"))) return;
+  const view = poll ? state.settingsVersion : ++state.settingsVersion;
   try {
-    const [settings, credentials] = await Promise.all([request(API + '/settings'), request(API + '/credentials')]);
+    // Admission is nonblocking on the server; avoid competing local reads.
+    const settings = await request(API + '/settings');
+    const credentials = await request(API + '/credentials');
     if (!state.csrf || view !== state.settingsVersion) return;
+    liveStatus(true);
+    if (poll && (state.dirty || document.activeElement?.closest?.('#settings-panel'))) return;
+    if (poll && settings.desired.revision === state.settings?.desired.revision && credentials.revision === state.credentials?.revision) {
+      $('restart-notice').textContent = settings.pending_restart_fields.length ? COPY['dashboard.restart'] : '';
+      return;
+    }
+    if (poll) state.settingsVersion += 1;
+    const opened = new Set([...$('settings-fields').children].filter(panel => panel.open).map(panel => panel.dataset.section));
     state.settings = settings; state.credentials = credentials; state.dirty = false;
     $('restart-notice').textContent = settings.pending_restart_fields.length ? COPY['dashboard.restart'] : '';
     const container = $('settings-fields'); container.replaceChildren();
     for (const section of Object.keys(settings.desired.settings)) {
-      const panel = node('details', null, 'panel'); panel.dataset.section = section;
-      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section === 'transcode' ? 'Transcode' : section));
+      const panel = node('details', null, 'panel'); panel.dataset.section = section; panel.open = opened.has(section);
+      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section === 'transcode' ? 'Transcode' : settingLabel(section)));
       const form = node('form', null, 'integration'); form.autocomplete = 'off';
       for (const [path, definition] of Object.entries(settings.fields)) {
         if (!path.startsWith(section + '.')) continue;
@@ -1331,9 +1418,9 @@ async function loadSettings() {
       }
       panel.appendChild(form); container.appendChild(panel);
     }
-    renderCredentials(view);
-    refreshDirty();
-  } catch (error) { displayError(error); }
+    renderCredentials(state.settingsVersion);
+    refreshDirty(); filterSettings();
+  } catch (error) { liveStatus(false); displayError(error); }
 }
 function renderCredentials(view = state.settingsVersion) {
   const container = $('settings-fields');
@@ -1411,13 +1498,16 @@ function renderCredentials(view = state.settingsVersion) {
     if (form) wireSectionForm(form, panel.dataset.section);
   }
 }
-async function loadRecognized() {
+async function loadRecognized(poll = false) {
   const generation = state.generation;
   const table = $('recognized-rows');
   try {
     const result = await request(state.recognizedSearch
       ? `${API}/search?${searchQuery('recognized', state.recognizedSearch)}` : `${API}/recognized`);
     if (generation !== state.generation || !state.csrf) return;
+    const signature = JSON.stringify(result.items);
+    if (poll && signature === state.recognizedSignature) { liveStatus(true); return; }
+    state.recognizedSignature = signature;
     table.replaceChildren();
     for (const item of result.items) {
       const tr = node('tr');
@@ -1431,7 +1521,7 @@ async function loadRecognized() {
       button.type = 'button';
       let detail = null;
       button.addEventListener('click', async () => {
-        if (detail) { detail.remove(); detail = null; button.textContent = 'Episodes'; return; }
+        if (detail) { detail.remove(); detail = null; button.textContent = 'details'; return; }
         button.disabled = true;
         detail = node('tr');
         const cell = node('td');
@@ -1450,11 +1540,11 @@ async function loadRecognized() {
               : `TVDB S${String(episode.tvdb_season).padStart(2,'0')}E${String(episode.tvdb_episode).padStart(2,'0')} (#${episode.tvdb_episode_id})`;
             cell.appendChild(node('p', `AniDB #${episode.anidb_episode_id} (episode ${episode.anidb_episode_number}) → ${placed}`));
           }
-          button.textContent = 'Hide episodes';
+          button.textContent = 'details';
           button.disabled = false;
         } catch (error) {
           cell.textContent = error.message;
-          button.textContent = 'Hide episodes';
+          button.textContent = 'details';
           button.disabled = false;
         }
       });
@@ -1462,11 +1552,12 @@ async function loadRecognized() {
       tr.appendChild(action);
       table.appendChild(tr);
     }
+    liveStatus(true);
     $('recognized-note').textContent = result.items.length
       ? `${result.items.length} recognized series`
-      : state.recognizedSearch ? 'No matches.' : 'No recognized series yet.';
+      : state.recognizedSearch ? 'No matches.' : 'No recognized series. Verified episodes add their anime here automatically.';
   } catch (error) {
-    $('recognized-note').textContent = error.message;
+    liveStatus(false); $('recognized-note').textContent = error.message;
   }
 }
 function searchQuery(scope, text) {
@@ -1484,7 +1575,7 @@ async function applySearch() {
     if (text === state.recognizedSearch) return;
     state.recognizedSearch = text; await loadRecognized(); return;
   }
-  const text = searchText($('search').value);
+  const text = searchText($(state.page === 'intake' ? 'intake-search' : 'search').value);
   if (text === state.search) return;
   if (state.loading) await state.loading;
   state.search = text; state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
@@ -1499,39 +1590,21 @@ async function showWorkspace() {
   document.title = ({intake: 'Intake', jobs: 'Jobs', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
   await loadServices();
-  $('activity-panel').hidden = state.page === 'settings' || state.page === 'recognized';
+  $('intake-panel').hidden = state.page !== 'intake';
+  $('jobs-panel').hidden = state.page !== 'jobs';
   $('settings-panel').hidden = state.page !== 'settings';
   $('recognized-panel').hidden = state.page !== 'recognized';
   for (const link of document.querySelectorAll('nav a')) link.classList.toggle('selected', new URL(link.href).pathname === location.pathname);
+  clearTimeout(state.timer); if (state.csrf) state.timer = setTimeout(tick, 5000);
   if (state.page === 'settings') { await loadSettings(); return; }
   if (state.page === 'recognized') { await loadRecognized(); return; }
-  if (state.page === 'jobs' && state.search && $('search').value !== state.search) {
-    $('search').value = state.search;
-  }
-  $('page-title').textContent = state.page === 'intake' ? 'Intake' : 'Jobs';
-  $('activity-title').textContent = state.page === 'intake' ? 'Incoming anime' : 'Job activity';
-  $('page-description').textContent = state.page === 'intake' ? 'Follow incoming anime through processing and staging.' : 'Track jobs and their recorded history. Status updates every five seconds.';
-  $('page-note').textContent = state.page === 'intake' ?
-    COPY['dashboard.scope'] : state.episodeFilter ?
+  if (state.page === 'jobs' && state.search) $('search').value = state.search;
+  $('page-note').textContent = state.episodeFilter ?
     'Related jobs for AniDB #' + state.episodeFilter.anidb_id + ' · TVDB ' +
       tvdbLabel({season: state.episodeFilter.season, episode: state.episodeFilter.episode}) +
       '. Includes released reservations and completed jobs.' :
-    'Filters apply across all jobs. Up to 100 jobs can be selected across pages; up to five use individual actions, larger selections use a queued batch.';
-  $('bulk-heading').hidden = state.page !== 'jobs';
-  $('completed-toggle-label').hidden = state.page !== 'jobs';
-  $('canceled-toggle-label').hidden = state.page !== 'jobs';
-  $('status-filter-label').hidden = state.page === 'intake';
-  $('intake-filter-label').hidden = state.page !== 'intake';
-  $('search').placeholder = state.page === 'intake' ? 'Search anime' : 'Search jobs: release, anime, activity or #id';
-  if (state.episodeFilter) {
-    $('show-completed').checked = true;
-    $('show-canceled').checked = true;
-  }
-  if (state.page === 'intake') {
-    const titles = ['Received', 'Series', 'Staged', 'Status', 'Backfill', 'Actions'];
-    const names = ['received', 'series', 'staged', 'status', 'backfill', 'actions'];
-    for (let index = 0; index < titles.length; index++) $('activity-col-' + names[index]).textContent = titles[index];
-  }
+    'Select up to 100 jobs across pages to apply the same action.';
+  if (state.episodeFilter) $('status-filter').value = 'ALL';
   await loadActivity();
   if (state.page === 'intake') {
     const params = new URLSearchParams((location.hash || '').slice(1));
@@ -1572,42 +1645,33 @@ $('sign-out').addEventListener('click', async () => {
   try { await request(`${API}/auth/session`, {method: 'DELETE', body: {}}); clearPrivate(); }
   catch (error) { displayError(error); }
 });
-$('refresh').addEventListener('click', () => loadActivity());
-for (const id of ['search', 'recognized-search']) {
+for (const id of ['intake-search', 'search', 'recognized-search']) {
   $(id).addEventListener('input', queueSearch);
   $(id).addEventListener('keydown', event => {
     if (event.key === 'Escape') { $(id).value = ''; clearTimeout(state.searchTimer); applySearch(); }
     if (event.key === 'Enter') { clearTimeout(state.searchTimer); applySearch(); }
   });
 }
-$('refresh-recognized').addEventListener('click', () => loadRecognized());
 $('bell').addEventListener('click', event => { event.stopPropagation(); $('bell-panel').hidden ? openBell() : closeBell(); });
 $('bell-panel').addEventListener('click', event => event.stopPropagation());
 document.addEventListener('click', () => { if (!$('bell-panel').hidden) closeBell(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('bell-panel').hidden) closeBell(); });
 $('bell-more').addEventListener('click', () => loadBell(true));
 $('bell-clear').addEventListener('click', async () => {
   try { const result = await request(API + '/notifications', {method: 'DELETE'}); renderBellCount(result.unread); await loadBell(); }
   catch (error) { $('bell-note').textContent = error.message; }
 });
-$('reload-settings').addEventListener('click', async () => {
-  if (state.dirty && !confirm(COPY['dashboard.discard'])) return;
-  await loadSettings();
-});
-$('status-filter').addEventListener('change', () => {
-  if (state.page !== 'jobs') { renderJobs(); return; }
-  if ($('status-filter').value === 'DONE') $('show-completed').checked = true;
-  if ($('status-filter').value === 'CANCELED') $('show-canceled').checked = true;
-  resetJobsPage();
-});
-$('show-completed').addEventListener('change', resetJobsPage);
+function filterSettings() {
+  const query = $('settings-search').value.trim().toLowerCase();
+  for (const panel of $('settings-fields').children) panel.hidden = !panel.textContent.toLowerCase().includes(query);
+}
+$('settings-search').addEventListener('input', filterSettings);
+$('status-filter').addEventListener('change', resetJobsPage);
 $('intake-filter').addEventListener('change', async () => {
   if (!state.csrf || state.page !== 'intake') return;
   if (state.loading) await state.loading;
   state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
   await loadActivity();
 });
-$('show-canceled').addEventListener('change', resetJobsPage);
 $('select-page').addEventListener('change', () => {
   if (state.bulkSubmitting || state.page !== 'jobs') return;
   if ($('select-page').checked) {
@@ -1622,15 +1686,16 @@ $('select-page').addEventListener('change', () => {
 });
 $('bulk-clear').addEventListener('click', () => {
   if (state.bulkSubmitting) return;
+  if (!confirm('Clear the current selection; the jobs themselves will remain unchanged?')) return;
   state.selected.clear();
   renderJobs();
 });
-$('bulk-submit').addEventListener('click', submitSelected);
-$('next-page').addEventListener('click', async () => {
+for (const name of ['retry', 'cancel', 'cleanup']) $('bulk-' + name).addEventListener('click', () => submitSelected(name));
+for (const id of ['next-page', 'intake-next']) $(id).addEventListener('click', async () => {
   if (state.next === null || state.loading) return;
   state.previous.push(state.cursor); state.cursor = String(state.next); await loadActivity();
 });
-$('previous-page').addEventListener('click', async () => {
+for (const id of ['previous-page', 'intake-previous']) $(id).addEventListener('click', async () => {
   if (!state.previous.length || state.loading) return;
   state.cursor = state.previous.pop(); await loadActivity();
 });
@@ -1712,7 +1777,7 @@ $('history-more').addEventListener('click', async () => {
   if (state.historyNext === null) return; state.historyCursor = state.historyNext; await loadHistory();
 });
 window.addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && state.csrf && state.page !== 'settings') loadActivity(); });
+document.addEventListener('visibilitychange', () => { void refreshPage(); });
 (async () => {
   try { const session = await request(`${API}/auth/session`); state.csrf = session.csrf_token; await showWorkspace(); }
   catch (error) { clearPrivate(error.status === 401 ? '' : error.message); }
@@ -1745,7 +1810,7 @@ function keyboardShortcut(event) {
   const pages = {'1': '/', '2': '/jobs', '3': '/recognized', '4': '/settings'};
   if (pages[event.key]) { event.preventDefault(); location.assign(pages[event.key]); }
   else if (event.key === '/') {
-    const id = state.page === 'recognized' ? 'recognized-search' : state.page === 'settings' ? 'settings-search' : 'search';
+    const id = state.page === 'recognized' ? 'recognized-search' : state.page === 'settings' ? 'settings-search' : state.page === 'intake' ? 'intake-search' : 'search';
     $(id)?.focus(); event.preventDefault();
   } else if (event.key === '?') { event.preventDefault(); showHelp(); }
 }
