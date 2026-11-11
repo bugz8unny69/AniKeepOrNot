@@ -16,6 +16,8 @@ class Element {
   set innerHTML(value) { throw new Error('Untrusted HTML must never be inserted'); }
   appendChild(child) { this.children.push(child); return child; }
   replaceChildren(...children) { this.children = children; }
+  focus() { this.focused = true; }
+  getAttribute(name) { return this.attributes[name]; }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   querySelectorAll(selector) {
@@ -169,13 +171,13 @@ test('status bar names each service and Keep is disabled with the Sonarr reason'
   const bar = h.elements.get('service-bar');
   assert.equal(bar.hidden, false);
   const text = element => [element.textContent || '', ...element.children.map(text)].join('');
-  assert.deepEqual(bar.children.map(text), ['qBittorrent Available', 'Sonarr Unavailable', 'Prowlarr Off']);
+  assert.deepEqual(bar.children.map(text), ['qbittorrent', 'sonarr', 'prowlarr']);
   assert.ok(bar.children[1].title.startsWith('Sonarr is unavailable: HTTP 503 at http://sonarr:8989'));
   assert.equal(h.run('keepBlockedMessage()'), 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989');
   services[1] = {...services[1], stale: true};
   await h.run('loadServices()');
   assert.equal(h.run('keepBlockedMessage()'), null);        // A stopped worker's old status never blocks.
-  assert.equal(text(bar.children[1]), 'Sonarr Not checked recently');
+  assert.equal(text(bar.children[1]), 'sonarr');
   h.run('clearPrivate()');
   assert.equal(bar.hidden, true);
   assert.equal(bar.children.length, 0);
@@ -758,7 +760,7 @@ test('transcode health shows the alive count and partial availability in yellow'
   h.run("state.services=[{service:'transcode',label:'Transcode agents',status:'UP',message:'Agents alive: 1/2. pc:8787: up, busy, gpu; lxc:8787: down'}]; renderServices();");
   const chip = h.elements.get('service-bar').children[0];
   assert.match(chip.className, /unknown/);
-  assert.equal(chip.children[1].textContent, ' Agents alive: 1/2');
+  assert.equal(chip.children[0].textContent, 'agents 1/2');
   assert.match(chip.title, /busy/);
 });
 
@@ -785,4 +787,30 @@ test('remote agents can be added and reordered without returning stored tokens',
   assert.equal(list.children[0].children[4].value, '');
   view.children[3].listeners.click();
   assert.equal(JSON.parse(hidden.value).length, 3);
+});
+
+
+test('console shortcuts navigate, focus search, and respect typing', async () => {
+  const h = await harness(); const visited = [];
+  h.ctx.location.assign = url => visited.push(url);
+  h.ctx.key = {key: '2', target: new Element('body'), preventDefault() {}};
+  h.run('keyboardShortcut(key)');
+  assert.deepEqual(visited, ['/jobs']);
+  for (const [key, url] of [['1', '/'], ['3', '/recognized'], ['4', '/settings']]) {
+    h.ctx.key.key = key; h.run('keyboardShortcut(key)'); assert.equal(visited.at(-1), url);
+  }
+  h.ctx.key.key = '/'; h.run('keyboardShortcut(key)');
+  assert.equal(h.elements.get('search').focused, true);
+  h.ctx.key.key = '2'; h.ctx.key.target = new Element('input');
+  h.run('keyboardShortcut(key)'); assert.equal(visited.length, 4);
+  h.ctx.key.target = new Element('textarea'); h.run('keyboardShortcut(key)');
+  h.ctx.key.target = new Element('select'); h.run('keyboardShortcut(key)');
+  assert.equal(visited.length, 4);
+});
+test('Escape closes the topmost dialog before the bell', async () => {
+  const h = await harness(); const first = new Element('dialog'), top = new Element('dialog');
+  first.showModal(); top.showModal();
+  h.ctx.document.querySelectorAll = selector => selector === 'dialog[open]' ? [first, top] : [];
+  h.ctx.key = {key: 'Escape', target: new Element('body'), preventDefault() {}};
+  h.run('keyboardShortcut(key)'); assert.equal(top.open, false); assert.equal(first.open, true);
 });

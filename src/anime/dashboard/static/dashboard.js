@@ -89,6 +89,8 @@ function clearPrivate(message = '') {
   if ($('history-dialog').open) $('history-dialog').close();
   if ($('matching-dialog').open) $('matching-dialog').close();
   if ($('series-dialog').open) $('series-dialog').close();
+  document.title = 'Sign in · ' + APP_NAME;
+  $('console-prompt').textContent = APP_NAME.toLowerCase() + ':~/signin$';
   $('workspace').hidden = true; $('sign-out').hidden = true; $('login-panel').hidden = false;
   notice(message);
 }
@@ -125,7 +127,7 @@ function displayError(error) {
 }
 function date(value) { return value ? new Date(value).toLocaleString() : '—'; }
 function statusBadge(job) {
-  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', ON_HOLD: 'waiting', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked', FAILED: 'blocked'};
+  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', ON_HOLD: 'held', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked', FAILED: 'blocked'};
   return node('span', job.status?.message || 'Unknown status', 'status ' + (classes[job.state] || ''));
 }
 function actionButton(job, action, label) {
@@ -727,12 +729,12 @@ function renderServices() {
     if (item.service === 'transcode') {
       const count = item.message.match(/Agents alive: (\d+)\/(\d+)/);
       if (count) {
-        label = `Agents alive: ${count[1]}/${count[2]}`;
+        label = `agents ${count[1]}/${count[2]}`;
         if (!item.stale && Number(count[1]) > 0 && count[1] !== count[2]) tone = 'unknown';
       }
     }
     const chip = node('span', null, 'service ' + tone);
-    chip.appendChild(node('strong', item.label)); chip.appendChild(node('span', ' ' + label));
+    chip.appendChild(node('strong', item.service === 'transcode' && label.startsWith('agents ') ? label : item.label.toLowerCase()));
     chip.title = item.message + (item.stale ? ' The worker has not updated this recently.' : '') +
       (item.checked_at_ms ? ' Checked ' + date(item.checked_at_ms) + '.' : '');
     chip.tabIndex = 0; chip.setAttribute('aria-label', item.label + ': ' + chip.title);
@@ -1493,6 +1495,7 @@ function queueSearch() {
   state.searchTimer = setTimeout(applySearch, 250);
 }
 async function showWorkspace() {
+  $('console-prompt').textContent = APP_NAME.toLowerCase() + ':~/' + (state.page === 'recognized' ? 'names' : state.page) + '$';
   document.title = ({intake: 'Intake', jobs: 'Jobs', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
   await loadServices();
@@ -1714,3 +1717,38 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && st
   try { const session = await request(`${API}/auth/session`); state.csrf = session.csrf_token; await showWorkspace(); }
   catch (error) { clearPrivate(error.status === 401 ? '' : error.message); }
 })();
+
+// Keyboard navigation stays native: each shortcut follows the existing page URL.
+function showHelp() {
+  const list = $('page-help'); list.replaceChildren();
+  const seen = new Set();
+  for (const button of document.querySelectorAll('button')) {
+    if (button.hidden || button.closest?.('[hidden]') || button.closest?.('#help-dialog')) continue;
+    const label = button.textContent?.trim() || button.getAttribute('aria-label');
+    const hint = button.title || 'Activate ' + (label || 'this control') + '.';
+    if (!label || seen.has(label + hint)) continue;
+    seen.add(label + hint); list.appendChild(node('dt', label)); list.appendChild(node('dd', hint));
+  }
+  if (!$('help-dialog').open) $('help-dialog').showModal();
+}
+function keyboardShortcut(event) {
+  const target = event.target;
+  if (event.ctrlKey || event.altKey || event.metaKey || target?.isContentEditable ||
+      ['INPUT', 'TEXTAREA', 'SELECT'].includes((target?.tagName || '').toUpperCase())) return;
+  if (event.key === 'Escape') {
+    const dialogs = [...document.querySelectorAll('dialog[open]')];
+    if (dialogs.length) dialogs[dialogs.length - 1].close();
+    else closeBell();
+    event.preventDefault(); return;
+  }
+  if (!state.csrf) return;
+  const pages = {'1': '/', '2': '/jobs', '3': '/recognized', '4': '/settings'};
+  if (pages[event.key]) { event.preventDefault(); location.assign(pages[event.key]); }
+  else if (event.key === '/') {
+    const id = state.page === 'recognized' ? 'recognized-search' : state.page === 'settings' ? 'settings-search' : 'search';
+    $(id)?.focus(); event.preventDefault();
+  } else if (event.key === '?') { event.preventDefault(); showHelp(); }
+}
+document.addEventListener('keydown', keyboardShortcut);
+$('help-open').addEventListener('click', showHelp);
+$('help-close').addEventListener('click', () => $('help-dialog').close());
