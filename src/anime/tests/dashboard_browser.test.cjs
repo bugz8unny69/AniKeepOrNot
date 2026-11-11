@@ -27,6 +27,7 @@ class Element {
       if (selector === 'form.integration') return element.tagName === 'form' && element.className === 'integration';
       if (selector === '[data-kind]') return Boolean(element.dataset.kind);
       if (selector === '[data-secret]') return Boolean(element.dataset.secret);
+      if (selector === '[data-agent-token]') return Boolean(element.dataset.agentToken);
       return false;
     };
     const result = [];
@@ -777,18 +778,97 @@ test('staged transcode batch is shown above jobs and hidden on Intake', async ()
   assert.equal(panel.hidden, true);
 });
 
+// Agent block layout: [strong, address label, token label, status, help, actions].
+const agentParts = card => ({host: card.children[1].children[1], token: card.children[2].children[1],
+  generate: card.children[2].children[2], status: card.children[3], help: card.children[4],
+  up: card.children[5].children[0], down: card.children[5].children[1], remove: card.children[5].children[2]});
+
 test('remote agents can be added and reordered without returning stored tokens', async () => {
   const h = await harness();
   const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},['http://first:8787','http://second:8787'])");
   const hidden = view.children[1];
   const list = view.children[2];
-  const firstDown = list.children[0].children[2];
-  firstDown.listeners.click();
+  agentParts(list.children[0]).down.listeners.click();
   assert.deepEqual(JSON.parse(hidden.value), ['http://second:8787','http://first:8787']);
-  assert.equal(list.children[0].children[4].type, 'password');
-  assert.equal(list.children[0].children[4].value, '');
-  view.children[3].listeners.click();
-  assert.equal(JSON.parse(hidden.value).length, 3);
+  const first = agentParts(list.children[0]);
+  assert.equal(first.token.type, 'password');
+  assert.equal(first.token.value, '');
+  view.children[3].listeners.click();                     // Add agent: a blank block is not saved yet.
+  assert.equal(list.children.length, 3);
+  assert.equal(JSON.parse(hidden.value).length, 2);
+  const added = agentParts(list.children[2]);
+  added.host.value = 'third:8787'; added.host.listeners.input();
+  assert.deepEqual(JSON.parse(hidden.value), ['http://second:8787','http://first:8787','third:8787']);
+});
+
+test('with no agents, Remote shows one empty agent block to fill in', async () => {
+  const h = await harness();
+  const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},[])");
+  assert.equal(view.children[2].children.length, 1);
+  assert.equal(view.children[1].value, '[]');
+  assert.match(agentParts(view.children[2].children[0]).status.textContent, /No token yet/);
+});
+
+test('Generate makes a strong token and shows the exact line for the agent', async () => {
+  const h = await harness();
+  h.ctx.crypto = require('node:crypto').webcrypto;
+  const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},['http://first:8787'])");
+  const parts = agentParts(view.children[2].children[0]);
+  parts.generate.listeners.click();
+  assert.match(parts.token.value, /^[0-9a-f]{64}$/);
+  assert.equal(parts.token.type, 'text');
+  assert.equal(parts.help.children[1].textContent, 'TRANSCODE_TOKEN=' + parts.token.value);
+  const first = parts.token.value;
+  parts.generate.listeners.click();
+  assert.notEqual(parts.token.value, first);                // Each click makes a new token.
+});
+
+test('one Save stores the agent list and then its token', async () => {
+  const h = await harness();
+  h.ctx.crypto = require('node:crypto').webcrypto;
+  const calls = [];
+  h.ctx.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null; calls.push({url, method: options.method, body});
+    if (url === '/api/v1/settings') return response({configuration: {revision: 6, settings: {}}, durability_confirmed: true, restart_fields: []});
+    if (url === '/api/v1/credentials/transcode') return response({status: {revision: 3, transcode_agents: ['http://new:8787']}, saved: true});
+    return response({});
+  };
+  h.run("state.settings={desired:{revision:5,settings:{}}}; state.credentials={revision:2,transcode_agents:[]};");
+  const form = h.run("node('form', null, 'integration')");
+  const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},[])");
+  form.appendChild(view); h.elements.get('settings-fields').appendChild(form);
+  h.ctx.form = form; h.run("wireSectionForm(form,'transcode'); refreshDirty()");
+  assert.equal(form._saveButton.disabled, true);
+  const parts = agentParts(view.children[2].children[0]);
+  parts.host.value = 'new:8787'; parts.host.listeners.input();
+  parts.generate.listeners.click();
+  const token = parts.token.value;
+  assert.equal(form._saveButton.disabled, false);
+  await form.listeners.submit({preventDefault() {}});
+  assert.deepEqual(calls.map(call => call.url), ['/api/v1/settings', '/api/v1/credentials/transcode']);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].body.settings)), {transcode: {agents: ['new:8787']}});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body)), {expected_revision: 2, agent: 'new:8787', token});
+  assert.equal(parts.token.value, '');
+  assert.equal(parts.token.type, 'password');
+  assert.match(parts.status.textContent, /Token is set/);
+  assert.equal(parts.help.children[1].textContent, 'TRANSCODE_TOKEN=' + token);   // Still there to copy.
+  assert.equal(form._saveButton.disabled, true);
+});
+
+test('a token without an agent address is not saved', async () => {
+  const h = await harness();
+  const calls = [];
+  h.ctx.fetch = async url => { calls.push(url); return response({}); };
+  h.run("state.settings={desired:{revision:5,settings:{}}}; state.credentials={revision:2,transcode_agents:[]};");
+  const form = h.run("node('form', null, 'integration')");
+  const view = h.run("agentSettings('transcode.agents',{label:'Remote agents'},[])");
+  form.appendChild(view); h.elements.get('settings-fields').appendChild(form);
+  h.ctx.form = form; h.run("wireSectionForm(form,'transcode')");
+  const parts = agentParts(view.children[2].children[0]);
+  parts.token.value = 'pasted-token'; parts.token.listeners.input();
+  await form.listeners.submit({preventDefault() {}});
+  assert.deepEqual(calls, []);
+  assert.match(form.children.at(-1).textContent, /Enter the agent address/);
 });
 
 

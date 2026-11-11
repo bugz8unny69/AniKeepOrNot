@@ -87,8 +87,12 @@ this work. Do not use Windows agents.
 Settings → Transcode defaults to Off, preserving ordinary verification/staging.
 Local uses the same encoder and has its own temp path, device and encoder
 allowlist. Remote uses the displayed agent order; Add, Up and Down edit that
-order. Tokens are saved separately in the existing private secrets store and
-are never returned by the API. Target size defaults to decimal 500 MB per
+order. Each agent has an Address and a Token field. Generate creates a random
+token and shows the exact `TRANSCODE_TOKEN=...` line to put in
+`/etc/transcode-agent.env` on that agent (then `systemctl restart
+transcode-agent`); a token from the agent can also be pasted instead. Save
+changes stores the agent list and its tokens together. Tokens are kept in the
+existing private secrets store and are never returned by the API. Target size defaults to decimal 500 MB per
 24 minutes, scaled by duration. Audio is budgeted before video and 1% is
 reserved for container overhead. Videos already under target are unchanged. Private transcoded outputs use the
 existing Publisher move path within staging, avoiding a second full video copy;
