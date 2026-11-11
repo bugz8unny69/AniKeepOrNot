@@ -43,7 +43,9 @@ class Reexec(Exception):
 
 
 def run(args,*,cwd=None,input=None,check=True):
-    result=subprocess.run([str(x) for x in args],cwd=cwd,input=input,text=True,capture_output=True)
+    # Commands run from / unless told otherwise: the caller's folder may be a
+    # release an upgrade has already deleted, and git cannot clone from there.
+    result=subprocess.run([str(x) for x in args],cwd=cwd or '/',input=input,text=True,capture_output=True)
     if check and result.returncode:
         command=Path(str(args[0])).name
         detail=(result.stderr or result.stdout).strip()
@@ -590,14 +592,36 @@ def _reexec(argv,error):
              '--source-dir',str(error.checkout),'--revision',error.revision]
     print('This upgrade brings a newer installer; continuing with it...',file=sys.stderr,flush=True)
     try:
-        return subprocess.run(command,env={**os.environ,REEXEC_ENV:'1'}).returncode
+        return subprocess.run(command,cwd='/',env={**os.environ,REEXEC_ENV:'1'}).returncode
     finally:
         shutil.rmtree(error.checkout,ignore_errors=True)
 
 
+PATH_ARGS=('source_dir','database','settings_file','webhook_key_file','admin_password_file')
+PATH_OPTIONS=('root','state_dir','config_dir','destination','unit_dir')
+
+def absolute_paths(args):
+    """Make relative path arguments absolute against the folder they were typed in.
+
+    Commands then run from / (see run()), so the caller's folder never matters.
+    An upgrade deletes old release folders; a shell sitting in one (for example
+    after `cd /opt/anime-discovery/current`) is left in a deleted folder, and git
+    refuses to clone from there."""
+    relative=[n for n in (*PATH_ARGS,*PATH_OPTIONS)
+              if getattr(args,n,None) is not None and not os.path.isabs(str(getattr(args,n)))]
+    if relative:
+        try:base=os.getcwd()
+        except FileNotFoundError:
+            raise ValueError('The current folder no longer exists, so relative paths cannot be used ('
+                             +', '.join('--'+n.replace('_','-') for n in relative)+'). Use absolute paths or cd to an existing folder.')
+        for n in relative:
+            value=getattr(args,n)
+            setattr(args,n,type(value)(os.path.join(base,str(value))))
+
 def main(argv=None):
     args=parser().parse_args(argv)
     try:
+        absolute_paths(args)
         options=resolve(args)
         if args.rollback:
             with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):

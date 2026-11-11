@@ -279,8 +279,8 @@ class ReexecTests(unittest.TestCase):
     def test_main_runs_the_new_installer_on_the_fetched_checkout_once(self):
         seen = {}
 
-        def run(command, env):
-            seen['command'], seen['env'] = command, env
+        def run(command, env, cwd):
+            seen['command'], seen['env'], seen['cwd'] = command, env, cwd
             return subprocess.CompletedProcess(command, 0)
         with patch.object(installer, 'resolve', return_value={}), \
                 patch.object(installer, 'apply', side_effect=installer.Reexec(self.checkout, 'f' * 40)), \
@@ -291,6 +291,7 @@ class ReexecTests(unittest.TestCase):
         self.assertEqual(command[1], str(self.checkout / 'bin/anime-discovery-install'))
         self.assertEqual(command[2:], ['--upgrade', '--source-dir', str(self.checkout), '--revision', 'f' * 40])
         self.assertEqual(seen['env'][installer.REEXEC_ENV], '1')
+        self.assertEqual(seen['cwd'], '/')                                 # Never the caller's folder.
         self.assertFalse(self.checkout.exists())                           # The fetched copy is removed.
 
 
