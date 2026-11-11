@@ -922,3 +922,19 @@ test('Settings reads respect nonblocking admission and polling reconnects after 
   assert.equal(h.elements.get('live-indicator').textContent,'live');
   assert.equal(h.elements.get('settings-fields').children[0].dataset.section,'anime');
 });
+
+
+test('boolean Settings edits enable save after the native input-before-change sequence', async () => {
+  const h = await harness();
+  const form = h.run("node('form', null, 'integration')");
+  const field = h.run("settingInput('sonarr.backfill_long_running', {type:'boolean',label:'Backfill',help:'Enable backfill.',minimum:null,maximum:null}, false)");
+  form.appendChild(field); h.elements.get('settings-fields').appendChild(form);
+  h.ctx.form = form; h.run("wireSectionForm(form,'sonarr'); refreshDirty()");
+  assert.equal(form._saveButton.disabled,true);
+  const input = field.children[1]; input.checked = true;
+  form.listeners.input(); input.listeners.change();
+  assert.equal(form._saveButton.disabled,false); assert.equal(h.run('state.dirty'),true);
+  assert.equal(input.value,'true');
+  input.checked = false; form.listeners.input(); input.listeners.change();
+  assert.equal(form._saveButton.disabled,true); assert.equal(h.run('state.dirty'),false);
+});
