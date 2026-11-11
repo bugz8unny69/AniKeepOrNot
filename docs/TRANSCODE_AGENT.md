@@ -4,15 +4,110 @@ Linux only. The agent uses Python's standard library and host ffmpeg/ffprobe;
 `src/transcode_agent` never imports AniKeepOrNot. The worker's Local mode
 uses the same `encode.py` implementation. All traffic uses HTTP over TCP.
 
-## Install
+## Install: from export to a working agent
 
-On Debian/Ubuntu install `python3 ffmpeg mesa-va-drivers`, create a system user
-`transcode`, and copy `src/transcode_agent` under `/opt/transcode-agent/src/`.
-Install `deploy/transcode-agent/transcode-agent.service` under
-`/etc/systemd/system/` and its env example as `/etc/transcode-agent.env` (0600).
-Set a long random `TRANSCODE_TOKEN`, shared with the worker. Enable the service
-with `systemctl enable --now transcode-agent`. No Python packages are needed.
-Check `ffmpeg -encoders` for `hevc_vaapi`, `libx265`, and `libopus`.
+The agent is one file, `adm-agent.pyz`. The agent machine needs Linux, systemd,
+Python 3.11+ and ffmpeg/ffprobe (with libx265 and libopus; `hevc_vaapi` and
+`mesa-va-drivers` for GPU encoding). No Git, checkout, database or AniKeepOrNot
+installation is needed there.
+
+**1. Export it** on the AniKeepOrNot server (or any checkout):
+
+```sh
+adm server agent pack --output ./adm-agent.pyz
+```
+
+**2. Copy it** to the agent machine and check it arrived intact. Nothing copies
+it automatically; use a channel you trust:
+
+```sh
+scp adm-agent.pyz adm-agent.pyz.sha256 agent-host:
+ssh agent-host 'sha256sum -c adm-agent.pyz.sha256'
+```
+
+**3. Install it.** The account that runs the command decides the kind of
+install; it is announced before anything changes.
+
+- System service (dedicated agent hosts): `sudo ./adm-agent.pyz server agent install`
+  prints "Installing as root: system service (runs as transcode)". It creates
+  the `transcode` account (added to the GPU device's group), installs
+  `/opt/transcode-agent/adm-agent.pyz`, `/etc/transcode-agent.env` (0600) and
+  `/etc/systemd/system/transcode-agent.service`, enables and starts it. On
+  Debian/Ubuntu it can install missing packages (asked, or `--install-deps`).
+- User service (no root): `./adm-agent.pyz server agent install` prints
+  "Installing as alice: user service (systemctl --user)". Files go to
+  `~/.local/share/anikeepornot/transcode-agent/`,
+  `~/.config/anikeepornot/transcode-agent/transcode-agent.env` and
+  `~/.config/systemd/user/transcode-agent.service` (XDG variables are honoured).
+  It never uses sudo or changes groups: if you cannot open the GPU device it
+  says which `usermod` an administrator can run, or choose CPU only. Run it from
+  a real login (desktop or ssh as that user, not `sudo -u`/`su`), which has a
+  systemd user manager. A user service runs only while you are logged in unless
+  lingering is on: `sudo loginctl enable-linger alice` (the installer reports
+  the current setting; it never changes it).
+
+It asks for the listen address (default `0.0.0.0:8787`), encoders, GPU device
+and temporary folder; `--yes` with `--listen`, `--encoders`, `--vaapi-device`
+and `--tmp` asks nothing. Reruns keep every setting and the token. The install
+only reports success after the agent answers its authenticated health check.
+
+**4. Pair it** in AniKeepOrNot: Settings > Transcode > Remote. Enter the
+address the installer printed (for example `192.168.1.50:8787`) and the token,
+then Save changes. Either:
+
+- show the agent's token and paste it into the Token field:
+  `sudo ./adm-agent.pyz server agent token` (user install: no sudo), or
+- click Generate in Settings, then on the agent run
+  `sudo ./adm-agent.pyz server agent token --set` and paste it (asked without echo).
+
+The two must be identical. Settings never shows a saved token again; the token
+is only in the agent's environment file and AniKeepOrNot's secrets store.
+
+**5. Check it.** The service bar shows `agents 1/1` in green. Its tooltip names
+any problem per agent: no token set, token rejected, unreachable, or needs an
+update. On the agent:
+
+```sh
+./adm-agent.pyz server agent status                      # installed version, service, health
+sudo systemctl status transcode-agent                    # user install: systemctl --user status transcode-agent
+sudo journalctl -u transcode-agent                       # user install: journalctl --user -u transcode-agent
+```
+
+A test video, run on the agent (`TOKEN` from `server agent token`):
+
+```sh
+ffmpeg -v error -y -f lavfi -i testsrc2=size=1280x720:rate=24 -f lavfi -i sine -t 5 -c:v libx264 -c:a flac sample.mkv
+A="Authorization: Bearer $TOKEN"; U=http://localhost:8787
+ID=$(curl -s -H "$A" -H "X-Sha256: $(sha256sum sample.mkv | cut -d' ' -f1)" -H "X-Video-Kbps: 1000" \
+  --data-binary @sample.mkv $U/jobs | python3 -c 'import sys,json;print(json.load(sys.stdin)["job_id"])')
+until curl -s -H "$A" $U/jobs/$ID | grep -qE '"state": "(done|failed)"'; do sleep 1; done
+curl -s -H "$A" $U/jobs/$ID; curl -s -X DELETE -H "$A" $U/jobs/$ID
+```
+
+It should end `"state": "done"` with `"encoder": "gpu"` (or `"cpu"`).
+
+**Crashes and reboots.** The unit restarts the agent 5 seconds after a crash
+(up to 5 times in 5 minutes) and starts it at boot (user installs: with
+lingering). Stopping or restarting it cancels a running encode; ffmpeg stops
+with it. Jobs are not continued after a restart: the agent forgets them, and
+AniKeepOrNot sends the video again within its three-attempt budget.
+
+**Updating.** Export the new version, copy and check it as above, then:
+
+```sh
+sudo ./adm-agent.pyz server agent upgrade --from ./adm-agent.pyz   # user install: no sudo
+sudo /opt/transcode-agent/adm-agent.pyz server agent rollback       # back to the previous version
+```
+
+The new archive is checked before the service stops. Upgrade waits while an
+encode runs (`--interrupt` to go ahead), keeps the settings, token and the
+previous archive, and puts the previous one back if the new one does not pass
+its health check. Run upgrade, rollback, status and token as the account that
+installed the agent; the other kind of install is refused with an explanation.
+
+**Network.** AniKeepOrNot must reach the agent's port. Tokens and videos travel
+over plain HTTP, so keep the agent on a trusted network or put HTTPS in front
+of it. The installer does not change firewalls or routers.
 
 Environment settings:
 
@@ -22,7 +117,7 @@ Environment settings:
 | TRANSCODE_TOKEN | required | Bearer token on every route |
 | TRANSCODE_ENCODERS | gpu,cpu | Allowed encoders; GPU always tried first |
 | TRANSCODE_VAAPI_DEVICE | /dev/dri/renderD128 | VAAPI render node |
-| TRANSCODE_TMP | /var/tmp | Parent of the agent's private work folder |
+| TRANSCODE_TMP | /var/tmp (user install: ~/.cache/anikeepornot) | Parent of the agent's private work folder |
 
 Only `<TRANSCODE_TMP>/transcode-agent/` is used and wiped at startup. Sibling
 files survive, including when the configured parent is a home or data folder.
@@ -140,9 +235,9 @@ Settings → Transcode defaults to Off, preserving ordinary verification/staging
 Local uses the same encoder and has its own temp path, device and encoder
 allowlist. Remote uses the displayed agent order; Add, Up and Down edit that
 order. Each agent has an Address and a Token field. Generate creates a random
-token and shows the exact `TRANSCODE_TOKEN=...` line to put in
-`/etc/transcode-agent.env` on that agent (then `systemctl restart
-transcode-agent`); a token from the agent can also be pasted instead. Save
+token and shows it as a `TRANSCODE_TOKEN=...` line to copy; give it to the agent
+with `adm-agent.pyz server agent token --set`. Or paste the token the agent
+shows with `adm-agent.pyz server agent token`. Save
 changes stores the agent list and its tokens together. Tokens are kept in the
 existing private secrets store and are never returned by the API. Target size defaults to decimal 500 MB per
 24 minutes, scaled by duration. Audio is budgeted before video and 1% is
