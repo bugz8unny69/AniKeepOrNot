@@ -22,8 +22,8 @@ def registration(secrets, *, staging_kind='STAGE_USER_EVALUATION_MEDIA'):
         try:
             await blocking(prepare, context, verification, secrets)
             return Outcome(value={'verification_job_id': verification})
-        except TranscodeWaiting:
-            return Outcome('defer', 'TRANSCODE_WAITING', delay_ms=10000)
+        except TranscodeWaiting as exc:
+            return Outcome('defer', 'TRANSCODE_WAITING', delay_ms=10000, facts={'service_detail': str(exc)[:500]})
         except (TranscodeFailed, EncodeError) as exc:
             return Outcome('review', 'TRANSCODE_FAILED', facts={'service_detail': str(exc)[:500]})
         except StagingReview:

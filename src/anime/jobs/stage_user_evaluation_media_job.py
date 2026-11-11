@@ -68,8 +68,8 @@ def registration(*,publisher_factory=Publisher,journal_factory=Journal,secrets=N
                 journal.guard(context.claim)
                 return {'verification_job_id':verification,'receipts':receipts,'refresh':bool(context.configuration.value('jellyfin.base_url'))}
         try:return Outcome(value=await blocking(run))
-        except TranscodeWaiting:
-            return Outcome('defer','TRANSCODE_WAITING',delay_ms=10000)
+        except TranscodeWaiting as exc:
+            return Outcome('defer','TRANSCODE_WAITING',delay_ms=10000,facts={'service_detail':str(exc)[:500]})
         except (TranscodeFailed,EncodeError) as exc:
             return Outcome('review','TRANSCODE_FAILED',facts={'service_detail':str(exc)[:500]})
         except StagingBusy as exc:return Outcome('defer',exc.reason_code,delay_ms=1000)

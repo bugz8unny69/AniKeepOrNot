@@ -40,6 +40,32 @@ revision, and `adm server agent --help` lists the settings. `python -m
 src.transcode_agent` is the same command. Stopping it (SIGTERM/SIGINT) cancels
 any encode, so no ffmpeg process outlives the agent.
 
+## Agent versions
+
+Each agent reports `agent_version` in `/health`. The worker uses only agents
+whose version equals its own `AGENT_VERSION` (src/transcode_agent/__init__.py);
+the build revision is shown for diagnostics only. The version is checked by the
+periodic health check and again right before every upload, so a worker upgrade
+never relies on an older answer.
+
+- An older agent (including one from before versions existed, which reports
+  none) gets no new work; the service bar and the waiting job say "Agent
+  pc:8787 is version 1; this worker requires version 2. Update this agent."
+- A newer agent says to update AniKeepOrNot instead.
+- Other compatible agents keep working in their configured order. When none
+  can, the job waits; a version refusal never uploads and never spends one of
+  the three encode attempts.
+- An encode already running is not interrupted by a health check.
+- After the agent is updated, the next health check and the waiting job pick it
+  up again without restarting the worker. Nothing updates or restarts agents
+  automatically.
+
+Bump `AGENT_VERSION` only for changes that need agents and workers updated
+together (the HTTP or encode contract).
+
+The service bar also names each agent's problem: no token set, token rejected
+(the saved token must match `TRANSCODE_TOKEN`), unreachable, or needs an update.
+
 ## API
 
 Every request uses `Authorization: Bearer TOKEN`.
