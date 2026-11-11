@@ -124,3 +124,14 @@ def test_archive_runs_the_http_agent_with_its_build_revision(archive, tmp_path):
     finally:
         agent.terminate()
         assert agent.wait(10) == 0
+
+
+def test_the_archive_installer_reads_its_templates_from_the_archive(archive, tmp_path):
+    path, _ = archive
+    code = ('import sys; sys.path.insert(0, sys.argv[1]); from src.transcode_agent import install;'
+            'print(install.running_archive()); print(install.template("transcode-agent.service"))')
+    result = subprocess.run([sys.executable, '-I', '-c', code, str(path)], cwd=tmp_path, env=CLEAN_ENV,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == str(path)
+    assert 'ExecStart=' in result.stdout and 'server agent' in result.stdout

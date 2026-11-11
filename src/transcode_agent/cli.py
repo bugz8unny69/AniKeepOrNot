@@ -73,6 +73,32 @@ def parser(prog='adm server agent'):
     p.add_argument('--version', action='store_true', help='print the agent version and build revision')
     commands = p.add_subparsers(dest='command', metavar='command')
     commands.add_parser('run', help='run the HTTP agent in the foreground (the default)')
+    scope = ('Run as root (sudo) for a system service that runs as the "transcode" account, or as yourself for a '
+             'user service (systemctl --user). The account running the command decides; there is no option for it.')
+    install = commands.add_parser('install', help='install this archive as the transcode-agent service',
+                                  description='Install the agent as a systemd service, check its health and explain '
+                                  'pairing. Reruns keep the token and settings. ' + scope)
+    install.add_argument('--from', dest='source', metavar='PATH', help='archive to install (default: this archive)')
+    install.add_argument('--yes', action='store_true', help='ask nothing: keep existing settings, defaults otherwise, '
+                         'and generate a token unless one exists or --token-stdin gives one')
+    install.add_argument('--listen', metavar='HOST:PORT', help='listen address (default 0.0.0.0:8787)')
+    install.add_argument('--encoders', choices=('gpu,cpu', 'gpu', 'cpu'), metavar='gpu,cpu|gpu|cpu', help='allowed encoders (default gpu,cpu)')
+    install.add_argument('--vaapi-device', metavar='PATH', help='GPU render node (default /dev/dri/renderD128)')
+    install.add_argument('--tmp', metavar='PATH', help='temporary parent folder')
+    install.add_argument('--token-stdin', action='store_true', help='read the token from standard input '
+                         '(never put a token in a command line)')
+    install.add_argument('--install-deps', action='store_true', help='system install: install missing packages '
+                         'with apt-get without asking')
+    upgrade = commands.add_parser('upgrade', help='replace the installed archive, keeping settings; rolls back if it fails',
+                                  description='Upgrade the installed agent. The new archive is checked before the '
+                                  'service stops; the old one is kept for rollback. ' + scope)
+    upgrade.add_argument('--from', dest='source', metavar='PATH', help='new archive (default: this archive)')
+    upgrade.add_argument('--interrupt', action='store_true', help='upgrade even while an encode is running')
+    commands.add_parser('rollback', help='switch back to the previous archive')
+    commands.add_parser('status', help='show the installed version, service state and health')
+    token = commands.add_parser('token', help='show the token to save in AniKeepOrNot, or replace it',
+                                description='Prints TRANSCODE_TOKEN for pairing. --set replaces it with one you paste.')
+    token.add_argument('--set', action='store_true', help='replace the token (asked for without echo)')
     if in_archive():
         return p                    # Building an archive needs an AniKeepOrNot installation or checkout.
     pack = commands.add_parser('pack', help='build the one-file agent archive adm-agent.pyz from this installation',
@@ -88,6 +114,12 @@ def main(argv=None, prog='adm server agent'):
     if args.version:
         print(version_text())
         return 0
+    if args.command in ('install', 'upgrade', 'rollback', 'status', 'token'):
+        from src.transcode_agent import install
+        options = {key: value for key, value in vars(args).items() if key not in ('command', 'version')}
+        if options.pop('token_stdin', False):
+            options['token'] = sys.stdin.readline().strip()
+        return install.main(args.command, options)
     if args.command == 'pack':
         from src.transcode_agent.pack import PackError, pack
         try:

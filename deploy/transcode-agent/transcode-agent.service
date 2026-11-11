@@ -1,7 +1,14 @@
+# AniKeepOrNot transcode agent. `adm-agent.pyz server agent install` writes this
+# file with the real paths: system scope keeps User=/Group= and
+# multi-user.target; user scope (systemctl --user) drops them and uses
+# default.target. Hand installs: replace the paths below.
 [Unit]
 Description=AniKeepOrNot transcode agent (VAAPI/x265 over HTTP)
 After=network-online.target
 Wants=network-online.target
+# Crash recovery: restart after 5 s, but give up after 5 failures in 5 minutes.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -10,9 +17,12 @@ Group=transcode
 SupplementaryGroups=render video
 WorkingDirectory=/opt/transcode-agent
 EnvironmentFile=/etc/transcode-agent.env
-ExecStart=/usr/bin/python3 -m src.transcode_agent
+ExecStart=/usr/bin/python3 /opt/transcode-agent/adm-agent.pyz server agent
 Restart=on-failure
 RestartSec=5
+# Stopping cancels any encode; ffmpeg children are in this unit's cgroup and are
+# stopped with it.
+TimeoutStopSec=60
 NoNewPrivileges=true
 StandardOutput=journal
 StandardError=journal
