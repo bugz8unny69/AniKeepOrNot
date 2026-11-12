@@ -1235,11 +1235,11 @@ function agentSettings(path, definition, values) {
       const describe = () => {
         status.textContent = tokens[index] ? 'New token: Save changes stores it.' :
           tokenConfigured(agents[index]) ? 'Token is set. Type or generate a new one to replace it.' :
-          'No token yet. Generate one, or paste the one shown on the agent by: adm-agent.pyz server agent token';
+          'No token yet. Generate one, or paste the one shown on the agent by: adm-agent.pyz agent token';
         help.replaceChildren();
         const value = tokens[index] || shown[index];
         if (!value) return;
-        help.appendChild(node('small', 'Give the agent this token: run adm-agent.pyz server agent token --set on it (sudo for a system install) and paste it, or put this line in its environment file and restart it.', 'muted'));
+        help.appendChild(node('small', 'Give the agent this token: run adm-agent.pyz agent token --set on it (sudo for a system install) and paste it, or put this line in its environment file and restart it.', 'muted'));
         const line = node('code', 'TRANSCODE_TOKEN=' + value); help.appendChild(line);
         const copy = node('button', 'Copy', 'secondary'); copy.type = 'button';
         copy.addEventListener('click', async () => {

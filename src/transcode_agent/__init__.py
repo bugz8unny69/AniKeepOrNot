@@ -13,7 +13,7 @@ import subprocess
 
 AGENT_VERSION = 1
 
-# Written into the .pyz by `adm server agent pack`; absent in a source checkout.
+# Written into the .pyz by `adm agent pack`; absent in a source checkout.
 BUILD_RESOURCE = 'build.json'
 _build = None
 

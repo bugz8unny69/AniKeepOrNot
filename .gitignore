@@ -38,6 +38,6 @@ build/
 *.zip
 .DS_Store
 
-# Built transcode-agent archives (adm server agent pack)
+# Built transcode-agent archives (adm agent pack)
 adm-agent.pyz
 adm-agent.pyz.sha256

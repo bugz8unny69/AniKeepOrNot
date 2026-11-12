@@ -1,4 +1,4 @@
-"""`adm server agent pack`: build adm-agent.pyz with the standard library's zipapp.
+"""`adm agent pack`: build adm-agent.pyz with the standard library's zipapp.
 
 Only the files listed in ARCHIVE_FILES go in: the agent modules unchanged, the
 maintained entry point and the service/environment templates, plus build.json

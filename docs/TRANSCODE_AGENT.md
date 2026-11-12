@@ -14,7 +14,7 @@ installation is needed there.
 **1. Export it** on the AniKeepOrNot server (or any checkout):
 
 ```sh
-adm server agent pack --output ./adm-agent.pyz
+adm agent pack --output ./adm-agent.pyz
 ```
 
 **2. Copy it** to the agent machine and check it arrived intact. Nothing copies
@@ -28,13 +28,13 @@ ssh agent-host 'sha256sum -c adm-agent.pyz.sha256'
 **3. Install it.** The account that runs the command decides the kind of
 install; it is announced before anything changes.
 
-- System service (dedicated agent hosts): `sudo ./adm-agent.pyz server agent install`
+- System service (dedicated agent hosts): `sudo ./adm-agent.pyz agent install`
   prints "Installing as root: system service (runs as transcode)". It creates
   the `transcode` account (added to the GPU device's group), installs
   `/opt/transcode-agent/adm-agent.pyz`, `/etc/transcode-agent.env` (0600) and
   `/etc/systemd/system/transcode-agent.service`, enables and starts it. On
   Debian/Ubuntu it can install missing packages (asked, or `--install-deps`).
-- User service (no root): `./adm-agent.pyz server agent install` prints
+- User service (no root): `./adm-agent.pyz agent install` prints
   "Installing as alice: user service (systemctl --user)". Files go to
   `~/.local/share/anikeepornot/transcode-agent/`,
   `~/.config/anikeepornot/transcode-agent/transcode-agent.env` and
@@ -56,9 +56,9 @@ address the installer printed (for example `192.168.1.50:8787`) and the token,
 then Save changes. Either:
 
 - show the agent's token and paste it into the Token field:
-  `sudo ./adm-agent.pyz server agent token` (user install: no sudo), or
+  `sudo ./adm-agent.pyz agent token` (user install: no sudo), or
 - click Generate in Settings, then on the agent run
-  `sudo ./adm-agent.pyz server agent token --set` and paste it (asked without echo).
+  `sudo ./adm-agent.pyz agent token --set` and paste it (asked without echo).
 
 The two must be identical. Settings never shows a saved token again; the token
 is only in the agent's environment file and AniKeepOrNot's secrets store.
@@ -68,12 +68,12 @@ any problem per agent: no token set, token rejected, unreachable, or needs an
 update. On the agent:
 
 ```sh
-./adm-agent.pyz server agent status                      # installed version, service, health
+./adm-agent.pyz agent status                      # installed version, service, health
 sudo systemctl status transcode-agent                    # user install: systemctl --user status transcode-agent
 sudo journalctl -u transcode-agent                       # user install: journalctl --user -u transcode-agent
 ```
 
-A test video, run on the agent (`TOKEN` from `server agent token`):
+A test video, run on the agent (`TOKEN` from `agent token`):
 
 ```sh
 ffmpeg -v error -y -f lavfi -i testsrc2=size=1280x720:rate=24 -f lavfi -i sine -t 5 -c:v libx264 -c:a flac sample.mkv
@@ -95,8 +95,8 @@ AniKeepOrNot sends the video again within its three-attempt budget.
 **Updating.** Export the new version, copy and check it as above, then:
 
 ```sh
-sudo ./adm-agent.pyz server agent upgrade --from ./adm-agent.pyz   # user install: no sudo
-sudo /opt/transcode-agent/adm-agent.pyz server agent rollback       # back to the previous version
+sudo ./adm-agent.pyz agent upgrade --from ./adm-agent.pyz   # user install: no sudo
+sudo /opt/transcode-agent/adm-agent.pyz agent rollback       # back to the previous version
 ```
 
 The new archive is checked before the service stops. Upgrade waits while an
@@ -129,15 +129,20 @@ through a reverse proxy; a bearer token does not encrypt a plain HTTP transfer.
 
 ## Running the agent
 
-`adm server agent` runs the agent in the foreground with the environment
-settings below; `adm server agent --version` prints its agent version and build
-revision, and `adm server agent --help` lists the settings. `python -m
+`adm agent run` (or just `adm agent`) runs the agent in the foreground with the
+environment settings below; `adm agent --version` prints its agent version and
+build revision, and `adm agent --help` lists the settings. `python -m
 src.transcode_agent` is the same command. Stopping it (SIGTERM/SIGINT) cancels
 any encode, so no ffmpeg process outlives the agent.
 
+`adm server agent ...` is the older spelling and still works, in `adm` and in the
+archive. The installed unit's `ExecStart` keeps it (`adm-agent.pyz server agent
+run`) because every archive version understands it, so a rollback to an older
+archive still starts.
+
 ## One-file agent archive
 
-`adm server agent pack --output ./adm-agent.pyz` builds the agent as one
+`adm agent pack --output ./adm-agent.pyz` builds the agent as one
 executable file with Python's `zipapp`, from the installation or checkout it
 runs in; no network or CI is needed. It contains only the agent modules
 (unchanged), the archive entry point, the service and environment templates and
@@ -150,8 +155,8 @@ on the agent machine confirms the copy arrived intact. It does not prove who
 built the file; transfer it over a channel you trust (for example `scp`).
 
 The agent machine needs Python 3.11+ and ffmpeg/ffprobe, nothing else:
-`./adm-agent.pyz server agent --version` and `./adm-agent.pyz server agent --help`
-work anywhere; only `server agent` commands are in the archive.
+`./adm-agent.pyz agent --version` and `./adm-agent.pyz agent --help`
+work anywhere; only `agent` commands are in the archive.
 
 ## Agent versions
 
@@ -236,8 +241,8 @@ Local uses the same encoder and has its own temp path, device and encoder
 allowlist. Remote uses the displayed agent order; Add, Up and Down edit that
 order. Each agent has an Address and a Token field. Generate creates a random
 token and shows it as a `TRANSCODE_TOKEN=...` line to copy; give it to the agent
-with `adm-agent.pyz server agent token --set`. Or paste the token the agent
-shows with `adm-agent.pyz server agent token`. Save
+with `adm-agent.pyz agent token --set`. Or paste the token the agent
+shows with `adm-agent.pyz agent token`. Save
 changes stores the agent list and its tokens together. Tokens are kept in the
 existing private secrets store and are never returned by the API. Target size defaults to decimal 500 MB per
 24 minutes, scaled by duration. Audio is budgeted before video and 1% is

@@ -9,12 +9,16 @@ import sys
 
 
 def main():
-    if sys.argv[1:2] == ["server"]:
+    if sys.argv[1:2] == ["agent"]:
         # The transcode agent; the same handlers run inside adm-agent.pyz.
-        if sys.argv[2:3] != ["agent"]:
-            sys.exit("usage: adm server agent [command] ... (see adm server agent --help)")
         from src.transcode_agent.cli import main as agent
-        sys.exit(agent(sys.argv[3:]))
+        sys.exit(agent(sys.argv[2:]))
+    if sys.argv[1:2] == ["server"]:
+        # Older spelling of `adm agent`, kept because installed units and scripts use it.
+        if sys.argv[2:3] != ["agent"]:
+            sys.exit("usage: adm agent [command] ... (see adm agent --help)")
+        from src.transcode_agent.cli import main as agent
+        sys.exit(agent(sys.argv[3:], prog="adm server agent"))
     if sys.argv[1:2] == ["transcode"]:
         from src.anime.transcode_cli import main as transcode
         sys.exit(transcode(sys.argv[2:]))
@@ -32,7 +36,7 @@ def main():
         sys.exit(services(sys.argv[2:]))
     parser = argparse.ArgumentParser(
         description=f"{APP_NAME} local administration",
-        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health) | adm server agent ... (the transcode agent)",
+        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health) | adm agent ... (the transcode agent: run, install, pack, ...)",
     )
     parser.add_argument("command", choices=("set-password",))
     parser.add_argument("--socket", default="/run/anime-discovery/admin.sock")

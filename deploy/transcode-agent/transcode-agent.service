@@ -1,7 +1,11 @@
-# AniKeepOrNot transcode agent. `adm-agent.pyz server agent install` writes this
+# AniKeepOrNot transcode agent. `adm-agent.pyz agent install` writes this
 # file with the real paths: system scope keeps User=/Group= and
 # multi-user.target; user scope (systemctl --user) drops them and uses
-# default.target. Hand installs: replace the paths below.
+# default.target. Hand installs: replace the paths below. To run the agent from
+# a full AniKeepOrNot checkout instead of the archive, use
+#   ExecStart=/usr/bin/python3 /opt/anime-discovery/bin/adm agent run
+# ExecStart keeps the `server agent run` spelling: every archive version
+# understands it, so a rollback to an older archive still starts.
 [Unit]
 Description=AniKeepOrNot transcode agent (VAAPI/x265 over HTTP)
 After=network-online.target
@@ -17,7 +21,7 @@ Group=transcode
 SupplementaryGroups=render video
 WorkingDirectory=/opt/transcode-agent
 EnvironmentFile=/etc/transcode-agent.env
-ExecStart=/usr/bin/python3 /opt/transcode-agent/adm-agent.pyz server agent
+ExecStart=/usr/bin/python3 /opt/transcode-agent/adm-agent.pyz server agent run
 Restart=on-failure
 RestartSec=5
 # Stopping cancels any encode; ffmpeg children are in this unit's cgroup and are

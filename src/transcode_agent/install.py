@@ -10,7 +10,7 @@ health check through `health(...)`, so tests use fakes. Paths are written under
 `root` (normally /); file contents always use the real runtime paths.
 
 The token is written only to the private environment file. It is shown only by
-the explicit `server agent token` command, never in logs or other output.
+the explicit `agent token` command, never in logs or other output.
 """
 from dataclasses import dataclass, field
 import getpass
@@ -195,7 +195,7 @@ def render_unit(text, layout, python):
     for path in (python, layout.archive, layout.env_file, layout.app_dir):
         if not _SAFE_PATH.fullmatch(str(path)):
             raise InstallError(f'paths with spaces or special characters are not supported: {path}')
-    replace = {'ExecStart': f'{python} {layout.archive} server agent', 'EnvironmentFile': str(layout.env_file),
+    replace = {'ExecStart': f'{python} {layout.archive} server agent run', 'EnvironmentFile': str(layout.env_file),
                'WorkingDirectory': str(layout.app_dir)}
     if layout.user:
         replace['WantedBy'] = 'default.target'
@@ -287,7 +287,7 @@ def inspect_archive(path, python, run):
                 raise InstallError(f'{path} is damaged or not an agent archive')
             record = json.loads(zipped.read('src/transcode_agent/' + BUILD_RESOURCE))
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
-        raise InstallError(f'{path} is not a readable agent archive (adm server agent pack builds one)') from None
+        raise InstallError(f'{path} is not a readable agent archive (adm agent pack builds one)') from None
     version = run([python, '-I', path, 'server', 'agent', '--version'], check=False)
     if version.returncode or f"version {record.get('agent_version')} " not in version.stdout:
         raise InstallError(f'{path} does not run on this machine: {(version.stderr or version.stdout).strip()[:200]}')
@@ -459,7 +459,7 @@ class Host:
 def _source(source):
     source = Path(source) if source else running_archive()
     if source is None:
-        raise InstallError('give the archive to install: --from adm-agent.pyz (build it with adm server agent pack)')
+        raise InstallError('give the archive to install: --from adm-agent.pyz (build it with adm agent pack)')
     if not source.is_file():
         raise InstallError(f'{source} does not exist')
     return source.resolve()
@@ -547,7 +547,7 @@ def install(options, layout, host=None, out=print):
 def pairing(layout, values):
     control = 'systemctl --user' if layout.user else 'sudo systemctl'
     logs = 'journalctl --user -u transcode-agent' if layout.user else 'sudo journalctl -u transcode-agent'
-    command = f"{'sudo ' if not layout.user else ''}{layout.archive} server agent token"
+    command = f"{'sudo ' if not layout.user else ''}{layout.archive} agent token"
     return (f"\nPair it in AniKeepOrNot: Settings > Transcode > Remote\n"
             f"  Address: {primary_address()}:{values['TRANSCODE_LISTEN'].rpartition(':')[2]}\n"
             f"  Token:   shown by: {command}\n"

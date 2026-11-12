@@ -29,7 +29,7 @@ jobs:
       - name: Check source syntax
         run: |
           python -m compileall -q src/anime
-          python -m py_compile bin/anime-discovery-install
+          python -m py_compile bin/akon-install
           node --test src/anime/tests/dashboard_browser.test.cjs
           node --check src/anime/dashboard/static/dashboard.js
       - name: Run the complete NextGen offline stack
