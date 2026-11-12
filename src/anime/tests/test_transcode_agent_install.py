@@ -152,7 +152,7 @@ def test_user_install_writes_a_user_unit_and_touches_nothing_system_wide(tmp_pat
     settings = [line.split('=')[0] for line in unit.splitlines() if '=' in line and not line.startswith('#')]
     assert not {'User', 'Group', 'SupplementaryGroups'} & set(settings)
     assert 'WantedBy=default.target' in unit
-    assert f'ExecStart=/usr/bin/python3 {layout.archive} server agent' in unit
+    assert f'ExecStart=/usr/bin/python3 {layout.archive} server agent run' in unit
     assert f'EnvironmentFile={layout.env_file}' in unit
     env = agent_install.read_env(layout.host(layout.env_file))
     assert re.fullmatch('[0-9a-f]{64}', env['TRANSCODE_TOKEN'])

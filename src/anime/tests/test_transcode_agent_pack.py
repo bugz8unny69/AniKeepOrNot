@@ -72,11 +72,11 @@ def test_build_record_matches_contents_and_digest(archive):
 
 def test_archive_and_adm_agree_on_version_and_commands(archive, tmp_path):
     path, built = archive
-    version = outside(path, 'server', 'agent', '--version', cwd=tmp_path)
+    version = outside(path, 'agent', '--version', cwd=tmp_path)
     assert version.returncode == 0
     assert f'version {AGENT_VERSION} ' in version.stdout
-    adm = subprocess.run([sys.executable, 'bin/adm', 'server', 'agent', '--help'], cwd=ROOT, capture_output=True, text=True)
-    packed = outside(path, 'server', 'agent', '--help')
+    adm = subprocess.run([sys.executable, 'bin/adm', 'agent', '--help'], cwd=ROOT, capture_output=True, text=True)
+    packed = outside(path, 'agent', '--help')
     assert 'TRANSCODE_TOKEN' in packed.stdout and 'run' in packed.stdout
     commands = lambda text: text.split('options:')[0]
     assert 'pack' in commands(adm.stdout)                 # Building needs an installation...
@@ -88,7 +88,7 @@ def test_unsupported_commands_fail_clearly(archive):
     for args in (('set-password',), ('report',), ()):
         result = outside(path, *args)
         assert result.returncode == 2 and 'contains only the AniKeepOrNot transcode agent' in result.stderr
-    assert 'invalid choice' in outside(path, 'server', 'agent', 'pack').stderr
+    assert 'invalid choice' in outside(path, 'agent', 'pack').stderr
 
 
 def test_packing_from_inside_an_archive_is_refused(tmp_path):
@@ -135,3 +135,11 @@ def test_the_archive_installer_reads_its_templates_from_the_archive(archive, tmp
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == str(path)
     assert 'ExecStart=' in result.stdout and 'server agent' in result.stdout
+
+
+def test_the_archive_accepts_agent_and_the_older_server_agent(archive, tmp_path):
+    path, _ = archive
+    short, long = outside(path, 'agent', '--version', cwd=tmp_path), outside(path, 'server', 'agent', '--version', cwd=tmp_path)
+    assert short.returncode == long.returncode == 0 and short.stdout == long.stdout
+    assert 'agent run' in outside(path, 'agent', 'run', '--help').stdout
+    assert 'server agent install' in outside(path, 'server', 'agent', 'install', '--help').stdout

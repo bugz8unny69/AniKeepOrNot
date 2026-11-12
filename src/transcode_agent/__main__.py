@@ -1,4 +1,4 @@
-"""python -m src.transcode_agent: the same as `adm server agent` (see cli.py)."""
+"""python -m src.transcode_agent: the same as `adm agent` (see cli.py)."""
 from src.transcode_agent.cli import main
 
 if __name__ == '__main__':

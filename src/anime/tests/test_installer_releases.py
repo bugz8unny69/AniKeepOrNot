@@ -230,7 +230,7 @@ class BranchUpgradeTests(base.InstallerOrchestrationTests):
             if args[:2] == ['git', 'clone']:
                 Path(args[-1]).mkdir(parents=True)
                 for name in ('src/anime/__main__.py', 'src/anime/install_support.py',
-                             'bin/anime-discovery-install', 'bin/adm'):
+                             'bin/akon-install', 'bin/adm'):
                     path = Path(args[-1]) / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text('# test candidate')
@@ -268,12 +268,12 @@ class ReexecTests(unittest.TestCase):
         return type('Args', (), {'upgrade': upgrade})()
 
     def test_only_an_upgrade_with_a_different_installer_re_runs_it(self):
-        (self.checkout / 'bin/anime-discovery-install').write_text('new installer')
+        (self.checkout / 'bin/akon-install').write_text('new installer')
         self.assertTrue(installer.should_reexec(self.args(), self.checkout, self.running))
         self.assertFalse(installer.should_reexec(self.args(upgrade=False), self.checkout, self.running))
         with patch.dict(os.environ, {installer.REEXEC_ENV: '1'}):          # Already the re-run.
             self.assertFalse(installer.should_reexec(self.args(), self.checkout, self.running))
-        (self.checkout / 'bin/anime-discovery-install').write_text('old installer')
+        (self.checkout / 'bin/akon-install').write_text('old installer')
         self.assertFalse(installer.should_reexec(self.args(), self.checkout, self.running))
 
     def test_main_runs_the_new_installer_on_the_fetched_checkout_once(self):
@@ -288,7 +288,7 @@ class ReexecTests(unittest.TestCase):
             code = installer.main(['--upgrade', '--source-dir', '/old', '--revision', 'e' * 40])
         self.assertEqual(code, 0)
         command = seen['command']
-        self.assertEqual(command[1], str(self.checkout / 'bin/anime-discovery-install'))
+        self.assertEqual(command[1], str(self.checkout / 'bin/akon-install'))
         self.assertEqual(command[2:], ['--upgrade', '--source-dir', str(self.checkout), '--revision', 'f' * 40])
         self.assertEqual(seen['env'][installer.REEXEC_ENV], '1')
         self.assertEqual(seen['cwd'], '/')                                 # Never the caller's folder.
@@ -438,7 +438,7 @@ class ReleasePackageTests(unittest.TestCase):
     def test_each_release_runs_its_own_package(self):
         import importlib.machinery, importlib.util, tempfile
         loader = importlib.machinery.SourceFileLoader(
-            'installer_under_test', str(Path(__file__).resolve().parents[3] / 'bin/anime-discovery-install'))
+            'installer_under_test', str(Path(__file__).resolve().parents[3] / 'bin/akon-install'))
         spec = importlib.util.spec_from_loader(loader.name, loader)
         installer = importlib.util.module_from_spec(spec)
         loader.exec_module(installer)

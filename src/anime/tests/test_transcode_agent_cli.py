@@ -1,4 +1,4 @@
-"""`adm server agent`: one command for normal ADM, python -m and the agent archive."""
+"""`adm agent` (and the older `adm server agent`): one command for ADM, python -m and the archive."""
 import os
 from pathlib import Path
 import subprocess
@@ -19,7 +19,7 @@ def run(*args, env=None):
 
 
 def test_adm_and_python_m_print_the_same_version():
-    adm = run('bin/adm', 'server', 'agent', '--version')
+    adm = run('bin/adm', 'agent', '--version')
     module = run('-m', 'src.transcode_agent', '--version')
     assert adm.returncode == module.returncode == 0
     assert adm.stdout == module.stdout == version_text() + '\n'
@@ -27,19 +27,19 @@ def test_adm_and_python_m_print_the_same_version():
 
 
 def test_help_documents_configuration_dependencies_and_the_service():
-    text = run('bin/adm', 'server', 'agent', '--help').stdout
+    text = run('bin/adm', 'agent', '--help').stdout
     for expected in ('TRANSCODE_TOKEN', 'TRANSCODE_LISTEN', 'ffprobe', 'systemctl status transcode-agent'):
         assert expected in text
 
 
 def test_unknown_server_command_fails_clearly_and_other_adm_commands_still_parse():
     other = run('bin/adm', 'server', 'web')
-    assert other.returncode == 1 and 'adm server agent' in other.stderr
+    assert other.returncode == 1 and 'adm agent' in other.stderr
     assert run('bin/adm', '--help').returncode == 0
 
 
 def test_missing_token_refuses_to_start_without_touching_files(tmp_path):
-    result = run('bin/adm', 'server', 'agent', env={'TRANSCODE_TOKEN': '', 'TRANSCODE_TMP': str(tmp_path)})
+    result = run('bin/adm', 'agent', env={'TRANSCODE_TOKEN': '', 'TRANSCODE_TMP': str(tmp_path)})
     assert result.returncode == 2 and 'TRANSCODE_TOKEN is required' in result.stderr
     assert list(tmp_path.iterdir()) == []
 
@@ -80,3 +80,37 @@ def test_settings_validation_is_shared():
     with pytest.raises(ValueError, match='host:port'):
         cli.settings({'TRANSCODE_LISTEN': 'nope', 'TRANSCODE_TOKEN': 't'})
     assert cli.settings({'TRANSCODE_TOKEN': 't'})['port'] == 8787
+
+
+def test_adm_agent_and_adm_server_agent_are_the_same_command(tmp_path):
+    short, long = run('bin/adm', 'agent', '--version'), run('bin/adm', 'server', 'agent', '--version')
+    assert short.returncode == long.returncode == 0 and short.stdout == long.stdout
+    for command in ('run', 'install', 'pack', 'upgrade', 'rollback', 'status', 'token'):
+        assert run('bin/adm', 'agent', command, '--help').returncode == 0, command
+    refused = run('bin/adm', 'agent', 'run', env={'TRANSCODE_TOKEN': '', 'TRANSCODE_TMP': str(tmp_path)})
+    assert refused.returncode == 2 and 'TRANSCODE_TOKEN is required' in refused.stderr
+
+
+def test_adm_agent_run_serves_health(tmp_path):
+    import json, socket, time, urllib.request
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    agent = subprocess.Popen([sys.executable, 'bin/adm', 'agent', 'run'], cwd=ROOT, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, env={**os.environ, 'TRANSCODE_TOKEN': 't', 'TRANSCODE_TMP': str(tmp_path),
+                                                          'TRANSCODE_LISTEN': f'127.0.0.1:{port}', 'TRANSCODE_ENCODERS': 'cpu'})
+    try:
+        request = urllib.request.Request(f'http://127.0.0.1:{port}/health', headers={'Authorization': 'Bearer t'})
+        for _ in range(100):
+            try:
+                with urllib.request.urlopen(request, timeout=1) as response:
+                    health = json.loads(response.read())
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            pytest.fail('adm agent run did not answer')
+        assert health['agent_version'] == AGENT_VERSION
+    finally:
+        agent.terminate()
+        assert agent.wait(10) == 0

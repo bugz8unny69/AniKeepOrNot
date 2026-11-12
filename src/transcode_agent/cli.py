@@ -1,4 +1,4 @@
-"""`adm server agent`: the transcode agent's commands.
+"""`adm agent` (also `adm server agent`): the transcode agent's commands.
 
 Normal `adm` and the agent archive (adm-agent.pyz) both call main() here, so
 the commands, help and behaviour are the same. Nothing here imports src.anime:
@@ -66,7 +66,7 @@ def run(environ=os.environ):
     return 0
 
 
-def parser(prog='adm server agent'):
+def parser(prog='adm agent'):
     p = argparse.ArgumentParser(prog=prog, description='AniKeepOrNot transcode agent. Without a command, '
                                 'runs the HTTP agent (what the transcode-agent service does).',
                                 epilog=ENVIRONMENT, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -109,7 +109,7 @@ def parser(prog='adm server agent'):
     return p
 
 
-def main(argv=None, prog='adm server agent'):
+def main(argv=None, prog='adm agent'):
     args = parser(prog).parse_args(argv)
     if args.version:
         print(version_text())
@@ -129,6 +129,6 @@ def main(argv=None, prog='adm server agent'):
             return 1
         print(f"Built {built['path']}\n  agent version {built['agent_version']}, revision {built['revision']}\n"
               f"  sha256 {built['sha256']} (also in {built['path']}.sha256)\n"
-              f"Copy it to the agent machine, then run: sudo ./{os.path.basename(built['path'])} server agent install")
+              f"Copy it to the agent machine, then run: sudo ./{os.path.basename(built['path'])} agent install")
         return 0
     return run()

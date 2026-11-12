@@ -35,11 +35,38 @@ from urllib.parse import urlsplit
 DEFAULTS={'root':'/opt/anime-discovery','state_dir':'/var/lib/anime-discovery',
     'config_dir':'/etc/anime-discovery','user':'anime-discovery',
     'source':'git@github.com:bugz8unny69/anime-discovery.git','ref':'NextGen',
-    'destination':'/usr/local/bin/anime-discovery-install','unit_dir':'/etc/systemd/system','python':'python3'}
+    'destination':'/usr/local/bin/akon-install','unit_dir':'/etc/systemd/system','python':'python3'}
 SERVICES=('anime-discovery-api.service','anime-discovery-worker.service')
 # Set when an upgrade re-runs the installer it just fetched, so it runs once.
 REEXEC_ENV='ANIME_DISCOVERY_INSTALLER_REEXEC'
 RELEASE_INFO='.anime-discovery-release.json'
+# The installer's own name. Installations made before the rename have the
+# legacy name in /usr/local/bin and in installer.json; the next install or
+# upgrade renames the installed command (see migrate_destination).
+INSTALLER='akon-install'
+LEGACY_INSTALLER='anime-discovery-install'
+
+
+def release_installer(release):
+    """The installer inside a release or checkout; releases from before the rename carry the legacy name."""
+    for name in (INSTALLER,LEGACY_INSTALLER):
+        if (Path(release)/'bin'/name).is_file():return Path(release)/'bin'/name
+    return Path(release)/'bin'/INSTALLER
+
+
+def migrate_destination(options):
+    """A saved destination with the legacy name becomes akon-install in the same folder."""
+    destination=Path(options['destination'])
+    if destination.name!=LEGACY_INSTALLER:return None
+    options['destination']=str(destination.with_name(INSTALLER))
+    return str(destination)
+
+
+def remove_legacy_installer(legacy,destination):
+    """After akon-install and its metadata are written: drop the old command and its locator."""
+    if not legacy:return
+    for path in (Path(legacy),Path(legacy+'.json')):
+        if path.is_file() and not path.is_symlink():path.unlink()
 
 
 class Reexec(Exception):
@@ -133,6 +160,7 @@ def saved_defaults():
     candidates=[
         Path(str(Path(__file__).resolve())+'.json'),
         Path(str(Path(DEFAULTS['destination']))+'.json'),
+        Path(str(Path(DEFAULTS['destination']).with_name(LEGACY_INSTALLER))+'.json'),
     ]
     bootstrap={}
     for locator in candidates:
@@ -192,7 +220,7 @@ def resolve(args):
     if args.upgrade or args.rollback:
         if not saved:
             raise ValueError(('Rollback' if args.rollback else 'Upgrade')+' requires an existing installation. '
-                             'Install it first: run anime-discovery-install without --upgrade.')
+                             'Install it first: run '+INSTALLER+' without --upgrade.')
         for k in (*DEFAULTS,'origin'):
             requested=getattr(args,k,None)
             if requested is not None and requested!=options.get(k):
@@ -203,6 +231,7 @@ def resolve(args):
     else:
         for k in (*DEFAULTS,'origin'):
             if getattr(args,k,None) is not None:options[k]=getattr(args,k)
+    options['legacy_destination']=migrate_destination(options)
     # --branch is the one setting an upgrade may change; it is saved for later upgrades.
     current_ref=options['ref']
     if getattr(args,'branch',None) is not None:
@@ -355,7 +384,7 @@ def should_reexec(args,candidate,running=None):
     """An upgrade whose fetched installer differs from the running one re-runs it, once."""
     if not args.upgrade or os.environ.get(REEXEC_ENV)=='1':return False
     running=Path(running or __file__)
-    try:return running.read_bytes()!=(candidate/'bin/anime-discovery-install').read_bytes()
+    try:return running.read_bytes()!=release_installer(candidate).read_bytes()
     except OSError:return False
 
 
@@ -420,7 +449,7 @@ def apply(options,args,execute=run):
         atomic_file(release/RELEASE_INFO,(json.dumps({'revision':revision,'ref':options['ref'],
             'installed_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},sort_keys=True)+'\n').encode(),0o644)
         pkg=package_dir(release)
-        for required in (pkg/'__main__.py',pkg/'install_support.py','bin/anime-discovery-install','bin/adm'):
+        for required in (pkg/'__main__.py',pkg/'install_support.py',release_installer(release).relative_to(release),'bin/adm'):
             if not (release/required).is_file():raise ValueError(f'Selected source does not contain the {APP_NAME} installer.')
         execute([options['python'],'-m','venv',str(release/'.venv')])
         with_retries(execute,[str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
@@ -500,7 +529,7 @@ def apply(options,args,execute=run):
             execute(['runuser','-u',options['user'],'--',release/'.venv/bin/python','-m',
                 package(release)+'.api.adm','set-password','--if-unset','--password-stdin'],cwd=release,input=password)
         destination=Path(options['destination']);destination.parent.mkdir(parents=True,exist_ok=True)
-        atomic_file(destination,(release/'bin/anime-discovery-install').read_bytes(),0o755)
+        atomic_file(destination,release_installer(release).read_bytes(),0o755)
         write_adm_launcher(destination,root,config)
         branches=dict(options.get('branches') or {})
         branches[options['ref']]={'config_dir':options['config_dir']}
@@ -511,6 +540,8 @@ def apply(options,args,execute=run):
         # Never store mutable installation settings in the launcher directory.
         if root!=Path(DEFAULTS['root']) or state!=Path(DEFAULTS['state_dir']):
             atomic_file(Path(str(destination)+'.json'),(json.dumps({'root':str(root),'state_dir':str(state)},sort_keys=True)+'\n').encode(),0o600)
+        # Only now, with the new command and its metadata saved, is the legacy command removed.
+        remove_legacy_installer(options.get('legacy_destination'),destination)
         result={'installed':True,'revision':revision,'previous_release':previous,'release':str(release),
             'configuration_preserved':True,'started_services':selected,
             'previously_running_services':active,
@@ -630,7 +661,7 @@ def _reexec(argv,error):
     for flag in ('--source-dir','--revision'):
         while flag in args:
             i=args.index(flag);del args[i:i+2]
-    command=[sys.executable,str(error.checkout/'bin/anime-discovery-install'),*args,
+    command=[sys.executable,str(release_installer(error.checkout)),*args,
              '--source-dir',str(error.checkout),'--revision',error.revision]
     print('This upgrade brings a newer installer; continuing with it...',file=sys.stderr,flush=True)
     try:

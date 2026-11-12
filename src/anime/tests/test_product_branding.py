@@ -38,10 +38,10 @@ def test_anidb_client_identity_remains_configured(monkeypatch):
 
 
 def test_installer_stays_standalone_and_uses_product_name(tmp_path):
-    installer=tmp_path/'anime-discovery-install'
-    shutil.copyfile(ROOT/'bin/anime-discovery-install',installer)
+    installer=tmp_path/'akon-install'
+    shutil.copyfile(ROOT/'bin/akon-install',installer)
     result=subprocess.run([sys.executable,str(installer),'--help'],cwd=tmp_path,
                           capture_output=True,text=True,timeout=10)
     assert result.returncode == 0, result.stderr
     assert APP_NAME in result.stdout
-    assert 'anime-discovery' in result.stdout  # Internal paths/command names stay stable.
+    assert 'usage: akon-install' in result.stdout  # The command is akon-install; internal paths keep anime-discovery.

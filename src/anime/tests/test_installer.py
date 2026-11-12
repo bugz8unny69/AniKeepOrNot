@@ -24,7 +24,7 @@ def load(name,path):
     module=importlib.util.module_from_spec(spec);loader.exec_module(module);return module
 
 
-installer=load('nextgen_test_installer',ROOT/'bin/anime-discovery-install')
+installer=load('nextgen_test_installer',ROOT/'bin/akon-install')
 class InstallerSupportTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -194,6 +194,48 @@ class InstallerSupportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     installer.resolve(installer.parser().parse_args(['--upgrade',*flags]))
 
+    def test_upgrade_of_a_legacy_install_renames_the_installed_command(self):
+        self.config.joinpath('settings.json').write_text(json.dumps({
+            'schema_version':10, 'settings':{'storage':{'database_path':str(self.database)}}}))
+        saved={'root':str(self.root/'app'), 'config_dir':str(self.config), 'ref':'NextGen',
+               'destination':str(self.root/'bin/anime-discovery-install')}
+        with patch.object(installer,'saved_defaults',return_value=saved):
+            options=installer.resolve(installer.parser().parse_args(['--upgrade']))
+        self.assertEqual(options['destination'],str(self.root/'bin/akon-install'))
+        self.assertEqual(options['legacy_destination'],str(self.root/'bin/anime-discovery-install'))
+        json.dumps(options)                                   # Still passed to the release as JSON.
+
+    def test_a_current_install_has_nothing_to_rename(self):
+        options={'destination':'/usr/local/bin/akon-install'}
+        self.assertIsNone(installer.migrate_destination(options))
+        self.assertEqual(options['destination'],'/usr/local/bin/akon-install')
+        self.assertEqual(installer.DEFAULTS['destination'],'/usr/local/bin/akon-install')
+
+    def test_legacy_command_and_locator_are_removed_after_the_new_one_is_written(self):
+        folder=self.root/'bin';folder.mkdir()
+        legacy=folder/'anime-discovery-install';legacy.write_text('old')
+        Path(str(legacy)+'.json').write_text('{}')
+        new=folder/'akon-install';new.write_text('new')
+        installer.remove_legacy_installer(str(legacy),new)
+        self.assertEqual(sorted(p.name for p in folder.iterdir()),['akon-install'])
+        installer.remove_legacy_installer(None,new)           # Nothing to do for a current install.
+
+    def test_release_installer_accepts_releases_from_before_the_rename(self):
+        release=self.root/'release';(release/'bin').mkdir(parents=True)
+        (release/'bin/anime-discovery-install').write_text('old')
+        self.assertEqual(installer.release_installer(release).name,'anime-discovery-install')
+        (release/'bin/akon-install').write_text('new')
+        self.assertEqual(installer.release_installer(release).name,'akon-install')
+
+    def test_custom_paths_are_found_through_the_legacy_locator(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)/'app';root.mkdir();bin_dir=Path(temp)/'bin';bin_dir.mkdir()
+            (bin_dir/'anime-discovery-install.json').write_text(json.dumps({'root':str(root),'state_dir':str(Path(temp)/'state')}))
+            (root/'installer.json').write_text(json.dumps({'root':str(root),'ref':'NextGen'}))
+            with patch.object(installer,'_saved_installation_file',side_effect=lambda path: json.loads(path.read_text())), \
+                 patch.object(installer,'DEFAULTS',{**installer.DEFAULTS,'destination':str(bin_dir/'akon-install')}):
+                self.assertEqual(installer.saved_defaults()['root'],str(root))
+
     def test_upgrade_without_installation_metadata_fails_closed(self):
         with patch.object(installer,'saved_defaults',return_value={}):
             with self.assertRaisesRegex(ValueError,'existing installation'):
@@ -260,7 +302,7 @@ class InstallerOrchestrationTests(unittest.TestCase):
             self.options=installer.resolve(self.args)
 
     def candidate(self,source,release,revision,execute):
-        for name in ['src/anime/__main__.py','src/anime/install_support.py','bin/anime-discovery-install','bin/adm']:
+        for name in ['src/anime/__main__.py','src/anime/install_support.py','bin/akon-install','bin/adm']:
             path=release/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('# test candidate')
         return 'a'*40
 

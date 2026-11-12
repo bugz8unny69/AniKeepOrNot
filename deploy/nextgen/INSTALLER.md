@@ -1,19 +1,19 @@
 # AniKeepOrNot installation and upgrades
 
-Run the standalone `bin/anime-discovery-install` from a reviewed checkout. It uses Python's standard library, asks questions by default, and accepts switches for unattended operation. Python 3.11+, git, runuser, systemd and Python venv/pip are required. Use `--install-system-deps` to install dependencies with apt-get on Debian/Ubuntu; this is never implied by `--yes`.
+Run the standalone `bin/akon-install` from a reviewed checkout. It uses Python's standard library, asks questions by default, and accepts switches for unattended operation. Python 3.11+, git, runuser, systemd and Python venv/pip are required. Use `--install-system-deps` to install dependencies with apt-get on Debian/Ubuntu; this is never implied by `--yes`.
 
 Default configuration files (`settings.json`, `secrets.json`, and the administrator password record) live in `/etc/anime-discovery`, owned by the service account with directory mode 0700. The database and runtime state live under `/var/lib/anime-discovery`; application releases live under `/opt/anime-discovery`. Existing installation paths and configured database filenames are preserved on upgrades.
 
 Install interactively:
 
 ```sh
-sudo python3 bin/anime-discovery-install
+sudo python3 bin/akon-install
 ```
 
 Install unattended from a local reviewed Git checkout:
 
 ```sh
-sudo python3 bin/anime-discovery-install --yes --source-dir /path/to/checkout --public-origin https://anime.example.com --settings-file /path/to/native-settings.json --start api --enable
+sudo python3 bin/akon-install --yes --source-dir /path/to/checkout --public-origin https://anime.example.com --settings-file /path/to/native-settings.json --start api --enable
 ```
 
 `--source-dir` installs committed tracked files at HEAD, not working-tree edits. Otherwise the installer fetches the private repository's configured branch using root's existing Git access. `--revision FULL_COMMIT_SHA` pins a release. It creates a virtual environment per release.
@@ -39,21 +39,31 @@ Each database upgrade first saves a copy beside the database (`anime-discovery.s
 ## Rollback
 
 ```sh
-sudo anime-discovery-install --rollback
+sudo akon-install --rollback
 ```
 
 Switches `current` back to the previous version, restores its unit files and restarts the services that were running. First the previous version checks the database and settings itself (`python -m src.anime check`). If an upgrade moved them beyond what that version understands, the rollback refuses and says why; nothing is changed. Nothing is deleted: the newer version becomes the previous one, and the next upgrade replaces it.
 
 ## The installer updates itself
 
-An upgrade installs the new release's own installer as `/usr/local/bin/anime-discovery-install`. When the fetched release brings a different installer, the upgrade continues with that new installer on the same checkout, once, so installer changes apply on the upgrade that delivers them.
+An upgrade installs the new release's own installer as `/usr/local/bin/akon-install`. When the fetched release brings a different installer, the upgrade continues with that new installer on the same checkout, once, so installer changes apply on the upgrade that delivers them.
 
-The installer writes `/usr/local/bin/anime-discovery-install`. Its root-owned private metadata directory is `/var/lib/anime-discovery/installer`: `installer.json` stores installation settings, `installation.json` records the last successful installation, and `installation.pending.json` records interrupted setup. The lock and new unit backups also live there. A successful upgrade migrates older JSON metadata from the application folder; failed upgrades retain it for recovery. Custom paths use a small locator beside the installed command. The working directory does not select the installation.
+### Formerly `anime-discovery-install`
+
+The installer used to be called `anime-discovery-install`. On an installation from before the rename, the first install or upgrade run with `akon-install` renames the command: it writes `akon-install` in the same folder, saves that name in `installer.json`, and then removes `anime-discovery-install` and its locator. Run that first upgrade from a checkout that has the new name:
+
+```sh
+sudo python3 bin/akon-install --upgrade
+```
+
+The old installed `anime-discovery-install --upgrade` cannot do this step, because it looks for its own old name in the new release.
+
+The installer writes `/usr/local/bin/akon-install`. Its root-owned private metadata directory is `/var/lib/anime-discovery/installer`: `installer.json` stores installation settings, `installation.json` records the last successful installation, and `installation.pending.json` records interrupted setup. The lock and new unit backups also live there. A successful upgrade migrates older JSON metadata from the application folder; failed upgrades retain it for recovery. Custom paths use a small locator beside the installed command. The working directory does not select the installation.
 
 Upgrade with:
 
 ```sh
-sudo anime-discovery-install --upgrade --yes
+sudo akon-install --upgrade --yes
 ```
 
 Running the command without `--upgrade` or `--rollback` installs. There is no `--install` switch, and switches must be spelled out in full (no abbreviations).
@@ -61,7 +71,7 @@ Running the command without `--upgrade` or `--rollback` installs. There is no `-
 To switch the installation to another branch:
 
 ```sh
-sudo anime-discovery-install --upgrade --branch refactor
+sudo akon-install --upgrade --branch refactor
 ```
 
 The branch is fetched and installed, its release folder is named after it (`…-refactor-<commit>`), and later upgrades keep using it until you pass `--branch` again. It is the only installation setting an upgrade may change. Every upgrade, with or without `--branch`, rewrites the systemd unit files from the new release (backing up the old ones) and reloads systemd.
@@ -85,7 +95,7 @@ The installed `adm` launcher automatically selects the active branch's configura
   - The new branch starts with an **empty database**, unless you ask for a copy:
 
     ```sh
-    sudo anime-discovery-install --upgrade --branch refactor --copy-db-data
+    sudo akon-install --upgrade --branch refactor --copy-db-data
     ```
 
 - **Switching back** to a branch you used before reuses its own folder and database exactly as you left them, so changes made on one branch never reach the other. That includes settings and passwords.
