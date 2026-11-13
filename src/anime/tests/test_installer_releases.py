@@ -37,6 +37,7 @@ class ReleaseLayoutTests(base.InstallerOrchestrationTests):
         self.assertEqual(Path(second['release']).name, f'{today}-local-aaaaaaaa-2')  # Same commit again.
         info = json.loads((Path(second['release']) / installer.RELEASE_INFO).read_text())
         self.assertEqual(info['revision'], 'a' * 40)
+        self.assertEqual(info['config_dir'], self.options['config_dir'])   # bin/adm run from the release finds it.
         self.assertEqual(os.readlink(self.root / 'current'), second['release'])
         # A re-run of a fetched installer is named after the configured branch.
         with self.patches(), patch.dict(os.environ, {installer.REEXEC_ENV: '1'}):

@@ -446,7 +446,7 @@ def apply(options,args,execute=run):
         label=options['ref'] if not args.source_dir or os.environ.get(REEXEC_ENV)=='1' else 'local'
         release=root/'releases'/release_name(root/'releases',label,revision)
         os.rename(incoming,release)
-        atomic_file(release/RELEASE_INFO,(json.dumps({'revision':revision,'ref':options['ref'],
+        atomic_file(release/RELEASE_INFO,(json.dumps({'revision':revision,'ref':options['ref'],'config_dir':options['config_dir'],
             'installed_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},sort_keys=True)+'\n').encode(),0o644)
         pkg=package_dir(release)
         for required in (pkg/'__main__.py',pkg/'install_support.py',release_installer(release).relative_to(release),'bin/adm'):
