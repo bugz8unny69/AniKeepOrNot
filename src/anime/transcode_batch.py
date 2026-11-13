@@ -15,7 +15,7 @@ import time
 from src.anime.acquisition.cleanup import directory, parent
 from src.anime.acquisition.media import signature, media_fingerprint, cancelled
 from src.anime.maintenance import MaintenanceGate, MaintenanceBusy
-from src.anime.services.transcode import transcode, target_bytes, TranscodeWaiting, TranscodeFailed
+from src.anime.services.transcode import transcode, target_bytes, TranscodeWaiting, TranscodeFailed, log
 from src.anime.storage.job_queue import JobQueue
 from src.anime.storage.sqlite import transaction
 from src.transcode_agent import encode
@@ -167,9 +167,11 @@ def _one(queue, batch, index, item, config, secrets, stop, *, client=transcode):
             item = _edit(queue, batch, index, state='publishing', result=output)
             _publish(queue, batch, index, item, temporary, target, folder, stop)
     except TranscodeWaiting:
+        log.info('batch %s: %s: back in the queue (no agent took it)', batch, source.name)
         _edit(queue, batch, index, state='pending')
     except (OSError, ValueError, encode.EncodeError, TranscodeFailed) as exc:
         cancelled(stop)
+        log.warning('batch %s: %s: failed: %s', batch, source.name, str(exc)[-400:])
         _edit(queue, batch, index, state='failed', error=str(exc)[-400:])
         item.pop('result',None)
     finally:
@@ -215,15 +217,22 @@ def run_batch(configuration, secrets, stop, *, client=transcode):
                 batch = status(db)
                 if not batch or batch['state'] == 'DONE': return False
                 # Give newly queued pipeline steps their opportunity to reserve a slot first.
-                if db.execute("SELECT 1 FROM jobs WHERE kind IN ('TRANSCODE_MEDIA','STAGE_BATCH_EPISODE') AND state='PENDING' LIMIT 1").fetchone(): return False
+                if db.execute("SELECT 1 FROM jobs WHERE kind IN ('TRANSCODE_MEDIA','STAGE_BATCH_EPISODE') AND state='PENDING' LIMIT 1").fetchone():
+                    log.info('batch %s: paused while new intake waits for an agent', batch['batch_id'])
+                    return False
                 number = batch['batch_id']
                 files = json.loads(db.execute('SELECT progress_json FROM transcode_batches WHERE batch_id=?', (number,)).fetchone()[0])
                 db.execute("UPDATE transcode_batches SET state='RUNNING' WHERE batch_id=?", (number,))
             count = 1 if configuration.value('transcode.mode') == 'local' else max(1, len(configuration.value('transcode.agents')))
             remaining = [(i, f) for i, f in enumerate(files) if f['state'] not in ('done', 'skipped', 'failed')]
+            round_files = remaining[:count]
+            log.info('batch %s: round of %d file(s) for %d destination(s), %d left: %s', number, len(round_files), count,
+                     len(remaining), ', '.join(Path(f['relative']).name for _, f in round_files))
+            began = time.monotonic()
             with ThreadPoolExecutor(max_workers=count, thread_name_prefix='transcode-staged') as pool:
-                tasks = [pool.submit(_one, queue, number, i, f, configuration, secrets, stop, client=client) for i, f in remaining[:count]]
+                tasks = [pool.submit(_one, queue, number, i, f, configuration, secrets, stop, client=client) for i, f in round_files]
                 for task in tasks: task.result()
+            log.info('batch %s: round finished in %.0fs', number, time.monotonic() - began)
             with queue.connection() as db, transaction(db):
                 batch = status(db)
                 if batch['done'] + batch['skipped'] + batch['failed'] == batch['total']:
