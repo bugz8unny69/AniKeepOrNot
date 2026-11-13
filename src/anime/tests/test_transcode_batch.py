@@ -161,3 +161,65 @@ class TranscodeBatchTests(unittest.IsolatedAsyncioTestCase):
             batch.run_batch(self.store.read(),None,threading.Event(),client=client)
         self.assertEqual(path.read_bytes(),original)
         self.assertEqual(self.rows('SELECT failed FROM transcode_batches'),[(1,)])
+
+
+class TranscodeBatchLaneTests(unittest.IsolatedAsyncioTestCase):
+    """Per-agent loops. Shares the fixtures only, so the tests above do not run twice."""
+    for _name in ('asyncSetUp', 'rows', 'source', 'queued', 'due', 'ready', 'worker', 'staged_ready', 'published', 'queue'):
+        locals()[_name] = getattr(TranscodeBatchTests, _name)
+    del _name
+
+    async def queue_sizes(self, sizes):
+        path = await self.published()
+        self.store.update({'transcode': {'mode': 'remote', 'target_mb': 1, 'retries': 0,
+                           'agents': ['http://first:8787', 'http://second:8787']}}, expected_revision=5)
+        from src.anime.acquisition.media import signature
+        with connect(self.database) as db: original = batch.staged_files(db)[0]
+        files = []
+        for index, size in enumerate(sizes):
+            current = path.with_name(f'ep-{index}.mkv')
+            current.write_bytes(b'x' * size)
+            files.append({**original, 'relative': str(current.relative_to(original['root'])),
+                          'file': list(signature(current.stat()))})
+        with patch.object(batch, 'staged_files', return_value=files): self.queue()
+
+    async def test_a_free_agent_takes_the_next_file_while_the_other_is_still_encoding(self):
+        await self.queue_sizes((100, 10, 100, 100, 10, 100))      # 10-byte files are under the target.
+        long_running, order, running, most = threading.Event(), [], [0], [0]
+        lock = threading.Lock()
+        def client(source, output, *args, **kwargs):
+            with lock:
+                running[0] += 1; most[0] = max(most[0], running[0])
+            kwargs['started']()
+            if source.name == 'ep-0.mkv':
+                assert long_running.wait(5), 'the other agent never finished the rest'
+            Path(output).write_bytes(b'done')
+            with lock:
+                running[0] -= 1; order.append(source.name)
+                if len(order) == 3: long_running.set()           # ep-2, ep-3, ep-5 done meanwhile.
+            return True
+        with patch.object(batch, 'target_bytes', return_value=50), patch.object(batch, '_catalog'):
+            batch.run_batch(self.store.read(), None, threading.Event(), client=client)
+        self.assertEqual(most[0], 2)
+        self.assertEqual(order[-1], 'ep-0.mkv')
+        self.assertEqual(sorted(order), ['ep-0.mkv', 'ep-2.mkv', 'ep-3.mkv', 'ep-5.mkv'])
+        self.assertEqual(self.rows('SELECT done,skipped,failed,state FROM transcode_batches'), [(4, 2, 0, 'DONE')])
+
+    async def test_a_file_no_agent_takes_waits_for_the_busy_one_and_the_batch_still_finishes(self):
+        await self.queue_sizes((100, 100, 100))
+        busy, done = threading.Lock(), []
+        def client(source, output, *args, **kwargs):
+            if not busy.acquire(blocking=False):                  # Only one agent will take work.
+                raise TranscodeWaiting('Waiting for transcoder')
+            try:
+                kwargs['started'](); Path(output).write_bytes(b'done'); done.append(source.name); return True
+            finally: busy.release()
+        with patch.object(batch, 'target_bytes', return_value=50), patch.object(batch, '_catalog'), \
+                patch.object(batch, '_lanes', side_effect=lambda *a, **k: real_lanes(*a, **{**k, 'retry_s': 0.01})):
+            for _ in range(5):
+                batch.run_batch(self.store.read(), None, threading.Event(), client=client)
+        self.assertEqual(sorted(done), ['ep-0.mkv', 'ep-1.mkv', 'ep-2.mkv'])
+        self.assertEqual(self.rows('SELECT done,failed,state FROM transcode_batches'), [(3, 0, 'DONE')])
+
+
+real_lanes = batch._lanes

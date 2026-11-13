@@ -209,7 +209,8 @@ class Remote:
                 if progress != last_progress:
                     last_progress, changed = progress, time.monotonic()
                 elif time.monotonic() - changed >= 60:
-                    raise TranscodeFailed('No encoding progress for 60 seconds')
+                    raise TranscodeFailed(f"No encoding progress for 60 seconds (agent at {progress}%, "
+                                          f"encoder {status.get('encoder') or 'not started'})")
                 if flag.wait(5): cancelled(flag)
             log.info('%s: encoded on %s in %.0fs', source.name, name, time.monotonic() - began)
             report('Receiving result')

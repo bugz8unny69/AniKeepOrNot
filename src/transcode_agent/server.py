@@ -37,6 +37,11 @@ _JOB = re.compile(r'/jobs/([a-f0-9]{32})(/result)?')
 _HEX64 = re.compile(r'[a-f0-9]{64}')
 
 
+def say(text):
+    """One line in the agent's journal (journalctl -u transcode-agent)."""
+    print(f'transcode-agent: {text}', flush=True)
+
+
 def workspace(tmp):
     """The only folder the agent touches: <tmp>/transcode-agent."""
     return Path(tmp) / SUBFOLDER
@@ -131,14 +136,31 @@ class Agent:
 
     def _run(self, job_id, video_kbps):
         job = self.jobs[job_id]
+        name, began = job_id[:8], time.monotonic()
+        size = job['source'].stat().st_size if job['source'].exists() else 0
+        say(f'job {name}: received {size / 1e6:.0f} MB, target video {video_kbps} kb/s')
+        logged = [-10.0]
 
         def progress(fraction):
-            job['progress'] = int(fraction * 100)
+            # Hundredths of a percent: a slow CPU encode still moves within the worker's stall window.
+            job['progress'] = round(fraction * 100, 2)
+            if job['progress'] >= logged[0] + 10:
+                logged[0] = job['progress'] // 10 * 10
+                say(f'job {name}: {logged[0]:.0f}% ({job["encoder"]}, {time.monotonic() - began:.0f}s)')
+
+        def encoder(value):
+            job.update(encoder=value)
+            logged[0] = -10.0
+            say(f'job {name}: encoding with {value}')
+
+        def failed(value, error):
+            say(f'job {name}: {value} encode failed: {error}')
         try:
-            result = self.transcode(job['source'], job['output'], video_kbps=video_kbps,
-                                    encoders=self.encoders, vaapi_device=self.vaapi_device,
-                                    workdir=job['folder'], on_progress=progress, cancelled=job['cancelled'],
-                                    on_encoder=lambda encoder: job.update(encoder=encoder))
+            options = dict(video_kbps=video_kbps, encoders=self.encoders, vaapi_device=self.vaapi_device,
+                           workdir=job['folder'], on_progress=progress, cancelled=job['cancelled'], on_encoder=encoder)
+            if self.transcode is encode.transcode:
+                options['on_failed'] = failed          # Test doubles need not accept it.
+            result = self.transcode(job['source'], job['output'], **options)
             digest = hashlib.sha256()
             with open(job['output'], 'rb') as stream:
                 for chunk in iter(lambda: stream.read(CHUNK), b''):
@@ -146,9 +168,12 @@ class Agent:
             with self.lock:
                 job.update(state='done', progress=100, encoder=result['encoder'],
                            sha256=digest.hexdigest(), finished_at=self.clock())
+            say(f'job {name}: done with {result["encoder"]} in {time.monotonic() - began:.0f}s')
         except Exception as exc:  # The agent must answer; the error goes to the worker.
             with self.lock:
                 job.update(state='failed', error=str(exc)[:500] or type(exc).__name__, finished_at=self.clock())
+            reason = 'cancelled by the worker' if job['cancelled'].is_set() else job['error']
+            say(f'job {name}: stopped after {time.monotonic() - began:.0f}s: {reason}')
         finally:
             try:
                 os.unlink(job['source'])
@@ -180,6 +205,8 @@ class Agent:
                 job['cancelled'].set()
         if job is None:
             return False
+        if job['state'] == 'running':
+            say(f'job {job_id[:8]}: the worker cancelled it at {job["progress"]}% ({job["encoder"] or "not started"})')
         if job['thread'] is not None:
             job['thread'].join()
         with self.lock:
