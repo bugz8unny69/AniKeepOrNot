@@ -182,3 +182,41 @@ def test_real_audio_only_mkv_is_rejected_for_a_video_source(tmp_path):
     with pytest.raises(encode.EncodeError, match='0 video streams, the source has 1'):
         encode.check(source_info=encode.probe(source), output=result)
     assert not result.exists()                                    # A rejected result is removed.
+
+
+def fake_ffmpeg(tmp_path, blocks):
+    """An executable that prints the given -progress blocks and exits 0."""
+    script = tmp_path / 'ffmpeg'
+    script.write_text('#!/bin/sh\ncat <<"END"\n' + ''.join(blocks) + 'END\n')
+    script.chmod(0o755)
+    return [str(script)]
+
+
+def block(frame, out_time='N/A', end=False):
+    return (f'frame={frame}\nfps=109.97\ntotal_size=22806528\nout_time_us={out_time}\nout_time_ms={out_time}\n'
+            f'out_time=N/A\nspeed=N/A\nprogress={"end" if end else "continue"}\n')
+
+
+def test_progress_comes_from_frames_when_ffmpeg_reports_no_out_time(tmp_path):
+    # As a Radeon RX 6700 XT hevc_vaapi encode into Matroska reports it: out_time N/A, frames counting.
+    seen = []
+    code, _ = encode.run_ffmpeg(fake_ffmpeg(tmp_path, [block(9), block(110), block(1000)]), 100.0, seen.append,
+                                frames=2000)
+    assert code == 0
+    assert seen == [9 / 2000, 110 / 2000, 0.5]
+
+
+def test_out_time_wins_when_ffmpeg_reports_it(tmp_path):
+    seen = []
+    encode.run_ffmpeg(fake_ffmpeg(tmp_path, [block(100, 25_000_000), block(2000, 100_000_000, end=True)]), 100.0,
+                      seen.append, frames=4000)
+    assert seen[0] == 0.25                       # 25 s of 100 s, not 100 of 4000 frames.
+    assert seen[-1] == 1.0
+
+
+def test_expected_frames_come_from_the_probe():
+    info = {'duration': 1440.0, 'streams': [{'codec_type': 'audio'}, {'codec_type': 'video', 'avg_frame_rate': '24000/1001'}]}
+    assert round(encode.frame_total(info)) == 34525
+    assert encode.frame_total({'duration': 10.0, 'streams': [{'codec_type': 'video', 'avg_frame_rate': '0/0',
+                                                              'r_frame_rate': '25/1'}]}) == 250
+    assert encode.frame_total({'duration': 10.0, 'streams': [{'codec_type': 'video'}]}) is None

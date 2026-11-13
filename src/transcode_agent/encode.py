@@ -50,7 +50,7 @@ def parse_encoders(value):
 def probe(path, *, ffprobe='ffprobe'):
     """ffprobe the file: {'duration': seconds, 'streams': [...]}; EncodeError when unreadable."""
     command = [ffprobe, '-v', 'error', '-show_entries',
-               'format=duration:stream=index,codec_type,codec_name,channels,bit_rate,profile'
+               'format=duration:stream=index,codec_type,codec_name,channels,bit_rate,profile,avg_frame_rate,r_frame_rate'
                ':stream_tags=language,BPS,BPS-eng,title:stream_disposition=default,forced', '-of', 'json', str(path)]
     try:
         completed = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
@@ -67,6 +67,20 @@ def probe(path, *, ffprobe='ffprobe'):
     except (ValueError, KeyError, TypeError):
         raise EncodeError('ffprobe output could not be read') from None
     return {'duration': duration, 'streams': streams}
+
+
+def frame_total(info):
+    """Expected video frames (duration x frame rate), or None when the probe has no usable rate."""
+    video = next((s for s in info.get('streams', ()) if s.get('codec_type') == 'video'), None)
+    for key in ('avg_frame_rate', 'r_frame_rate'):
+        try:
+            num, _, den = str((video or {}).get(key, '')).partition('/')
+            rate = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if math.isfinite(rate) and 0 < rate < 1000:
+            return info['duration'] * rate
+    return None
 
 
 def counts(streams):
@@ -163,11 +177,13 @@ def _last_line(raw):
     return lines[-1][:500] if lines else ''
 
 
-def run_ffmpeg(command, duration, on_progress=None, cancelled=None):
+def run_ffmpeg(command, duration, on_progress=None, cancelled=None, frames=None):
     """Run one ffmpeg command. Returns (returncode, last stderr line).
 
     on_progress(fraction) is called from ffmpeg's -progress output as the
-    encode advances (0.0 to 1.0).
+    encode advances (0.0 to 1.0): from out_time, or, when ffmpeg reports it as
+    N/A (as some builds do while copying many streams into Matroska), from the
+    frame count over `frames`, the expected total.
     """
     try:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -194,16 +210,27 @@ def run_ffmpeg(command, duration, on_progress=None, cancelled=None):
     reader = threading.Thread(target=drain, daemon=True)
     reader.start()
     try:
+        frame, timed = None, False        # Per -progress block: the frame count, and whether out_time was usable.
         for raw in process.stdout:
             line = raw.decode('utf-8', 'replace').strip()
             if on_progress is None or duration <= 0:
                 continue
-            if line.startswith('out_time_us=') or line.startswith('out_time_ms='):
+            if line.startswith('frame='):
+                try:
+                    frame = int(line.split('=', 1)[1])
+                except ValueError:
+                    frame = None
+            elif line.startswith('out_time_us=') or line.startswith('out_time_ms='):
                 try:
                     micros = int(line.split('=', 1)[1])
                 except ValueError:
                     continue
+                timed = True
                 on_progress(min(1.0, max(0.0, micros / 1_000_000 / duration)))
+            elif line == 'progress=continue':
+                if not timed and frame is not None and frames:
+                    on_progress(min(1.0, max(0.0, frame / frames)))
+                frame, timed = None, False
             elif line == 'progress=end':
                 on_progress(1.0)
     except BaseException:
@@ -255,7 +282,7 @@ def transcode(source, output, *, video_kbps, encoders=('gpu', 'cpu'), vaapi_devi
             if cancelled is not None and cancelled.is_set():
                 raise EncodeError('cancelled')
             if run is run_ffmpeg:
-                code, error = run(command, info['duration'], report, cancelled=cancelled)
+                code, error = run(command, info['duration'], report, cancelled=cancelled, frames=frame_total(info))
             else:
                 code, error = run(command, info['duration'], report)
             if code != 0:
