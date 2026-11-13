@@ -1,83 +1,35 @@
-"""Local privileged password recovery through the API's Unix socket."""
+"""AniKeepOrNot local administration: `adm COMMAND ...`.
 
-from src.anime import APP_NAME
-import argparse
-import getpass
-import json
-import socket
+The commands are the modules in src/anime/api/adm_commands; adding a module
+there adds a command and its line in `adm --help`.
+"""
 import sys
 
+from src.anime import APP_NAME
 
-def main():
-    if sys.argv[1:2] == ["agent"]:
-        # The transcode agent; the same handlers run inside adm-agent.pyz.
-        from src.transcode_agent.cli import main as agent
-        sys.exit(agent(sys.argv[2:]))
-    if sys.argv[1:2] == ["server"]:
-        # Older spelling of `adm agent`, kept because installed units and scripts use it.
-        if sys.argv[2:3] != ["agent"]:
-            sys.exit("usage: adm agent [command] ... (see adm agent --help)")
-        from src.transcode_agent.cli import main as agent
-        sys.exit(agent(sys.argv[3:], prog="adm server agent"))
-    if sys.argv[1:2] == ["transcode"]:
-        from src.anime.transcode_cli import main as transcode
-        sys.exit(transcode(sys.argv[2:]))
-    if sys.argv[1:2] == ["report"]:
-        # Read-only diagnostics straight from the database; the API need not run.
-        from src.anime.job_report import main as report
-        sys.exit(report(sys.argv[2:]))
-    if sys.argv[1:2] == ["recover"]:
-        # Stopped job diagnostics, classification, and safe recovery.
-        from src.anime.job_recovery import main as recover
-        sys.exit(recover(sys.argv[2:]))
-    if sys.argv[1:2] == ["services"]:
-        # One-off check of every external service; AniDB is read from cache.
-        from src.anime.services.check import main as services
-        sys.exit(services(sys.argv[2:]))
-    parser = argparse.ArgumentParser(
-        description=f"{APP_NAME} local administration",
-        epilog="Also: adm report ... (read-only job reports) | adm recover ... (historical job recovery & retry, including adm recover resv --ep-id N [--release] and batch-audit) | adm services check (external service health) | adm agent ... (the transcode agent: run, install, pack, ...)",
-    )
-    parser.add_argument("command", choices=("set-password",))
-    parser.add_argument("--socket", default="/run/anime-discovery/admin.sock")
-    parser.add_argument("--password-stdin", action="store_true", help="Read a password from standard input for automation")
-    parser.add_argument("--if-unset", action="store_true", help="Initialize only; preserve an existing password")
-    args = parser.parse_args()
-    if args.password_stdin:
-        password = sys.stdin.buffer.read(1026).decode('utf-8').removesuffix('\n')
-    else:
-        password = getpass.getpass("New administrator password: ")
-        confirmation = getpass.getpass("Confirm password: ")
-        if password != confirmation:
-            parser.error("Passwords do not match")
-    from src.anime.api.passwords import validate_password
-    try:
-        validate_password(password)
-    except ValueError:
-        parser.error("Password must be 12–256 characters with no control characters")
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-        conn.settimeout(15)
-        conn.connect(args.socket)
-        request = {"command": args.command, "password": password}
-        if args.if_unset:request["if_unset"] = True
-        payload = json.dumps(request).encode()
-        conn.sendall(payload + bytes([10]))
-        response = b""
-        while not response.endswith(bytes([10])) and len(response) < 2048:
-            part = conn.recv(2048)
-            if not part:
-                break
-            response += part
-    try:
-        result = json.loads(response)
-    except (ValueError, UnicodeError):
-        parser.error("Invalid admin socket response")
-    if result.get("ok") is not True:
-        parser.error("Password change failed")
-    if result.get("unchanged"):
-        print("Existing administrator password preserved.")
-        return
-    print("Administrator password updated; existing dashboard sessions are invalidated.")
+
+def usage(commands):
+    shown = {name: module for name, module in commands.items() if not getattr(module, 'HIDDEN', False)}
+    width = max(map(len, shown))
+    lines = [f'usage: adm COMMAND ...', '', f'{APP_NAME} local administration.', '', 'commands:']
+    lines += [f'  {name.ljust(width)}  {module.SUMMARY}' for name, module in shown.items()]
+    lines += ['', 'Run adm COMMAND --help for the options and subcommands of a command.']
+    return '\n'.join(lines)
+
+
+def main(argv=None):
+    from src.anime.api.adm_commands import commands
+    argv = sys.argv[1:] if argv is None else argv
+    found = commands()
+    if not argv or argv[0] in ('-h', '--help', 'help'):
+        print(usage(found))
+        sys.exit(0 if argv else 2)
+    command = found.get(argv[0])
+    if command is None:
+        print(usage(found), file=sys.stderr)
+        print(f'\nadm: unknown command {argv[0]!r}', file=sys.stderr)
+        sys.exit(2)
+    sys.exit(command.main(argv[1:], prog=f'adm {argv[0]}'))
 
 
 if __name__ == "__main__":
