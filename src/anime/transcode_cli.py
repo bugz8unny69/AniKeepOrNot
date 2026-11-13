@@ -10,15 +10,30 @@ from src.anime.storage.sqlite import transaction
 from src.anime.transcode_batch import enqueue, dry_run, status
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description='Transcode staged videos in the background')
-    parser.add_argument('--config-dir', default=cli_config_dir())
-    commands = parser.add_subparsers(dest='command', required=True)
-    staged = commands.add_parser('staged')
-    staged.add_argument('--series', type=int, metavar='ANIDB_ID')
-    staged.add_argument('--dry-run', action='store_true')
-    staged.add_argument('--yes', action='store_true')
-    commands.add_parser('status')
+EPILOG = '''Transcoding uses the mode set in Settings > Transcode: Local (this machine) or
+Remote (transcode agents; pair one with `adm-agent.pyz agent token`). With the
+mode on, new intake is also transcoded automatically between verification and
+staging; these commands are for videos that are already staged.
+
+examples:
+  adm transcode staged --dry-run        what would be transcoded, and the saving
+  adm transcode staged --series 12345   queue one series (asks to confirm)
+  adm transcode status                  progress of the current batch'''
+
+
+def main(argv=None, prog='adm transcode'):
+    parser = argparse.ArgumentParser(prog=prog, description='Transcode staged videos in the background.\n'
+                                     'The worker does the encoding; these commands queue and report.',
+                                     epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--config-dir', default=cli_config_dir(), help='configuration folder (default: %(default)s)')
+    commands = parser.add_subparsers(dest='command', required=True, metavar='command')
+    staged = commands.add_parser('staged', help='queue staged videos for a one-way transcode',
+                                 description='Queue staged videos as one batch. The staged file is replaced and '
+                                 'the original cannot be recovered.')
+    staged.add_argument('--series', type=int, metavar='ANIDB_ID', help='only this series (AniDB ID)')
+    staged.add_argument('--dry-run', action='store_true', help='list the files, sizes and estimated saving; change nothing')
+    staged.add_argument('--yes', action='store_true', help='do not ask for confirmation')
+    commands.add_parser('status', help='show the current batch: progress, current file and failures')
     args = parser.parse_args(argv)
     if args.command == 'staged' and args.series is not None and args.series <= 0:
         parser.error('--series must be a positive AniDB ID')
