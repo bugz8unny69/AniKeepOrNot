@@ -221,8 +221,11 @@ def run_ffmpeg(command, duration, on_progress=None, cancelled=None):
 
 def transcode(source, output, *, video_kbps, encoders=('gpu', 'cpu'), vaapi_device=DEFAULT_VAAPI_DEVICE,
               workdir=None, on_progress=None, run=run_ffmpeg, ffmpeg='ffmpeg', ffprobe='ffprobe',
-              cancelled=None, source_info=None, on_encoder=None):
+              cancelled=None, source_info=None, on_encoder=None, on_failed=None):
     """Encode source into output (MKV). Returns {'encoder': 'gpu'|'cpu', 'duration': s}.
+
+    on_encoder(encoder) is called as each encoder starts; on_failed(encoder, error)
+    when one fails and the next allowed encoder is tried.
 
     Raises EncodeError with ffmpeg's last error line when every allowed
     encoder failed, or when the output does not match the source.
@@ -265,6 +268,7 @@ def transcode(source, output, *, video_kbps, encoders=('gpu', 'cpu'), vaapi_devi
             check(source_info=info, output=output, ffprobe=ffprobe)
             return {'encoder': encoder, 'duration': info['duration']}
         last_error = f'{encoder}: {failed}'
+        if on_failed is not None: on_failed(encoder, failed)
         _remove(output)
     raise EncodeError(last_error or 'no encoder ran')
 

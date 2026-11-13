@@ -4,12 +4,14 @@ The batch row holds a small JSON cursor/rename receipt for each file. There are
 no per-file jobs or history rows. A rename receipt is saved before publishing;
 a restart can finish the catalog update without encoding the same file twice.
 """
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import fcntl
 import json
 import os
 from pathlib import Path
+import threading
 import time
 
 from src.anime.acquisition.cleanup import directory, parent
@@ -132,6 +134,7 @@ def _guard(db, item):
 
 
 def _one(queue, batch, index, item, config, secrets, stop, *, client=transcode):
+    """Process one file. Returns 'done', 'skipped', 'waiting' (no agent took it) or 'failed'."""
     root, relative = item['root'], item['relative']
     source = Path(root)/relative
     # The .tmp name is deterministic for this batch so a crash leaves a known
@@ -143,13 +146,16 @@ def _one(queue, batch, index, item, config, secrets, stop, *, client=transcode):
         with directory(root) as base, parent(base, relative) as (folder, name):
             if item.get('result'):
                 _publish(queue, batch, index, item, temporary, target, folder, stop)
-                return
+                return 'done'
             temporary.unlink(missing_ok=True)
             before = signature(os.stat(name, dir_fd=folder, follow_symlinks=False))
             if before[2:4] != tuple(item['file'][2:4]): raise TranscodeFailed('Staged source changed')
-            if before[2] <= target_bytes(item['duration'], config.value('transcode.target_mb')):
+            target_size = target_bytes(item['duration'], config.value('transcode.target_mb'))
+            if before[2] <= target_size:
+                log.info('batch %s: %s: skipped, already under the target (%.0f MB, target %.0f MB)',
+                         batch, source.name, before[2] / 1e6, target_size / 1e6)
                 _edit(queue, batch, index, state='skipped')
-                return
+                return 'skipped'
             cancelled(stop)
             _edit(queue, batch, index, state='encoding')
             def started():
@@ -157,8 +163,9 @@ def _one(queue, batch, index, item, config, secrets, stop, *, client=transcode):
                 item = _edit(queue, batch, index, attempts=item['attempts']+1)
             result = client(source, temporary, config, secrets, stop, batch=True, started=started, attempts=item['attempts'])
             if not result:
+                log.info('batch %s: %s: skipped, already under the target', batch, source.name)
                 _edit(queue, batch, index, state='skipped')
-                return
+                return 'skipped'
             with temporary.open('rb') as stream:
                 file = signature(os.fstat(stream.fileno()))
                 fingerprint = media_fingerprint(stream.fileno(), file[2], file)
@@ -166,13 +173,16 @@ def _one(queue, batch, index, item, config, secrets, stop, *, client=transcode):
             output = {'relative': str(Path(relative).with_suffix('.mkv')), 'file': list(file), 'sha256': fingerprint}
             item = _edit(queue, batch, index, state='publishing', result=output)
             _publish(queue, batch, index, item, temporary, target, folder, stop)
+            return 'done'
     except TranscodeWaiting:
         log.info('batch %s: %s: back in the queue (no agent took it)', batch, source.name)
         _edit(queue, batch, index, state='pending')
+        return 'waiting'
     except (OSError, ValueError, encode.EncodeError, TranscodeFailed) as exc:
         cancelled(stop)
         log.warning('batch %s: %s: failed: %s', batch, source.name, str(exc)[-400:])
         _edit(queue, batch, index, state='failed', error=str(exc)[-400:])
+        return 'failed'
         item.pop('result',None)
     finally:
         # Retain a complete publishing receipt's file for crash reconciliation.
@@ -206,6 +216,46 @@ def _publish(queue, batch, index, item, temporary, target, folder, stop):
         _save(db, batch, files)
 
 
+def _intake_waiting(queue):
+    with queue.connection() as db:
+        return db.execute("SELECT 1 FROM jobs WHERE kind IN ('TRANSCODE_MEDIA','STAGE_BATCH_EPISODE') "
+                          "AND state='PENDING' LIMIT 1").fetchone() is not None
+
+
+def _lanes(queue, batch, remaining, count, config, secrets, stop, client, *, retry_s=10):
+    """One loop per destination: each takes the next file as soon as its last one is
+    finished, so a skipped file or a short episode never leaves an agent idle.
+
+    A loop gives way to new intake between files. When no agent takes a file, it goes
+    back to the front; the loop tries again in retry_s while another loop is still
+    working, and stops when none is (the next tick starts over).
+    """
+    lock, running = threading.Lock(), [0]
+    def lane():
+        while not stop.is_set():
+            with lock:
+                if not remaining: return
+                if _intake_waiting(queue):
+                    log.info('batch %s: giving way to new intake waiting for an agent', batch)
+                    return
+                index = remaining.popleft()
+                running[0] += 1
+            try:
+                with queue.connection() as db:       # The saved state, with attempts already spent.
+                    item = json.loads(db.execute('SELECT progress_json FROM transcode_batches WHERE batch_id=?',
+                                                 (batch,)).fetchone()[0])[index]
+                outcome = _one(queue, batch, index, item, config, secrets, stop, client=client)
+            finally:
+                with lock: running[0] -= 1
+            if outcome == 'waiting':
+                with lock:
+                    remaining.appendleft(index)
+                    others = running[0]
+                if others == 0 or stop.wait(retry_s): return
+    with ThreadPoolExecutor(max_workers=count, thread_name_prefix='transcode-staged') as pool:
+        for task in [pool.submit(lane) for _ in range(count)]: task.result()
+
+
 def run_batch(configuration, secrets, stop, *, client=transcode):
     """One background tick. Process every free agent without consuming job slots."""
     if configuration.value('transcode.mode') == 'off' or stop.is_set(): return False
@@ -224,15 +274,11 @@ def run_batch(configuration, secrets, stop, *, client=transcode):
                 files = json.loads(db.execute('SELECT progress_json FROM transcode_batches WHERE batch_id=?', (number,)).fetchone()[0])
                 db.execute("UPDATE transcode_batches SET state='RUNNING' WHERE batch_id=?", (number,))
             count = 1 if configuration.value('transcode.mode') == 'local' else max(1, len(configuration.value('transcode.agents')))
-            remaining = [(i, f) for i, f in enumerate(files) if f['state'] not in ('done', 'skipped', 'failed')]
-            round_files = remaining[:count]
-            log.info('batch %s: round of %d file(s) for %d destination(s), %d left: %s', number, len(round_files), count,
-                     len(remaining), ', '.join(Path(f['relative']).name for _, f in round_files))
+            remaining = deque(i for i, f in enumerate(files) if f['state'] not in ('done', 'skipped', 'failed'))
+            log.info('batch %s: %d file(s) left, up to %d at a time', number, len(remaining), count)
             began = time.monotonic()
-            with ThreadPoolExecutor(max_workers=count, thread_name_prefix='transcode-staged') as pool:
-                tasks = [pool.submit(_one, queue, number, i, f, configuration, secrets, stop, client=client) for i, f in round_files]
-                for task in tasks: task.result()
-            log.info('batch %s: round finished in %.0fs', number, time.monotonic() - began)
+            _lanes(queue, number, remaining, count, configuration, secrets, stop, client)
+            log.info('batch %s: paused after %.0fs, %d file(s) left', number, time.monotonic() - began, len(remaining))
             with queue.connection() as db, transaction(db):
                 batch = status(db)
                 if batch['done'] + batch['skipped'] + batch['failed'] == batch['total']:

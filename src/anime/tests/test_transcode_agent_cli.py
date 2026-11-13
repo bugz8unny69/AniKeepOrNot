@@ -114,3 +114,21 @@ def test_adm_agent_run_serves_health(tmp_path):
     finally:
         agent.terminate()
         assert agent.wait(10) == 0
+
+
+def test_agent_logs_each_job_and_reports_fine_progress(tmp_path, capsys):
+    seen = []
+    def transcode(source, output, *, on_progress, on_encoder, **_):
+        on_encoder('cpu')
+        on_progress(0.1234)
+        seen.append(agent.status(job)['progress'])
+        Path(output).write_bytes(b'result')
+        return {'encoder': 'cpu'}
+    agent = Agent(tmp=tmp_path, token='t', encoders='cpu', transcode=transcode)
+    job = agent.reserve()
+    agent.jobs[job]['source'].write_bytes(b'x' * 16)
+    agent.start(job, 100).join(5)
+    assert seen == [12.34]                                      # Not rounded down to a whole percent.
+    text = capsys.readouterr().out
+    for expected in (f'job {job[:8]}: received', 'encoding with cpu', '10% (cpu', 'done with cpu'):
+        assert expected in text, expected
