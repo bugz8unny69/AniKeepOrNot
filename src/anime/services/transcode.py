@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hashlib
 import http.client
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +17,8 @@ from src.anime.acquisition.media import cancelled
 from src.transcode_agent import AGENT_VERSION, encode
 
 CHUNK = 1024 * 1024
+# Under the worker's logger, so these lines reach its journal at its verbosity.
+log = logging.getLogger('anime.worker.transcode')
 _SLOTS = threading.Condition()
 _BUSY = set()
 _PIPELINE_WAITERS = 0
@@ -32,6 +35,17 @@ class TranscodeFailed(RuntimeError):
     def __init__(self, message, *, status=None):
         super().__init__(message)
         self.status = status          # The agent's HTTP status, when it answered with one.
+
+
+def _mb(size):
+    """A size for the log: 4.2 GB, 512 MB, 40 kB, 10 B."""
+    for unit, scale in (('GB', 1e9), ('MB', 1e6), ('kB', 1e3)):
+        if size >= scale: return f'{size / scale:.1f} {unit}'
+    return f'{size} B'
+
+
+def _rate(size, seconds):
+    return f'{_mb(size)} in {seconds:.1f}s ({size / 1e6 / max(seconds, 0.001):.0f} MB/s)'
 
 
 def agent_name(address):
@@ -147,11 +161,15 @@ class Remote:
 
     def run(self, source, output, rate, audio, flag, report, started):
         # SHA-256 must be known before the headers are sent. Verify it again during upload.
+        name, size = agent_name(self.address), source.stat().st_size
+        began = time.monotonic()
         expected = digest(source, flag)
+        log.info('%s: hashed %s for %s', source.name, _rate(size, time.monotonic() - began), name)
         conn = self.connection(120)
         job = None
         try:
             report('Sending to ' + self.address)
+            began = time.monotonic()
             conn.putrequest('POST', '/jobs')
             for key, value in {'Authorization': 'Bearer '+self.token, 'Content-Length': str(source.stat().st_size),
                                'X-Sha256': expected, 'X-Video-Kbps': str(rate), 'X-Max-Audio': str(audio)}.items():
@@ -178,6 +196,8 @@ class Remote:
             if response.status in (409, 507): raise TranscodeWaiting('Agent busy or out of space')
             if response.status != 201: raise TranscodeFailed(f'Upload returned HTTP {response.status}')
             job = json.loads(body)['job_id']
+            log.info('%s: uploaded to %s: %s', source.name, name, _rate(size, time.monotonic() - began))
+            began = time.monotonic()
             last_progress, changed = None, time.monotonic()
             while True:
                 cancelled(flag)
@@ -191,7 +211,9 @@ class Remote:
                 elif time.monotonic() - changed >= 60:
                     raise TranscodeFailed('No encoding progress for 60 seconds')
                 if flag.wait(5): cancelled(flag)
+            log.info('%s: encoded on %s in %.0fs', source.name, name, time.monotonic() - began)
             report('Receiving result')
+            began = time.monotonic()
             conn.close()
             conn = self.connection(120)
             conn.request('GET', '/jobs/'+job+'/result', headers={'Authorization': 'Bearer '+self.token})
@@ -207,6 +229,8 @@ class Remote:
                 stream.flush()
                 os.fsync(stream.fileno())
             if check.hexdigest() != expected: raise TranscodeFailed('Result SHA-256 mismatch')
+            log.info('%s: received result from %s: %s', source.name, name,
+                     _rate(output.stat().st_size, time.monotonic() - began))
         finally:
             conn.close()
             if job is not None:
@@ -236,11 +260,21 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
     candidates = ('local',) if mode == 'local' else configuration.value('transcode.agents')
     last_error = 'No agent available'
     update_required = []      # Reachable agents refused for their version: why the job waits.
+    skipped = []              # (agent, why) for the log: why this video did not go to an agent.
+    def skip(address, why):
+        name = 'this machine' if address == 'local' else agent_name(address)
+        skipped.append(f'{name}: {why}')
+        log.info('%s: skipped %s: %s', source.name, name, why)
+    need = int(source.stat().st_size * 1.5)
     with pipeline_priority(batch) as acquired_slot:
         for address in candidates:
             cancelled(flag)
             with slot(address, batch) as acquired:
-                if not acquired: continue
+                if not acquired:
+                    with _SLOTS: in_use = address in _BUSY
+                    skip(address, 'another video from this worker is using it' if in_use
+                         else 'kept free for new intake waiting for an agent')
+                    continue
                 acquired_slot()
                 remote = None
                 folder = None
@@ -252,11 +286,16 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                             wipe(tmp)
                             _LOCAL_INITIALIZED.add(tmp)
                     folder = Path(tmp)/'transcode-agent'
-                    if encode.free_bytes(folder) < source.stat().st_size * 1.5: continue
+                    free = encode.free_bytes(folder)
+                    if free < need:
+                        skip(address, f'{_mb(free)} free in {folder}, needs {_mb(need)}')
+                        continue
                 else:
                     remote = remote_factory(address, secrets.transcode_token(address))
-                    if not remote.token: continue
-                    alive = False
+                    if not remote.token:
+                        skip(address, 'no token saved (Settings > Transcode)')
+                        continue
+                    alive, why = False, None
                     for retry in range(configuration.value('transcode.retries')+1):
                         try:
                             # Checked right before every upload: a worker upgrade never trusts an older answer.
@@ -264,13 +303,23 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                             problem = compatibility(address, health)
                             if problem:
                                 update_required.append(problem)   # No upload, no attempt spent.
+                                why = problem
                                 break
-                            alive = not health['busy'] and health['free_bytes'] >= source.stat().st_size * 1.5
+                            if health['busy']:
+                                why = 'the agent reports a job running'
+                            elif health['free_bytes'] < need:
+                                why = f"{_mb(health['free_bytes'])} free on the agent, needs {_mb(need)}"
+                            else:
+                                alive = True
                             break
-                        except (OSError, ValueError, KeyError, http.client.HTTPException, TranscodeFailed):
+                        except (OSError, ValueError, KeyError, http.client.HTTPException, TranscodeFailed) as exc:
+                            why = f'no health answer ({type(exc).__name__}: {str(exc)[:120]})'
                             if retry < configuration.value('transcode.retries') and flag.wait(configuration.value('transcode.retry_seconds')):
                                 cancelled(flag)
-                    if not alive: continue
+                    if not alive:
+                        skip(address, why)
+                        continue
+                    log.info('%s: sending to %s (%s)', source.name, agent_name(address), _mb(source.stat().st_size))
                 while attempts < 3:
                     def spend():
                         nonlocal attempts
@@ -296,10 +345,13 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                         cancelled(flag)
                         os.replace(temporary, output)
                         return True
-                    except TranscodeWaiting:
+                    except TranscodeWaiting as exc:
+                        skip(address, f'refused the upload ({exc})')
                         break
                     except (OSError, ValueError, KeyError, http.client.HTTPException, encode.EncodeError, TranscodeFailed) as exc:
                         last_error = str(exc)[-400:]
+                        log.warning('%s: failed on %s: %s', source.name,
+                                    'this machine' if remote is None else agent_name(address), last_error)
                         temporary.unlink(missing_ok=True)
                         if remote is not None: break  # Fail over before retrying this destination.
                     finally:
@@ -311,7 +363,9 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                              report=report, started=started, attempts=attempts, remote_factory=remote_factory)
     if update_required:
         message = ' '.join(update_required)[:500]
+        log.info('%s: no agent took it; waiting (%s)', source.name, '; '.join(skipped))
         report(message)
         raise TranscodeWaiting(message)
+    log.info('%s: no agent took it; waiting (%s)', source.name, '; '.join(skipped) or 'no agents configured')
     report('Waiting for transcoder')
     raise TranscodeWaiting('Waiting for transcoder')

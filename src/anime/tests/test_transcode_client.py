@@ -1,4 +1,5 @@
 """Shared-client budgets, failover, waiting, slots, settings and private tokens."""
+import itertools
 import json
 from pathlib import Path
 import threading
@@ -194,7 +195,7 @@ def test_remote_rejects_bad_hash_and_frozen_progress(tmp_path, failure):
     try:
         with patch.object(remote,'request',side_effect=request), patch.object(agent,'result',side_effect=result):
             if failure=='frozen':
-                with patch.object(client.time,'monotonic',side_effect=[0,1,62]):
+                with patch.object(client.time,'monotonic',side_effect=itertools.count(0, 31)):
                     with pytest.raises(client.TranscodeFailed,match='60 seconds'):
                         remote.run(source,output,100,128,Flag(),lambda _:None,lambda:None)
             else:
@@ -333,3 +334,21 @@ def test_no_agents_or_no_tokens_is_a_setup_problem():
     class NoTokens:
         def transcode_token(self, address): return ''
     assert TranscodeAdapter().probe(config(), NoTokens()).status == 'NOT_CONFIGURED'
+
+
+def test_each_skipped_agent_is_logged_with_its_reason(tmp_path, caplog):
+    source, output = tmp_path/'episode.mkv', tmp_path/'result'
+    source.write_bytes(b'x'*4096)
+    answers = {'http://first:8787': {'busy': True, 'free_bytes': 10**9},
+               'http://second:8787': {'busy': False, 'free_bytes': 10}}
+    class Remote:
+        token = 'test'
+        def __init__(self, address, token): self.address = address
+        def health(self): return {**answers[self.address], 'agent_version': AGENT_VERSION}
+    with caplog.at_level('INFO', logger='anime.worker.transcode'), pytest.raises(client.TranscodeWaiting):
+        client.transcode(source, output, config(), Secrets(), threading.Event(), info={'duration': 1, 'streams': []},
+                         remote_factory=Remote)
+    text = caplog.text
+    assert 'episode.mkv: skipped first:8787: the agent reports a job running' in text
+    assert 'episode.mkv: skipped second:8787: 10 B free on the agent, needs 6.1 kB' in text
+    assert 'episode.mkv: no agent took it; waiting' in text
