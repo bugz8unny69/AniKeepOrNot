@@ -1,5 +1,6 @@
 """Verify a declared episode through providers; this job never acquires content."""
 import inspect
+import re
 import time
 from dataclasses import dataclass
 
@@ -31,6 +32,27 @@ DEFINITION=HandlerDefinition(KIND,"Verify release episode")
 class ReleaseCompletion:
     verified: VerifiedRelease | BatchVerificationCompletion | BatchCandidatePooled
     verification_job_id: int
+
+
+_MOVIE_WORDS=re.compile(r'(?<![A-Za-z])(?:movie|the[ ._]movie|gekijou?ban)(?![A-Za-z])|劇場版',re.I)
+
+
+def movie_release(database,source):
+    """True for a movie: AniDB calls the work a Movie, or the title says movie
+    without naming a season or episode (a "S01 + Movie" pack is not one)."""
+    from contextlib import closing
+    import json
+    from src.anime.storage.migrations import _open
+    with closing(_open(database,readonly=True,timeout_ms=5000)) as db:
+        row=db.execute("SELECT json_extract(series_json,'$.anime.type') FROM identity_results WHERE result_id=?",
+                       (source.identity_result_id,)).fetchone()
+    if row and isinstance(row[0],str) and row[0].strip().casefold()=='movie':
+        return True
+    try:title=json.loads(source.raw_body).get('release_name')
+    except (ValueError,TypeError,AttributeError):return False
+    if type(title) is not str or not _MOVIE_WORDS.search(title):return False
+    from src.anime.batch.recognition import release_scope_hint
+    return release_scope_hint(title).kind in ('special','unknown')
 
 
 def _persist(db,claim,value):
@@ -75,6 +97,9 @@ def registration(verify, *, user_evaluation_kind=None, batch_kind=None):
         except (ValueError,TypeError): return Outcome("review","JOB_PAYLOAD_INVALID")
         try:
             source=await blocking(load_release,context.configuration.value("storage.database_path"),context.claim.event_id,aid)
+            if await blocking(movie_release,context.configuration.value("storage.database_path"),source):
+                # Movies are not supported yet: notify and cancel, never review.
+                return Outcome("cancel","RELEASE_MOVIE_SKIPPED")
             if 'claim' in inspect.signature(verify).parameters:
                 result=await verify(source,context.configuration,context.cancelled,
                                     claim=context.claim)
@@ -92,6 +117,9 @@ def registration(verify, *, user_evaluation_kind=None, batch_kind=None):
         except SizeLimitExceeded as exc: return Outcome("fail", exc.reason_code, facts=exc.facts)
         except MediaInvalid as exc: return Outcome("fail" if exc.reason_code == 'MEDIA_AUDIO_REQUIRED' else "review", exc.reason_code, facts=failure_facts(exc))
         except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
+        # A season pack whose files cannot be told apart stops once, naming the
+        # file check, instead of being retried as an unexpected failure.
+        except BatchPlanningError as exc: return Outcome("review","SEASON_PACK_FILES_UNCLEAR", facts=failure_facts(exc))
         if type(result) not in (VerifiedRelease,BatchVerificationCompletion,BatchCandidatePooled) or result.source!=source:
             return Outcome("review","RELEASE_CONFLICT")
         return Outcome(value=ReleaseCompletion(result,context.claim.job_id))

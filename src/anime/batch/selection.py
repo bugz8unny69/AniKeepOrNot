@@ -11,15 +11,27 @@ from src.anime.acquisition.metadata import BatchInventory, ObservedBatchInventor
 
 VIDEO = frozenset(('.mkv', '.mp4', '.m4v', '.avi'))
 _SPECIAL = re.compile(r'(?<![A-Za-z0-9])(?:OVA|OAV|ONA|SPECIALS?|NCOP|NCED|PV|TRAILER|RECAP|EXTRAS?|MOVIE)(?![A-Za-z0-9])', re.I)
-_SE = re.compile(r'(?<![A-Za-z0-9])S(?P<season>\d{1,2})[ ._-]*E(?P<ep>\d{1,4})(?![A-Za-z0-9])', re.I)
-_X = re.compile(r'(?<![A-Za-z0-9])(?P<season>\d{1,2})x(?P<ep>\d{1,4})(?!\d)', re.I)
-_SEASON = re.compile(r'(?<![A-Za-z0-9])S(?P<season>\d{1,2})(?![A-Za-z0-9])|\bSeason[ ._-]*S?(?P<word>\d{1,2})\b', re.I)
+# An optional release version ('E01v2', 'E01 v2') belongs to the episode tag.
+_SE = re.compile(r'(?<![A-Za-z0-9])S(?P<season>\d{1,2})[ ._-]*E(?P<ep>\d{1,4})(?:\s?v\d{1,2})?(?![A-Za-z0-9])', re.I)
+_X = re.compile(r'(?<![A-Za-z0-9])(?P<season>\d{1,2})x(?P<ep>\d{1,4})(?:v\d{1,2})?(?![A-Za-z0-9])', re.I)
+# 'Season 2', 'Season_02', '4th Season'. A dash is not a separator: in
+# 'Season_-_01' the number after it is the episode.
+_SEASON = re.compile(r'(?<![A-Za-z0-9])S(?P<season>\d{1,2})(?![A-Za-z0-9])'
+                     r'|(?<![A-Za-z0-9])Season[ ._]?S?(?P<word>\d{1,2})(?![A-Za-z0-9])'
+                     r'|(?<![A-Za-z0-9])(?P<ordinal>\d{1,2})(?:st|nd|rd|th)[ ._]Season(?![A-Za-z0-9])', re.I)
 _SEASON_DIR = re.compile(r'(?:Season[ ._-]*|S)(\d{1,2})', re.I)
 _ORDINARY = (re.compile(r'(?<![A-Za-z0-9])(?:Episode|EP|E)[ ._-]*(?P<ep>\d{1,4})(?!\d)', re.I),
-             re.compile(r'\s-\s(?P<ep>\d{1,4})(?:v\d+)?(?!\d)', re.I),
+             re.compile(r'[\s_]-[\s_](?P<ep>\d{1,4})(?:v\d+)?(?![\d.])', re.I),
              re.compile(r'[\[(](?P<ep>\d{1,4})[\])]', re.I),
              re.compile(r'第\s*(?P<ep>\d{1,4})\s*話'))
-_RANGE = re.compile(r'\d{1,4}\s*(?:-|~|\+|&|,|to)\s*(?:E(?:P)?\s*)?\d{1,4}(?!\d)', re.I)
+# A range starts at an episode number, not inside a season tag ('S2 - 10').
+_RANGE = re.compile(r'(?:(?<![A-Za-z0-9.])|(?<=E)|(?<=EP))\d{1,4}\s*(?:-|~|\+|&|,|to)\s*(?:E(?:P)?\s*)?\d{1,4}(?!\d)', re.I)
+# Right after an explicit S01E01: '-E02', ' & E02', '-02'. Not ' - 0 + 2 = 1' (an episode title).
+_RANGE_AFTER = re.compile(r'(?:\s*(?:-|~|\+|&|,|to)\s*E(?:P)?\s*\d{1,4}|[-~]\d{1,4})(?!\d)', re.I)
+# Bracketed CRC32 checksum, e.g. [E02FF655]. Its letters and digits are not episode numbers.
+_CRC = re.compile(r'[\[(][0-9A-F]{8}[\])]', re.I)
+# Half episodes such as recaps: 'Show - 20.5', 'E20.5'.
+_HALF = re.compile(r'(?:[\s_]-[\s_]|(?<![A-Za-z0-9])E)\d{1,4}\.\d(?!\d)', re.I)
 _REPEAT = re.compile(r'(?<![A-Za-z])E\d{1,4}\s*E\d{1,4}(?!\d)', re.I)
 
 
@@ -42,12 +54,13 @@ def _episode(path, season):
     """Return a release episode number, None for a labeled extra, else fail."""
     safe_path(path)
     relative = PurePosixPath(path)
-    stem = relative.stem
+    stem = _CRC.sub(' ', relative.stem)
     dirs = relative.parts[:-1]
     folder_seasons = [int(m.group(1)) for d in dirs if (m := _SEASON_DIR.fullmatch(d))]
-    seasons = {int(m.group('season') or m.group('word')) for m in _SEASON.finditer(stem)}
+    seasons = {int(m.group('season') or m.group('word') or m.group('ordinal')) for m in _SEASON.finditer(stem)}
     seasons.update(folder_seasons)
-    special = bool(_SPECIAL.search(stem) or any(_SPECIAL.fullmatch(d) for d in dirs) or 0 in seasons)
+    special = bool(_SPECIAL.search(stem) or any(_SPECIAL.fullmatch(d) for d in dirs) or 0 in seasons
+                   or (_HALF.search(stem) and not _SE.search(stem)))
     if special:
         # A regular-episode declaration and a special label in one video are
         # contradictory; skip only files with unambiguous extra identity.
@@ -58,19 +71,24 @@ def _episode(path, season):
         raise BatchPlanningError('Conflicting season in extra video')
     if len(seasons) > 1 or (seasons and season not in seasons):
         raise BatchPlanningError('Conflicting season in video file')
-    if _RANGE.search(stem) or _REPEAT.search(stem):
-        raise BatchPlanningError('Multi-episode video cannot be mapped one-to-one')
-    explicit = [(int(m.group('season')), int(m.group('ep'))) for m in _SE.finditer(stem)]
-    explicit += [(int(m.group('season')), int(m.group('ep'))) for m in _X.finditer(stem)]
+    tags = list(_SE.finditer(stem)) + list(_X.finditer(stem))
+    explicit = [(int(m.group('season')), int(m.group('ep'))) for m in tags]
     if len(explicit) > 1:
         raise BatchPlanningError('Ambiguous explicit episode declarations')
     if explicit:
+        tag = tags[0]
+        # Whatever follows the explicit tag is the episode title ('0 + 2 = 1').
+        # Only a range attached to the tag makes it a multi-episode file.
+        if _RANGE_AFTER.match(stem, tag.end()) or _REPEAT.search(stem):
+            raise BatchPlanningError('Multi-episode video cannot be mapped one-to-one')
         file_season, number = explicit[0]
         if file_season != season:
             raise BatchPlanningError('Episode belongs to a different season')
-        residue = _SE.sub(' ', _X.sub(' ', stem))
-        if any(p.search(residue) for p in _ORDINARY):
+        # A second number before the tag ('Show - 13 (S02E01)') is a conflict.
+        if any(p.search(stem[:tag.start()]) for p in _ORDINARY):
             raise BatchPlanningError('Conflicting episode declarations')
+    elif _RANGE.search(stem) or _REPEAT.search(stem):
+        raise BatchPlanningError('Multi-episode video cannot be mapped one-to-one')
     else:
         candidates = []
         for pattern in _ORDINARY:

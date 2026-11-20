@@ -71,6 +71,15 @@ def hash_magnet(digest,value=None):
     return 'magnet:?'+urlencode(keep,safe=':/')
 
 
+# Files a release may carry next to its videos: external audio (.mka) and
+# subtitle tracks (.mks, .sup/.idx/.sub, .vtt), covers and checksums. Only
+# video files are ever selected; the rest are never staged or opened.
+SIDECAR_FILE_TYPES=frozenset(('.nfo','.srt','.ass','.ssa','.txt','.mka','.mks','.sup','.idx','.sub','.vtt',
+                              '.jpg','.jpeg','.png','.webp','.sfv','.md5'))
+BATCH_FILE_TYPES=frozenset(('.mkv','.mp4','.m4v','.avi'))|SIDECAR_FILE_TYPES
+SINGLE_FILE_TYPES=frozenset(('.mkv','.mp4'))|SIDECAR_FILE_TYPES
+
+
 def safe_path(value):
     if (type(value) is not str or not 1<=len(value)<=2048 or '\\' in value or ':' in value
             or any(unicodedata.category(c).startswith('C') for c in value)
@@ -140,8 +149,7 @@ class BatchInventory:
         if sum(f.size for f in self.files)>MAX_INTEGER:raise MetadataInvalid()
         videos=[f for f in self.files if PurePosixPath(f.path).suffix.lower() in ('.mkv','.mp4','.m4v','.avi')]
         if not videos or any(f.size<=0 for f in videos):raise MetadataInvalid()
-        allowed={'.mkv','.mp4','.m4v','.avi','.nfo','.srt','.ass','.ssa','.txt'}
-        if any(PurePosixPath(f.path).suffix.lower() not in allowed for f in self.files):raise MetadataInvalid()
+        if any(PurePosixPath(f.path).suffix.lower() not in BATCH_FILE_TYPES for f in self.files):raise MetadataInvalid()
         if len(self.json().encode('utf-8'))>1048576:raise MetadataInvalid()
 
     def json(self):
@@ -171,8 +179,7 @@ class ObservedBatchInventory:
         if any('/'.join(p.split('/')[:n]) in names for p in paths
                for n in range(1,len(p.split('/')))):raise MetadataInvalid()
         if sum(f.size for f in self.files)>MAX_INTEGER:raise MetadataInvalid()
-        allowed={'.mkv','.mp4','.m4v','.avi','.nfo','.srt','.ass','.ssa','.txt'}
-        if any(PurePosixPath(f.path).suffix.lower() not in allowed
+        if any(PurePosixPath(f.path).suffix.lower() not in BATCH_FILE_TYPES
                for f in self.files):raise MetadataInvalid()
         videos=[f for f in self.files
                 if PurePosixPath(f.path).suffix.lower() in ('.mkv','.mp4','.m4v','.avi')]
@@ -225,8 +232,7 @@ class ObservedInventory:
                for p in names for n in range(1,len(p.split('/')))):
             raise MetadataInvalid()
         if sum(f.size for f in self.files)>MAX_INTEGER:raise MetadataInvalid()
-        allowed={'.mkv','.mp4','.nfo','.srt','.ass','.ssa','.txt'}
-        if any(PurePosixPath(f.path).suffix.lower() not in allowed for f in self.files):
+        if any(PurePosixPath(f.path).suffix.lower() not in SINGLE_FILE_TYPES for f in self.files):
             raise MetadataInvalid()
         videos=[f.index for f in self.files
                 if PurePosixPath(f.path).suffix.lower() in ('.mkv','.mp4')]

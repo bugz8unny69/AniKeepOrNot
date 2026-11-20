@@ -34,6 +34,7 @@ class Provider:
         self.candidates = {15105: ("Higurashi Sotsu",)}
         self.tvdb_titles = ("Higurashi Sotsu",)
         self.tvdb_anidb_ids = frozenset({15105})
+        self.season_entry_id = 17000
 
     def title_candidates(self, aliases):
         self.queries.append(tuple(aliases))
@@ -49,7 +50,7 @@ class Provider:
 
     def season_entry(self, tid, season, episode=None):
         self.season_lookups.append((tid, season, episode))
-        return 17000
+        return self.season_entry_id
 
 
     def series(self, tid, credentials):
@@ -80,6 +81,7 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_s02_title_uses_distinct_sequel_lookup(self):
         provider = Provider()
+        provider.season_entry_id = 15105   # The sequel work is TVDB season 2's entry.
         result, trace = await self.identify(RELEASE, provider)
         self.assertEqual(provider.queries, [("Higurashi Sotsu",)])
         self.assertEqual(result["anime"]["anidb_id"], 15105)
@@ -117,6 +119,7 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         # but title spelling differs ("Higurashi: When They Cry - SOTSU").
         provider = Provider()
         provider.tvdb_titles = ("Higurashi: When They Cry - SOTSU",)
+        provider.season_entry_id = 15105
         result, trace = await self.identify(RELEASE, provider)
         self.assertEqual(result["anime"]["anidb_id"], 15105)
         self.assertEqual(result["anime"]["tvdb_series_id"], 12345)
@@ -239,6 +242,50 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             "Higurashi When They Cry S02 | BD 1080p",
             ["Higurashi When They Cry"],
         ))
+
+
+
+class SeasonEntryCorrectionTests(unittest.IsolatedAsyncioTestCase):
+    """The title finds the right series but not the season's entry (prod jobs 751, 1181)."""
+    make_resolver = SequelDiscoveryTests.make_resolver
+    identify = SequelDiscoveryTests.identify
+
+    def provider(self, candidates, titles, entries):
+        provider = Provider()
+        provider.candidates = candidates
+        provider.anime = lambda aid: {"title": titles[aid], "titles": (titles[aid],)}
+        provider.tvdb_titles = tuple(titles.values())
+        provider.tvdb_anidb_ids = frozenset(titles)
+        def season_entry(tid, season, episode=None):
+            provider.season_lookups.append((tid, season, episode))
+            if (season, episode) not in entries:
+                raise IdentityNotReady()
+            return entries[season, episode]
+        provider.season_entry = season_entry
+        return provider
+
+    async def test_alternate_title_of_the_first_season_moves_to_season_four(self):
+        provider = self.provider({13871: ("Tensei shitara Slime Datta Ken",)},
+            {13871: "Tensei shitara Slime Datta Ken", 18884: "Tensei Shitara Slime Datta Ken Dai 4 Ki"},
+            {(4, None): 18884})
+        result, _ = await self.identify("[FoundYears] That Time I Got Reincarnated as a Slime Season 4 "
+            "(CR WEB-DL 1080p AVC E-AC3) [Dual-Audio] | Tensei shitara Slime Datta Ken", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 18884)
+        self.assertEqual(provider.season_lookups, [(12345, 4, None)])
+
+    async def test_second_cour_pack_moves_to_the_cour_two_entry(self):
+        provider = self.provider({16128: ("AMAIM Warrior at the Borderline",)},
+            {16128: "AMAIM Warrior at the Borderline", 17091: "Kyoukai Senki (2022)"},
+            {(1, 14): 17091})
+        result, _ = await self.identify("AMAIM Warrior at the Borderline S01E14-E25 (Cour 2) "
+            "[CR Web-DL 1080p AVC Opus] [Dual Audio] [hchcsen]", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 17091)
+
+    async def test_no_single_season_entry_keeps_the_title_match(self):
+        provider = self.provider({16128: ("AMAIM Warrior at the Borderline",)},
+            {16128: "AMAIM Warrior at the Borderline"}, {})
+        result, _ = await self.identify("AMAIM Warrior at the Borderline S01E14 1080p", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 16128)
 
 
 if __name__ == "__main__":

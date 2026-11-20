@@ -30,6 +30,7 @@ EVENT_TYPES = {
     'SERIES_EPISODE_TROUBLE': ('open_series', 'open_job'),
     'KEEP_SEARCH_FAILED': ('open_job',),
     'TRANSCODE_BATCH_DONE': ('open_jobs',),
+    'MOVIE_SKIPPED': ('open_job',),
 }
 
 
@@ -125,6 +126,26 @@ def keep_search_failed(db, claim, now=None):
                 'message': 'Keep finished, but the library manager did not start the search for missing episodes. '
                            'Start a search for this series in the library manager.',
                 'anidb_id': anidb_id, 'job_id': claim.job_id, 'severity': 'attention'}, now=now)
+
+
+def movie_skipped(db, claim, now=None):
+    """A movie release was skipped: movies are not supported yet."""
+    row = db.execute("SELECT r.anidb_id,json_extract(r.series_json,'$.anime.title'),e.raw_body "
+                     "FROM jobs j JOIN identity_results r ON r.event_id=j.event_id "
+                     "JOIN incoming_events e ON e.event_id=j.event_id WHERE j.job_id=? "
+                     "ORDER BY r.result_id DESC LIMIT 1", (claim.job_id,)).fetchone()
+    anidb_id, name, release = (row or (None, None, None))
+    try:
+        import json
+        release = json.loads(release).get('release_name') if release else None
+    except (ValueError, TypeError, AttributeError):
+        release = None
+    name = name.strip()[:80] if isinstance(name, str) and name.strip() else None
+    notify(db, {'type': 'MOVIE_SKIPPED',
+                'title': f'Movie skipped: {name}'[:120] if name else 'Movie skipped',
+                'message': 'Movies are not supported yet, so this release was canceled. Nothing was downloaded.',
+                'anidb_id': anidb_id, 'job_id': claim.job_id,
+                'release_name': release[:1024] if isinstance(release, str) and release else None}, now=now)
 
 
 def _series_of_job_keep(db, job_id):

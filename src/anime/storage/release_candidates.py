@@ -275,6 +275,33 @@ def auto_cleanup_oversized(db,claim):
     return request_automatic_cleanup(db,claim)
 
 
+def close_skipped_release(db,claim,now):
+    """A skipped release (a movie, for now): notify, then close its operation.
+
+    The check runs before anything is added to qBittorrent, so usually there
+    is nothing to clean and the operation is closed directly. Anything it does
+    own goes through the normal cancellation cleanup.
+    """
+    from src.anime.notifications import movie_skipped
+    from src.anime.storage.cancellation import operation,unfinished_resources
+    movie_skipped(db,claim,now)
+    op=operation(db,claim.job_id)
+    if op[1]!='ACTIVE':return ()
+    open_jobs=db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) WHERE m.operation_id=? "
+                         "AND j.state NOT IN ('DONE','CANCELED','FAILED') LIMIT 1",(op[0],)).fetchone()
+    if open_jobs or unfinished_resources(db,op[0]) or _owns_torrents(db,op[0]):
+        return request_automatic_cleanup(db,claim)
+    # The job keeps RELEASE_MOVIE_SKIPPED; the operation records a finished cancel.
+    db.execute("UPDATE job_operations SET state='CANCELED',cleanup_state='COMPLETE',"
+               "reason_code='CANCELLATION_COMPLETE',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
+    return ()
+
+
+def _owns_torrents(db,operation_id):
+    from src.anime.cancel_cleanup import owned_torrents
+    return bool(owned_torrents(db,operation_id))
+
+
 def request_automatic_cleanup(db,claim):
     from src.anime.storage.cancellation import CancellationStore,operation
     from src.anime.storage.sqlite import enqueue_job_with_receipt

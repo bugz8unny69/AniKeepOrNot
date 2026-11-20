@@ -308,6 +308,10 @@ class JobQueue:
                 # An episode of a tracked series could not be got: one bell item per series.
                 from src.anime.notifications import job_needs_review
                 job_needs_review(db,claim,now)
+            if db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()==(
+                    'CANCELED','RELEASE_MOVIE_SKIPPED'):
+                from src.anime.storage.release_candidates import close_skipped_release
+                records.extend(close_skipped_release(db,claim,now))
             # Failed Sonarr candidates use the existing cancellation worker,
             # never the user-facing Cancel button. Non-Sonarr jobs are untouched.
             if db.execute('SELECT state FROM jobs WHERE job_id=?',

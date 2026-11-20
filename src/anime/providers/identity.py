@@ -303,6 +303,25 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                     matching.anidb(aid)
                 anime = client.anime(aid)
                 check(stage, "passed", "season_entry_selected")
+            elif rel_season is not None and (rel_season > 1 or (episode or 0) > 1):
+                # The title matched a work of the right series, but not
+                # necessarily the AniDB entry for this season or cour: an
+                # alternate title ("| Tensei shitara Slime Datta Ken") finds the
+                # first season, and a cour 2 pack (S01E14-E25) the first cour.
+                # Take the entry Anime-Lists records for this TVDB season and
+                # episode; without exactly one, keep the title's match.
+                try:
+                    covering = client.season_entry(tid, rel_season, episode)
+                except (IdentityNotReady, IdentityConflict):
+                    covering = aid
+                if covering != aid:
+                    aid = covering
+                    if matching is not None:
+                        matching.anidb(aid)
+                    anime = client.anime(aid)
+                    check(stage, "passed", "season_entry_corrected")
+                else:
+                    check(stage, "passed")
             else:
                 check(stage, "passed")
             if cancelled.is_set():
