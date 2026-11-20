@@ -65,7 +65,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'recognized_series',  # v70 keys Recognized names by AniDB anime
             'notifications',  # v71 adds the notification inbox
             'transcode_media',  # v72 records transcode attempts/results
-            'transcode_batches')  # v73 adds staged batches
+            'transcode_batches',  # v73 adds staged batches
+            None)  # v74 rebuilds notifications to allow MOVIE_SKIPPED
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

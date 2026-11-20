@@ -38,13 +38,21 @@ def movie_release(database,source):
     without naming a season or episode (a "S01 + Movie" pack is not one)."""
     from contextlib import closing
     import json
-    from src.anime.storage.migrations import _open
-    with closing(_open(database,readonly=True,timeout_ms=5000)) as db:
-        row=db.execute("SELECT json_extract(series_json,'$.anime.type') FROM identity_results WHERE result_id=?",
-                       (source.identity_result_id,)).fetchone()
+    import sqlite3
+    from src.anime.storage.migrations import MigrationError,_open
+    result_id=getattr(source,'identity_result_id',None)
+    row=None
+    if type(result_id) is int:
+        # A check that cannot read the identity never blocks verification.
+        try:
+            with closing(_open(database,readonly=True,timeout_ms=5000)) as db:
+                row=db.execute("SELECT json_extract(series_json,'$.anime.type') FROM identity_results "
+                               "WHERE result_id=?",(result_id,)).fetchone()
+        except (sqlite3.Error,OSError,ValueError,MigrationError):
+            row=None
     if row and isinstance(row[0],str) and row[0].strip().casefold()=='movie':
         return True
-    try:title=json.loads(source.raw_body).get('release_name')
+    try:title=json.loads(getattr(source,'raw_body',b'') or b'{}').get('release_name')
     except (ValueError,TypeError,AttributeError):return False
     from src.anime.batch.recognition import movie_title
     return movie_title(title)

@@ -284,7 +284,9 @@ def auto_cleanup_metadata_timeout(db,claim):
     Backfill candidates are already handled by auto_cleanup_failed_candidate.
     """
     if (not db.in_transaction or claim.event_id is None
-            or claim.kind not in ('PREPARE_ACQUISITION','VERIFY_RELEASE')
+            # Batch metadata candidates have their own failure path
+            # (auto_cleanup_failed_batch_candidate); only single magnets here.
+            or claim.kind!='PREPARE_ACQUISITION'
             or db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',
                           (claim.job_id,)).fetchone()!=('FAILED','TORRENT_METADATA_TIMEOUT')
             or db.execute("SELECT 1 FROM incoming_events WHERE event_id=? AND source='release-discovery'",
