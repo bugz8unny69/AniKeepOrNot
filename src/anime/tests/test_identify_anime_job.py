@@ -163,6 +163,21 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE job_id=? AND event_code=?",(job,marker)),[(1,)])
         self.assertEqual(self.rows("SELECT count(*) FROM identity_results"),[(0,)])
 
+    async def test_unidentified_movie_is_skipped_with_a_notification(self):   # e.g. job 8322
+        from src.anime.storage.sqlite import IdentityNotReady
+        _, job = self.enqueue(raw_body=b'{"release_name":"[ToonsHub] Puella Magi Madoka Magica the Movie '
+                                       b'Part III Rebellion (2013) 1080p CR WEB-DL DUAL AAC2.0 H.264"}')
+        _, series = self.enqueue(raw_body=b'{"release_name":"Unknown Show S01E01 1080p"}')
+        async def resolve(*args): raise IdentityNotReady()
+        worker = self.worker(registration(resolve))
+        await worker.attempt()
+        await worker.attempt()
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),
+                         [("CANCELED","RELEASE_MOVIE_SKIPPED")])
+        self.assertEqual(self.rows("SELECT type,job_id FROM notifications"),[("MOVIE_SKIPPED",job)])
+        # A series that is not found still stops for review.
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE job_id=?",(series,)),[("NEEDS_REVIEW",)])
+
     async def test_conflicting_canonical_identity_is_reviewed_without_stopping_worker(self):
         first,_ = self.enqueue()
         db = connect(self.database)

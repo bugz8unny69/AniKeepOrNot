@@ -13,7 +13,7 @@ from src.anime.cancellation import CancellationError
 from src.anime.diagnostics import exception
 from src.anime.handlers import HandlerDefinition
 from src.anime.history import integer
-from src.anime.job_contracts import CompletionRejected, Outcome, Registration
+from src.anime.job_contracts import CompletionRejected, Outcome, Registration, failure_facts
 from src.anime.staging import Publisher, StagingReview, StagingUnavailable, StagingBusy
 from src.anime.storage.staging import Journal, persist
 from src.anime.episode_reservations import ReservationConflict
@@ -50,6 +50,10 @@ def registration(*,publisher_factory=Publisher,journal_factory=Journal,secrets=N
             facts=None
             if kind=='review' and isinstance(exc,StagingReview) and getattr(exc,'failed_check',None):
                 facts={'failed_check':exc.failed_check,'failed_path':exc.failed_path}
+            if reason=='STAGING_UNAVAILABLE':
+                from src.anime.staging import staging_retry_delay_ms
+                return Outcome(kind,reason,facts=failure_facts(exc) or None,
+                               delay_ms=staging_retry_delay_ms(context.claim.attempt))
             return Outcome(kind,reason,facts=facts)
         payload=context.data()
         try:

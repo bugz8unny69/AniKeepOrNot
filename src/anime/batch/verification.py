@@ -93,7 +93,9 @@ def verify_batch_files(inventory, *, client, credentials, anidb_id, tvdb_series_
             # Merged/colliding episodes are never one-to-one evidence.
             raise ReleaseConflict()
         reverse[target] = anidb_number
-    seen_ids, tvdb_records = set(), {}
+    # A season/number TVDB lists twice is only a conflict for a file that maps
+    # to it; elsewhere in the series (often specials) it does not matter.
+    seen_ids, tvdb_records, duplicated = set(), {}, set()
     for page in range(20):
         if cancelled is not None and cancelled.is_set():
             raise ReleaseNotReady()
@@ -110,7 +112,7 @@ def verify_batch_files(inventory, *, client, credentials, anidb_id, tvdb_series_
             seen_ids.add(eid)
             key=(record_season,number)
             if key in tvdb_records:
-                raise ReleaseConflict()
+                duplicated.add(key)
             tvdb_records[key]=eid
         if len(seen_ids)>10000:
             raise ProviderInvalidResponse()
@@ -133,6 +135,8 @@ def verify_batch_files(inventory, *, client, credentials, anidb_id, tvdb_series_
         if candidate is None:
             raise ReleaseNotReady('RELEASE_EPISODE_MAPPING_MISSING')
         destination = mappings[candidate]
+        if destination in duplicated:
+            raise ReleaseConflict()
         tvdb_id = tvdb_records.get(destination)
         if tvdb_id is None:
             raise ReleaseNotReady('RELEASE_TVDB_EPISODE_MISSING')

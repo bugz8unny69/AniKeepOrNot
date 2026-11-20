@@ -5,7 +5,7 @@ from src.anime.providers.errors import (
 )
 from src.anime.providers.http import Clients, Credentials, Options
 from src.anime.providers.identity import ClientPool, delivery_title
-from src.anime.providers.release_mapping import declared_episode, forward_mappings, absolute_lookup
+from src.anime.providers.release_mapping import declared_episode, forward_mappings, absolute_lookup, absolute_index, absolute_series
 from src.anime.batch.recognition import release_scope_hint
 from src.anime.release_contracts import VerifiedRelease, ReleaseNotReady, ReleaseConflict
 from src.anime.worker import blocking
@@ -60,9 +60,17 @@ def make_verifier(options, credentials, *, client_pool=None, client_factory=Clie
                 if cancelled.is_set(): raise ReleaseNotReady()
                 return VerifiedRelease(source,number,catalog[number],None,None,None)
         else:
-            mappings=forward_mappings(client.mapping_xml(),source.anidb_id,source.tvdb_series_id,catalog,
+            payload=client.mapping_xml()
+            mappings=forward_mappings(payload,source.anidb_id,source.tvdb_series_id,catalog,
                                          absolute=absolute_lookup(client,source.tvdb_series_id,secret))
             candidates=[n for n,target in mappings.items() if target==(season,number)]
+            if not candidates and season==1 and secret is not None and absolute_series(payload,source.anidb_id):
+                # Long-running series numbered absolutely: "One Piece S01E1160"
+                # means absolute episode 1160, not TVDB season 1 episode 1160.
+                where=absolute_index(client,source.tvdb_series_id,secret).get(number)
+                if where is not None:
+                    candidates=[n for n,target in mappings.items() if target==where]
+                    season,number=where
             if not candidates:
                 # Only explicitly mapped regular AniDB episodes can verify
                 # TVDB S00. AniDB's separate special-numbering type is not

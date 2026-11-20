@@ -579,6 +579,16 @@ REASONS = {
         'The saved list of season packs for this season no longer matches what this job expected, for example because another job changed it.',
         'The season pack choice for this season needs review.',
         'Open the job report (adm report job --id followed by the job number) to compare the saved season packs, then press Retry.'),
+    # A movie release is canceled with a notification until movies are supported.
+    'RELEASE_MOVIE_SKIPPED': ('RELEASE_MOVIE_SKIPPED',
+        'The release is a movie, and movies are not supported yet.',
+        'This movie was skipped.',
+        'Nothing to do. The release was canceled and nothing was downloaded.'),
+    # Raised by the season-pack file planner; was retried as JOB_HANDLER_FAILED.
+    'SEASON_PACK_FILES_UNCLEAR': ('SEASON_PACK_FILES_UNCLEAR',
+        'A video in this season pack does not name exactly one regular episode, so its files cannot be matched to episodes.',
+        'The episodes in this season pack could not be told apart.',
+        'Open the job report (adm report job --id followed by the job number) to see which file and check failed. This season pack is not downloaded.'),
 
     # --- Releases submitted by hand (added after the first audit) ---------------------
     'MANUAL_RELEASE_EPISODE_MISMATCH': ('MANUAL_RELEASE_EPISODE_MISMATCH',

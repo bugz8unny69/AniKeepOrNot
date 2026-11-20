@@ -194,6 +194,17 @@ class ReleaseVerifierTests(unittest.IsolatedAsyncioTestCase):
             await self.verify(release, self.configuration, self.cancelled)
         self.assertEqual(caught.exception.reason_code, "RELEASE_SPECIAL_UNSUPPORTED")
 
+    async def test_absolute_series_reads_s01_number_as_absolute(self):   # One Piece jobs 643, 8370, 9581
+        release = replace(self.source, raw_body=b'{"release_name":"One Piece S01E1160 Loki 1080p CR WEB-DL"}')
+        self.client.mapping_xml = lambda: (b'<anime-list><anime anidbid="123" tvdbid="456" '
+                                           b'defaulttvdbseason="a"/></anime-list>')
+        self.client.episodes = lambda aid: {1160: 9160}
+        self.client.absolute_page = lambda tid, page, secret: (((23, 68, 1160),), False)
+        self.client.episode_page = lambda *args: (((777, 23, 68),), False)
+        proven = await self.verify(release, self.configuration, self.cancelled)
+        self.assertEqual((proven.anidb_episode_number, proven.tvdb_season, proven.tvdb_episode,
+                          proven.tvdb_episode_id), (1160, 23, 68, 777))
+
     async def test_no_episodeoffset_verifies_only_with_matching_tvdb_episode(self):
         release=replace(self.source,raw_body=b'{"release_name":"Test S02E01"}')
         for mapping in (MAPPING.replace(b' episodeoffset="12"',b''),

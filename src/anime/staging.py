@@ -25,6 +25,15 @@ class StagingBusy(RuntimeError):
     def __init__(self):super().__init__('Another staging attempt is still draining.')
 
 
+def staging_retry_delay_ms(attempt):
+    """Wait before retrying an unavailable staging folder: 2, 4, 6... minutes.
+
+    The staging folder is a network share; a brief outage used to exhaust all
+    retries within seconds (1s/2s/4s backoff) and stop the job for review.
+    """
+    return 120_000*max(1,attempt if type(attempt) is int else 1)
+
+
 class StagingUnavailable(RuntimeError):
     reason_code='STAGING_UNAVAILABLE'
     def __init__(self):super().__init__('The staging filesystem is temporarily unavailable.')

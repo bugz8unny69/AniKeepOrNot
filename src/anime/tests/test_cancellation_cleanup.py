@@ -57,6 +57,15 @@ class CancellationCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service().cleanup(self.job)['cleanup_state'],'COMPLETE')
         self.assertFalse(self.payload_root.exists())
 
+    async def test_folder_not_yet_empty_on_nfs_waits_then_finishes(self):   # jobs 8785, 8798, 9435
+        import errno
+        from unittest.mock import patch
+        await self.setup_download()
+        with patch('shutil.rmtree',side_effect=OSError(errno.ENOTEMPTY,'Directory not empty')):
+            self.assertEqual(self.service().cancel(self.job)['cleanup_state'],'PENDING')
+        self.assertEqual(self.service().cleanup(self.job)['cleanup_state'],'COMPLETE')
+        self.assertFalse(self.payload_root.exists())
+
     async def test_missing_folder_counts_as_done(self):
         await self.setup_download()
         import shutil;shutil.rmtree(self.payload_root)

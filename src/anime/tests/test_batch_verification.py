@@ -108,6 +108,15 @@ class ProviderBatchTests(unittest.TestCase):
         with self.assertRaises(ReleaseConflict):
             self.check(inventory('Show/Show S01E01.mkv'),client)
 
+    def test_duplicate_tvdb_episode_blocks_only_the_file_that_uses_it(self):   # job 725
+        client=FakeClient()
+        client.records += ((2100,0,3),(2101,0,3))   # Season 0 listed twice: unused.
+        self.assertEqual(len(self.check(inventory('Show/Show S01E01.mkv'),client).files),1)
+        client=FakeClient()
+        client.records += ((2102,1,1),)              # The file's own episode, twice.
+        with self.assertRaises(ReleaseConflict):
+            self.check(inventory('Show/Show S01E01.mkv'),client)
+
     def test_reject_cross_season_unknown_video_and_duplicate_mapping(self):
         for names in (('Show/Show S02E01.mkv',),
                       ('Show/Show S01E01.mkv','Show/Show S01E01 alternate.mkv'),

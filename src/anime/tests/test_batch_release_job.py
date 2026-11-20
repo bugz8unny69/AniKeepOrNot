@@ -69,3 +69,14 @@ class BatchReleaseJobTests(unittest.IsolatedAsyncioTestCase):
             [(0,1),(1,2)])
         self.assertEqual(self.rows('SELECT count(*) FROM acquisition_plans'),[(0,)])
         self.assertEqual(self.rows('SELECT count(*) FROM torrent_submissions'),[(0,)])
+
+    async def test_unplannable_season_pack_stops_once_with_its_reason(self):
+        from src.anime.batch.selection import BatchPlanningError
+        async def verify(source,*args):
+            raise BatchPlanningError('Episode number missing or ambiguous')
+        worker=Worker(self.store,self.startup,Registry((registration(verify),)),
+                      policy=Policy(lease_ms=30000))
+        self.addAsyncCleanup(worker.close)
+        await worker.attempt()
+        self.assertEqual(self.rows('SELECT kind,state,last_reason_code,attempt_count FROM jobs'),
+                         [('VERIFY_RELEASE','NEEDS_REVIEW','SEASON_PACK_FILES_UNCLEAR',1)])

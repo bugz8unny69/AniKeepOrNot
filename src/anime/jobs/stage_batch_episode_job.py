@@ -59,8 +59,10 @@ def registration(*,publisher_factory=Publisher,journal_factory=BatchStagingJourn
             return Outcome('defer',exc.reason_code,delay_ms=1000)
         except FileExistsError as exc:
             return Outcome('review','STAGING_REVIEW', facts=failure_facts(exc))
-        except (StagingUnavailable,OSError):
-            return Outcome('retry','STAGING_UNAVAILABLE')
+        except (StagingUnavailable,OSError) as exc:
+            from src.anime.staging import staging_retry_delay_ms
+            return Outcome('retry','STAGING_UNAVAILABLE',facts=failure_facts(exc) or None,
+                           delay_ms=staging_retry_delay_ms(context.claim.attempt))
         except (StagingReview,MediaInvalid,CancellationError) as exc:
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
     return Registration(KIND,DEFINITION,execute,persist=_persist)

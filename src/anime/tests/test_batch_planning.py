@@ -76,5 +76,53 @@ class ManifestSelectionTests(unittest.TestCase):
                                 episode_map={1: 1, 2: 1})
 
 
+
+class ReleaseFileNameTests(unittest.TestCase):
+    """Real season packs that were wrongly stopped (production jobs in brackets)."""
+    def episode(self, name, season):
+        from src.anime.batch.selection import file_episode_number
+        return file_episode_number('Pack/' + name, season)
+
+    def test_crc_checksum_is_not_an_episode(self):   # 664, 888, 832
+        self.assertEqual(self.episode('[whomst-mini] Cyberpunk Edgerunners - S02E08 [WEB 1080p AV1 Opus] [Dual Audio] [E02FF655].mkv', 2), 8)
+        self.assertEqual(self.episode('[whomst-mega] Cyberpunk Edgerunners - S02E03 [WEB 2160p x265 EAC3] [Dual Audio] [4E57E8F9].mkv', 2), 3)
+        self.assertEqual(self.episode('[GetItTwisted] Fire Force - S02E21 [BD 1080p AVC Opus Dual-Audio] [E4B21E72].mkv', 2), 21)
+
+    def test_season_tag_before_dash_number_is_not_a_range(self):   # 845, 796
+        self.assertEqual(self.episode('[Raze] Cyberpunk Edgerunners S2 - 10 (Dual-Audio) (Multi-Sub) DDP5.1 x265 10bit 1080p 143.8561fps.mkv', 2), 10)
+        self.assertEqual(self.episode('[Salieri] Spy x Family - S3 - 12 (1080p) (HDR) [Dual Audio].mkv', 3), 12)
+
+    def test_version_suffix(self):   # 1304, 894, 832, 751
+        self.assertEqual(self.episode('[Judas] Seihantai - S02E01v2.mkv', 2), 1)
+        self.assertEqual(self.episode('[Judas] Re.Zero - S04E19v2.mkv', 4), 19)
+        self.assertEqual(self.episode('[FoundYears] That Time I Got Reincarnated as a Slime - S04E01 v2 (CR WEB-DL 1080p AVC EAC-3) [Dual-Audio].mkv', 4), 1)
+
+    def test_underscore_dash_and_ordinal_season(self):   # 985
+        name = '[DB]ReZero kara Hajimeru Isekai Seikatsu 4th Season_-_07_(Dual Audio_10bit_1080p_x265).mkv'
+        self.assertEqual(self.episode(name, 4), 7)
+        with self.assertRaises(BatchPlanningError):
+            self.episode(name, 3)
+
+    def test_episode_title_after_tag_is_ignored(self):   # 782
+        self.assertEqual(self.episode('Cyberpunk Edgerunners - S02E03 - 0 + 2 = 1.mkv', 2), 3)
+
+    def test_half_episode_is_an_extra(self):   # 948
+        self.assertIsNone(self.episode('[Sristi] Shiki - 20.5.mkv', 1))
+        self.assertEqual(self.episode('[Sristi] Shiki - 20.mkv', 1), 20)
+
+    def test_real_multi_episode_and_conflicts_still_stop(self):
+        for name in ('Show S01E01-E02.mkv', 'Show S01E01-02.mkv', 'Show S01E01 & E02.mkv',
+                     'Show - 01-02.mkv', 'Show - 13 (S01E01).mkv'):
+            with self.subTest(name=name), self.assertRaises(BatchPlanningError):
+                self.episode(name, 1)
+
+    def test_sidecar_audio_and_subtitle_tracks_are_allowed(self):   # 782, 844
+        from src.anime.acquisition.metadata import MetadataInvalid
+        files = inventory('Pack/Show - S01E01.mkv', 'Pack/Show - S01E01.mka', 'Pack/Show - S01E01.mks')
+        self.assertEqual(plan_verified_batch(files, season=1, episode_map={1: 1}).probe_index, 0)
+        with self.assertRaises(MetadataInvalid):
+            inventory('Pack/Show - S01E01.mkv', 'Pack/setup.exe')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -66,3 +66,13 @@ def release_scope_hint(release_name):
     if special:
         return ReleaseScope('special')
     return unknown
+
+
+_MOVIE_WORDS = re.compile(r'(?<![A-Za-z])(?:movies?|films?|the[ ._]movie|gekijou?ban)(?![A-Za-z])|劇場版', re.I)
+
+
+def movie_title(release_name):
+    """The title says movie and names no season or episode ("S01 + Movie" is a pack)."""
+    if type(release_name) is not str or not _MOVIE_WORDS.search(release_name):
+        return False
+    return release_scope_hint(release_name).kind in ('special', 'unknown')

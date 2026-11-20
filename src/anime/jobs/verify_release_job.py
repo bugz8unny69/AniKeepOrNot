@@ -33,6 +33,31 @@ class ReleaseCompletion:
     verification_job_id: int
 
 
+def movie_release(database,source):
+    """True for a movie: AniDB calls the work a Movie, or the title says movie
+    without naming a season or episode (a "S01 + Movie" pack is not one)."""
+    from contextlib import closing
+    import json
+    import sqlite3
+    from src.anime.storage.migrations import MigrationError,_open
+    result_id=getattr(source,'identity_result_id',None)
+    row=None
+    if type(result_id) is int:
+        # A check that cannot read the identity never blocks verification.
+        try:
+            with closing(_open(database,readonly=True,timeout_ms=5000)) as db:
+                row=db.execute("SELECT json_extract(series_json,'$.anime.type') FROM identity_results "
+                               "WHERE result_id=?",(result_id,)).fetchone()
+        except (sqlite3.Error,OSError,ValueError,MigrationError):
+            row=None
+    if row and isinstance(row[0],str) and row[0].strip().casefold()=='movie':
+        return True
+    try:title=json.loads(getattr(source,'raw_body',b'') or b'{}').get('release_name')
+    except (ValueError,TypeError,AttributeError):return False
+    from src.anime.batch.recognition import movie_title
+    return movie_title(title)
+
+
 def _persist(db,claim,value):
     if type(value) is not ReleaseCompletion or value.verification_job_id!=claim.job_id:
         raise ValueError("release completion does not match its job")
@@ -75,6 +100,9 @@ def registration(verify, *, user_evaluation_kind=None, batch_kind=None):
         except (ValueError,TypeError): return Outcome("review","JOB_PAYLOAD_INVALID")
         try:
             source=await blocking(load_release,context.configuration.value("storage.database_path"),context.claim.event_id,aid)
+            if await blocking(movie_release,context.configuration.value("storage.database_path"),source):
+                # Movies are not supported yet: notify and cancel, never review.
+                return Outcome("cancel","RELEASE_MOVIE_SKIPPED")
             if 'claim' in inspect.signature(verify).parameters:
                 result=await verify(source,context.configuration,context.cancelled,
                                     claim=context.claim)
@@ -92,6 +120,9 @@ def registration(verify, *, user_evaluation_kind=None, batch_kind=None):
         except SizeLimitExceeded as exc: return Outcome("fail", exc.reason_code, facts=exc.facts)
         except MediaInvalid as exc: return Outcome("fail" if exc.reason_code == 'MEDIA_AUDIO_REQUIRED' else "review", exc.reason_code, facts=failure_facts(exc))
         except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
+        # A season pack whose files cannot be told apart stops once, naming the
+        # file check, instead of being retried as an unexpected failure.
+        except BatchPlanningError as exc: return Outcome("review","SEASON_PACK_FILES_UNCLEAR", facts=failure_facts(exc))
         if type(result) not in (VerifiedRelease,BatchVerificationCompletion,BatchCandidatePooled) or result.source!=source:
             return Outcome("review","RELEASE_CONFLICT")
         return Outcome(value=ReleaseCompletion(result,context.claim.job_id))

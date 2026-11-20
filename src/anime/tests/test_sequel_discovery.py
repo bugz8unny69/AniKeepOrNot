@@ -34,6 +34,7 @@ class Provider:
         self.candidates = {15105: ("Higurashi Sotsu",)}
         self.tvdb_titles = ("Higurashi Sotsu",)
         self.tvdb_anidb_ids = frozenset({15105})
+        self.season_entry_id = 17000
 
     def title_candidates(self, aliases):
         self.queries.append(tuple(aliases))
@@ -49,7 +50,7 @@ class Provider:
 
     def season_entry(self, tid, season, episode=None):
         self.season_lookups.append((tid, season, episode))
-        return 17000
+        return self.season_entry_id
 
 
     def series(self, tid, credentials):
@@ -80,6 +81,7 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_s02_title_uses_distinct_sequel_lookup(self):
         provider = Provider()
+        provider.season_entry_id = 15105   # The sequel work is TVDB season 2's entry.
         result, trace = await self.identify(RELEASE, provider)
         self.assertEqual(provider.queries, [("Higurashi Sotsu",)])
         self.assertEqual(result["anime"]["anidb_id"], 15105)
@@ -112,11 +114,24 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(IdentityConflict):
             await self.identify(RELEASE, provider)
 
+    async def test_sequel_entry_agrees_through_its_anime_lists_series_group(self):   # jobs 9194, 447
+        provider = Provider()
+        provider.season_entry_id = 15105
+        provider.tvdb_titles = ("Higurashi When They Cry",)       # TVDB names the series, not the sequel
+        provider.tvdb_anidb_ids = frozenset()
+        provider.series_group_titles = lambda tid: ("Higurashi no Naku Koro ni", "Higurashi When They Cry")
+        result, trace = await self.identify(RELEASE, provider)
+        self.assertEqual(result["anime"]["anidb_id"], 15105)
+        provider.series_group_titles = lambda tid: ("Some Other Series",)
+        with self.assertRaises(IdentityConflict):
+            await self.identify(RELEASE, provider)
+
     async def test_verified_provider_link_allows_different_title_language(self):
         # W-13: JoJo / Black Clover scenario: TVDB lists explicit AniDB remoteId 15105
         # but title spelling differs ("Higurashi: When They Cry - SOTSU").
         provider = Provider()
         provider.tvdb_titles = ("Higurashi: When They Cry - SOTSU",)
+        provider.season_entry_id = 15105
         result, trace = await self.identify(RELEASE, provider)
         self.assertEqual(result["anime"]["anidb_id"], 15105)
         self.assertEqual(result["anime"]["tvdb_series_id"], 12345)
@@ -131,7 +146,8 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         result, trace = await self.identify(
             "Saga of Tanya the Evil S02E08 Torpedo Strike 1080p CR WEB-DL DUAL AAC2.0 H.264-VARYG "
             "(Youjo Senki II, Dual-Audio, Multi-Subs)", provider)
-        self.assertEqual(provider.queries, [("Saga of Tanya the Evil",)])
+        # The bracketed alternate title is searched too; the metadata parts are not.
+        self.assertEqual(provider.queries, [("Saga of Tanya the Evil", "Youjo Senki II")])
         self.assertEqual(provider.season_lookups, [(12345, 2, 8)])
         self.assertEqual(result["anime"], {"anidb_id": 17000, "tvdb_series_id": 12345,
                                            "title": "Youjo Senki II"})
@@ -239,6 +255,85 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             "Higurashi When They Cry S02 | BD 1080p",
             ["Higurashi When They Cry"],
         ))
+
+
+
+class SeasonEntryCorrectionTests(unittest.IsolatedAsyncioTestCase):
+    """The title finds the right series but not the season's entry (prod jobs 751, 1181)."""
+    make_resolver = SequelDiscoveryTests.make_resolver
+    identify = SequelDiscoveryTests.identify
+
+    def provider(self, candidates, titles, entries):
+        provider = Provider()
+        provider.candidates = candidates
+        provider.anime = lambda aid: {"title": titles[aid], "titles": (titles[aid],)}
+        provider.tvdb_titles = tuple(titles.values())
+        provider.tvdb_anidb_ids = frozenset(titles)
+        def season_entry(tid, season, episode=None):
+            provider.season_lookups.append((tid, season, episode))
+            if (season, episode) not in entries:
+                raise IdentityNotReady()
+            return entries[season, episode]
+        provider.season_entry = season_entry
+        return provider
+
+    async def test_alternate_title_of_the_first_season_moves_to_season_four(self):
+        provider = self.provider({13871: ("Tensei shitara Slime Datta Ken",)},
+            {13871: "Tensei shitara Slime Datta Ken", 18884: "Tensei Shitara Slime Datta Ken Dai 4 Ki"},
+            {(4, None): 18884})
+        result, _ = await self.identify("[FoundYears] That Time I Got Reincarnated as a Slime Season 4 "
+            "(CR WEB-DL 1080p AVC E-AC3) [Dual-Audio] | Tensei shitara Slime Datta Ken", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 18884)
+        self.assertEqual(provider.season_lookups, [(12345, 4, None)])
+
+    async def test_second_cour_pack_moves_to_the_cour_two_entry(self):
+        provider = self.provider({16128: ("AMAIM Warrior at the Borderline",)},
+            {16128: "AMAIM Warrior at the Borderline", 17091: "Kyoukai Senki (2022)"},
+            {(1, 14): 17091})
+        result, _ = await self.identify("AMAIM Warrior at the Borderline S01E14-E25 (Cour 2) "
+            "[CR Web-DL 1080p AVC Opus] [Dual Audio] [hchcsen]", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 17091)
+
+    async def test_no_single_season_entry_keeps_the_title_match(self):
+        provider = self.provider({16128: ("AMAIM Warrior at the Borderline",)},
+            {16128: "AMAIM Warrior at the Borderline"}, {})
+        result, _ = await self.identify("AMAIM Warrior at the Borderline S01E14 1080p", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 16128)
+
+
+
+class AliasFormTests(unittest.TestCase):
+    """Real release titles that found no AniDB entry (production IDENTIFY_ANIME jobs)."""
+    def forms(self, title):
+        from src.anime.providers.identity import alias_forms
+        from src.anime.release_names import release_title
+        return alias_forms(title, release_title(title)[0])
+
+    def test_cleaned_forms(self):
+        cases = {
+            "Magic.Kaito.1412.S01.REPACK.1080p.BluRay.REMUX.AVC.Dual-Audio.FLAC.2.0-Fool": "Magic Kaito 1412",
+            "[AnoZu] LIAR GAME 2026 S01 1080p CR WEB-DL Dual-Audio DDP 2.0 H.264": "LIAR GAME",
+            "Look Back (2024) (BD 1080p HEVC h265 Dual-Audio EAC3/Opus)": "Look Back",
+            "[Moxie] Ao no Exorcist - Season 01 (S01) (BD Remux 1080p FLAC 2.0) [Dual Audio]": "Ao no Exorcist",
+            "[URD] Tensei Shitara Dragon no Tamago Datta (Reincarnated as a Dragon Hatchling) (Season 01) (BD 1080p)":
+                "Reincarnated as a Dragon Hatchling",
+            "[ToonsHub] Welsh and Shedar S01E04 1080p AMZN WEB-DL DUAL DDP2.0 H.264 "
+            "(Aoki Denshou: Welsh & Shedar, Dual-Audio, Multi-Subs)": "Aoki Denshou: Welsh & Shedar",
+        }
+        for title, wanted in cases.items():
+            with self.subTest(title=title):
+                forms = self.forms(title)
+                self.assertIn(wanted, forms)
+                self.assertFalse(any(f in ("Dual-Audio", "Multi-Subs") for f in forms))
+
+    def test_fuzzy_match_uses_words(self):   # job 9521: "Alyu" for "Alya"
+        from src.anime.providers import parsing
+        payload = ('<animetitles><anime aid="17914"><title type="official" xml:lang="en">'
+                   'Alya Sometimes Hides Her Feelings in Russian</title></anime>'
+                   '<anime aid="1"><title type="main" xml:lang="x-jat">Hidden Russian</title></anime>'
+                   '</animetitles>').encode()
+        found = parsing.title_matches(payload, ["Alyu Sometimes Hides Her Feelings in Russian"])
+        self.assertEqual(set(found), {17914})
 
 
 if __name__ == "__main__":

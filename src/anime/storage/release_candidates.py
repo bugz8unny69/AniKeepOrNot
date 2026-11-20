@@ -275,6 +275,53 @@ def auto_cleanup_oversized(db,claim):
     return request_automatic_cleanup(db,claim)
 
 
+def auto_cleanup_metadata_timeout(db,claim):
+    """A magnet whose file list never arrived is removed, not left in qBittorrent.
+
+    The job has already FAILED with TORRENT_METADATA_TIMEOUT; nothing was
+    downloaded. The same cancellation cleanup deletes the paused magnet and its
+    empty ad-* folder (production jobs 7276-8120 left five such torrents).
+    Backfill candidates are already handled by auto_cleanup_failed_candidate.
+    """
+    if (not db.in_transaction or claim.event_id is None
+            # Batch metadata candidates have their own failure path
+            # (auto_cleanup_failed_batch_candidate); only single magnets here.
+            or claim.kind!='PREPARE_ACQUISITION'
+            or db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',
+                          (claim.job_id,)).fetchone()!=('FAILED','TORRENT_METADATA_TIMEOUT')
+            or db.execute("SELECT 1 FROM incoming_events WHERE event_id=? AND source='release-discovery'",
+                          (claim.event_id,)).fetchone()):
+        return ()
+    return request_automatic_cleanup(db,claim)
+
+
+def close_skipped_release(db,claim,now):
+    """A skipped release (a movie, for now): notify, then close its operation.
+
+    The check runs before anything is added to qBittorrent, so usually there
+    is nothing to clean and the operation is closed directly. Anything it does
+    own goes through the normal cancellation cleanup.
+    """
+    from src.anime.notifications import movie_skipped
+    from src.anime.storage.cancellation import operation,unfinished_resources
+    movie_skipped(db,claim,now)
+    op=operation(db,claim.job_id)
+    if op[1]!='ACTIVE':return ()
+    open_jobs=db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) WHERE m.operation_id=? "
+                         "AND j.state NOT IN ('DONE','CANCELED','FAILED') LIMIT 1",(op[0],)).fetchone()
+    if open_jobs or unfinished_resources(db,op[0]) or _owns_torrents(db,op[0]):
+        return request_automatic_cleanup(db,claim)
+    # The job keeps RELEASE_MOVIE_SKIPPED; the operation records a finished cancel.
+    db.execute("UPDATE job_operations SET state='CANCELED',cleanup_state='COMPLETE',"
+               "reason_code='CANCELLATION_COMPLETE',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
+    return ()
+
+
+def _owns_torrents(db,operation_id):
+    from src.anime.cancel_cleanup import owned_torrents
+    return bool(owned_torrents(db,operation_id))
+
+
 def request_automatic_cleanup(db,claim):
     from src.anime.storage.cancellation import CancellationStore,operation
     from src.anime.storage.sqlite import enqueue_job_with_receipt

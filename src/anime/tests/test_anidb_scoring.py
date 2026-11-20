@@ -85,7 +85,9 @@ class DummyProvider:
 
     def season_entry(self, tid, season, episode=None):
         self.season_entry_calls.append((tid, season, episode))
-        return 99999
+        # Anime-Lists' entry for that TVDB season; a test whose selected work
+        # already is that season's entry sets it to that work.
+        return getattr(self, 'season_entry_id', 99999)
 
     def series(self, tid, credentials):
         self.series_calls.append(tid)
@@ -249,6 +251,7 @@ class AniDBScoringIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "titles": ("Black Clover", "Black Clover 2nd Season"),
             "animation": True, "live": False, "anidb_ids": frozenset({12665, 19433})
         }
+        provider.season_entry_id = 19433   # Anime-Lists: TVDB season 2 of Black Clover.
         resolver, config = self.make_resolver(provider)
         trace = MatchingTrace()
         delivery = DummyDelivery("[Anime Time] Black Clover - S02E02")
@@ -292,6 +295,7 @@ class AniDBScoringIntegrationTests(unittest.IsolatedAsyncioTestCase):
         provider.series = lambda tid, creds: {
             "titles": ("Higurashi Sotsu",), "animation": True, "live": False, "anidb_ids": frozenset({16137})
         }
+        provider.season_entry_id = 16137   # Anime-Lists: TVDB season 2 of Higurashi.
         resolver, config = self.make_resolver(provider)
         trace = MatchingTrace()
         delivery = DummyDelivery("[Dyna] Higurashi When They Cry S02 (BD 1080p AVC Opus 2.0) [Dual Audio] | Higurashi Sotsu")

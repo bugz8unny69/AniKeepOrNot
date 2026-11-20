@@ -28,6 +28,7 @@ and **Mark read**. The panel closes on an outside click or Esc.
 | `API_REJECTION` | The webhook refused a delivery (work item P4). `group_key = release:<name>` | Process anyway, Add torrent/magnet, Open series |
 | `SERIES_EPISODE_TROUBLE` | An episode job of a tracked series ends in Needs review, or discovery finds no usable release for an episode (`NO_RESULTS`, all candidates failed). Not for retries or waits. One item per series (`group_key = series:<anidb_id>`) listing the episodes. | Open series, Open job |
 | `KEEP_SEARCH_FAILED` | Keep's one missing-episode search did not start. | Open job |
+| `MOVIE_SKIPPED` | A movie release was canceled because movies are not supported yet (AniDB type Movie, or a movie title with no season or episode). Nothing was downloaded. | Open job |
 
 ## API
 

@@ -216,6 +216,13 @@ class Clients:
     def season_entry(self, tid, season, episode=None):
         return parsing.season_entry(self._mapping_payload(),tid,season,episode)
 
+    def series_group_titles(self, tid):
+        """Every AniDB title of the entries Anime-Lists maps to TVDB series tid."""
+        aids=parsing.series_group(self._mapping_payload(),tid)
+        titles=self._public("anidb_titles","titles",TITLES_URL,limit=67108864,gap=86400000,
+                            validate=lambda value:parsing.xml(value,"animetitles"))
+        return tuple(t for aid,names,_ in parsing.title_index(titles) if aid in aids for t in names)
+
     def _anime_payload(self, aid):
         parsing.positive_text(str(aid))
         query = urllib.parse.urlencode({"request":"anime","aid":aid,"protover":1,
