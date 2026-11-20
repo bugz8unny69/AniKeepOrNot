@@ -3,6 +3,7 @@
 Release-name parsing lives in src/anime/release_names.py.
 """
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 
 from src.anime.providers.errors import ProviderInvalidResponse
@@ -58,6 +59,10 @@ def title_index(payload):
     return index
 
 
+_COMMON_WORDS = frozenset(('with', 'from', 'that', 'this', 'into', 'your', 'season', 'part', 'world',
+                           'another', 'movie', 'episode'))
+
+
 def title_matches(payload, aliases, *, threshold_pct=50):
     index = title_index(payload)
     wanted_texts = [a.text if hasattr(a, "text") else str(a) for a in aliases if a]
@@ -65,10 +70,16 @@ def title_matches(payload, aliases, *, threshold_pct=50):
     if not wanted_norms:
         return {}
 
+    # Words come from the text before norm() removes its spaces; on the
+    # normalized text the "word" was the whole title, so a typo ("Alyu" for
+    # "Alya") or a particle spelling ("wo"/"o") never reached the fuzzy check.
     wanted_words = {
         w for t in wanted_texts
-        for w in re.findall(r'[a-z0-9]{3,}', norm(t))
+        for w in re.findall(r'[^\W_]{4,}', unicodedata.normalize('NFKC', t).casefold())
+        if w not in _COMMON_WORDS
     }
+    # A fuzzy candidate shares at least two words (one for a one-word title).
+    needed = 1 if len(wanted_words) < 2 else 2
 
     from difflib import SequenceMatcher
     found = {}
@@ -78,7 +89,7 @@ def title_matches(payload, aliases, *, threshold_pct=50):
             for nt in normed:
                 if not nt:
                     continue
-                if any(w in nt for w in wanted_words):
+                if sum(w in nt for w in wanted_words) >= needed:
                     best_ratio = max(
                         SequenceMatcher(None, nw, nt, autojunk=False).ratio()
                         for nw in wanted_norms
@@ -103,6 +114,13 @@ def mapping_id(payload, aid):
     value = rows[0].get("tvdbid")
     if value in (None,"","0","unknown"): raise IdentityNotReady()
     return positive_text(value)
+
+
+def series_group(payload, tid):
+    """AniDB ids (as title_index keys) that anime-lists maps to TVDB series tid."""
+    root = xml(payload,"anime-list",limit=16777216)
+    return frozenset(positive_text(node.get("anidbid")) for node in root.findall("anime")
+                     if node.get("tvdbid")==str(tid) and re.fullmatch(r"[1-9][0-9]{0,9}", node.get("anidbid") or ""))
 
 
 def season_entry(payload, tid, season, episode=None):

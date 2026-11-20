@@ -317,10 +317,11 @@ class JobQueue:
             if db.execute('SELECT state FROM jobs WHERE job_id=?',
                           (claim.job_id,)).fetchone() in (('FAILED',), ('NEEDS_REVIEW',)):
                 from src.anime.storage.release_candidates import (
-                    auto_cleanup_failed_candidate, auto_cleanup_oversized)
+                    auto_cleanup_failed_candidate, auto_cleanup_oversized, auto_cleanup_metadata_timeout)
                 from src.anime.storage.batch_candidates import auto_cleanup_failed_batch_candidate
                 records.extend(auto_cleanup_failed_candidate(db,claim))
                 records.extend(auto_cleanup_oversized(db,claim))
+                records.extend(auto_cleanup_metadata_timeout(db,claim))
                 records.extend(auto_cleanup_failed_batch_candidate(db,claim))
             return tuple(records)
 

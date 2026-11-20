@@ -117,6 +117,11 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
             await worker.attempt()
         self.assertEqual(diagnostic.call_args.kwargs['reason_code'],'STAGING_UNAVAILABLE')
         self.assertEqual(diagnostic.call_args.args[1],'OPERATION_FAILED')
+        # An unavailable staging share waits minutes, not 1s/2s/4s, before retrying (jobs 8266-8663).
+        row=self.rows("SELECT j.state,j.available_at_ms-h.occurred_at_ms FROM jobs j JOIN job_history h USING(job_id) "
+                      "WHERE j.kind='STAGE_USER_EVALUATION_MEDIA' AND h.event_code='RETRY_SCHEDULED'")
+        self.assertEqual(row[0][0],'RETRY_WAIT')
+        self.assertGreaterEqual(row[0][1],120_000)
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE state='ON_HOLD' AND last_reason_code='EPISODE_RESERVED'"),[(1,)])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE activity_code='SKIPPED_DUPLICATE'"),[(0,)])
 

@@ -10,7 +10,7 @@ from src.anime.providers.http import Clients, Credentials, Options, json_object
 from src.anime.providers.errors import (ProviderInvalidResponse, ProviderDeferred,
     ProviderUnavailable, ProviderAuthenticationFailed)
 from src.anime.release_names import norm, release_title
-from src.anime.providers.scoring import generate_title_variants, rank_and_select_candidates
+from src.anime.providers.scoring import TitleVariant, generate_title_variants, rank_and_select_candidates
 from src.anime.release_names import detect_explicit_sequel_marker
 from src.anime.storage.sqlite import IdentityConflict, IdentityNotReady
 from src.anime.worker import blocking
@@ -48,6 +48,49 @@ def _release_seasons(title):
     found = marker_seasons(EXPLICIT.sub(' ', parsed.text))
     if parsed.season is not None: found.add(parsed.season)
     return [str(number) for number in sorted(found)]
+
+
+_METADATA_PART = re.compile(
+    r"(?i)^(?:dual|multi)[ ._-]*(?:audio|subs?)|^(?:\d{3,4}p|4k|uhd|hevc|avc|av1|x26[45]|h\.?26[45]"
+    r"|web[ ._-]?(?:dl|rip)|bd(?:rip|[ ._-]?remux)?|blu[ ._-]?ray|remux|flac|opus|aac|e?ac3|ddp?|truehd|batch"
+    r"|uncensored|weekly|complete|eng(?:lish)?[ ._-]*(?:dub|sub)s?)\b")
+
+
+def alias_forms(title, aliases):
+    """The release's aliases plus cleaned forms AniDB actually lists.
+
+    "Magic.Kaito.1412" -> "Magic Kaito 1412"; "LIAR GAME 2026" and
+    "Look Back (2024)" without the year; "Ao no Exorcist - Season" without
+    "- Season"; "A (B)" -> A and B; an unbalanced "Title (Other" -> Title;
+    a trailing "(Aoki Denshou: Welsh & Shedar, Dual-Audio)" -> its title part.
+    The originals stay first, so nothing that matched before changes order.
+    """
+    forms = []
+    def add(text):
+        text = re.sub(r"\s+", " ", text or "").strip(" -–:,.")
+        if len(text) >= 2 and text not in forms and text not in aliases:
+            forms.append(text)
+    for alias in aliases:
+        base = alias
+        if " " not in base and "." in base:
+            base = base.replace(".", " ")
+            add(base)
+        base = re.sub(r"\s*\([^()]*$", "", base)        # unbalanced "(..." tail
+        add(base)
+        for inner in re.findall(r"\(([^()]+)\)", base):
+            add(inner)
+        outer = re.sub(r"\s*\([^()]*\)", " ", base)
+        add(outer)
+        for text in (base, outer):
+            add(re.sub(r"[\s.]*\(?(?:19|20)\d{2}\)?$", "", text))
+            add(re.sub(r"\s*[-–]\s*Season$", "", text, flags=re.I))
+    primary = title.split(" | ", 1)[0]
+    for inner in re.findall(r"\(([^()]+)\)", primary):
+        for part in inner.split(","):
+            part = part.strip()
+            if part and not _METADATA_PART.search(part) and not re.fullmatch(r"(?:19|20)\d{2}", part):
+                add(part)
+    return list(aliases) + forms
 
 
 def explicit_sequel_alias(title, base_aliases):
@@ -132,6 +175,7 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 incomplete("invalid_release_title")
             seasons = _release_seasons(title)
             aliases, episode = release_title(title)
+            aliases = alias_forms(title, aliases) if aliases else aliases
             if matching is not None:
                 matching.queries(aliases, episode, int(seasons[0]) if len(seasons) == 1 else None)
             if len({int(value) for value in seasons}) > 1:
@@ -180,6 +224,11 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 threshold_pct = 90
 
             variants, _, _ = generate_title_variants(title, seasons=seasons, episode=episode)
+            # Score against the cleaned aliases too, not only the variants that
+            # still carry release leftovers ("(Season 01)", ". . .AVC").
+            known = {norm(v.text) for v in variants}
+            variants = (*variants, *(TitleVariant(a, "cleaned") for a in aliases
+                                     if norm(a) and norm(a) not in known))
 
             # S02+ is not itself a rejection. Prefer a separately named
             # sequel work over the generic season-one title for lookup.
@@ -348,7 +397,16 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             check(stage, "passed")
             stage = "provider_titles"
             has_id_link = bool(tvdb["anidb_ids"] and (base_aid in tvdb["anidb_ids"] or aid in tvdb["anidb_ids"]))
-            titles_agree = bool({norm(x) for x in base_anime["titles"]} & {norm(x) for x in tvdb["titles"]})
+            tvdb_norms = {norm(x) for x in tvdb["titles"]}
+            titles_agree = bool({norm(x) for x in base_anime["titles"]} & tvdb_norms)
+            if not has_id_link and not titles_agree and hasattr(client, "series_group_titles"):
+                # A sequel entry ("Black Clover 2nd Season", "Mushoku Tensei III")
+                # rarely shares a title with the TVDB series ("Black Clover").
+                # Anime-Lists groups every AniDB entry of a TVDB series; the
+                # series is confirmed when TVDB agrees with any entry of that group.
+                titles_agree = bool({norm(x) for x in client.series_group_titles(tid)} & tvdb_norms)
+                if titles_agree:
+                    check(stage, "passed", "series_group_title")
             if not has_id_link and not titles_agree:
                 check(stage, "failed", "provider_titles_disagree")
                 raise IdentityConflict()

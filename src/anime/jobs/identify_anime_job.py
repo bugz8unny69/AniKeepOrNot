@@ -105,6 +105,17 @@ def _decided(database, anidb_id):
             db.close()
 
 
+def _movie_request(request):
+    """A release whose identity was not found, and whose title says it is a movie."""
+    from src.anime.batch.recognition import movie_title
+    try:
+        import json
+        title = json.loads(getattr(request, "raw_body", b"") or b"{}").get("release_name")
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return movie_title(title)
+
+
 def registration(resolve, *, release_kind=None):
     """Compose with an async verified-identity service, optionally a release job.
 
@@ -131,6 +142,7 @@ def registration(resolve, *, release_kind=None):
         trace = MatchingTrace()
         def evidence():
             return trace.dump()
+        request = None
         try:
             request = await blocking(_request, context.configuration.value("storage.database_path"),
                                      context.claim.event_id)
@@ -146,6 +158,10 @@ def registration(resolve, *, release_kind=None):
             trace.check("tvdb_series", "failed", "provider_auth_failed")
             return Outcome("review", "SERVICE_SETUP_INVALID", facts={"service_status": "AUTH_FAILED"}, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except (IdentityNotReady, IdentityConflict) as exc:
+            if _movie_request(request):
+                # Movies are not supported yet: notify and cancel, never review.
+                return Outcome("cancel", "RELEASE_MOVIE_SKIPPED", matching=evidence(),
+                               candidate_evidence=trace.candidate_evidence)
             return Outcome("review", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         try:
             validated = AnimeSeries.from_dict(candidate)

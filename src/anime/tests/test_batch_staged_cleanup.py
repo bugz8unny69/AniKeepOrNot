@@ -75,6 +75,21 @@ class BatchStagedCleanupTests(unittest.TestCase):
         with self.assertRaises(CancellationError):
             self.facts()
 
+class BatchCleanupReviewFactsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_review_names_the_failed_check(self):   # jobs 8206, 9958 recorded nothing
+        import threading
+        from types import SimpleNamespace
+        from src.anime.cancellation import CancellationError
+        from src.anime.jobs.cleanup_batch_download_job import registration
+        class Service:
+            def __init__(self, *args): pass
+            def run(self, *args, **kwargs): raise CancellationError('SOURCE_NOT_STOPPED')
+        execute = registration(None, service_factory=Service).execute
+        context = SimpleNamespace(data=lambda: {'decision_job_id': 5, 'plan_id': 7}, configuration=None,
+                                  claim=SimpleNamespace(job_id=9), cancelled=threading.Event())
+        outcome = await execute(context)
+        self.assertEqual((outcome.kind, outcome.reason_code), ('review', 'DECISION_DOWNLOAD_CLEANUP_REVIEW'))
+        self.assertTrue(outcome.facts['failed_check'].endswith('SOURCE_NOT_STOPPED'))
 
 if __name__ == '__main__':
     unittest.main()

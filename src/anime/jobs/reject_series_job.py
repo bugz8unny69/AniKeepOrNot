@@ -199,7 +199,8 @@ def registration(*, remove=remove_series):
         except (StagingReview, KeepReview, CancellationError, ValueError, TypeError, KeyError):
             return Outcome('review', 'REJECT_CLEANUP_REVIEW')
         except OSError:
-            return Outcome('retry', 'STAGING_UNAVAILABLE')
+            from src.anime.staging import staging_retry_delay_ms
+            return Outcome('retry', 'STAGING_UNAVAILABLE', delay_ms=staging_retry_delay_ms(context.claim.attempt))
         if result == 'review':
             return Outcome('review', 'REJECT_CLEANUP_REVIEW')
         if result == 'waiting':

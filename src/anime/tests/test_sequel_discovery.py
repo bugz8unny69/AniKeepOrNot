@@ -114,6 +114,18 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(IdentityConflict):
             await self.identify(RELEASE, provider)
 
+    async def test_sequel_entry_agrees_through_its_anime_lists_series_group(self):   # jobs 9194, 447
+        provider = Provider()
+        provider.season_entry_id = 15105
+        provider.tvdb_titles = ("Higurashi When They Cry",)       # TVDB names the series, not the sequel
+        provider.tvdb_anidb_ids = frozenset()
+        provider.series_group_titles = lambda tid: ("Higurashi no Naku Koro ni", "Higurashi When They Cry")
+        result, trace = await self.identify(RELEASE, provider)
+        self.assertEqual(result["anime"]["anidb_id"], 15105)
+        provider.series_group_titles = lambda tid: ("Some Other Series",)
+        with self.assertRaises(IdentityConflict):
+            await self.identify(RELEASE, provider)
+
     async def test_verified_provider_link_allows_different_title_language(self):
         # W-13: JoJo / Black Clover scenario: TVDB lists explicit AniDB remoteId 15105
         # but title spelling differs ("Higurashi: When They Cry - SOTSU").
@@ -134,7 +146,8 @@ class SequelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         result, trace = await self.identify(
             "Saga of Tanya the Evil S02E08 Torpedo Strike 1080p CR WEB-DL DUAL AAC2.0 H.264-VARYG "
             "(Youjo Senki II, Dual-Audio, Multi-Subs)", provider)
-        self.assertEqual(provider.queries, [("Saga of Tanya the Evil",)])
+        # The bracketed alternate title is searched too; the metadata parts are not.
+        self.assertEqual(provider.queries, [("Saga of Tanya the Evil", "Youjo Senki II")])
         self.assertEqual(provider.season_lookups, [(12345, 2, 8)])
         self.assertEqual(result["anime"], {"anidb_id": 17000, "tvdb_series_id": 12345,
                                            "title": "Youjo Senki II"})
@@ -286,6 +299,41 @@ class SeasonEntryCorrectionTests(unittest.IsolatedAsyncioTestCase):
             {16128: "AMAIM Warrior at the Borderline"}, {})
         result, _ = await self.identify("AMAIM Warrior at the Borderline S01E14 1080p", provider)
         self.assertEqual(result["anime"]["anidb_id"], 16128)
+
+
+
+class AliasFormTests(unittest.TestCase):
+    """Real release titles that found no AniDB entry (production IDENTIFY_ANIME jobs)."""
+    def forms(self, title):
+        from src.anime.providers.identity import alias_forms
+        from src.anime.release_names import release_title
+        return alias_forms(title, release_title(title)[0])
+
+    def test_cleaned_forms(self):
+        cases = {
+            "Magic.Kaito.1412.S01.REPACK.1080p.BluRay.REMUX.AVC.Dual-Audio.FLAC.2.0-Fool": "Magic Kaito 1412",
+            "[AnoZu] LIAR GAME 2026 S01 1080p CR WEB-DL Dual-Audio DDP 2.0 H.264": "LIAR GAME",
+            "Look Back (2024) (BD 1080p HEVC h265 Dual-Audio EAC3/Opus)": "Look Back",
+            "[Moxie] Ao no Exorcist - Season 01 (S01) (BD Remux 1080p FLAC 2.0) [Dual Audio]": "Ao no Exorcist",
+            "[URD] Tensei Shitara Dragon no Tamago Datta (Reincarnated as a Dragon Hatchling) (Season 01) (BD 1080p)":
+                "Reincarnated as a Dragon Hatchling",
+            "[ToonsHub] Welsh and Shedar S01E04 1080p AMZN WEB-DL DUAL DDP2.0 H.264 "
+            "(Aoki Denshou: Welsh & Shedar, Dual-Audio, Multi-Subs)": "Aoki Denshou: Welsh & Shedar",
+        }
+        for title, wanted in cases.items():
+            with self.subTest(title=title):
+                forms = self.forms(title)
+                self.assertIn(wanted, forms)
+                self.assertFalse(any(f in ("Dual-Audio", "Multi-Subs") for f in forms))
+
+    def test_fuzzy_match_uses_words(self):   # job 9521: "Alyu" for "Alya"
+        from src.anime.providers import parsing
+        payload = ('<animetitles><anime aid="17914"><title type="official" xml:lang="en">'
+                   'Alya Sometimes Hides Her Feelings in Russian</title></anime>'
+                   '<anime aid="1"><title type="main" xml:lang="x-jat">Hidden Russian</title></anime>'
+                   '</animetitles>').encode()
+        found = parsing.title_matches(payload, ["Alyu Sometimes Hides Her Feelings in Russian"])
+        self.assertEqual(set(found), {17914})
 
 
 if __name__ == "__main__":

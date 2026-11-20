@@ -39,6 +39,12 @@ def absolute_index(client, tid, secret):
     return index
 
 
+def absolute_series(payload, aid):
+    """True when Anime-Lists numbers this entry absolutely (defaulttvdbseason="a")."""
+    root=xml(payload,"anime-list",limit=16777216)
+    return any(node.get("anidbid")==str(aid) and node.get("defaulttvdbseason")=="a" for node in root.findall("anime"))
+
+
 def absolute_lookup(client, tid, secret):
     """The lazy absolute= argument of forward_mappings, or None without TVDB credentials."""
     return None if secret is None else (lambda: absolute_index(client,tid,secret))

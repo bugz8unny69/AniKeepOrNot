@@ -118,6 +118,14 @@ class CancellationService:
                 # ownership or filesystem contradictions still enter REVIEW.
                 self._state(job_id,'PENDING','CANCELLATION_PENDING',cause='SERVICE_UNAVAILABLE')
             except (ClientAuthenticationFailed,ClientUnsupported,OSError,CancellationError,ValueError) as exc:
+                import errno
+                if isinstance(exc,OSError) and exc.errno in (errno.ENOTEMPTY,errno.EBUSY):
+                    # The download folder is on a network share: right after
+                    # qBittorrent deletes the files, NFS can briefly keep them
+                    # (".nfs..." while still open), so removing the folder fails.
+                    # The folder empties on its own; try again later (jobs 8785, 8798, 9435).
+                    self._state(job_id,'PENDING','CANCELLATION_PENDING',cause='STORAGE_UNAVAILABLE')
+                    return self.store.status(job_id)
                 from src.anime.reasons import get_reason
                 from src.anime.cancellation import failure_location
                 cause=getattr(exc,'reason_code','STORAGE_UNAVAILABLE' if isinstance(exc,OSError) else 'CANCELLATION_REVIEW')

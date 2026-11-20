@@ -1,6 +1,5 @@
 """Verify a declared episode through providers; this job never acquires content."""
 import inspect
-import re
 import time
 from dataclasses import dataclass
 
@@ -34,9 +33,6 @@ class ReleaseCompletion:
     verification_job_id: int
 
 
-_MOVIE_WORDS=re.compile(r'(?<![A-Za-z])(?:movie|the[ ._]movie|gekijou?ban)(?![A-Za-z])|劇場版',re.I)
-
-
 def movie_release(database,source):
     """True for a movie: AniDB calls the work a Movie, or the title says movie
     without naming a season or episode (a "S01 + Movie" pack is not one)."""
@@ -50,9 +46,8 @@ def movie_release(database,source):
         return True
     try:title=json.loads(source.raw_body).get('release_name')
     except (ValueError,TypeError,AttributeError):return False
-    if type(title) is not str or not _MOVIE_WORDS.search(title):return False
-    from src.anime.batch.recognition import release_scope_hint
-    return release_scope_hint(title).kind in ('special','unknown')
+    from src.anime.batch.recognition import movie_title
+    return movie_title(title)
 
 
 def _persist(db,claim,value):

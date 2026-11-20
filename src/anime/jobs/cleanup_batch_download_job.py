@@ -115,8 +115,13 @@ def registration(secrets,*,service_factory=BatchDecisionCleanup):
         except ClientUnavailable:
             return Outcome('retry','DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE')
         except (CancellationError,ClientInvalid,ClientAuthenticationFailed,
-                ClientUnsupported,MetadataInvalid,AcquisitionConflict):
-            return Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW')
+                ClientUnsupported,MetadataInvalid,AcquisitionConflict) as exc:
+            # Name the check that stopped it, as CLEANUP_DECIDED_DOWNLOAD does
+            # (jobs 8206 and 9958 stopped with nothing recorded).
+            from src.anime.cancellation import failure_location
+            check,path=failure_location(exc)
+            facts={k:v for k,v in (('failed_check',check),('failed_path',path)) if v}
+            return Outcome('review','DECISION_DOWNLOAD_CLEANUP_REVIEW',facts=facts or None)
         except OSError:
             return Outcome('retry','DECISION_DOWNLOAD_CLEANUP_UNAVAILABLE')
     return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)

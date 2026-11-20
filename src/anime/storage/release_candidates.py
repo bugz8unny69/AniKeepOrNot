@@ -275,6 +275,24 @@ def auto_cleanup_oversized(db,claim):
     return request_automatic_cleanup(db,claim)
 
 
+def auto_cleanup_metadata_timeout(db,claim):
+    """A magnet whose file list never arrived is removed, not left in qBittorrent.
+
+    The job has already FAILED with TORRENT_METADATA_TIMEOUT; nothing was
+    downloaded. The same cancellation cleanup deletes the paused magnet and its
+    empty ad-* folder (production jobs 7276-8120 left five such torrents).
+    Backfill candidates are already handled by auto_cleanup_failed_candidate.
+    """
+    if (not db.in_transaction or claim.event_id is None
+            or claim.kind not in ('PREPARE_ACQUISITION','VERIFY_RELEASE')
+            or db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',
+                          (claim.job_id,)).fetchone()!=('FAILED','TORRENT_METADATA_TIMEOUT')
+            or db.execute("SELECT 1 FROM incoming_events WHERE event_id=? AND source='release-discovery'",
+                          (claim.event_id,)).fetchone()):
+        return ()
+    return request_automatic_cleanup(db,claim)
+
+
 def close_skipped_release(db,claim,now):
     """A skipped release (a movie, for now): notify, then close its operation.
 
