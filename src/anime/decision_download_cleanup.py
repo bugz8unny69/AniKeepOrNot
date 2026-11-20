@@ -41,6 +41,13 @@ def status(db,decision):
         'reason':None if reason is None else DEFAULT_CATALOG.reason(reason),'status_url':f'/api/v1/jobs/{job}'}
 
 
+def transcoded(db,plan_id,publication):
+    """True when staging published this plan's transcoded output instead of the torrent's file."""
+    row=db.execute('SELECT t.output_root FROM staging_publications s JOIN transcode_media t '
+        'USING(verification_job_id) WHERE s.plan_id=? AND t.evidence_json IS NOT NULL',(plan_id,)).fetchone()
+    return row is not None and publication['source_root']==row[0]
+
+
 def staging_status(db,stage_job):
     return db.execute("SELECT job_id FROM jobs WHERE kind=? "
         "AND json_extract(payload_json,'$.staging_job_id')=? ORDER BY job_id",(KIND,stage_job)).fetchall()
@@ -142,20 +149,12 @@ class Service(OwnedCleanup):
             (op,preparation,plan.evaluation_job_id)).fetchone()
         intent=_intent(db,plan)
         if shared or intent is None or intent.state!='OWNED_STOPPED':raise CancellationError()
-        selected=plan.manifest.files[plan.manifest.selected_index]
-        if publication['source_root']!=intent.options.download_root or publication['source']['path']!=selected.path or publication['source']['file'][2]!=selected.size:raise CancellationError()
-        return op,intent,tuple(protected),publication['source']['root']
-
-    def _capture(self,cleaner):
-        captured=cleaner.capture()
-        if captured['root']!=self.source_root_identity:raise CancellationError()
-        return captured
-
-    def _pin(self,cleaner):
-        # The original qBittorrent folder, or already gone.
-        pinned=cleaner.root_only()
-        if pinned['root'] not in (None,self.source_root_identity):raise CancellationError()
-        return pinned
+        # Integrity of the video was proven when staging published it. Removing
+        # the download only needs the torrent to be ours: owned() rechecks hash,
+        # ad-* tag, category, save path and file list before every command.
+        # Transcodes and missing files no longer stop this in review.
+        if transcoded(db,source[1],publication):self.legacy_move=False
+        return op,intent,tuple(protected)
 
     def _fence(self,db=None):
         if self.cancelled.is_set():raise CancellationError()
@@ -166,7 +165,7 @@ class Service(OwnedCleanup):
     def run(self,claim,decision,cancelled,*,stage_job=None):
         self.claim,self.decision,self.cancelled,self.stage_job=claim,decision,cancelled,stage_job
         self.guard=self._fence
-        with self.queue.connection() as db,transaction(db):op,intent,protected,self.source_root_identity=self.facts(db)
+        with self.queue.connection() as db,transaction(db):op,intent,protected=self.facts(db)
         with OperationGate(self.queue.database).hold(op,cleanup=True):
             self._fence()
             factory=self.files_factory

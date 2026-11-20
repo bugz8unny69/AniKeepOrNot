@@ -73,8 +73,8 @@ class OwnedCleanup:
                     raise CancellationError('STOP_TIMEOUT')
                 return False
             if current.state not in STOPPED:
-                if getattr(self,'legacy_move',False) and current.state=='missingFiles':
-                    pass
+                if current.state=='missingFiles':
+                    pass   # Files already gone: nothing to stop. Removal keeps the disk untouched.
                 else:
                     # Stopping is repeatable. After restart, each control rechecks
                     # exact ownership rather than trusting a prior HTTP response.
@@ -90,7 +90,7 @@ class OwnedCleanup:
                     found=client.inspect(intent.plan.manifest.info_hash)
                     current=owned(intent,found)
                     if current.state not in STOPPED:
-                        if not (getattr(self,'legacy_move',False) and current.state=='missingFiles'):
+                        if current.state!='missingFiles':
                             if self._phase_age_ms(intent)>self.phase_deadline_ms:
                                 raise CancellationError('STOP_TIMEOUT')
                             return False
@@ -107,7 +107,7 @@ class OwnedCleanup:
                         raise CancellationError('REMOVE_TIMEOUT')
                     return False
                 if current.state not in STOPPED:
-                    if getattr(self,'legacy_move',False) and current.state=='missingFiles':
+                    if current.state=='missingFiles':
                         pass
                     else:
                         if current.state not in ACTIVE:raise CancellationError('TORRENT_STATE_UNEXPECTED')
@@ -127,9 +127,12 @@ class OwnedCleanup:
                 # client independently validates identity immediately before
                 # every command. No filesystem deletion is retried here.
                 self._fence()
+                # missingFiles: qBittorrent only drops the record; the ad-* folder
+                # is purged below like any other leftover.
+                missing=found is not None and found.state=='missingFiles'
                 client.cleanup_control(intent,intent.fingerprint,
                     CleanupPermit(intent.fingerprint,'remove'),'remove',
-                    delete_files=not getattr(self,'legacy_move',False))
+                    delete_files=not (getattr(self,'legacy_move',False) or missing))
                 found=client.inspect(intent.plan.manifest.info_hash)
                 if found is not None:
                     owned(intent,found)
