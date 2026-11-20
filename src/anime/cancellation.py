@@ -14,6 +14,20 @@ class CancellationError(ValueError):
         self.check,self.path=check,path
 
 
+def _repo_relative(filename,root):
+    """'src/anime/...' for a frame's file, wherever the checkout lives.
+
+    Bytecode keeps the path it was compiled at, so a moved or renamed checkout
+    reports the old folder. Fall back to the last 'src/anime/' in the path.
+    """
+    from pathlib import Path
+    try:return Path(filename).resolve().relative_to(root).as_posix()
+    except ValueError:pass
+    text=Path(filename).as_posix()
+    at=text.rfind('/src/anime/')
+    return text[at+1:] if at>=0 else None
+
+
 def failure_location(exc):
     """Name the check that stopped cleanup: 'file.py:LINE function', plus the
     file path when the root cause was a filesystem error. No raw messages.
@@ -28,8 +42,7 @@ def failure_location(exc):
         seen.add(id(chain));chain=chain.__cause__ or chain.__context__
     check=None;tb=chain.__traceback__
     while tb is not None:
-        try:relative=Path(tb.tb_frame.f_code.co_filename).resolve().relative_to(root).as_posix()
-        except ValueError:relative=None
+        relative=_repo_relative(tb.tb_frame.f_code.co_filename,root)
         if relative is not None and relative.startswith('src/anime/'):
             check=f'{relative}:{tb.tb_lineno} {tb.tb_frame.f_code.co_name}'
         tb=tb.tb_next

@@ -401,6 +401,14 @@ class ManagementActionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(plain.read_text(),'hi\n')
             self.assertEqual(plain.stat().st_mode&0o777,0o600)
 
+    def test_failure_location_names_files_compiled_in_another_checkout(self):
+        from pathlib import Path
+        from src.anime.cancellation import _repo_relative
+        root=Path('/home/user/new-checkout')
+        self.assertEqual(_repo_relative('/home/user/old-checkout/src/anime/cancellation_service.py',root),
+                         'src/anime/cancellation_service.py')
+        self.assertIsNone(_repo_relative('/usr/lib/python3/json/decoder.py',root))
+
     def test_failure_location_names_the_original_check_and_file(self):
         from src.anime.cancellation import CancellationError, failure_location
         from src.anime.reasons import safe_details

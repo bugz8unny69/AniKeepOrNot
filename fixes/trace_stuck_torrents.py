@@ -106,7 +106,8 @@ def bucket(r):
     state = r['op_state']
     if state == 'ACTIVE':
         last = r.get('last_job') or {}
-        return f"ACTIVE · last job {last.get('kind')} {last.get('state')}"
+        text = f"ACTIVE · last job {last.get('kind')} {last.get('state')}"
+        return text + f" {last['reason']}" if last.get('reason') else text
     if cleanup is None:
         return f"{state} (cleanup {r['cleanup_state']}) · NO cleanup job was ever queued"
     text = f"{state} (cleanup {r['cleanup_state']}) · {cleanup['kind']} {cleanup['state']}"

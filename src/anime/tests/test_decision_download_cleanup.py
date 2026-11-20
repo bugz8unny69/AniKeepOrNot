@@ -233,14 +233,16 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
         self.assertEqual(fake.posts.count('command'),1)
 
-    async def test_purge_never_follows_a_swapped_folder(self):
+    async def test_recreated_folder_is_still_purged(self):
+        """The ad-* folder is ours by tag and name, not by the identity staging saw."""
         worker,_,_,_,_,job=await self.download_ready()
         import shutil
         moved=self.payload_root.with_name(self.payload_root.name+'.other')
         self.payload_root.rename(moved);self.payload_root.mkdir()
         await worker.attempt()
-        self.assertTrue(moved.exists())                  # Not ours any more: untouched.
-        self.assertNotEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertFalse(self.payload_root.exists())
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
         shutil.rmtree(moved)
 
     async def test_other_consumer_blocks_all_external_controls(self):
@@ -263,16 +265,6 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,tags=()))
         await worker.attempt()
         self.assertEqual(self.controls,[]);self.assertTrue(self.remainder.exists())
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
-
-    async def test_replaced_download_root_is_preserved_for_review(self):
-        worker,_,_,_,_,job=await self.download_ready()
-        old=self.payload_root.with_name(self.payload_root.name+'-original')
-        self.payload_root.rename(old);self.payload_root.mkdir()
-        replacement=self.payload_root/self.remainder.relative_to(self.payload_root)
-        replacement.parent.mkdir(parents=True,exist_ok=True);replacement.write_bytes(b'new')
-        await worker.attempt()
-        self.assertNotIn('remove',self.controls);self.assertEqual(replacement.read_bytes(),b'new')
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
 
     async def test_legacy_move_missing_files_recovery_from_prepared(self):
@@ -380,23 +372,27 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.payload_root.exists())
         self.assertEqual(len(list(staging.rglob('*.mkv'))),1)
 
-    async def test_transcode_row_for_another_root_keeps_the_source_check(self):
-        """A publication not pointing at the transcode output is checked as before."""
+    async def test_publication_mismatch_does_not_block_cleanup(self):
+        """Integrity is checked at staging only. A publication whose source no
+        longer matches the torrent (size, path) still lets an owned torrent go."""
         worker,staging,stage_job=await self.staged()
         job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
         db=connect(self.database)
         try:
             with transaction(db):
-                verification=self.rows('SELECT verification_job_id FROM staging_publications WHERE job_id=?',(stage_job,))[0][0]
-                db.execute("UPDATE staging_publications SET manifest_json=json_set(manifest_json,'$.source.file[2]',123) "
-                           "WHERE job_id=?",(stage_job,))
-                db.execute("INSERT INTO transcode_media(verification_job_id,job_id,output_root,evidence_json) "
-                           "VALUES(?,?,'/elsewhere','{}')",(verification,stage_job))
+                db.execute("UPDATE staging_publications SET manifest_json=json_set(manifest_json,"
+                           "'$.source.path','renamed.mkv','$.source.file[2]',123) WHERE job_id=?",(stage_job,))
         finally:db.close()
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.remainder.parent.mkdir(parents=True,exist_ok=True)
+        self.remainder.write_bytes(b'original')
         self.attach(worker)
         await self.make_due(job);await worker.attempt()
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
-        self.assertEqual(self.controls,[])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertEqual(self.delete_files_args,[True])
+        self.assertFalse(self.payload_root.exists())
 
     async def test_retry_cleanup_capability_and_execution(self):
         """WI-20: Retry Cleanup for CLEANUP_DECIDED_DOWNLOAD jobs in NEEDS_REVIEW."""
