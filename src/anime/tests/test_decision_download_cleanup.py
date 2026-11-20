@@ -330,8 +330,12 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.snapshot)
         self.assertEqual(self.rows('SELECT phase FROM cancellation_cleanup'),[('COMPLETE',)])
 
-    async def test_copy_missing_files_is_rejected_without_deletion(self):
-        """WI-19: COPY plans reporting missingFiles must NOT be deleted."""
+    async def test_copy_missing_files_removes_only_the_record(self):
+        """Jobs 3089/6012/6030: a COPY plan whose download files are already gone.
+
+        Staging copied the video, so nothing is left to protect: qBittorrent drops
+        the record (deleteFiles=false) and the ad-* folder is purged.
+        """
         worker,staging,stage_job=await self.staged()
         job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
         self.payload_root=Path(self.snapshot.observation.save_path)
@@ -341,9 +345,58 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
         self.attach(worker)
         await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['remove'])
+        self.assertEqual(self.delete_files_args,[False])
+        self.assertIsNone(self.snapshot)
+        self.assertFalse(self.payload_root.exists())
+        self.assertEqual(len(list(staging.rglob('*.mkv'))),1)    # The staged video stays.
+
+    async def test_transcoded_staging_still_removes_the_torrent(self):
+        """Jobs 8867..10118: staging published the transcoded file, not the torrent's."""
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                verification=self.rows('SELECT verification_job_id FROM staging_publications WHERE job_id=?',(stage_job,))[0][0]
+                # What staging records when it publishes a transcode output.
+                db.execute("UPDATE staging_publications SET manifest_json=json_set(manifest_json,"
+                           "'$.source_root',?,'$.source.path','.transcode/1.mkv','$.source.file[2]',123,'$.transfer','MOVE') "
+                           "WHERE job_id=?",(str(staging),stage_job))
+                db.execute("INSERT INTO transcode_media(verification_job_id,job_id,output_root,evidence_json) "
+                           "VALUES(?,?,?,'{}')",(verification,stage_job,str(staging)))
+        finally:db.close()
+        self.payload_root=Path(self.snapshot.observation.save_path)
+        self.remainder=self.payload_root/self.snapshot.observation.files[0].path
+        self.remainder.parent.mkdir(parents=True,exist_ok=True)
+        self.remainder.write_bytes(b'original')
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+        self.assertEqual(self.controls,['stop','remove'])
+        self.assertEqual(self.delete_files_args,[True])          # Not treated as legacy MOVE.
+        self.assertIsNone(self.snapshot)
+        self.assertFalse(self.payload_root.exists())
+        self.assertEqual(len(list(staging.rglob('*.mkv'))),1)
+
+    async def test_transcode_row_for_another_root_keeps_the_source_check(self):
+        """A publication not pointing at the transcode output is checked as before."""
+        worker,staging,stage_job=await self.staged()
+        job=self.rows("SELECT job_id FROM jobs WHERE kind=? AND json_extract(payload_json,'$.staging_job_id')=?",(KIND,stage_job))[0][0]
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                verification=self.rows('SELECT verification_job_id FROM staging_publications WHERE job_id=?',(stage_job,))[0][0]
+                db.execute("UPDATE staging_publications SET manifest_json=json_set(manifest_json,'$.source.file[2]',123) "
+                           "WHERE job_id=?",(stage_job,))
+                db.execute("INSERT INTO transcode_media(verification_job_id,job_id,output_root,evidence_json) "
+                           "VALUES(?,?,'/elsewhere','{}')",(verification,stage_job))
+        finally:db.close()
+        self.attach(worker)
+        await self.make_due(job);await worker.attempt()
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
         self.assertEqual(self.controls,[])
-        self.assertIsNotNone(self.snapshot)
 
     async def test_retry_cleanup_capability_and_execution(self):
         """WI-20: Retry Cleanup for CLEANUP_DECIDED_DOWNLOAD jobs in NEEDS_REVIEW."""
@@ -355,7 +408,8 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.remainder=self.payload_root/self.snapshot.observation.files[0].path
         self.payload_root.mkdir(parents=True,exist_ok=True)
         if self.remainder.exists():self.remainder.unlink()
-        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
+        # A qBittorrent state cleanup does not handle stops it for review.
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='error'))
         self.attach(worker)
         await self.make_due(job);await worker.attempt()
         self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('NEEDS_REVIEW',)])
@@ -371,12 +425,8 @@ class DecisionDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RetryStale):
             request_review_retry(self.database,job,expected_attempt=999,expected_reason='DECISION_DOWNLOAD_CLEANUP_REVIEW')
 
-        # Fix the underlying issue (simulate upgrading to MOVE or resolving state)
-        db=connect(self.database)
-        try:
-            with transaction(db):
-                db.execute("UPDATE staging_publications SET manifest_json = json_set(manifest_json, '$.transfer', 'MOVE') WHERE job_id=?",(stage_job,))
-        finally:db.close()
+        # Fix the underlying issue: qBittorrent now reports the files as missing.
+        self.snapshot=replace(self.snapshot,observation=replace(self.snapshot.observation,state='missingFiles'))
 
         receipt=request_review_retry(self.database,job,expected_attempt=1,expected_reason='DECISION_DOWNLOAD_CLEANUP_REVIEW')
         self.assertEqual(receipt.outcome,'QUEUED')

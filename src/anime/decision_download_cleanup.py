@@ -41,6 +41,13 @@ def status(db,decision):
         'reason':None if reason is None else DEFAULT_CATALOG.reason(reason),'status_url':f'/api/v1/jobs/{job}'}
 
 
+def transcoded(db,plan_id,publication):
+    """True when staging published this plan's transcoded output instead of the torrent's file."""
+    row=db.execute('SELECT t.output_root FROM staging_publications s JOIN transcode_media t '
+        'USING(verification_job_id) WHERE s.plan_id=? AND t.evidence_json IS NOT NULL',(plan_id,)).fetchone()
+    return row is not None and publication['source_root']==row[0]
+
+
 def staging_status(db,stage_job):
     return db.execute("SELECT job_id FROM jobs WHERE kind=? "
         "AND json_extract(payload_json,'$.staging_job_id')=? ORDER BY job_id",(KIND,stage_job)).fetchall()
@@ -142,6 +149,12 @@ class Service(OwnedCleanup):
             (op,preparation,plan.evaluation_job_id)).fetchone()
         intent=_intent(db,plan)
         if shared or intent is None or intent.state!='OWNED_STOPPED':raise CancellationError()
+        if transcoded(db,source[1],publication):
+            # Staging published the transcoded output, not the torrent's file,
+            # so the publication says nothing about the download. Ownership of
+            # the torrent and its ad-* folder rests on the torrent checks alone.
+            self.legacy_move=False
+            return op,intent,tuple(protected),None
         selected=plan.manifest.files[plan.manifest.selected_index]
         if publication['source_root']!=intent.options.download_root or publication['source']['path']!=selected.path or publication['source']['file'][2]!=selected.size:raise CancellationError()
         return op,intent,tuple(protected),publication['source']['root']
@@ -154,7 +167,8 @@ class Service(OwnedCleanup):
     def _pin(self,cleaner):
         # The original qBittorrent folder, or already gone.
         pinned=cleaner.root_only()
-        if pinned['root'] not in (None,self.source_root_identity):raise CancellationError()
+        if self.source_root_identity is not None and pinned['root'] not in (None,self.source_root_identity):
+            raise CancellationError()
         return pinned
 
     def _fence(self,db=None):
