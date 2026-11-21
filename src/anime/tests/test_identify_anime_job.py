@@ -178,6 +178,32 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
         # A series that is not found still stops for review.
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE job_id=?",(series,)),[("NEEDS_REVIEW",)])
 
+    async def test_release_without_anidb_or_anime_lists_entry_is_canceled_with_a_notification(self):
+        # Prod: Tom and Jerry Forbidden Compass (not on AniDB), Welsh and Shedar
+        # (AniDB 20379, no Anime-Lists entry yet). A tie between entries still reviews.
+        from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing, IdentityNotReady
+        errors = {b"Tom and Jerry": AniDBEntryMissing, b"Welsh and Shedar": AnimeListsEntryMissing,
+                  b"Tied Show": IdentityNotReady}
+        jobs = {}
+        for name in errors:
+            jobs[name] = self.enqueue(raw_body=b'{"release_name":"%s S01E03 1080p"}' % name)[1]
+        async def resolve(request, *args):
+            raise next(error for name, error in errors.items() if name in request.raw_body)()
+        worker = self.worker(registration(resolve))
+        for _ in errors:
+            await worker.attempt()
+        state = "SELECT j.state,j.last_reason_code,o.state,o.cleanup_state FROM jobs j " \
+                "JOIN job_operation_members m USING(job_id) JOIN job_operations o USING(operation_id) WHERE j.job_id=?"
+        self.assertEqual(self.rows(state, (jobs[b"Tom and Jerry"],)),
+                         [("CANCELED", "ANIDB_ENTRY_MISSING", "CANCELED", "COMPLETE")])
+        self.assertEqual(self.rows(state, (jobs[b"Welsh and Shedar"],)),
+                         [("CANCELED", "ANIME_LISTS_ENTRY_MISSING", "CANCELED", "COMPLETE")])
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?", (jobs[b"Tied Show"],)),
+                         [("NEEDS_REVIEW", "IDENTITY_INCOMPLETE")])
+        self.assertEqual(self.rows("SELECT type,job_id,title FROM notifications ORDER BY job_id"), [
+            ("RELEASE_UNSUPPORTED", jobs[b"Tom and Jerry"], "Not on AniDB: Tom and Jerry S01E03 1080p"),
+            ("RELEASE_UNSUPPORTED", jobs[b"Welsh and Shedar"], "Not linked to TVDB yet: Welsh and Shedar S01E03 1080p")])
+
     async def test_conflicting_canonical_identity_is_reviewed_without_stopping_worker(self):
         first,_ = self.enqueue()
         db = connect(self.database)

@@ -911,7 +911,7 @@ CREATE TABLE IF NOT EXISTS transcode_batches (
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_transcode_batch ON transcode_batches((1)) WHERE state IN ('QUEUED','RUNNING');
 CREATE TABLE IF NOT EXISTS notifications (
  notification_id INTEGER PRIMARY KEY,
- type TEXT NOT NULL CHECK(type IN ('API_REJECTION','SERIES_EPISODE_TROUBLE','KEEP_SEARCH_FAILED','TRANSCODE_BATCH_DONE','MOVIE_SKIPPED')),
+ type TEXT NOT NULL CHECK(type IN ('API_REJECTION','SERIES_EPISODE_TROUBLE','KEEP_SEARCH_FAILED','TRANSCODE_BATCH_DONE','MOVIE_SKIPPED','RELEASE_UNSUPPORTED')),
  severity TEXT NOT NULL CHECK(severity IN ('info','attention')),
  title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 120),
  message TEXT NOT NULL CHECK(length(message) BETWEEN 1 AND 500),
@@ -1064,6 +1064,16 @@ class IdentityNotReady(ValueError):
 
     def __init__(self):
         super().__init__("Anime identification is incomplete.")
+
+
+class AniDBEntryMissing(IdentityNotReady):
+    """No AniDB entry matches the release title (or it has none): unsupported."""
+    reason_code = "ANIDB_ENTRY_MISSING"
+
+
+class AnimeListsEntryMissing(IdentityNotReady):
+    """AniDB has the anime, but Anime-Lists links it to no TVDB series."""
+    reason_code = "ANIME_LISTS_ENTRY_MISSING"
 
 
 def persist_identity(db, event_id, candidate, validated_at_ms=None):

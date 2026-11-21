@@ -12,7 +12,7 @@ from src.anime.providers.errors import (ProviderInvalidResponse, ProviderDeferre
 from src.anime.release_names import norm, release_title
 from src.anime.providers.scoring import TitleVariant, generate_title_variants, rank_and_select_candidates
 from src.anime.release_names import detect_explicit_sequel_marker
-from src.anime.storage.sqlite import IdentityConflict, IdentityNotReady
+from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing, IdentityConflict, IdentityNotReady
 from src.anime.worker import blocking
 
 
@@ -84,6 +84,14 @@ def alias_forms(title, aliases):
         for text in (base, outer):
             add(re.sub(r"[\s.]*\(?(?:19|20)\d{2}\)?$", "", text))
             add(re.sub(r"\s*[-–]\s*Season$", "", text, flags=re.I))
+        # "JoJo's Bizarre Adventure Part 7: Steel Ball Run": AniDB lists the
+        # work as "Steel Ball Run: JoJo's Bizarre Adventure", and the series
+        # as "JoJo's Bizarre Adventure". Try both, the subtitle first.
+        split = re.fullmatch(r"(.+?)(?:\s+Part\s+\d{1,2})?\s*:\s+([^:]+)", outer.strip(), flags=re.I)
+        if split:
+            add(split[2] + ": " + split[1])
+            if split[0] != split[1] + ": " + split[2]:   # Only with "Part N": the series title.
+                add(split[1])
     primary = title.split(" | ", 1)[0]
     for inner in re.findall(r"\(([^()]+)\)", primary):
         for part in inner.split(","):
@@ -91,6 +99,31 @@ def alias_forms(title, aliases):
             if part and not _METADATA_PART.search(part) and not re.fullmatch(r"(?:19|20)\d{2}", part):
                 add(part)
     return list(aliases) + forms
+
+
+def season_from_candidates(client, scoring, tid, season, episode):
+    """(entry, TVDB series, season entry) from the other eligible candidates, or None.
+
+    Only Anime-Lists is consulted: each eligible AniDB candidate's series,
+    then that series' entry for the season. Exactly one distinct season entry
+    is required; none or several keep the job in review.
+    """
+    found = {}
+    for candidate in scoring.candidates:
+        if not candidate.eligible:
+            continue
+        try:
+            other = client.mapping(candidate.anidb_id)
+            if other == tid:
+                continue
+            entry = client.season_entry(other, season, episode)
+        except (IdentityNotReady, IdentityConflict):
+            continue
+        found.setdefault((other, entry), candidate.anidb_id)
+    if len(found) != 1:
+        return None
+    (other, entry), base = next(iter(found.items()))
+    return base, other, entry
 
 
 def explicit_sequel_alias(title, base_aliases):
@@ -156,9 +189,9 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             if matching is not None:
                 matching.check(step, status, note)
 
-        def incomplete(note):
+        def incomplete(note, error=IdentityNotReady):
             check(stage, "failed", note)
-            raise IdentityNotReady()
+            raise error()
 
         try:
             if cancelled.is_set():
@@ -182,7 +215,7 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 stage = "season_scope"
                 incomplete("multiple_seasons")
             if not aliases:
-                incomplete("no_title_aliases")
+                incomplete("no_title_aliases", AniDBEntryMissing)
             check("release_title", "passed")
 
             if len(seasons) <= 1:
@@ -295,7 +328,7 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             if len(candidates) == 0:
                 if matching is not None:
                     matching.scoring(threshold_pct, "v1", "NO_CANDIDATES", 0, 0)
-                incomplete("no_anidb_candidates")
+                incomplete("no_anidb_candidates", AniDBEntryMissing)
 
             # Score and rank all discovered AniDB candidates
             rel_season = int(seasons[0]) if seasons else None
@@ -314,9 +347,9 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
 
             if scoring.selected is None:
                 if scoring.decision == "AMBIGUOUS_TIE":
-                    incomplete("no_unique_anidb_candidate")
+                    incomplete("no_unique_anidb_candidate")   # A person picks: stays in review.
                 else:
-                    incomplete("no_anidb_candidates")
+                    incomplete("no_anidb_candidates", AniDBEntryMissing)
 
             check(stage, "passed")
             aid = scoring.selected.anidb_id
@@ -333,7 +366,13 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             check(stage, "passed")
 
             stage = "anime_lists"
-            tid = client.mapping(aid)
+            try:
+                tid = client.mapping(aid)
+            except AnimeListsEntryMissing:
+                raise
+            except IdentityNotReady:
+                # AniDB is the root of trust; Anime-Lists is the only TVDB link.
+                incomplete("anime_lists_entry_missing", AnimeListsEntryMissing)
             if matching is not None:
                 matching.tvdb(tid, ())
             base_aid, base_anime = aid, anime
@@ -347,7 +386,22 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 season_lookup = None
 
             if season_lookup is not None:
-                aid = client.season_entry(tid, season_lookup, episode)
+                try:
+                    aid = client.season_entry(tid, season_lookup, episode)
+                except IdentityNotReady:
+                    # The title alone ties several AniDB entries ("JoJo's Bizarre
+                    # Adventure": the 1993 OVA, the 2012 TV series ...). The one
+                    # picked may belong to an Anime-Lists series without this
+                    # season. Use the season of another equally eligible entry,
+                    # only when exactly one such entry exists (prod JoJo S06).
+                    found = season_from_candidates(client, scoring, tid, season_lookup, episode)
+                    if found is None:
+                        raise
+                    base_aid, tid, aid = found
+                    base_anime = {"title": candidates[base_aid][0], "titles": candidates[base_aid]}
+                    if matching is not None:
+                        matching.tvdb(tid, ())
+                    check(stage, "passed", "season_entry_other_candidate")
                 if matching is not None:
                     matching.anidb(aid)
                 anime = client.anime(aid)

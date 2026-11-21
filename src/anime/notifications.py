@@ -31,6 +31,7 @@ EVENT_TYPES = {
     'KEEP_SEARCH_FAILED': ('open_job',),
     'TRANSCODE_BATCH_DONE': ('open_jobs',),
     'MOVIE_SKIPPED': ('open_job',),
+    'RELEASE_UNSUPPORTED': ('open_job',),
 }
 
 
@@ -146,6 +147,34 @@ def movie_skipped(db, claim, now=None):
                 'message': 'Movies are not supported yet, so this release was canceled. Nothing was downloaded.',
                 'anidb_id': anidb_id, 'job_id': claim.job_id,
                 'release_name': release[:1024] if isinstance(release, str) and release else None}, now=now)
+
+
+_UNSUPPORTED = {
+    'ANIDB_ENTRY_MISSING': ('Not on AniDB',
+        'AniDB has no entry matching this release title, so it is not supported and was canceled. '
+        'Nothing was downloaded.'),
+    'ANIME_LISTS_ENTRY_MISSING': ('Not linked to TVDB yet',
+        'AniDB has this anime, but Anime-Lists does not link it to a TVDB series yet, so this release '
+        'was canceled. Nothing was downloaded. Once Anime-Lists adds it, new releases work on their own.'),
+}
+
+
+def release_unsupported(db, claim, reason, now=None):
+    """A release identification cannot support was canceled (not on AniDB, or not in Anime-Lists)."""
+    heading, message = _UNSUPPORTED[reason]
+    row = db.execute("SELECT e.raw_body FROM jobs j JOIN incoming_events e ON e.event_id=j.event_id "
+                     "WHERE j.job_id=?", (claim.job_id,)).fetchone()
+    release = None
+    try:
+        import json
+        release = json.loads(row[0]).get('release_name') if row and row[0] else None
+    except (ValueError, TypeError, AttributeError):
+        release = None
+    release = release if isinstance(release, str) and release.strip() else None
+    notify(db, {'type': 'RELEASE_UNSUPPORTED',
+                'title': (f'{heading}: {release}' if release else heading)[:120],
+                'message': message, 'anidb_id': None, 'job_id': claim.job_id,
+                'release_name': release[:1024] if release else None}, now=now)
 
 
 def _series_of_job_keep(db, job_id):

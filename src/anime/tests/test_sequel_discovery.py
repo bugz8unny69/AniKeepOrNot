@@ -294,6 +294,91 @@ class SeasonEntryCorrectionTests(unittest.IsolatedAsyncioTestCase):
             "[CR Web-DL 1080p AVC Opus] [Dual Audio] [hchcsen]", provider)
         self.assertEqual(result["anime"]["anidb_id"], 17091)
 
+    def jojo(self, extra_entries=()):
+        """Anime-Lists as on production: 788/789/4918 are TVDB 83950 (OVAs),
+        9304 is TVDB 262954 (2012 TV) whose season 6 is 19287 Steel Ball Run."""
+        titles = {788: "JoJo no Kimyou na Bouken", 789: "JoJo no Kimyou na Bouken (2000)",
+                  4918: "JoJo no Kimyou na Bouken: Phantom Blood", 9304: "JoJo no Kimyou na Bouken (2012)",
+                  19287: "Steel Ball Run: JoJo no Kimyou na Bouken"}
+        series = {788: 83950, 789: 83950, 4918: 83950, 9304: 262954, 19287: 262954}
+        entries = {(83950, 1): 788, (83950, 2): 789, (83950, 0): 4918, (262954, 1): 9304,
+                   (262954, 6): 19287, **dict(extra_entries)}
+        provider = Provider()
+        provider.candidates = {aid: ("JoJo's Bizarre Adventure", title) for aid, title in titles.items()
+                               if aid != 19287}
+        provider.anime = lambda aid: {"title": titles[aid], "titles": (titles[aid], "JoJo's Bizarre Adventure")}
+        provider.mapping = lambda aid: series[aid]
+        provider.tvdb_titles = ("JoJo's Bizarre Adventure",)
+        provider.tvdb_anidb_ids = frozenset({9304})
+        def season_entry(tid, season, episode=None):
+            provider.season_lookups.append((tid, season, episode))
+            if (tid, season) not in entries:
+                raise IdentityNotReady()
+            return entries[tid, season]
+        provider.season_entry = season_entry
+        return provider
+
+    async def test_tied_title_takes_the_season_from_the_candidate_whose_series_has_it(self):
+        # Prod jobs 542, 548, 549, 8758, 8764, 9988, 10004: 788 ranks first, but
+        # only 9304's Anime-Lists series (262954) has a season 6.
+        for name in ("[ToonsHub] JoJos Bizarre Adventure S06E06 1080p NF WEB-DL DUAL AAC2.0 H.264 "
+                     "(JoJo no Kimyou na Bouken: Steel Ball Run, Dual-Audio, Multi-Subs)",
+                     "[Judas] JoJo's Bizarre Adventure (JoJo no Kimyou na Bouken) - S06E09 [1080p][HEVC x265 10bit]"
+                     "[Dual-Audio][Multi-Subs] (Weekly)"):
+            with self.subTest(name=name):
+                provider = self.jojo()
+                result, trace = await self.identify(name, provider)
+                self.assertEqual((result["anime"]["anidb_id"], result["anime"]["tvdb_series_id"]), (19287, 262954))
+                self.assertIn("season_entry_other_candidate", [c["note"] for c in trace["checks"]])
+
+    async def test_two_candidate_series_with_the_season_stay_in_review(self):
+        # 788's series has no season 6; two other candidates' series both have one.
+        provider = self.jojo(extra_entries={(99999, 6): 20000})
+        provider.candidates[20000] = ("JoJo's Bizarre Adventure", "JoJo Other Work")
+        mapping = provider.mapping
+        provider.mapping = lambda aid: 99999 if aid == 20000 else mapping(aid)
+        with self.assertRaises(IdentityNotReady):
+            await self.identify("JoJos Bizarre Adventure S06E06 1080p", provider)
+
+    async def test_part_number_and_subtitle_find_the_series(self):
+        # Prod jobs 385, 9066: the full title scored below the threshold.
+        provider = self.jojo()
+        result, _ = await self.identify("[Anime Chap] JoJo's Bizarre Adventure Part 7: Steel Ball Run S06E06 "
+                                        "[WEB 1080p] {Corrected Names} Episode 06 [Dual Audio]", provider)
+        self.assertEqual(result["anime"]["anidb_id"], 19287)
+
+    async def test_unsupported_releases_raise_their_own_reason(self):
+        from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing
+        # Prod jobs 154-158: the name carries no title at all.
+        with self.assertRaises(AniDBEntryMissing):
+            await self.identify("T00393120 S01E02 1080p CR WEB-DL DUAL AAC2.0 H.264-VARYG (Dual-Audio, Multi-Subs)",
+                                Provider())
+        # Prod jobs 8384, 8548, 481, 9238: AniDB lists nothing close enough.
+        provider = Provider()
+        provider.candidates = {}
+        with self.assertRaises(AniDBEntryMissing):
+            await self.identify("[ToonsHub] Tom and Jerry Forbidden Compass (2025) 1080p AMZN WEB-DL DUAL", provider)
+        provider.candidates = {15668: ("Tom Sawyer no Bouken",)}   # A fuzzy hit below the threshold.
+        with self.assertRaises(AniDBEntryMissing):
+            await self.identify("[ToonsHub] Tom and Jerry Forbidden Compass (2025) 1080p AMZN WEB-DL DUAL", provider)
+        # Prod jobs 8668, 8950, 10067, 332: on AniDB, not in Anime-Lists.
+        provider = Provider()
+        provider.candidates = {20379: ("Aoki Denshou: Welsh & Shedar",)}
+        provider.anime = lambda aid: {"title": "Aoki Denshou: Welsh & Shedar", "titles": ("Aoki Denshou: Welsh & Shedar",)}
+        def mapping(aid): raise IdentityNotReady()
+        provider.mapping = mapping
+        with self.assertRaises(AnimeListsEntryMissing):
+            await self.identify("[ToonsHub] Welsh and Shedar S01E03 1080p AMZN WEB-DL DUAL DDP2.0 H.264 "
+                                "(Aoki Denshou: Welsh & Shedar, Dual-Audio, Multi-Subs)", provider)
+
+    async def test_tied_entries_still_review(self):
+        from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing
+        provider = Provider()
+        provider.candidates = {1: ("Same Show",), 2: ("Same Show",)}
+        with self.assertRaises(IdentityNotReady) as raised:
+            await self.identify("Same Show S01E01 1080p", provider)
+        self.assertNotIsInstance(raised.exception, (AniDBEntryMissing, AnimeListsEntryMissing))
+
     async def test_no_single_season_entry_keeps_the_title_match(self):
         provider = self.provider({16128: ("AMAIM Warrior at the Borderline",)},
             {16128: "AMAIM Warrior at the Borderline"}, {})
@@ -325,6 +410,14 @@ class AliasFormTests(unittest.TestCase):
                 forms = self.forms(title)
                 self.assertIn(wanted, forms)
                 self.assertFalse(any(f in ("Dual-Audio", "Multi-Subs") for f in forms))
+
+    def test_subtitle_order_and_part_number(self):   # jobs 385, 9066
+        forms = self.forms("[Anime Chap] JoJo's Bizarre Adventure Part 7: Steel Ball Run S06E06 [WEB 1080p]")
+        self.assertIn("Steel Ball Run: JoJo's Bizarre Adventure", forms)
+        self.assertIn("JoJo's Bizarre Adventure", forms)
+        forms = self.forms("[Group] JoJo no Kimyou na Bouken: Steel Ball Run S06E06 [WEB 1080p]")
+        self.assertIn("Steel Ball Run: JoJo no Kimyou na Bouken", forms)
+        self.assertNotIn("JoJo no Kimyou na Bouken", forms)   # Without "Part N" the series title is not split off.
 
     def test_fuzzy_match_uses_words(self):   # job 9521: "Alyu" for "Alya"
         from src.anime.providers import parsing

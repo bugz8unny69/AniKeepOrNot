@@ -29,6 +29,7 @@ and **Mark read**. The panel closes on an outside click or Esc.
 | `SERIES_EPISODE_TROUBLE` | An episode job of a tracked series ends in Needs review, or discovery finds no usable release for an episode (`NO_RESULTS`, all candidates failed). Not for retries or waits. One item per series (`group_key = series:<anidb_id>`) listing the episodes. | Open series, Open job |
 | `KEEP_SEARCH_FAILED` | Keep's one missing-episode search did not start. | Open job |
 | `MOVIE_SKIPPED` | A movie release was canceled because movies are not supported yet (AniDB type Movie, or a movie title with no season or episode). Nothing was downloaded. | Open job |
+| `RELEASE_UNSUPPORTED` | A release was canceled because identification cannot support it: AniDB has no entry for its title (`ANIDB_ENTRY_MISSING`), or AniDB has it but Anime-Lists does not link it to TVDB yet (`ANIME_LISTS_ENTRY_MISSING`). Nothing was downloaded. A tie between AniDB entries still stops for review. | Open job |
 
 ## API
 
