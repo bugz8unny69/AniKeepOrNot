@@ -579,6 +579,15 @@ REASONS = {
         'The saved list of season packs for this season no longer matches what this job expected, for example because another job changed it.',
         'The season pack choice for this season needs review.',
         'Open the job report (adm report job --id followed by the job number) to compare the saved season packs, then press Retry.'),
+    # Identification found nothing AniDB-backed: canceled with a notification.
+    'ANIDB_ENTRY_MISSING': ('ANIDB_ENTRY_MISSING',
+        'AniDB has no entry matching this release title, so it is not supported.',
+        'This release is not on AniDB.',
+        'Nothing to do. The release was canceled and nothing was downloaded.'),
+    'ANIME_LISTS_ENTRY_MISSING': ('ANIME_LISTS_ENTRY_MISSING',
+        'AniDB has this anime, but Anime-Lists does not link it to a TVDB series yet.',
+        'This anime is not linked to TVDB yet.',
+        'Nothing to do. The release was canceled and nothing was downloaded. Once Anime-Lists adds it, new releases work on their own.'),
     # A movie release is canceled with a notification until movies are supported.
     'RELEASE_MOVIE_SKIPPED': ('RELEASE_MOVIE_SKIPPED',
         'The release is a movie, and movies are not supported yet.',

@@ -21,6 +21,8 @@ from src.anime.worker import blocking
 from src.anime.matching import MatchingTrace
 
 KIND = "IDENTIFY_ANIME"
+# Identification outcomes that cancel with a notification instead of review.
+UNSUPPORTED_REASONS = frozenset(("ANIDB_ENTRY_MISSING", "ANIME_LISTS_ENTRY_MISSING"))
 DEFINITION = HandlerDefinition(KIND, "Identify anime series")
 
 
@@ -161,6 +163,11 @@ def registration(resolve, *, release_kind=None):
             if _movie_request(request):
                 # Movies are not supported yet: notify and cancel, never review.
                 return Outcome("cancel", "RELEASE_MOVIE_SKIPPED", matching=evidence(),
+                               candidate_evidence=trace.candidate_evidence)
+            if exc.reason_code in UNSUPPORTED_REASONS:
+                # Not on AniDB, or AniDB without an Anime-Lists TVDB link: not
+                # supported. Notify and cancel; a person cannot fix it in review.
+                return Outcome("cancel", exc.reason_code, matching=evidence(),
                                candidate_evidence=trace.candidate_evidence)
             return Outcome("review", exc.reason_code, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         try:

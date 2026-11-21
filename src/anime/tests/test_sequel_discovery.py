@@ -347,6 +347,38 @@ class SeasonEntryCorrectionTests(unittest.IsolatedAsyncioTestCase):
                                         "[WEB 1080p] {Corrected Names} Episode 06 [Dual Audio]", provider)
         self.assertEqual(result["anime"]["anidb_id"], 19287)
 
+    async def test_unsupported_releases_raise_their_own_reason(self):
+        from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing
+        # Prod jobs 154-158: the name carries no title at all.
+        with self.assertRaises(AniDBEntryMissing):
+            await self.identify("T00393120 S01E02 1080p CR WEB-DL DUAL AAC2.0 H.264-VARYG (Dual-Audio, Multi-Subs)",
+                                Provider())
+        # Prod jobs 8384, 8548, 481, 9238: AniDB lists nothing close enough.
+        provider = Provider()
+        provider.candidates = {}
+        with self.assertRaises(AniDBEntryMissing):
+            await self.identify("[ToonsHub] Tom and Jerry Forbidden Compass (2025) 1080p AMZN WEB-DL DUAL", provider)
+        provider.candidates = {15668: ("Tom Sawyer no Bouken",)}   # A fuzzy hit below the threshold.
+        with self.assertRaises(AniDBEntryMissing):
+            await self.identify("[ToonsHub] Tom and Jerry Forbidden Compass (2025) 1080p AMZN WEB-DL DUAL", provider)
+        # Prod jobs 8668, 8950, 10067, 332: on AniDB, not in Anime-Lists.
+        provider = Provider()
+        provider.candidates = {20379: ("Aoki Denshou: Welsh & Shedar",)}
+        provider.anime = lambda aid: {"title": "Aoki Denshou: Welsh & Shedar", "titles": ("Aoki Denshou: Welsh & Shedar",)}
+        def mapping(aid): raise IdentityNotReady()
+        provider.mapping = mapping
+        with self.assertRaises(AnimeListsEntryMissing):
+            await self.identify("[ToonsHub] Welsh and Shedar S01E03 1080p AMZN WEB-DL DUAL DDP2.0 H.264 "
+                                "(Aoki Denshou: Welsh & Shedar, Dual-Audio, Multi-Subs)", provider)
+
+    async def test_tied_entries_still_review(self):
+        from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing
+        provider = Provider()
+        provider.candidates = {1: ("Same Show",), 2: ("Same Show",)}
+        with self.assertRaises(IdentityNotReady) as raised:
+            await self.identify("Same Show S01E01 1080p", provider)
+        self.assertNotIsInstance(raised.exception, (AniDBEntryMissing, AnimeListsEntryMissing))
+
     async def test_no_single_season_entry_keeps_the_title_match(self):
         provider = self.provider({16128: ("AMAIM Warrior at the Borderline",)},
             {16128: "AMAIM Warrior at the Borderline"}, {})

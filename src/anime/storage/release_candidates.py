@@ -295,23 +295,29 @@ def auto_cleanup_metadata_timeout(db,claim):
     return request_automatic_cleanup(db,claim)
 
 
-def close_skipped_release(db,claim,now):
-    """A skipped release (a movie, for now): notify, then close its operation.
+# Releases canceled with a notification instead of review: movies, and
+# releases with no AniDB entry or no Anime-Lists TVDB link.
+SKIPPED_REASONS=frozenset(('RELEASE_MOVIE_SKIPPED','ANIDB_ENTRY_MISSING','ANIME_LISTS_ENTRY_MISSING'))
+
+
+def close_skipped_release(db,claim,now,reason='RELEASE_MOVIE_SKIPPED'):
+    """A skipped release (a movie, or an unsupported one): notify, then close its operation.
 
     The check runs before anything is added to qBittorrent, so usually there
     is nothing to clean and the operation is closed directly. Anything it does
     own goes through the normal cancellation cleanup.
     """
-    from src.anime.notifications import movie_skipped
+    from src.anime.notifications import movie_skipped,release_unsupported
     from src.anime.storage.cancellation import operation,unfinished_resources
-    movie_skipped(db,claim,now)
+    if reason=='RELEASE_MOVIE_SKIPPED':movie_skipped(db,claim,now)
+    else:release_unsupported(db,claim,reason,now)
     op=operation(db,claim.job_id)
     if op[1]!='ACTIVE':return ()
     open_jobs=db.execute("SELECT 1 FROM jobs j JOIN job_operation_members m USING(job_id) WHERE m.operation_id=? "
                          "AND j.state NOT IN ('DONE','CANCELED','FAILED') LIMIT 1",(op[0],)).fetchone()
     if open_jobs or unfinished_resources(db,op[0]) or _owns_torrents(db,op[0]):
         return request_automatic_cleanup(db,claim)
-    # The job keeps RELEASE_MOVIE_SKIPPED; the operation records a finished cancel.
+    # The job keeps its skip reason; the operation records a finished cancel.
     db.execute("UPDATE job_operations SET state='CANCELED',cleanup_state='COMPLETE',"
                "reason_code='CANCELLATION_COMPLETE',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
     return ()
