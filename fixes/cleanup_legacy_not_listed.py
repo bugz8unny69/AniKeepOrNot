@@ -79,8 +79,8 @@ def ensure_stopped():
             raise RuntimeError(f'Cannot verify {service} is stopped')
 
 
-def backup(db, path):
-    target = path.with_name(path.name + '.before-not-listed-' + uuid.uuid4().hex + '.sqlite')
+def backup(db, path, label='not-listed'):
+    target = path.with_name(path.name + '.before-' + label + '-' + uuid.uuid4().hex + '.sqlite')
     fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     os.close(fd)
     try:

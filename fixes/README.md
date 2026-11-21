@@ -155,3 +155,27 @@ decision. Preview (read-only), then apply:
 sudo python3 /opt/anime-discovery/current/fixes/accept_kept_series.py
 sudo python3 /opt/anime-discovery/current/fixes/accept_kept_series.py --apply
 ```
+
+
+## Send releases with the wrong AniDB entry through identification again
+
+Some release checks stopped in Needs review (for example
+RELEASE_EPISODE_MAPPING_MISSING) because identification picked the wrong AniDB
+entry, such as season 1 for an S02 release. Retry reuses that same entry. This
+cancels each given release check (nothing was downloaded yet) and queues the
+stored delivery again as a new identification, exactly as the webhook would:
+same release name and magnet, no search, no Auto BR.
+
+Deploy the identification fixes first, otherwise the same entry is picked
+again. Then preview (read-only, services may be running):
+
+```sh
+sudo -u anime-discovery /opt/anime-discovery/current/.venv/bin/python \
+  /opt/anime-discovery/current/fixes/resend_to_identity.py \
+  --config-dir /etc/anime-discovery/branches/develop 835 582 678 613 531 751 1181
+```
+
+Add --apply to back up the database, cancel, and send them again. Only release
+checks stopped for an episode-mapping reason are touched; anything else is
+reported and left alone. A second --apply does nothing. If a cancel is still
+cleaning up, the job shows cancel_pending: rerun --apply later.
