@@ -14,7 +14,7 @@ STEPS = frozenset((
 STATUSES = frozenset(("passed", "failed", "waiting", "skipped"))
 NOTES = frozenset((
     "invalid_release_title", "multiple_seasons", "not_previously_recognized",
-    "recognized_season_reused", "unverified_sequel", "sequel_alias_selected", "base_series_season_lookup", "season_entry_selected", "season_entry_corrected", "series_group_title", "no_title_aliases",
+    "recognized_season_reused", "unverified_sequel", "sequel_alias_selected", "base_series_season_lookup", "season_entry_selected", "season_entry_corrected", "season_entry_other_candidate", "series_group_title", "no_title_aliases",
     "no_unique_anidb_candidate", "no_anidb_candidates", "multiple_anidb_candidates", "anidb_titles_disagree", "no_anime_lists_mapping",
     "tvdb_live_action", "tvdb_not_animation", "tvdb_anidb_conflict",
     "provider_titles_disagree", "missing_verification", "verified",
