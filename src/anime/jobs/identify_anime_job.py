@@ -160,7 +160,7 @@ def registration(resolve, *, release_kind=None):
             trace.check("tvdb_series", "failed", "provider_auth_failed")
             return Outcome("review", "SERVICE_SETUP_INVALID", facts={"service_status": "AUTH_FAILED"}, matching=evidence(), candidate_evidence=trace.candidate_evidence)
         except (IdentityNotReady, IdentityConflict) as exc:
-            if _movie_request(request):
+            if _movie_request(request) or exc.reason_code == "RELEASE_MOVIE_SKIPPED":
                 # Movies are not supported yet: notify and cancel, never review.
                 return Outcome("cancel", "RELEASE_MOVIE_SKIPPED", matching=evidence(),
                                candidate_evidence=trace.candidate_evidence)

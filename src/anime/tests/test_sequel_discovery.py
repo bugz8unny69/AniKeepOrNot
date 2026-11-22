@@ -371,6 +371,25 @@ class SeasonEntryCorrectionTests(unittest.IsolatedAsyncioTestCase):
             await self.identify("[ToonsHub] Welsh and Shedar S01E03 1080p AMZN WEB-DL DUAL DDP2.0 H.264 "
                                 "(Aoki Denshou: Welsh & Shedar, Dual-Audio, Multi-Subs)", provider)
 
+    async def test_anime_lists_words_instead_of_a_tvdb_id_are_unsupported(self):
+        # Prod 9164 Look Back (tvdbid="movie"), 8572 (tvdbid="web"): these used to
+        # read as a broken provider response, retry until exhausted, then review.
+        from src.anime.providers import parsing
+        from src.anime.storage.sqlite import AnimeListsEntryMissing, AnimeListsMovie
+        lists = (b'<anime-list><anime anidbid="18493" tvdbid="movie"/>'
+                 b'<anime anidbid="9983" tvdbid="web"/><anime anidbid="13" tvdbid="hentai"/></anime-list>')
+        for aid, title, error in ((18493, "Look Back", AnimeListsMovie),
+                                  (9983, "Houseki no Kuni", AnimeListsEntryMissing)):
+            provider = Provider()
+            provider.candidates = {aid: (title,)}
+            provider.anime = lambda _, title=title: {"title": title, "titles": (title,)}
+            provider.mapping = lambda a: parsing.mapping_id(lists, a)
+            with self.subTest(title), self.assertRaises(error):
+                await self.identify(title + " (BD 1080p HEVC Dual-Audio)", provider)
+        self.assertEqual(AnimeListsMovie.reason_code, "RELEASE_MOVIE_SKIPPED")
+        with self.assertRaises(AnimeListsEntryMissing):
+            parsing.mapping_id(lists, 13)
+
     async def test_tied_entries_still_review(self):
         from src.anime.storage.sqlite import AniDBEntryMissing, AnimeListsEntryMissing
         provider = Provider()

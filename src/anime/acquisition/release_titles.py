@@ -27,7 +27,7 @@ class AnimeTitles:
             base, number = season_marker(title)
             if number is not None and norm(base):
                 marked.add((norm(base), number))
-            elif tvdb_season > 1 and YEAR_TAG.search(title):
+            elif type(tvdb_season) is int and tvdb_season > 1 and YEAR_TAG.search(title):
                 # A catalog title may contain a year that torrent releases omit.
                 # Treat the yearless name as a franchise alias: require a season
                 # marker (or absolute episode number), not a bare sequel episode.

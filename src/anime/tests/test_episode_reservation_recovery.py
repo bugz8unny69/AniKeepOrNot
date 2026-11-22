@@ -84,6 +84,30 @@ class EpisodeResetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows('SELECT count(*) FROM manual_release_submissions'),[(1,)])
         self.assertEqual(self.rows('SELECT state FROM episode_reservations'),[('ACTIVE',)])
 
+    async def test_auto_br_delivery_without_a_magnet_can_be_replayed(self):
+        # Prod 10942: Auto BR sends only the release name and info hash; the
+        # pipeline builds the magnet from the hash. Replay refused it as invalid.
+        import json
+        from types import SimpleNamespace
+        from src.anime.storage.episode_reset import _replay
+        aid,season,ep,tid,anidb_ep,anidb_eid=await self.seeded_episode()
+        digest='e'*40
+        raw=json.dumps({'release_name':f'Test Anime S{season:02d}E{ep:02d} 1080p',
+                        'torrent_infohash':digest}).encode()
+        db=connect(self.database)
+        try:
+            with transaction(db):
+                event,series,job=db.execute(
+                    'SELECT i.event_id,i.series_json,j.job_id FROM identity_results i '
+                    'JOIN jobs j ON j.event_id=i.event_id LIMIT 1').fetchone()
+                _replay(db,SimpleNamespace(job_id=job),(event,digest,'magnet',None,raw,series,0),
+                        aid,season,ep,2000)
+        finally:
+            db.close()
+        self.assertEqual(self.rows('SELECT info_hash,source FROM manual_release_submissions'),
+                         [(digest,'magnet')])
+        self.assertEqual(self.rows("SELECT raw_body FROM incoming_events WHERE source='manual-release'"),[(raw,)])
+
     async def test_replay_requires_a_persisted_size_failure(self):
         aid,season,ep,tid,anidb_ep,anidb_eid=await self.seeded_episode()
         with self.assertRaises(EpisodeResetUnavailable):

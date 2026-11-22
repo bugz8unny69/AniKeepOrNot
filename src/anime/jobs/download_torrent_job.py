@@ -81,10 +81,15 @@ def registration(secrets,*,client_factory=Client,journal_factory=TransferJournal
                 record,permit,receipts=await blocking(journal.start,context.claim,intent,snapshot)
                 log(receipts)
                 if permit is not None:
-                    if context.cancelled.is_set():return wait('TORRENT_START_UNCERTAIN')
-                    await blocking(journal.guard,context.claim,intent,record,'start')
-                    try:await blocking(client.start_selected,intent,record.fingerprint,permit)
-                    except (ClientUnavailable,ClientAuthenticationFailed,ClientInvalid):return wait('TORRENT_START_UNCERTAIN')
+                    try:
+                        if context.cancelled.is_set():return wait('TORRENT_START_UNCERTAIN')
+                        await blocking(journal.guard,context.claim,intent,record,'start')
+                        try:await blocking(client.start_selected,intent,record.fingerprint,permit)
+                        except (ClientUnavailable,ClientAuthenticationFailed,ClientInvalid):return wait('TORRENT_START_UNCERTAIN')
+                    finally:
+                        # Never sent: undo START_UNCERTAIN so the next attempt starts it.
+                        if permit.unused('start'):
+                            await blocking(journal.start_not_sent,context.claim,intent.plan.plan_id)
             # start() can return another job's newer record without a permit.
             # Read again before reconciling that record, even when we did not send.
             snapshot=await blocking(client.inspect_transfer,intent.plan.manifest.info_hash)

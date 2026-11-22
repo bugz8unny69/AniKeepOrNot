@@ -1076,6 +1076,11 @@ class AnimeListsEntryMissing(IdentityNotReady):
     reason_code = "ANIME_LISTS_ENTRY_MISSING"
 
 
+class AnimeListsMovie(AnimeListsEntryMissing):
+    """Anime-Lists records the AniDB entry as a movie (tvdbid="movie"): movies are skipped."""
+    reason_code = "RELEASE_MOVIE_SKIPPED"
+
+
 def persist_identity(db, event_id, candidate, validated_at_ms=None):
     """Return result ID/audit inside caller transaction; never commit or log.
 

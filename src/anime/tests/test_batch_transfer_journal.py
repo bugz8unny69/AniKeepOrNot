@@ -311,6 +311,29 @@ class BatchTransferJournalSelectTests(unittest.IsolatedAsyncioTestCase):
             start_permit.take(record.fingerprint, 'start')
         self.assertEqual(len(self.transfer_rows()), 1)
 
+    def test_unsent_start_goes_back_to_selected_for_another_start(self):
+        claim = self.transfer_claim
+        journal = BatchTransferJournal(self.database, clock=self.clock)
+        intent, _ = journal.load(claim, self.submission, self.inventory)
+        record, _, _ = journal.select(claim, intent, self.snapshot(intent), self.submission)
+        probe = intent.candidate.probe_index
+        exact = self.snapshot(intent, priorities=tuple(
+            1 if i == probe else 0 for i in range(len(intent.inventory.files))))
+        journal.selected(claim, intent, exact, self.submission)
+        started, permit, _ = journal.start(claim, intent, exact, self.submission)
+        self.assertEqual(started.phase, 'START_UNCERTAIN')
+        # The attempt gave up before the client took the permit: nothing was sent.
+        self.assertTrue(permit.unused('start'))
+        self.assertTrue(journal.start_not_sent(claim, intent.candidate.plan_id))
+        self.assertEqual(self.rows('SELECT phase,reason_code,start_job_id,start_attempt '
+                                   'FROM batch_torrent_transfers'),
+                         [('SELECTED', 'TORRENT_SELECTION_CONFIRMED', None, None)])
+        self.assertFalse(journal.start_not_sent(claim, intent.candidate.plan_id))  # Only from START_UNCERTAIN.
+        again, permit, _ = journal.start(claim, intent, exact, self.submission)
+        self.assertEqual(again.phase, 'START_UNCERTAIN')
+        permit.take(record.fingerprint, 'start')
+        self.assertFalse(permit.unused('start'))
+
 
 if __name__ == '__main__':
     unittest.main()

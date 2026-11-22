@@ -44,6 +44,9 @@ def _audit(db,claim,code,reason,now):
 
 class TransferJournal:
     def __init__(self,database,*,clock=None):self.queue=JobQueue(database,clock=clock)
+    def start_not_sent(self,claim,plan_id):
+        from src.anime.storage.start_not_sent import start_not_sent
+        return start_not_sent(self.queue,claim,'torrent_transfers',plan_id)
     def _fence(self,db,claim,intent=None,preparation=None):
         self.queue._owns(db,claim,self.queue.now())
         current=_current(db,claim,preparation if preparation is not None else intent.plan.preparation_job_id)

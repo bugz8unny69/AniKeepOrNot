@@ -84,6 +84,15 @@ class ReleaseTitleTests(unittest.TestCase):
         self.assertEqual(season_marker('Title II'), ('Title', 2))
         self.assertEqual(season_marker('Title (2025)'), ('Title (2025)', None))
 
+    def test_episode_without_a_tvdb_placement_is_searched_by_its_anidb_number(self):
+        # Prod 10246 Black Clover: Anime-Lists does not place the episode on TVDB
+        # yet, so it has no TVDB season. Building its titles crashed with TypeError.
+        titles = ('Black Clover (2025)', 'Black Clover 2nd Season')
+        target = EpisodeTarget(None, 'SEARCHABLE', 5)
+        prepared = AnimeTitles.build(titles, None)
+        self.assertEqual(prepared.tvdb_season, 1)
+        self.assertTrue(search_queries(titles, prepared, target, season=None))
+
     def test_year_qualified_anime_matches_explicit_season_without_accepting_wrong_season(self):
         titles = ('Koori no Jouheki (2026)', 'The Ramparts of Ice (2026)')
         target = EpisodeTarget(2, 'SEARCHABLE', 2, 9002, 14)

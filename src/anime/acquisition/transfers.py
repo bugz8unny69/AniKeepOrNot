@@ -106,3 +106,6 @@ class TransferPermit:
         with self._lock:
             if fingerprint!=self.fingerprint or action not in self._remaining:raise TransferConflict()
             self._remaining.remove(action)
+    def unused(self,action):
+        """True while the action was never handed to the client: nothing was sent."""
+        with self._lock:return action in self._remaining
