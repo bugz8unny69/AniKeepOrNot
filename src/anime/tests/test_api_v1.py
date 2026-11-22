@@ -11,7 +11,38 @@ ADMIN='m'*43
 ORIGIN='https://anime.example'
 
 
+IDENTITY={'schema_version':2,'anime':{'anidb_id':1001,'tvdb_series_id':2002,'title':'Test Anime'},'episodes':[]}
+
+
+class InstantBridge:
+    """Tests: identify each queued release at once, as the API's identity process would."""
+    def __init__(self,test):self.test=test;self.created={}
+    def wake(self):
+        import logging,sqlite3
+        from src.anime.identity_bridge import apply_result
+        db=sqlite3.connect(self.test.database)
+        try:waiting=[row[0] for row in db.execute('SELECT request_id FROM identity_requests ORDER BY request_id')]
+        finally:db.close()
+        for request_id in waiting:
+            series=getattr(self.test,'identity',IDENTITY)
+            if callable(series):   # Per release: identity(release_name) -> series.
+                db=sqlite3.connect(self.test.database)
+                try:raw=db.execute('SELECT raw_body FROM identity_requests WHERE request_id=?',(request_id,)).fetchone()[0]
+                finally:db.close()
+                series=series(json.loads(raw)['release_name'])
+            if series is None:continue   # Left queued: still being identified.
+            apply_result(self.test.database,{'request_id':request_id,'result':'identified',
+                                             'series':series},logging.getLogger('test.bridge'))
+            db=sqlite3.connect(self.test.database)
+            try:self.created[request_id]=db.execute(
+                'SELECT event_id,job_id FROM jobs WHERE event_id=(SELECT max(event_id) FROM incoming_events)').fetchone()
+            finally:db.close()
+    async def run(self):pass
+    async def close(self):pass
+
+
 class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
+    identity=IDENTITY
     rows=fixture.AcquisitionPreparationTests.rows
     async def asyncSetUp(self):
         await fixture.AcquisitionPreparationTests.asyncSetUp(self)
@@ -19,6 +50,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.secrets.initialize(webhook_token=WEB)
         self.calls=[]
         self.app=Application(self.root,origin=ORIGIN)
+        self.app.bridge=InstantBridge(self)
         self.app.passwords.replace(ADMIN,expected_revision=0)
         session,csrf=self.app.sessions.create(self.app.passwords.read()[1])
         self.admin_cookie=COOKIE+'='+session
@@ -43,7 +75,13 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         output=[]
         async def send(message):output.append(message)
         await self.app(scope,receive,send)
-        return output[0]['status'],json.loads(output[1]['body']),dict(output[0]['headers'])
+        result=json.loads(output[1]['body'])
+        # Tests: the delivery and the worker job the (instant) identity bridge created for it.
+        created=getattr(self.app.bridge,'created',{})
+        if type(result.get('data')) is dict and result['data'].get('request_id') in created:
+            event_id,job_id=created[result['data']['request_id']]
+            result['data'].update(event_id=event_id,job_id=job_id)
+        return output[0]['status'],result,dict(output[0]['headers'])
 
     def release(self,**extra):return {'release_name':'Test Anime - 10','torrent_infohash':'a'*40,**extra}
 
@@ -71,13 +109,15 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         for path,body,token in attempts:
             status,result,headers=await self.request('POST',path,body,token=token)
             self.assertEqual(status,202)
-            self.assertTrue(result['data']['event_id'])
+            self.assertTrue(result['data']['request_id'])
         for (raw,) in self.rows('SELECT raw_body FROM incoming_events'):
             self.assertEqual(set(json.loads(raw)),{'release_name','torrent_infohash'})
             self.assertNotIn(WEB.encode(),raw)
         self.assertEqual(self.rows('SELECT source FROM incoming_events'),[('autobrr',)]*3)
-        self.assertEqual(self.rows('SELECT kind,state FROM jobs'),[('IDENTIFY_ANIME','PENDING')]*3)
+        # The API identified each release; the worker got its first job, never an identification job.
+        self.assertEqual(self.rows('SELECT kind,state FROM jobs'),[('VERIFY_RELEASE','PENDING')]*3)
         self.assertEqual(self.rows("SELECT component FROM job_history WHERE event_code='CREATED'"),[('api',)]*3)
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])
 
     async def test_bad_conflicting_or_management_webhook_credentials_create_no_work(self):
         for path,body,token in [('/api/v1/webhook',self.release(),None),('/api/v1/webhook',self.release(),'n'*43),
@@ -185,9 +225,10 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_field_aliases_are_only_release_hints(self):
         body={'token':WEB,'torrentName':'Test Anime - 10','torrentHash':'A'*40,'anidb_id':123,
               'tvdb_id':456,'verified':True,'magnet':'magnet:?private_secret=value'}
+        self.identity=None   # Still being identified: the stored release is only the cleaned hints.
         status,_,_=await self.request('POST','/api/v1/webhook',body)
         self.assertEqual(status,202)
-        raw=self.rows('SELECT raw_body FROM incoming_events')[0][0]
+        raw=self.rows('SELECT raw_body FROM identity_requests')[0][0]
         self.assertEqual(json.loads(raw),{'release_name':'Test Anime - 10','torrent_infohash':'a'*40})
         self.assertNotIn(b'private_secret',raw)
         self.assertEqual(self.rows('SELECT count(*) FROM identity_results'),[(0,)])

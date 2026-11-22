@@ -18,7 +18,7 @@ from src.anime.diagnostics import event
 from src.anime.maintenance import MaintenanceLease, MaintenanceError
 from src.anime.storage.sqlite import SCHEMA
 
-LATEST_VERSION = 76
+LATEST_VERSION = 77
 SQL_DIR = Path(__file__).with_name("sql")
 SCRIPTS = (
     "001_foundation.sql", "002_independent_jobs.sql", "003_incoming_events.sql",
@@ -35,7 +35,7 @@ SCRIPTS = (
     "065_renamed_codes.sql",
     "066_retired_service_codes.sql",
     "067_resources.sql",
-    "068_package_paths.sql", "069_series_accept_search.sql", "070_recognized_series.sql", "071_notifications.sql", "072_transcode_media.sql", "073_transcode_batches.sql", "074_movie_skipped.sql", "075_release_unsupported.sql", "076_job_failed.sql",
+    "068_package_paths.sql", "069_series_accept_search.sql", "070_recognized_series.sql", "071_notifications.sql", "072_transcode_media.sql", "073_transcode_batches.sql", "074_movie_skipped.sql", "075_release_unsupported.sql", "076_job_failed.sql", "077_identity_requests.sql",
 )
 
 
@@ -76,7 +76,6 @@ class MigrationResult:
     from_version: int
     to_version: int
     applied_versions: tuple[int, ...]
-    backup_name: str | None
 
 
 def _version(db):
@@ -219,38 +218,6 @@ def prune_backups(database, keep=BACKUPS_KEPT):
     return removed
 
 
-def _backup(db, database, version, scripts):
-    path = Path(database)
-    name = path.name + ".before-v" + str(version) + "-" + uuid.uuid4().hex + ".sqlite"
-    target = path.with_name(name)
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-    os.close(fd)
-    destination = None
-    try:
-        destination = sqlite3.connect(target, timeout=0)
-        def progress(status, remaining, total):
-            if status not in (sqlite3.SQLITE_OK, sqlite3.SQLITE_DONE):
-                # backup() otherwise retries BUSY/LOCKED indefinitely even
-                # though the connection's busy timeout is zero.
-                raise MigrationError()
-        db.backup(destination, pages=128, progress=progress, sleep=0)
-        _validate(destination, version, scripts)
-    finally:
-        if destination is not None:
-            destination.close()
-    fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    return name
-
-
 def preview(database):
     """Existing database only. No schema changes, backup or implicit creation.
 
@@ -290,8 +257,10 @@ def apply(database, plan, *, lease):
         if current != plan:
             raise MigrationConflict()
         if current.from_version == LATEST_VERSION:
-            return MigrationResult(LATEST_VERSION, LATEST_VERSION, (), None)
-        backup = _backup(db, database, current.from_version, scripts)
+            return MigrationResult(LATEST_VERSION, LATEST_VERSION, ())
+        # No copy of the database (owner, 2026-11-22): each step is one transaction
+        # that rolls back whole on failure, and a migration moves old data into the
+        # new shape itself, so nothing depends on a backup.
         applied = []
         for version in range(current.from_version + 1, LATEST_VERSION + 1):
             lease.require(database)
@@ -302,7 +271,7 @@ def apply(database, plan, *, lease):
         _validate(db, LATEST_VERSION, scripts)
         event(logging.getLogger("anime.api"), logging.INFO,
               "DATABASE_MIGRATED", component="api")
-        return MigrationResult(current.from_version, LATEST_VERSION, tuple(applied), backup)
+        return MigrationResult(current.from_version, LATEST_VERSION, tuple(applied))
     except (OSError, sqlite3.Error, UnicodeError):
         raise MigrationError() from None
     finally:

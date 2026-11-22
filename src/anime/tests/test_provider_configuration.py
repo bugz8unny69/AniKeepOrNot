@@ -127,7 +127,16 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.secrets = SecretStore(self.root)
         db = connect(self.database)
         initialize(db)
-        self.event,self.job = accept_event_and_job(db,"test",b'{"release_name":"Test Anime"}',kind="IDENTIFY_ANIME",payload={})
+        # The API identified the release (identity process) and gave the worker its first job.
+        from src.anime.identity_bridge import apply_result, queue_release
+        request = queue_release(db, b'{"release_name":"Test Anime"}')
+        db.close()
+        import logging
+        apply_result(str(self.database), {"request_id": request, "result": "identified", "series": {
+            "schema_version": 2, "anime": {"anidb_id": 123, "tvdb_series_id": 456, "title": "Test Anime"}}},
+            logging.getLogger("test"))
+        db = connect(self.database)
+        self.event, self.job = db.execute("SELECT event_id,job_id FROM jobs").fetchone()
         db.close()
 
     def state(self):
@@ -161,23 +170,33 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(worker.close)
         self.assertEqual(self.state(), ("PENDING", 0))
 
-    async def test_composed_worker_finishes_with_current_settings_and_no_network_at_startup(self):
+    async def test_identity_process_uses_current_settings_reports_and_exits(self):
+        import io, json
+        from src.anime import identity_process
+        from src.anime.identity_bridge import queue_release
         self.secrets.initialize("private-key")
+        db = connect(self.database)
+        request = queue_release(db, b'{"release_name":"Other Anime - 02"}')
+        db.close()
         seen = []
-        def factory(options,credentials,**kwargs):
-            async def resolve(request,configuration,cancelled):
-                seen.append((options(configuration).client_version,credentials().api_key))
-                return {"schema_version":2,"anime":{"anidb_id":123,"tvdb_series_id":456,"title":"Test Anime"}}
+        def factory(options, credentials, **kwargs):
+            async def resolve(request, configuration, cancelled, *, matching=None):
+                seen.append((options(configuration).client_version, credentials().api_key))
+                return {"schema_version": 2, "anime": {"anidb_id": 124, "tvdb_series_id": 457, "title": "Other Anime"}}
             return resolve
-        with patch("src.anime.providers.configuration.make_resolver",side_effect=factory):
-            worker = await build_identity_worker(self.root)
-        self.addAsyncCleanup(worker.close)
-        self.assertEqual(seen,[])
-        self.store.update({"anidb":{"client_version":2}},expected_revision=1)
-        self.secrets.update_tvdb_api_key("rotated-private-key",expected_revision=1)
-        await worker.attempt()
-        self.assertEqual(seen,[(2,"rotated-private-key")])
-        self.assertEqual(self.state(),("DONE",1))
+        self.store.update({"anidb": {"client_version": 2}}, expected_revision=1)
+        self.secrets.update_tvdb_api_key("rotated-private-key", expected_revision=1)
+        out = io.StringIO()
+        with patch("src.anime.providers.identity.make_resolver", side_effect=factory):
+            self.assertEqual(await identity_process.run(self.root, out), 0)   # Exits: nothing left due.
+        self.assertEqual(seen, [(2, "rotated-private-key")])
+        line = json.loads(out.getvalue())
+        self.assertEqual((line["request_id"], line["result"], line["series"]["anime"]["anidb_id"]),
+                         (request, "identified", 124))
+        db = connect(self.database)
+        try:   # Reported, not applied yet: kept for the API, not tried again meanwhile.
+            self.assertEqual(db.execute("SELECT last_reason_code FROM identity_requests").fetchall(), [("REPORTED",)])
+        finally: db.close()
 
 
     async def test_resolver_captures_credentials_once_and_refreshes_options_next_attempt(self):
@@ -214,10 +233,6 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_composition_advances_to_reserved_episode_without_external_acquisition(self):
         from src.anime.release_contracts import VerifiedRelease
         self.secrets.initialize("private-key")
-        def identity_factory(*args,**kwargs):
-            async def resolve(source,*rest):
-                return {"schema_version":2,"anime":{"anidb_id":123,"tvdb_series_id":456,"title":"Test Anime"}}
-            return resolve
         def release_factory(*args,**kwargs):
             async def verify(source,*rest): return VerifiedRelease(source,1,987,0,1,100)
             return verify
@@ -226,32 +241,30 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self,name,label):self.name,self.label=name,label
             def probe(self,configuration,secrets,*,now_ms=0):return self.result(UP,now_ms=now_ms)
         always_up=ServiceHealth(ServiceRegistry(AlwaysUp(a.name,a.label) for a in default_registry()))
-        with patch("src.anime.providers.configuration.make_resolver",side_effect=identity_factory), \
-             patch("src.anime.providers.configuration.make_verifier",side_effect=release_factory):
+        with patch("src.anime.providers.configuration.make_verifier",side_effect=release_factory):
             worker=await build_identity_worker(self.root,backfill=True,service_health=always_up)
         self.addAsyncCleanup(worker.close)
-        await worker.attempt()
         await worker.attempt()
         db=connect(self.database)
         try:
             self.assertEqual(db.execute('SELECT kind,state,event_id,created_by_job_id FROM jobs ORDER BY job_id').fetchall(),
-                             [('IDENTIFY_ANIME','DONE',self.event,None),('VERIFY_RELEASE','DONE',self.event,self.job),('SELECT_USER_EVALUATION','PENDING',self.event,self.job+1)])
+                             [('VERIFY_RELEASE','DONE',self.event,None),('SELECT_USER_EVALUATION','PENDING',self.event,self.job)])
             self.assertEqual(db.execute('SELECT verification_scope FROM release_verifications').fetchall(),[('DECLARED_SINGLE_EPISODE',)])
-            self.assertEqual(db.execute('SELECT count(*) FROM jobs').fetchone()[0],3)
+            self.assertEqual(db.execute('SELECT count(*) FROM jobs').fetchone()[0],2)
         finally:db.close()
         await worker.attempt()
         await worker.attempt()
         db=connect(self.database)
         try:
             self.assertEqual(db.execute('SELECT kind,state FROM jobs ORDER BY job_id').fetchall(),
-                             [('IDENTIFY_ANIME','DONE'),('VERIFY_RELEASE','DONE'),('SELECT_USER_EVALUATION','DONE'),('RESERVE_EPISODE','DONE'),('PREPARE_ACQUISITION','PENDING')])
+                             [('VERIFY_RELEASE','DONE'),('SELECT_USER_EVALUATION','DONE'),('RESERVE_EPISODE','DONE'),('PREPARE_ACQUISITION','PENDING')])
             self.assertEqual(db.execute('SELECT tvdb_season,tvdb_episode FROM episode_reservations').fetchall(),[(0,1)])
         finally:db.close()
-        await worker.attempt()  # No torrent hash: preparation needs review.
+        await worker.attempt()  # No torrent hash: the torrent is canceled (review policy).
         db=connect(self.database)
         try:
             self.assertEqual(db.execute("SELECT state FROM jobs WHERE kind='PREPARE_ACQUISITION'").fetchall(),
-                             [('NEEDS_REVIEW',)])
+                             [('CANCELED',)])
             self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE kind='DISCOVER_EPISODE_RELEASES'").fetchone()[0],0)
         finally:db.close()
 

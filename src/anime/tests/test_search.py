@@ -37,6 +37,15 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
     rows = base.ApiV1Tests.rows
     request = base.ApiV1Tests.request
     release = base.ApiV1Tests.release
+    # What the API's identity process identifies each test release as (matches the seeded series).
+    @staticmethod
+    def identity(release_name):
+        for key, aid, tid, title in (('Frieren', 1001, 2001, 'Sousou no Frieren'), ('Dandadan', 1002, 2002, 'Dandadan')):
+            if key in release_name:
+                break
+        else:
+            aid, tid, title = 1003, 2003, release_name.split(' - ')[0]
+        return {'schema_version': 2, 'anime': {'anidb_id': aid, 'tvdb_series_id': tid, 'title': title}, 'episodes': []}
 
     def seed(self, *statements):
         # Recognized rows normally come from release verification; seed them directly.
@@ -115,7 +124,8 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         status, data = await self.search('scope=recognized&q=journeys')
         self.assertEqual(status, 200)
         self.assertEqual(data['items'], [{'tvdb_series_id': 2001, 'seasons': [1], 'anidb_id': 1001,
-                                          'title': 'Sousou no Frieren', 'anime_type': None, 'alias_count': 1,
+                                          # 2: identifying the delivery remembers its release name.
+                                          'title': 'Sousou no Frieren', 'anime_type': None, 'alias_count': 2,
                                           'verified_episode_count': 0, 'placed_episode_count': 0}])
         status, data = await self.search('scope=recognized&q=2002')
         self.assertEqual([item['anidb_id'] for item in data['items']], [1002])
@@ -155,7 +165,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item['job_id'] for item in data['items']], [stopped])
         status, data = await self.search('scope=jobs&q=retries&state=DONE')
         self.assertEqual(data['items'], [])
-        status, data = await self.search('scope=jobs&q=identify+series')
+        status, data = await self.search('scope=jobs&q=verify+release')
         self.assertEqual(sorted(item['job_id'] for item in data['items']), sorted([stuck, stopped]))
 
 

@@ -55,41 +55,39 @@ def for_release(database, release, season=None):
         "episodes": [], "attributes": {}}
 
 
-def save(database, job_id, *, anidb_id, tvdb_series_id, title, season):
+def save(database, raw_body, *, anidb_id, tvdb_series_id, title, season):
+    """Save a hand match for a refused release (API Reject), by its name and season.
+
+    The API then queues the release for identification again; the identity
+    process uses this match through the resolver.
+    """
     if (type(anidb_id) is not int or not 0 < anidb_id < (1 << 63)
             or type(tvdb_series_id) is not int or not 0 < tvdb_series_id < (1 << 63)
             or (season is not None and (type(season) is not int or not 0 <= season <= 999))
             or type(title) is not str or not 1 <= len(title.strip()) <= 512
             or any(ord(c) < 32 or ord(c) == 127 for c in title)):
         raise ManualMatchError("Invalid identity fields")
+    try:
+        release = json.loads(raw_body)["release_name"]
+        if type(release) is not str:
+            raise ValueError()
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        raise ManualMatchError("Release name unavailable") from None
+    key = _key(release)
+    scope = _scope(release)
+    if scope is None:
+        raise ManualMatchError('Ambiguous release; cannot reuse automatically')
+    if season is not None and season != scope:
+        raise ManualMatchError('Season conflicts with parsed release')
+    wanted = (anidb_id, tvdb_series_id, title.strip())
     with JobQueue(database).connection() as db, transaction(db):
-        row = db.execute(
-            "SELECT j.kind,j.state,e.raw_body FROM jobs j "
-            "JOIN incoming_events e ON e.event_id=j.event_id WHERE j.job_id=?",
-            (job_id,)).fetchone()
-        if row is None or row[0] != "IDENTIFY_ANIME" or row[1] != "NEEDS_REVIEW":
-            raise ManualMatchError("Only unidentified jobs awaiting review can be corrected")
-        try:
-            raw = json.loads(row[2])
-            release = raw["release_name"]
-            if type(release) is not str:
-                raise ValueError()
-            key = _key(release)
-            scope = _scope(release)
-            if scope is None:
-                raise ManualMatchError('Ambiguous release; cannot reuse automatically')
-            if season is not None and season != scope:
-                raise ManualMatchError('Season conflicts with parsed release')
-        except (ValueError, TypeError, KeyError, UnicodeError):
-            raise ManualMatchError("Release name unavailable") from None
         prior = db.execute(
             "SELECT anidb_id,tvdb_series_id,title FROM manual_identity_matches "
             "WHERE alias_key=? AND tvdb_season=?", (key, scope)).fetchone()
-        wanted = (anidb_id, tvdb_series_id, title.strip())
         if prior is not None and prior != wanted:
             raise ManualMatchError("An existing manual match differs; edit the existing match first")
         db.execute(
             "INSERT OR IGNORE INTO manual_identity_matches "
             "(alias_key,tvdb_season,anidb_id,tvdb_series_id,title) VALUES(?,?,?,?,?)",
             (key, scope, *wanted))
-    return {"job_id": job_id, "alias": key, "season": season, "saved": True}
+    return {"alias": key, "season": season, "saved": True}

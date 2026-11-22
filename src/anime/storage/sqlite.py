@@ -909,6 +909,16 @@ CREATE TABLE IF NOT EXISTS transcode_batches (
  progress_json TEXT NOT NULL CHECK(json_valid(progress_json))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_transcode_batch ON transcode_batches((1)) WHERE state IN ('QUEUED','RUNNING');
+CREATE TABLE IF NOT EXISTS identity_requests (
+ request_id INTEGER PRIMARY KEY,
+ raw_body BLOB NOT NULL CHECK(length(raw_body) BETWEEN 1 AND 65536),
+ process_anyway INTEGER NOT NULL DEFAULT 0 CHECK(process_anyway IN (0,1)),
+ received_at_ms INTEGER NOT NULL CHECK(received_at_ms>=0),
+ next_try_at_ms INTEGER NOT NULL CHECK(next_try_at_ms>=0),
+ tries INTEGER NOT NULL DEFAULT 0 CHECK(tries>=0),
+ last_reason_code TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_identity_requests_next ON identity_requests(next_try_at_ms,request_id);
 CREATE TABLE IF NOT EXISTS notifications (
  notification_id INTEGER PRIMARY KEY,
  type TEXT NOT NULL CHECK(type IN ('API_REJECTION','SERIES_EPISODE_TROUBLE','KEEP_SEARCH_FAILED','TRANSCODE_BATCH_DONE','MOVIE_SKIPPED','RELEASE_UNSUPPORTED','JOB_FAILED')),

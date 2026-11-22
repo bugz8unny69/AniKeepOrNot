@@ -812,7 +812,7 @@ async function loadServices() {
 }
 // The bell: unread count from the service poll; the panel lists the inbox.
 const BELL_ACTIONS = Object.freeze({
-  process_anyway: 'Process anyway', add_release: 'Add torrent/magnet', open_series: 'Open series', open_job: 'Open job', open_jobs: 'Open jobs page',
+  match_by_hand: 'Match by hand', process_anyway: 'Process anyway', add_release: 'Add torrent/magnet', open_series: 'Open series', open_job: 'Open job', open_jobs: 'Open jobs page',
 });
 function renderBellCount(count) {
   const badge = $('bell-badge');
@@ -854,6 +854,7 @@ function bellItem(item) {
   return box;
 }
 async function bellAction(item, action, button) {
+  if (action === 'match_by_hand') { closeBell(); openBellMatch(item); return; }
   if (action === 'process_anyway' && !confirm('Queue this warned release for processing; any resulting downloads must be canceled separately?')) return;
   button.disabled = true;
   try {
@@ -1064,16 +1065,24 @@ async function openCoverage(jobId) {
     }
   }
 }
-function manualMatchForm(root, result) {
-  if (result.state !== 'NEEDS_REVIEW') return;
+// A release refused with API Reject: match it by hand, then it is identified again.
+function openBellMatch(item) {
+  state.matchingVersion++; state.matchingJob = null;
+  $('matching-title').textContent = 'Match by hand';
+  $('matching-summary').textContent = item.release_name || item.title;
+  const body = $('matching-body'); body.replaceChildren();
+  manualMatchForm(body, item);
+  if (!$('matching-dialog').open) $('matching-dialog').showModal();
+}
+function manualMatchForm(root, item) {
   const section = matchingSection(root, 'Correct anime identification');
-  section.appendChild(node('p', 'Enter the series identity for this season. The same alias and season will reuse it on later retries. Episode placement remains independently verified. Leave season empty for unnumbered specials.', 'muted'));
+  section.appendChild(node('p', 'Enter the series identity for this season. The same name and season will reuse it. Episode placement remains independently verified. Leave season empty for unnumbered specials.', 'muted'));
   const form = document.createElement('form');
   const inputs = [
-    ['title', 'Anime title', 'text', result.evidence?.tvdb_titles?.[0] || result.evidence?.queries?.[0] || ''],
-    ['anidb_id', 'AniDB ID', 'number', result.evidence?.selected_anidb_id || ''],
-    ['tvdb_series_id', 'TVDB series ID', 'number', result.evidence?.selected_tvdb_id || ''],
-    ['season', 'Season (optional; leave blank for OVA/special)', 'number', result.evidence?.season ?? '']
+    ['title', 'Anime title', 'text', ''],
+    ['anidb_id', 'AniDB ID', 'number', item.anidb_id || ''],
+    ['tvdb_series_id', 'TVDB series ID', 'number', ''],
+    ['season', 'Season (optional; leave blank for OVA/special)', 'number', '']
   ];
   for (const [name, label, type, initial] of inputs) {
     const wrap = node('label', label);
@@ -1083,11 +1092,11 @@ function manualMatchForm(root, result) {
     if (type === 'number') { field.min = name === 'season' ? '0' : '1'; field.max = name === 'season' ? '999' : '9223372036854775807'; }
     wrap.appendChild(field); form.appendChild(wrap);
   }
-  const submit = node('button', 'Save match and retry');
+  const submit = node('button', 'Save match and identify again');
   submit.type = 'submit'; form.appendChild(submit);
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (!confirm('Save this anime identity for other unresolved releases with the same name and season?')) return;
+    if (!confirm('Save this anime identity for other releases with the same name and season?')) return;
     const values = Object.fromEntries(new FormData(form));
     const body = {
       title: values.title.trim(), anidb_id: Number(values.anidb_id),
@@ -1097,12 +1106,10 @@ function manualMatchForm(root, result) {
         || (body.season !== null && !Number.isSafeInteger(body.season))) { notice('Invalid identity number.', true); return; }
     submit.disabled = true;
     try {
-      await request(`${API}/jobs/${result.job_id}/manual-match`, {method: 'POST', body});
-      await request(`${API}/jobs/${result.job_id}/retry`, {method: 'POST',
-        body: {expected_attempt: result.attempts, expected_reason: result.reason?.code}});
+      await request(`${API}/notifications/${item.notification_id}/actions/match_by_hand`, {method: 'POST', body});
       $('matching-dialog').close();
-      notice('Match saved; identification queued for retry.');
-      await loadActivity();
+      notice('Match saved; the release is identified again.');
+      await loadBell();
     } catch (error) {
       displayError(error);
     } finally { submit.disabled = false; }
@@ -1122,7 +1129,6 @@ async function openMatching(jobId) {
     if (version !== state.matchingVersion || state.matchingJob !== jobId || !state.csrf) return;
     summary.textContent = `Attempt ${result.attempts} · ${result.state.replaceAll('_',' ').toLowerCase()}`;
     if (result.reason?.message) summary.textContent += ` · ${result.reason.message}`;
-    manualMatchForm(body, result);
     if (!result.available || !result.evidence) {
       body.appendChild(node('p',
         result.attempts === 0 ? 'Identification has not started yet.' :

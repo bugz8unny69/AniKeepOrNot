@@ -213,6 +213,11 @@ class Application:
         self.slots=asyncio.Semaphore(8)
         self.logger=configure_logging(self.startup.logging_settings(),'api',logger=logging.Logger('api.request'))
         self.closed=False
+        # The API identifies releases (in its identity process) and gives the worker a job.
+        from src.anime.identity_bridge import IdentityBridge
+        self.bridge=IdentityBridge(directory,self.startup.value('storage.database_path'),self.logger,
+                                   executor=self.pool)
+        self.bridge_task=None
 
     def close(self):
         self.closed=True
@@ -251,11 +256,16 @@ class Application:
                         await send({'type':'lifespan.startup.failed','message':'Admin socket could not be started'})
                         return
                     await send({'type':'lifespan.startup.complete'})
+                    self.bridge_task=asyncio.create_task(self.bridge.run())
                     interval = watchdog_interval()
                     if interval is not None:
                         watchdog_task = asyncio.create_task(self._watchdog(interval))
                 elif message['type']=='lifespan.shutdown':
                     notify('STOPPING=1')
+                    # The identity process must stop with the API (KillMode=mixed, no stop timeout).
+                    await self.bridge.close()
+                    if self.bridge_task is not None:
+                        await asyncio.gather(self.bridge_task, return_exceptions=True)
                     if self.admin_server is not None:
                         self.admin_server.close()
                         await self.admin_server.wait_closed()
@@ -374,8 +384,11 @@ class Application:
                         with transaction(db):notify_refused(db,*decided,normalized)
                         # 200, so autobrr never retries; no event and no job.
                         return 200,{'accepted':False,'reason_code':DECISION_REASONS[decided[1]]},[]
-                    event_id,job_id=accept_event_and_job(db,'autobrr',normalized,kind='IDENTIFY_ANIME',payload={},component='api',logger=self.logger)
-            return 202,{'event_id':event_id,'job_id':job_id},[]
+                    # Identified by the identity process; only then does the worker get a job.
+                    from src.anime.identity_bridge import queue_release
+                    request_id=queue_release(db,normalized)
+            self.bridge.wake()
+            return 202,{'request_id':request_id},[]
         check_origin(headers,self.origin)
         try:
             password_revision, password_digest = self.passwords.read()
@@ -531,19 +544,6 @@ class Application:
                                 'state':row[0],'attempts':row[1],
                                 'reason':None if row[2] is None else CATALOG.reason(row[2]),
                                 'evidence':evidence},[]
-            manual=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})/manual-match',path)
-            if manual:
-                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                exact(body,('anidb_id','tvdb_series_id','title','season'))
-                from src.anime.storage.manual_identity import save, ManualMatchError
-                try:
-                    result=save(configuration.value('storage.database_path'),int(manual[1]),
-                        anidb_id=body['anidb_id'],tvdb_series_id=body['tvdb_series_id'],
-                        title=body['title'],season=body['season'])
-                except ManualMatchError:
-                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
-                return 200,result,[]
             matching=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})/matching',path)
             if matching:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
@@ -559,9 +559,10 @@ class Application:
                         if row[4] is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
                         source=db.execute("SELECT job_id,kind,state,attempt_count,last_reason_code,event_id FROM jobs "
                             "WHERE event_id=? AND kind='IDENTIFY_ANIME' ORDER BY job_id LIMIT 1",(row[4],)).fetchone()
-                        if source is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                        identity_job=source[0]
-                        row=source[1:]
+                        # Identified by the API (identity process): no identification job, no evidence.
+                        if source is not None:
+                            identity_job=source[0]
+                            row=source[1:]
                     evidence=None
                     # Review a bounded set of durable, fenced lifecycle outcomes.
                     # Older jobs legitimately have no trace and must not be guessed.
@@ -1029,16 +1030,16 @@ class Application:
                 unread=inbox.unread(db)
             return 200,{'deleted':1,'unread':unread},[]
         if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-        exact(body,())
+        exact(body,('anidb_id','tvdb_series_id','title','season') if match[2]=='match_by_hand' else ())
         with queue.connection() as db:
             db.execute('BEGIN')
             item=inbox.get(db,number)
         if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
         action=match[2]
         if action not in EVENT_TYPES[item['type']]:raise ApiError(400,'API_REQUEST_INVALID')
-        return self._notification_action(configuration,queue,item,action)
+        return self._notification_action(configuration,queue,item,action,body)
 
-    def _notification_action(self,configuration,queue,item,action):
+    def _notification_action(self,configuration,queue,item,action,body=None):
         """Each action runs existing code; open_* are links the dashboard follows."""
         if action=='open_jobs':
             return 200,{'action':action},[]
@@ -1051,16 +1052,27 @@ class Application:
         if action=='add_release':
             # The existing manual release form, for this series (and episode when known).
             return 200,{'action':action,'anidb_id':item['anidb_id'],'release_name':item['release_name']},[]
+        if action=='match_by_hand':
+            # Save the hand match for this release name and season, then identify it again.
+            from src.anime.storage.manual_identity import save, ManualMatchError
+            if item['raw_body'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
+            try:
+                save(configuration.value('storage.database_path'),bytes(item['raw_body']),
+                     anidb_id=body['anidb_id'],tvdb_series_id=body['tvdb_series_id'],
+                     title=body['title'],season=body['season'])
+            except ManualMatchError:
+                raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
         # process_anyway: the delivery exactly as the webhook would have queued it,
         # skipping the decision check for this one delivery (work item P4 4.5).
         if item['raw_body'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
+        from src.anime.identity_bridge import queue_release
         with queue.connection() as db:
-            event_id,job_id=accept_event_and_job(db,'autobrr',bytes(item['raw_body']),kind='IDENTIFY_ANIME',
-                                                 payload={'process_anyway':True},component='api',logger=self.logger)
+            request_id=queue_release(db,bytes(item['raw_body']),process_anyway=True)
         from src.anime.storage.sqlite import transaction
         with queue.connection() as db,transaction(db):
             inbox.delete(db,item['notification_id'])
-        return 202,{'action':action,'event_id':event_id,'job_id':job_id},[]
+        self.bridge.wake()
+        return 202,{'action':action,'request_id':request_id},[]
 
     def _recognized(self,db,language,match=None):
         where,params=match if match else ('1',[])

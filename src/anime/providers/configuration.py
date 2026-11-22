@@ -4,7 +4,6 @@ from functools import partial
 from src.anime.configuration import ConfigurationStore
 from src.anime.configuration_schema import ConfigurationError
 from src.anime.job_contracts import Policy, Registry
-from src.anime.jobs.identify_anime_job import registration
 from src.anime.jobs.verify_release_job import KIND as RELEASE_KIND, registration as release_registration
 from src.anime.jobs.select_user_evaluation_job import KIND as USER_EVALUATION_KIND, registration as user_evaluation_registration
 from src.anime.jobs.discover_episode_releases_job import KIND as BACKFILL_KIND, registration as backfill_registration
@@ -31,7 +30,7 @@ from src.anime.batch.provider_worker import make_batch_verifier
 from src.anime.providers.backfill_catalog import make_catalog_factory
 from src.anime.providers.errors import ProviderConfigurationError
 from src.anime.providers.http import Options
-from src.anime.providers.identity import ClientPool, make_resolver
+from src.anime.providers.identity import ClientPool
 from src.anime.providers.releases import make_verifier
 from src.anime.secrets import SecretStore
 from src.anime.worker import Worker, blocking, serve_worker
@@ -66,7 +65,7 @@ def validate_provider_configuration(configuration, *, secrets=None, require_seri
         series_credentials(secrets)
 
 
-async def build_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
+async def build_identity_worker(config_directory, *, additional_registrations=(),
                                 policy=Policy(), logger=None, read_metainfo=None, read_batch_metainfo=None,
                                 backfill=False, backfill_select=False, backfill_acquire=False,
                                 require_series_credentials=False, client_factory=None, service_health=None):
@@ -88,7 +87,8 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                       require_series_credentials=require_series_credentials)
     await blocking(prepare,startup)  # Missing configuration fails before claims.
     pool=ClientPool()
-    resolve = make_resolver(options_from_configuration, partial(series_credentials, secrets), client_pool=pool)
+    # Identification runs in the API's identity process (identity_bridge.py):
+    # the worker only gets releases that are already identified.
     read_batch_metainfo=make_batch_reader(secrets=secrets) if read_batch_metainfo is None else read_batch_metainfo
     from src.anime.acquisition.existing_metadata import make_existing_observer
     # Read-only qB file lists rank batch candidates; observed outside any
@@ -120,8 +120,7 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
         batch_stage_registration(secrets=secrets),
         batch_prowlarr_registration(secrets),
     )
-    registry = Registry((registration(resolve,release_kind=RELEASE_KIND if release_kind is None else release_kind),
-                         release_registration(verify,user_evaluation_kind=USER_EVALUATION_KIND,batch_kind=BATCH_KIND),
+    registry = Registry((release_registration(verify,user_evaluation_kind=USER_EVALUATION_KIND,batch_kind=BATCH_KIND),
                          batch_registration(reservation_kind=BATCH_RESERVE_KIND),
                          user_evaluation_registration(reservation_kind=RESERVE_KIND),
                          reserve_registration(preparation_kind=PREPARE_KIND),
@@ -143,12 +142,12 @@ async def build_identity_worker(config_directory, *, additional_registrations=()
                   service_health=service_health,secrets=secrets)
 
 
-async def run_identity_worker(config_directory, *, additional_registrations=(), release_kind=None,
+async def run_identity_worker(config_directory, *, additional_registrations=(),
                               policy=Policy(), read_metainfo=None, read_batch_metainfo=None,
                               backfill=False, backfill_select=False, backfill_acquire=False,
                               require_series_credentials=False, client_factory=None, service_health=None):
     worker = await build_identity_worker(config_directory,additional_registrations=additional_registrations,
-                                         release_kind=release_kind,policy=policy,read_metainfo=read_metainfo,
+                                         policy=policy,read_metainfo=read_metainfo,
                                          read_batch_metainfo=read_batch_metainfo,
                                          backfill=backfill,backfill_select=backfill_select,
                                          backfill_acquire=backfill_acquire,

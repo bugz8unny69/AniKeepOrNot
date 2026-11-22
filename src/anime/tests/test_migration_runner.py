@@ -53,19 +53,13 @@ class MigrationRunnerTests(unittest.TestCase):
                     self.assertEqual(migrations._structure(upgraded), migrations._structure(fresh))
                     self.assertEqual(upgraded.execute("PRAGMA foreign_key_check").fetchall(), [])
                     self.assertEqual(upgraded.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
-                    if version < migrations.LATEST_VERSION:
-                        backup = sqlite3.connect(path.with_name(result.backup_name))
-                        try:
-                            self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], version)
-                        finally:
-                            backup.close()
-                    else:
-                        self.assertIsNone(result.backup_name)
+                    # No database copy is made (owner, 2026-11-22).
+                    self.assertEqual(list(path.parent.glob(path.name + ".before-*")), [])
                 finally:
                     upgraded.close()
                     fresh.close()
 
-    def test_existing_rows_ids_history_and_provenance_preserved_with_wal_backup(self):
+    def test_existing_rows_ids_history_and_provenance_preserved_in_wal_mode(self):
         historical(self.path, 3)
         db = sqlite3.connect(self.path)
         try:
@@ -89,13 +83,6 @@ class MigrationRunnerTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT * FROM result_episode_links").fetchall(), [(4,1,3)])
             self.assertEqual(db.execute("SELECT reason_code,component FROM event_history WHERE history_id=10").fetchone(), ("OLD_CODE",None))
             self.assertEqual(db.execute("SELECT reason_code,component,activity_code FROM job_history WHERE history_id=11").fetchone(), ("OLD_CODE",None,None))
-            backup = sqlite3.connect(self.path.with_name(result.backup_name))
-            try:
-                self.assertEqual(backup.execute("SELECT raw_body FROM incoming_events").fetchone(), (b"ab",))
-                self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], 3)
-            finally:
-                backup.close()
-            self.assertEqual(self.path.with_name(result.backup_name).stat().st_mode & 0o777, 0o600)
         finally:
             db.close()
 
@@ -153,16 +140,6 @@ class MigrationRunnerTests(unittest.TestCase):
         # Explicit re-preview and recovery can continue from the committed version.
         result = self.run_upgrade(migrations.preview(self.path))
         self.assertEqual(result.applied_versions, tuple(range(5,migrations.LATEST_VERSION+1)))
-
-    def test_backup_failure_never_applies_a_migration(self):
-        historical(self.path, 3)
-        plan = migrations.preview(self.path)
-        with patch.object(migrations, "_backup", side_effect=OSError("secret path")):
-            with self.assertRaises(migrations.MigrationError) as raised:
-                self.run_upgrade(plan)
-        self.assertNotIn("secret", str(raised.exception))
-        self.assertEqual(migrations.preview(self.path).from_version, 3)
-        self.assertIsNotNone(self.gate.status())
 
     def test_admitted_runtime_connection_requires_current_version_and_open_gate(self):
         historical(self.path, 3)

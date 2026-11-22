@@ -118,10 +118,12 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         from src.anime.history import append_job_history
         from src.anime.matching import MatchingTrace
         from src.anime.storage.sqlite import enqueue_job
-        status, receipt, _ = await self.request('POST', '/api/v1/webhook',
-                                               self.release(), token=WEB)
-        self.assertEqual(status, 202)
-        job=receipt['data']['job_id']
+        # A historical identification job (before the API identified releases) keeps its evidence.
+        from src.anime.storage.sqlite import accept_event_and_job
+        with connect(self.database) as db:
+            event_id,job=accept_event_and_job(db,'autobrr',json.dumps(self.release()).encode(),
+                                              kind='IDENTIFY_ANIME',payload={})
+        receipt={'data':{'event_id':event_id,'job_id':job}}
         trace=MatchingTrace()
         trace.queries(['Higurashi When They Cry'], season=2)
         trace.check('release_title','passed')

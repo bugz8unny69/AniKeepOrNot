@@ -94,14 +94,20 @@ class WebhookRefusalTests(unittest.IsolatedAsyncioTestCase):
                     row = db.execute('SELECT type,anidb_id,count,raw_body IS NOT NULL FROM notifications').fetchone()
                 self.assertEqual(row, ('API_REJECTION', 1001, 2, 1))
 
-    async def test_undecided_and_unknown_series_are_queued_as_before(self):
+    async def test_undecided_and_unknown_series_are_queued_for_the_identity_process(self):
+        self.identity = None   # Still being identified.
         status, data, _ = await self.request('POST', '/api/v1/webhook', self.release(release_name=NAME), token=WEB)
         self.assertEqual(status, 202)
         self.seed('ACCEPT')
         status, _, _ = await self.request('POST', '/api/v1/webhook', self.release(release_name='Dandadan - 03'), token=WEB)
         self.assertEqual(status, 202)
+        with connect(self.database) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM identity_requests').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT count(*) FROM jobs WHERE job_id<>900').fetchone()[0], 0)
 
-    async def test_process_anyway_creates_exactly_one_identify_job_that_skips_the_check(self):
+    async def test_process_anyway_identifies_again_and_skips_the_decision(self):
+        self.identity = {'schema_version': 2, 'anime': {'anidb_id': 1001, 'tvdb_series_id': 2001,
+                                                        'title': 'Sousou no Frieren'}, 'episodes': []}
         self.seed('REJECT')
         await self.request('POST', '/api/v1/webhook', self.release(release_name=NAME), token=WEB)
         with connect(self.database) as db:
@@ -110,7 +116,7 @@ class WebhookRefusalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 202)
         with connect(self.database) as db:
             kind, payload = db.execute("SELECT kind,payload_json FROM jobs WHERE job_id=?", (data['data']['job_id'],)).fetchone()
-            self.assertEqual((kind, json.loads(payload)), ('IDENTIFY_ANIME', {'process_anyway': True}))
+            self.assertEqual((kind, json.loads(payload)), ('VERIFY_RELEASE', {'anidb_id': 1001}))
             self.assertEqual(db.execute('SELECT count(*) FROM notifications').fetchone()[0], 0)
             self.assertEqual(json.loads(db.execute('SELECT raw_body FROM incoming_events WHERE event_id=?',
                                                    (data['data']['event_id'],)).fetchone()[0])['release_name'], NAME)
