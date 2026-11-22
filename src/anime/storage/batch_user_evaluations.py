@@ -1,12 +1,12 @@
 """Fenced, read-only (no reservations) multi-episode trial persistence."""
 import sqlite3
+from src.anime.storage.adapter import require_current
 import time
 
 from src.anime.batch.user_evaluation import (
     BatchEpisodeFact, BatchUserEvaluationSource, BatchUserEvaluationProposal,
 )
 from src.anime.history import integer, append_job_history
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.anime.user_evaluation_policy import UserEvaluationConflict
 
@@ -42,11 +42,8 @@ def load_batch_user_evaluation_source(database,verification_job_id,event_id):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         return _source(db,verification_job_id,event_id)
-    except (OSError,sqlite3.Error,MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
 

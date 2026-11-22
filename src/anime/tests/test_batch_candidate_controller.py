@@ -406,8 +406,7 @@ class BatchCandidateControllerTests(unittest.IsolatedAsyncioTestCase):
 
         verifier = make_batch_verifier(Options('registeredclient', 1), lambda: Credentials('private'),
                                        mock_read_metainfo, client_factory=lambda *a: None)
-        from src.anime.storage.job_queue import QueueUnavailable
-        with self.assertRaises(QueueUnavailable):
+        with self.assertRaises(FileNotFoundError):   # The real error, never relabeled.
             await verifier(source, bad_config, threading.Event(), claim=SimpleNamespace(job_id=1))
         self.assertFalse(called_independent)
 

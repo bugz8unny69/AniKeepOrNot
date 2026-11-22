@@ -27,7 +27,9 @@ from src.anime.dashboard.assets import load_assets, CSP as DASHBOARD_CSP
 from src.anime.dashboard.presentation import HANDLERS
 from src.anime.search import SearchInvalid, match as search_match, words as search_words
 from src.anime.secrets import SecretStore
-from src.anime.storage.job_queue import JobQueue, QueueUnavailable
+import sqlite3
+from src.anime.storage.adapter import DatabaseVersionMismatch
+from src.anime.storage.job_queue import JobOperationMissing, JobQueue, StorageStatementInvalid
 from src.anime.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
 from src.anime.storage import notifications as inbox
 from src.anime.decided_series import webhook_decision, notify_refused, REASONS as DECISION_REASONS
@@ -346,7 +348,8 @@ class Application:
         except ConfigurationConflict as exc:raise ApiError(409,exc.reason_code) from None
         except ConfigurationError as exc:raise ApiError(503,exc.reason_code) from None
         except (MaintenancePending,MaintenanceBusy,MaintenanceError) as exc:raise ApiError(503,exc.reason_code) from None
-        except QueueUnavailable as exc:raise ApiError(503,exc.reason_code) from None
+        except (DatabaseVersionMismatch,StorageStatementInvalid,JobOperationMissing) as exc:raise ApiError(503,exc.reason_code) from None
+        except sqlite3.Error:raise ApiError(503,'DATABASE_ERROR') from None
         except CancellationError as exc:raise ApiError(409,exc.reason_code) from None
 
     def _route(self,method,path,headers,query,body,peer):

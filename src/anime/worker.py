@@ -4,6 +4,8 @@ No provider/acquisition/Keep handlers are bundled. Installed application code
 passes registrations to Worker; an empty registry fails readiness before claims.
 """
 import asyncio
+import os
+import sqlite3
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 import logging
@@ -24,7 +26,13 @@ from src.anime.job_contracts import CompletionRejected, Outcome, Policy, Registr
 from src.anime.reasons import get_reason
 from src.anime.services.startup import StartupRefused
 from src.anime.maintenance import MaintenanceGate, MaintenanceBusy, MaintenancePending
-from src.anime.storage.job_queue import JobQueue, LeaseLost, QueueUnavailable
+from src.anime.storage.job_queue import JobQueue, LeaseLost, StorageStatementInvalid
+from src.anime.storage.adapter import DatabaseVersionMismatch
+from src.anime.storage.migrations import MigrationError
+
+
+# Database problems in one attempt: logged with SQLite's own message; the worker carries on.
+DATABASE_ERRORS = (sqlite3.Error, StorageStatementInvalid, DatabaseVersionMismatch, MigrationError)
 
 
 class WorkerNotReady(RuntimeError):
@@ -58,6 +66,32 @@ class Context:
 
     def data(self):
         return self.claim.data()
+
+
+def storage_outcome(exc):
+    """Why a database or file operation failed, as a recorded outcome; None otherwise.
+
+    The job's activity and history show the reason and a bounded cause: SQLite's
+    error name ("SQLITE_FULL", "SQLITE_CONSTRAINT_CHECK") or an errno name and
+    path ("ENOSPC" on the staging share), plus the failed check (file:line).
+    """
+    import errno as _errno
+    facts = dict(failure_facts(exc) or {})
+    if isinstance(exc, StorageStatementInvalid):
+        return Outcome("review", "STORAGE_STATEMENT_INVALID", facts=facts or None)
+    if isinstance(exc, sqlite3.Error):
+        name = getattr(exc, "sqlite_errorname", None)
+        if isinstance(name, str) and name.startswith("SQLITE_"):
+            facts["storage_error"] = name
+        return Outcome("retry", "DATABASE_ERROR", facts=facts or None)
+    filename = getattr(exc, "filename", None) if isinstance(exc, OSError) else None
+    if filename is not None and exc.errno in _errno.errorcode:
+        facts["storage_error"] = _errno.errorcode[exc.errno]
+        path = os.fsdecode(filename)
+        if path.startswith("/") and "failed_path" not in facts:
+            facts["failed_path"] = path
+        return Outcome("retry", "STORAGE_UNAVAILABLE", facts=facts)
+    return None
 
 
 class Worker:
@@ -174,7 +208,7 @@ class Worker:
                            health.snapshot(), now_ms=now)
         except Exception as exc:
             exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
-                      reason_code="STORAGE_UNAVAILABLE", component="worker")
+                      reason_code="DATABASE_ERROR", component="worker")
         self._services_dirty = False
         self._services_saved_ms = now
 
@@ -293,7 +327,7 @@ class Worker:
               operation_id=facts.get("operation_id"))
 
     def _log_error(self, exc, claim=None):
-        reason = getattr(exc, "reason_code", "JOB_HANDLER_FAILED")
+        reason = getattr(exc, "reason_code", "DATABASE_ERROR" if isinstance(exc, sqlite3.Error) else "JOB_HANDLER_FAILED")
         if get_reason(reason) is None:
             reason = "JOB_HANDLER_FAILED"
         try:database=self.startup.value("storage.database_path")
@@ -333,13 +367,19 @@ class Worker:
                 if asyncio.current_task().cancelling():
                     raise
                 return Outcome("retry", "JOB_HANDLER_FAILED")
-            except (QueueUnavailable,ConfigurationError):
-                # Storage/configuration failure is not a provider retry decision.
+            except (ConfigurationError, DatabaseVersionMismatch, MigrationError):
+                # Configuration, or a database at another schema version (an upgrade
+                # is half done): nothing safe can be written about this job.
                 raise
             except Exception as exc:
                 waiting = self._exception_wait(spec, exc)
                 if waiting is not None:
                     return waiting
+                stored = storage_outcome(exc)
+                if stored is not None:
+                    # Recorded on the job (activity and history), not only in the log.
+                    self._log_error(exc, claim)
+                    return stored
                 # Catch-boundary diagnostic with exact redacted error
                 exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
@@ -531,15 +571,6 @@ class Worker:
                 worked = False
             await asyncio.sleep(1)
 
-    async def _storage_unavailable(self, exc):
-        """A database error in one attempt: log it and keep running. Never stop.
-
-        One failed transaction used to stop the whole worker. Job leases and
-        retries already make an interrupted attempt safe; the run loop's poll
-        interval paces the next attempt.
-        """
-        self._log_error(exc)
-
     async def run(self, *, on_ready=None):
         if self._running or self._closed:
             raise RuntimeError("worker cannot be started in its current state")
@@ -551,8 +582,8 @@ class Worker:
                 if not self._paused:
                     try:
                         await self._recover()
-                    except QueueUnavailable as exc:
-                        await self._storage_unavailable(exc)
+                    except DATABASE_ERRORS as exc:
+                        self._log_error(exc)
                         continue
                     if not ready:
                         if self._service_health is not None and self._secrets is not None:
@@ -573,8 +604,9 @@ class Worker:
                         self._tasks.remove(task)
                         try:
                             worked = bool(task.result()) or worked
-                        except QueueUnavailable as exc:
-                            await self._storage_unavailable(exc)
+                        except DATABASE_ERRORS as exc:
+                            # One attempt's database error never stops the worker.
+                            self._log_error(exc)
                 if not worked:
                     try:
                         await asyncio.wait_for(self._stop.wait(),timeout=self.policy.poll_ms/1000)

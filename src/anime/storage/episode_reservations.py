@@ -1,10 +1,10 @@
 """Durable exact-episode gates in the worker's fenced completion transaction."""
 import sqlite3
+from src.anime.storage.adapter import require_current
 import time
 
 from src.anime.episode_reservations import ReservationInput, ReservationConflict, EpisodeReserved, EpisodeStaged
 from src.anime.history import integer, append_job_history
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.anime.storage.releases import _source as release_source
 from src.anime.storage.user_evaluations import _source as user_evaluation_source
@@ -51,9 +51,8 @@ def load_reservation_input(database,evaluation_job_id,event_id):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute("BEGIN")
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:raise QueueUnavailable()
+        require_current(db)
         return _facts(db,evaluation_job_id,event_id)
-    except (OSError,sqlite3.Error,MigrationError):raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
 

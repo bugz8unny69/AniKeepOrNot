@@ -5,6 +5,7 @@ the existing discovery worker can advance the pointer to the next ranked
 candidate. Selection never grants a torrent submission permit.
 """
 import time
+from src.anime.storage.adapter import require_current
 
 from src.anime.acquisition.prowlarr_search import DiscoveryPolicy, Release, SearchResult
 from src.anime.acquisition.metadata import infohash
@@ -152,13 +153,11 @@ def acquisition_identity(database, source):
     """
     from src.anime.acquisition.contracts import AcquisitionInput
     from src.anime.storage.migrations import LATEST_VERSION, _open
-    from src.anime.storage.job_queue import QueueUnavailable
     if type(source) is not AcquisitionInput:
         raise SelectionConflict()
     db=_open(database,readonly=True,timeout_ms=5000)
     try:
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         rows=db.execute(
             "SELECT p.tvdb_series_id,s.tvdb_episode_id "
             "FROM incoming_events e "

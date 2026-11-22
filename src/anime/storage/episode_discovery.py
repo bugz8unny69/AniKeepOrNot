@@ -5,12 +5,12 @@ Episodes are searched with Prowlarr (acquisition.prowlarr_search); results are
 in episode_discovery_results and jobs of kind DISCOVER_EPISODE_RELEASES.
 """
 from dataclasses import dataclass
+from src.anime.storage.adapter import require_current
 import sqlite3
 import time
 
 from src.anime.history import append_job_history, integer
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.sqlite import enqueue_job_with_receipt
 from src.anime.acquisition.prowlarr_search import BackfillObservation, CandidateSelection
 
@@ -56,12 +56,9 @@ def anchor_searched(db, plan_id):
 
 def plan_window(db, plan_id, anchor, backfill, following):
     computed = window(anchor, backfill, following, anchor_searched(db, plan_id))
-    try:
-        stored = tuple(r[0] for r in db.execute(
-            "SELECT anidb_episode_number FROM episode_discovery_results "
-            "WHERE plan_id=? ORDER BY anidb_episode_number", (plan_id,)).fetchall())
-    except (sqlite3.OperationalError, sqlite3.DatabaseError):
-        stored = ()
+    stored = tuple(r[0] for r in db.execute(
+        "SELECT anidb_episode_number FROM episode_discovery_results "
+        "WHERE plan_id=? ORDER BY anidb_episode_number", (plan_id,)).fetchall())
     if stored and not set(stored).issubset(set(computed)):
         return stored
     return computed
@@ -154,8 +151,6 @@ def automatic_retry_used(database, job_id):
             "AND reason_code IN (" + ",".join("?" * len(SEARCH_FAILURES)) + ") AND history_id>COALESCE((SELECT max(history_id) "
             "FROM job_history WHERE job_id=? AND event_code='RETRY_REQUESTED'),0) LIMIT 1",
             (job_id, *SEARCH_FAILURES, job_id)).fetchone() is not None
-    except (sqlite3.Error, OSError, MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None: db.close()
 
@@ -165,11 +160,8 @@ def load_batch(database, plan_id, start, retry_episode=None):
     try:
         db = _open(database,readonly=True,timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0] != LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         return _plan(db,plan_id,start,retry_episode)
-    except (sqlite3.Error,OSError,MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None: db.close()
 
@@ -305,8 +297,7 @@ def load_fallback(database,plan_id,episode):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         selected=_selected(db,plan_id,episode)
         if selected is None:raise BackfillConflict()
         identity,digest=selected
@@ -317,8 +308,6 @@ def load_fallback(database,plan_id,episode):
         pending=next_candidate(db,plan_id=plan_id,episode=episode)
         if failed!=('FAILED',) or pending is None:raise BackfillConflict()
         return FallbackTarget(identity,digest,pending[1])
-    except (sqlite3.Error,OSError,MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
 
@@ -560,15 +549,12 @@ def load_dub_search(database, plan_id, episode):
     try:
         db = _open(database, readonly=True, timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0] != LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         tried = _audio_only(db, plan_id, episode)
         if tried is None: return None
         selected = _selected(db, plan_id, episode)
         if selected is None: raise BackfillConflict()
         return DubSearch(selected[0], tried)
-    except (sqlite3.Error, OSError, MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None: db.close()
 

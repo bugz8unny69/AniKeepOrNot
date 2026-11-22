@@ -20,7 +20,7 @@ from src.anime.history import append_event_history
 from src.anime.job_contracts import parse_payload
 from src.anime.providers.release_mapping import declared_episode
 from src.anime.release_contracts import ReleaseNotReady
-from src.anime.storage.job_queue import JobQueue, QueueUnavailable
+from src.anime.storage.job_queue import JobQueue
 from src.anime.storage.sqlite import enqueue_job_with_receipt, persist_identity, transaction
 from src.anime.storage.series_intake import plan_window, _placements
 
@@ -206,12 +206,9 @@ def metainfo_for(database, event_id, digest):
     """The original uploaded BEP3 bytes; never supplied through a job payload."""
     if type(event_id) is not int or event_id < 1:
         return None
-    try:
-        with JobQueue(database).connection() as db:
-            row = db.execute(
-                'SELECT metainfo FROM manual_release_submissions '
-                'WHERE event_id=? AND info_hash=? AND source=\'torrent\'',
-                (event_id,digest)).fetchone()
-        return None if row is None else bytes(row[0])
-    except (QueueUnavailable, OSError, sqlite3.Error):
-        return None
+    with JobQueue(database).connection() as db:
+        row = db.execute(
+            'SELECT metainfo FROM manual_release_submissions '
+            'WHERE event_id=? AND info_hash=? AND source=\'torrent\'',
+            (event_id,digest)).fetchone()
+    return None if row is None else bytes(row[0])

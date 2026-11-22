@@ -12,7 +12,8 @@ from src.anime.job_contracts import Outcome, Policy, Registration, Registry, Suc
 from src.anime.jobs.identify_anime_job import (
     KIND, IdentifiedSeries, ProviderDeferred, ProviderUnavailable, registration,
 )
-from src.anime.storage.job_queue import LeaseLost, QueueUnavailable
+import sqlite3
+from src.anime.storage.job_queue import LeaseLost
 from src.anime.storage.sqlite import (
     accept_event, connect, enqueue_job, initialize, persist_identity, save_identity, transaction,
 )
@@ -325,11 +326,12 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError): Registry((registration(resolve,release_kind="VERIFY_RELEASE"),))
 
 
-    async def test_source_storage_failure_is_not_reclassified_as_provider_retry(self):
+    async def test_source_database_failure_is_recorded_as_a_database_error_not_a_provider_retry(self):
         async def resolve(*args): self.fail("storage could not supply a request")
         _,job = self.enqueue()
         worker = self.worker(registration(resolve))
-        with patch("src.anime.jobs.identify_anime_job._request",side_effect=QueueUnavailable()):
-            with self.assertRaises(QueueUnavailable): await worker.attempt()
-        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),[("RUNNING",None)])
-        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='RETRY_SCHEDULED'"),[(0,)])
+        with patch("src.anime.jobs.identify_anime_job._request",side_effect=sqlite3.OperationalError("disk I/O error")):
+            await worker.attempt()
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),
+                         [("RETRY_WAIT","DATABASE_ERROR")])
+        self.assertNotIn("SERVICE", self.rows("SELECT last_reason_code FROM jobs WHERE job_id=?",(job,))[0][0])

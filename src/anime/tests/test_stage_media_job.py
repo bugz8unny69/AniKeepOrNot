@@ -127,7 +127,6 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_staging_transaction_rolls_back_duplicate_closure_on_failure(self):
         from unittest.mock import patch
-        from src.anime.storage.job_queue import QueueUnavailable
         from src.anime.storage.episode_reservations import cancel_staged_waiters
         worker=self.worker();await self.staged_ready(worker)
         await self.held_contender(worker);self.stage_due()
@@ -135,7 +134,7 @@ class StageMediaJobTests(unittest.IsolatedAsyncioTestCase):
             cancel_staged_waiters(*args)
             raise OSError('interrupted transaction')
         with patch('src.anime.storage.episode_reservations.cancel_staged_waiters',side_effect=fail_after_closure):
-            with self.assertRaises(QueueUnavailable):await worker.attempt()
+            with self.assertRaises(OSError):await worker.attempt()   # The file error itself, not "storage".
         self.assertEqual(self.rows('SELECT state FROM staging_publications'),[('PLANNED',)])
         self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE state='ON_HOLD' AND last_reason_code='EPISODE_RESERVED'"),[(1,)])
         self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='CANCELED'"),[(0,)])

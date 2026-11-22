@@ -1,5 +1,6 @@
 """Immutable source inventory/intent publication under fenced worker completion."""
 import sqlite3
+from src.anime.storage.adapter import require_current
 import time
 import uuid
 
@@ -10,7 +11,6 @@ from src.anime.episode_reservations import ReservationConflict
 from src.anime.history import append_job_history, integer
 from src.anime.job_contracts import parse_payload
 from src.anime.storage.episode_reservations import _facts as episode_facts
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 
 
@@ -48,9 +48,8 @@ def load_acquisition_input(database,evaluation_job_id,event_id):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:raise QueueUnavailable()
+        require_current(db)
         return _source(db,evaluation_job_id,event_id)
-    except (OSError,sqlite3.Error,MigrationError):raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
 
@@ -64,7 +63,6 @@ def source_magnet(database,source):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         row=db.execute('SELECT raw_body FROM incoming_events WHERE event_id=?',(source.event_id,)).fetchone()
-    except (OSError,sqlite3.Error,MigrationError):raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
     if row is None:raise SourceMissing()

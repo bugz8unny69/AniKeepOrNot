@@ -971,18 +971,12 @@ def admitted_connection(gate):
     Never nest admissions or use this during exclusive migration maintenance.
     """
     with gate.operation():
-        from src.anime.storage.migrations import _open, LATEST_VERSION, MigrationError, MigrationUnsupported
+        from src.anime.storage.migrations import _open
+        from src.anime.storage.adapter import require_current
+        db = _open(gate.database, readonly=False,timeout_ms=5000)
         try:
-            db = _open(gate.database, readonly=False,timeout_ms=5000)
-        except (OSError, sqlite3.Error):
-            raise MigrationError() from None
-        try:
-            try:
-                if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
-                    raise MigrationUnsupported()
-                db.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.Error:
-                raise MigrationError() from None
+            require_current(db)
+            db.execute("PRAGMA journal_mode=WAL")
             yield db
         finally:
             db.close()

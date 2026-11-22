@@ -1,10 +1,10 @@
 """Atomic trial-plan anchoring and evaluation. No external resource claims."""
 import json
+from src.anime.storage.adapter import require_current
 import sqlite3
 import time
 
 from src.anime.history import integer, append_job_history
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.anime.user_evaluation_policy import UserEvaluationSource, UserEvaluationProposal, UserEvaluationConflict, Window
 
@@ -39,10 +39,9 @@ def load_user_evaluation_source(database,verification_job_id,event_id,*,with_del
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute("BEGIN")
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:raise QueueUnavailable()
+        require_current(db)
         source=_source(db,verification_job_id,event_id)
         return (source,_delivery(db,event_id)) if with_delivery else source
-    except (OSError,sqlite3.Error,MigrationError):raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
 

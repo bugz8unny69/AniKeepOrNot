@@ -1,5 +1,6 @@
 """Read source context and persist declared-episode facts under worker ownership."""
 import time
+from src.anime.storage.adapter import require_current
 import sqlite3
 
 from src.anime.history import integer
@@ -7,7 +8,6 @@ from src.anime.storage.recognition import remember_verified_release, remember_ve
 from src.anime.job_contracts import parse_payload
 from src.anime.release_contracts import ReleaseInput, VerifiedRelease, ReleaseConflict, ReleaseNotReady
 from src.anime.schema.anime_series import AnimeSeries
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 
 
@@ -32,10 +32,8 @@ def load_release(database, event_id, aid):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute("BEGIN")
-        if db.execute("PRAGMA user_version").fetchone()[0]!=LATEST_VERSION: raise QueueUnavailable()
+        require_current(db)
         return _source(db,event_id,aid)
-    except (OSError,sqlite3.Error,MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None: db.close()
 

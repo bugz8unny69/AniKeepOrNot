@@ -4,6 +4,7 @@ No implicit DDL or migration. Network work must happen outside these methods.
 TVDB credentials/tokens/response bodies are never accepted by public_put.
 """
 from contextlib import contextmanager
+from src.anime.storage.adapter import require_current
 import re
 import sqlite3
 import time
@@ -11,7 +12,6 @@ import uuid
 
 from src.anime.history import integer
 from src.anime.providers.errors import ProviderDeferred
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.anime.storage.sqlite import transaction
 
@@ -30,11 +30,8 @@ class ProviderStore:
         db = None
         try:
             db = _open(self.database,readonly=False,timeout_ms=5000)
-            if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
-                raise QueueUnavailable()
+            require_current(db)
             yield db
-        except (OSError,sqlite3.Error,MigrationError):
-            raise QueueUnavailable() from None
         finally:
             if db is not None: db.close()
 

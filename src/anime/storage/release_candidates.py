@@ -150,17 +150,12 @@ def schedule_after_cleanup(db,operation_id):
     target_job_id, payload_str = automated
     issue = None
     if payload_str:
-        try:
-            issue = json.loads(payload_str).get('failure_reason')
-        except Exception:
-            pass
+        payload = json.loads(payload_str)
+        issue = payload.get('failure_reason') if isinstance(payload, dict) else None
     if not issue:
-        try:
-            t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
-            if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
-                issue = t_row[0]
-        except sqlite3.OperationalError:
-            pass
+        t_row = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (target_job_id,)).fetchone()
+        if t_row and t_row[0] and t_row[0] != 'JOB_CANCELED':
+            issue = t_row[0]
     if not issue:
         h_row = db.execute(
             "SELECT reason_code FROM job_history "
@@ -336,11 +331,7 @@ def request_automatic_cleanup(db,claim):
     if op[1]!='ACTIVE':return ()
     if db.execute("SELECT 1 FROM management_actions WHERE operation_id=? "
                   "AND action='CLEANUP'",(op[0],)).fetchone():return ()
-    failing_reason = None
-    try:
-        failing_reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()
-    except sqlite3.OperationalError:
-        pass
+    failing_reason = db.execute("SELECT last_reason_code FROM jobs WHERE job_id=?", (claim.job_id,)).fetchone()
     failure_reason = failing_reason[0] if failing_reason and failing_reason[0] else None
     # This is the same cancellation transition and control job used by the
     # manual UI. Only its *trigger* differs. No new worker/cleanup path.

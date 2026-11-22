@@ -124,7 +124,6 @@ class ProviderStorageTests(unittest.TestCase):
 
 
     def test_missing_database_is_not_initialized_by_provider_library(self):
-        from src.anime.storage.job_queue import QueueUnavailable
         path = self.path.with_name("missing.sqlite")
-        with self.assertRaises(QueueUnavailable): ProviderStore(path).reserve("anidb",10000)
+        with self.assertRaises(FileNotFoundError): ProviderStore(path).reserve("anidb",10000)
         self.assertFalse(path.exists())

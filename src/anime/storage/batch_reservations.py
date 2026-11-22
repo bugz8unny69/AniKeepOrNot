@@ -5,13 +5,13 @@ acquisition and safe cleanup are installed. A serial SQLite worker transaction
 arbitrates against BOTH existing single-episode and batch owners.
 """
 from dataclasses import dataclass
+from src.anime.storage.adapter import require_current
 import sqlite3
 import time
 
 from src.anime.episode_reservations import ReservationConflict, EpisodeReserved
 from src.anime.history import integer, append_job_history
 from src.anime.storage.batch_user_evaluations import _source as user_evaluation_source
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.anime.user_evaluation_policy import UserEvaluationConflict
 
@@ -102,10 +102,8 @@ def load_batch_reservation(database,evaluation_job_id,event_id):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         return _facts(db,evaluation_job_id,event_id)
-    except (OSError,sqlite3.Error,MigrationError):raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()
 

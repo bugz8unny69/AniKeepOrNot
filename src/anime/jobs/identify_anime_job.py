@@ -5,6 +5,7 @@ library. Neither a webhook nor a matching title is proof of verified identity.
 No bundled live resolver, provider HTTP requests or acquisition are installed.
 """
 from dataclasses import dataclass, field
+from src.anime.storage.adapter import require_current
 import inspect
 import sqlite3
 
@@ -14,7 +15,6 @@ from src.anime.job_contracts import CompletionRejected, Outcome, Registration, S
 from src.anime.schema.anime_series import AnimeSeries
 from src.anime.providers.errors import (ProviderUnavailable, ProviderDeferred,
     ProviderInvalidResponse, ProviderAuthenticationFailed)
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 from src.anime.storage.sqlite import IdentityConflict, IdentityNotReady, persist_identity
 from src.anime.worker import blocking
@@ -57,16 +57,13 @@ def _request(database, event_id):
     try:
         db = _open(database,readonly=True,timeout_ms=5000)
         db.execute("BEGIN")
-        if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         row = db.execute("SELECT source,CASE WHEN length(raw_body)<=65536 THEN raw_body ELSE NULL END,"
                          "state FROM incoming_events WHERE event_id=?",(event_id,)).fetchone()
         if (row is None or type(row[1]) is not bytes
                 or row[2] not in ("PENDING", "RETRY_WAIT", "IDENTIFIED")):
             raise IdentityNotReady()
         return IdentityRequest(event_id,row[0],row[1])
-    except (sqlite3.Error, OSError, MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None:
             db.close()
@@ -100,8 +97,6 @@ def _decided(database, anidb_id):
         db = _open(database,readonly=True,timeout_ms=5000)
         from src.anime.storage.review_decisions import decision
         return decision(db, anidb_id)
-    except (sqlite3.Error, OSError, MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None:
             db.close()

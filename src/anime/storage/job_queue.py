@@ -17,6 +17,7 @@ from src.anime.job_contracts import Outcome, Policy, Successor, parse_payload
 from src.anime.matching import from_json as matching_from_json
 from src.anime.messages import validate_job_activity
 from src.anime.storage.migrations import _open, LATEST_VERSION
+from src.anime.storage.adapter import require_current
 from src.anime.storage.sqlite import enqueue_job_with_receipt, transaction
 
 
@@ -26,19 +27,19 @@ class LeaseLost(RuntimeError):
         super().__init__("Job ownership is no longer valid.")
 
 
-class QueueUnavailable(RuntimeError):
-    reason_code = "STORAGE_UNAVAILABLE"
-    def __init__(self):
-        super().__init__("Job storage is unavailable.")
+class JobOperationMissing(RuntimeError):
+    """A running job is not a member of any operation: inconsistent job data."""
+    reason_code = "JOB_OPERATION_MISSING"
+    def __init__(self, job_id):
+        super().__init__(f"Job {job_id} belongs to no operation.")
 
 
-class StorageStatementInvalid(QueueUnavailable):
+class StorageStatementInvalid(RuntimeError):
     """A SQL statement was rejected as invalid: a programming defect, not an outage.
 
     Raised for sqlite3.ProgrammingError/InterfaceError, such as a wrong
-    number of bound parameters or an unsupported parameter type. Subclassing
-    QueueUnavailable keeps every existing recovery path unchanged; only the
-    reported reason and message differ. failed_check names the statement site.
+    number of bound parameters or an unsupported parameter type. The original
+    error stays in __context__; failed_check names the statement site.
     """
     reason_code = "STORAGE_STATEMENT_INVALID"
     def __init__(self, failed_check=None):
@@ -90,15 +91,13 @@ class JobQueue:
         db = None
         try:
             db = _open(self.database, readonly=False,timeout_ms=5000)
-            if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
-                raise QueueUnavailable()
+            require_current(db)
             yield db
         except (sqlite3.ProgrammingError, sqlite3.InterfaceError) as exc:
             # Deterministic statement defects. The original error stays in
             # __context__, so exact_error() still logs sqlite's own message.
+            # Every other database or file error raises as itself.
             raise StorageStatementInvalid(_statement_site(exc)) from None
-        except (sqlite3.Error, OSError):
-            raise QueueUnavailable() from None
         finally:
             if db is not None:
                 db.close()
@@ -118,7 +117,7 @@ class JobQueue:
     def operation_id(self,claim):
         with self.connection() as db,transaction(db):
             row=db.execute('SELECT operation_id FROM job_operation_members WHERE job_id=?',(claim.job_id,)).fetchone()
-            if row is None:raise QueueUnavailable()
+            if row is None:raise JobOperationMissing(claim.job_id)
             return row[0]
 
     def claim(self, halted=None, exclude_kinds=None):

@@ -149,7 +149,10 @@ _ENTRIES = (
     Reason('SERVICE_UNAVAILABLE','A service this job needs could not be reached, was too busy, or kept failing. The details name the service. The job waits and tries again by itself, without using up its retries.','Waiting for a service to come back.','Nothing to do for a short outage: waiting jobs continue on their own. If it lasts, check the service named in the details. After 72 hours the job stops for review.','WARNING',True),
     Reason('SERVICE_RESPONSE_INVALID','A service sent back a response that could not be read or did not make sense. The details name the service.','A service sent a response that could not be used.','Check that the service named in the details is working and up to date, then press Retry.','WARNING',None),
     Reason('SERVICE_SETUP_INVALID','A service is not set up correctly: its address, login, client name or API key is missing or was rejected, or its version does not support what this needs. The details name the service and what is wrong. Waiting would not fix this.','A service is not set up correctly.','Fix the service named in the details in Settings (adm services check tests every service), then press Retry. For a required service, start the worker again.','ERROR',False),
-    Reason('STORAGE_UNAVAILABLE','The database could not be read or written. Whether the last change was saved is unknown.','The database is unavailable.','Check the database file, its disk and its permissions.','ERROR',None),
+    Reason('STORAGE_UNAVAILABLE','A file operation on the staging share failed, probably temporarily (for example the network share was briefly unreachable).','The staging share is unavailable.','Check that the staging share is mounted, has free space, and is writable by the worker.','ERROR',None),
+    Reason('DATABASE_ERROR','The database returned an error. The log has the exact SQLite message (for example disk full, I/O error or a constraint the data broke).','A database error stopped this step.','Read the SQLite message in the log: free disk space for disk full or I/O errors; report a constraint error as a bug. Then press Retry.','ERROR',None),
+    Reason('DATABASE_VERSION_MISMATCH','The database schema is not the version this program was built for, usually because an upgrade is half done.','The database version does not match the program.','Finish the upgrade (akon-install --upgrade), or roll back to the matching version.','ERROR',False),
+    Reason('JOB_OPERATION_MISSING','A job belongs to no operation, so its work cannot be tracked or cleaned up. The job data is inconsistent.','This job has no operation record.','Report the job ID. Cancel the job; retrying will fail the same way.','ERROR',False),
     Reason('STORAGE_STATEMENT_INVALID','A database query in the program is wrong, for example it has the wrong number of values. This is a bug, not a database problem. Nothing was saved.','A program error stopped processing.','Report the failed check from the log. Retrying will fail the same way until the program is fixed.','ERROR',False),
     Reason('UNSUPPORTED_JOB_KIND','No part of the program handles this type of job.','This type of job cannot be processed.','Check that the installed version matches the database.','ERROR',False),
     Reason('USER_EVALUATION_COUNTS_INVALID','Both evaluation episode counts are zero.','Set at least one evaluation episode count above zero.','Raise the "backfill" or "following" evaluation episodes in Settings.','WARNING',False),
@@ -209,6 +212,9 @@ def display_reason(code: str) -> dict:
             "action": entry.action, "severity": entry.severity,
             "retryable": entry.retryable}
 
+_STORAGE_ERROR = __import__("re").compile(r"SQLITE_[A-Z_]{1,40}|E[A-Z0-9]{1,15}")
+
+
 def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  attempt=None, max_attempts=None, cause_reason_code=None,
                  video_mb=None, limit_mb=None, plan_used_mb=None,
@@ -217,7 +223,8 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
                  delete_cache=None, cache_entries_deleted=None, cached_replay=None,
                  observed_audio=None, missing_audio=None,
                  blocking_job_id=None, operation_id=None,
-                 service=None, service_detail=None, service_status=None, waiting_since_ms=None) -> dict:
+                 service=None, service_detail=None, service_status=None, waiting_since_ms=None,
+                 storage_error=None) -> dict:
     """Build bounded history facts; never accept raw values or exception text.
 
     Field names identify schema locations, not missing episode coverage.
@@ -256,6 +263,12 @@ def safe_details(*, missing_fields=(), invalid_fields=(), retry_at_ms=None,
         if type(failed_check) is not str or not _CHECK.fullmatch(failed_check):
             raise ValueError("invalid failed check")
         details["failed_check"] = failed_check
+    # Why a database or file operation failed, as a bounded code: SQLite's error
+    # name ("SQLITE_FULL", "SQLITE_CONSTRAINT_CHECK") or an errno name ("ENOSPC").
+    if storage_error is not None:
+        if type(storage_error) is not str or not _STORAGE_ERROR.fullmatch(storage_error):
+            raise ValueError("invalid storage error")
+        details["storage_error"] = storage_error
     # The local file the failed check was looking at (absolute, no controls).
     if failed_path is not None:
         if (type(failed_path) is not str or not failed_path.startswith("/")

@@ -5,11 +5,11 @@ every selected file size and index and active operation ownership. The result
 is NOT a torrent submission permit or proof of download/audio/staging.
 """
 from dataclasses import dataclass
+from src.anime.storage.adapter import require_current
 import sqlite3
 
 from src.anime.acquisition.metadata import BatchInventory, ObservedBatchInventory, AcquisitionConflict
 from src.anime.history import integer
-from src.anime.storage.job_queue import QueueUnavailable
 from src.anime.storage.migrations import LATEST_VERSION, MigrationError, _open
 
 
@@ -100,10 +100,7 @@ def load_batch_acquisition_candidate(database,reservation_job_id,inventory):
     try:
         db=_open(database,readonly=True,timeout_ms=5000)
         db.execute('BEGIN')
-        if db.execute('PRAGMA user_version').fetchone()[0]!=LATEST_VERSION:
-            raise QueueUnavailable()
+        require_current(db)
         return _candidate(db,reservation_job_id,inventory)
-    except (OSError,sqlite3.Error,MigrationError):
-        raise QueueUnavailable() from None
     finally:
         if db is not None:db.close()

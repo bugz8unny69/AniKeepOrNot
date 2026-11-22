@@ -100,3 +100,28 @@ def write_transaction(db):
         if lock is not None:
             held.discard(path)
             lock.release()
+
+
+def _migration_unsupported():
+    from src.anime.storage.migrations import MigrationUnsupported
+    return MigrationUnsupported
+
+
+class DatabaseVersionMismatch(_migration_unsupported()):
+    """The database schema is not the version this code was built for (an upgrade is half done).
+
+    A MigrationUnsupported, so maintenance and the upgrade gate treat it as before.
+    """
+    reason_code = "DATABASE_VERSION_MISMATCH"
+
+    def __init__(self, found, expected):
+        RuntimeError.__init__(self, f"Database schema is v{found}; this code needs v{expected}.")
+        self.found, self.expected = found, expected
+
+
+def require_current(db):
+    """Refuse to read or write a database at another schema version."""
+    from src.anime.storage.migrations import LATEST_VERSION
+    found = db.execute("PRAGMA user_version").fetchone()[0]
+    if found != LATEST_VERSION:
+        raise DatabaseVersionMismatch(found, LATEST_VERSION)

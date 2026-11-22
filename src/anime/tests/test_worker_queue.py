@@ -7,7 +7,7 @@ import unittest
 
 from src.anime.handlers import HandlerDefinition
 from src.anime.job_contracts import CompletionRejected, Outcome, Policy, Registration, Registry, Successor
-from src.anime.storage.job_queue import JobQueue, LeaseLost, QueueUnavailable
+from src.anime.storage.job_queue import JobQueue, LeaseLost
 from src.anime.storage.sqlite import enqueue_job, initialize, transaction
 
 
@@ -116,7 +116,8 @@ class WorkerQueueTests(unittest.TestCase):
         registry = Registry((spec,))
         claim,_ = self.queue.claim()
         self.queue.start(claim,spec,"a"*32,registry)
-        with self.assertRaises(QueueUnavailable):
+        # SQLite's authorizer refuses the commit; the error raises as itself.
+        with self.assertRaises(sqlite3.DatabaseError):
             self.queue.finish(claim,Outcome(),spec=spec,invocation="a"*32,registry=registry)
         self.assertEqual(self.state(),("RUNNING",1))
 
@@ -125,7 +126,7 @@ class WorkerQueueTests(unittest.TestCase):
             db.execute("UPDATE jobs SET state='ON_HOLD'")
         self.assertIsNone(self.queue.claim()[0])
         missing = self.path.with_name("missing.sqlite")
-        with self.assertRaises(QueueUnavailable): JobQueue(missing).claim()
+        with self.assertRaises(FileNotFoundError): JobQueue(missing).claim()
         self.assertFalse(missing.exists())
 
 

@@ -9,7 +9,8 @@ from src.anime.messages import DEFAULT_CATALOG
 from src.anime.diagnostics import exception
 from src.anime.job_contracts import failure_facts
 from src.anime.reasons import get_reason
-from src.anime.storage.job_queue import JobQueue, QueueUnavailable, StorageStatementInvalid
+import sqlite3
+from src.anime.storage.job_queue import JobQueue, StorageStatementInvalid
 from src.anime.storage.sqlite import connect, initialize
 
 
@@ -30,8 +31,6 @@ class StorageStatementErrorTests(unittest.TestCase):
             with self.queue.connection() as db:
                 db.execute('SELECT ?,?', (1,))  # One value for two placeholders.
         error = caught.exception
-        # Same recovery handling as before: still a QueueUnavailable.
-        self.assertIsInstance(error, QueueUnavailable)
         self.assertEqual(error.reason_code, 'STORAGE_STATEMENT_INVALID')
         self.assertEqual(str(error), 'A database statement is invalid (programming error).')
         # The failing execute() line, not the enclosing `with` line.
@@ -50,12 +49,12 @@ class StorageStatementErrorTests(unittest.TestCase):
             with self.queue.connection() as db:
                 db.execute('SELECT ?', (object(),))
 
-    def test_operational_failures_still_report_storage_unavailable(self):
-        with self.assertRaises(QueueUnavailable) as caught:
+    def test_other_database_errors_raise_as_themselves(self):
+        # No catch-all: the real SQLite error, never "storage unavailable".
+        with self.assertRaises(sqlite3.OperationalError) as caught:
             with self.queue.connection() as db:
                 db.execute('SELECT * FROM table_that_does_not_exist')
-        self.assertNotIsInstance(caught.exception, StorageStatementInvalid)
-        self.assertEqual(caught.exception.reason_code, 'STORAGE_UNAVAILABLE')
+        self.assertIn('no such table', str(caught.exception))
 
     def test_log_names_the_statement_error_and_original_cause(self):
         try:

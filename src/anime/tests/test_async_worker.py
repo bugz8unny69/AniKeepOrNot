@@ -134,9 +134,40 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(running,3)
         self.assertEqual([row[0] for row in self.rows()],["DONE","PENDING"])
 
-    async def test_a_storage_error_in_one_attempt_never_stops_the_worker(self):
+    def history(self, reason):
+        db = sqlite3.connect(self.database)
+        try:
+            import json
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT details_json FROM job_history WHERE reason_code=? ORDER BY history_id", (reason,))]
+        finally:
+            db.close()
+
+    async def test_storage_failures_show_why_in_the_job_activity_and_history(self):
+        import errno
+        async def database(context):
+            db = sqlite3.connect(":memory:")
+            db.execute("CREATE TABLE t(x CHECK(x>0))")
+            db.execute("INSERT INTO t VALUES(0)")      # A constraint the data broke.
+        async def staging(context):
+            raise OSError(errno.ENOSPC, "No space left on device", "/mnt/media/Anime-Trial/Show/S01E01.mkv")
+        for handler, reason, cause in ((database, "DATABASE_ERROR", "SQLITE_CONSTRAINT_CHECK"),
+                                       (staging, "STORAGE_UNAVAILABLE", "ENOSPC")):
+            with self.subTest(reason):
+                job = self.enqueue()
+                await self.worker(handler).attempt()
+                db = sqlite3.connect(self.database)
+                state = db.execute("SELECT state,last_reason_code FROM jobs WHERE job_id=?", (job,)).fetchone()
+                db.close()
+                self.assertEqual(state, ("RETRY_WAIT", reason))
+                facts = self.history(reason)[-1]
+                self.assertEqual(facts["storage_error"], cause)
+                self.assertIn("src/anime/tests/test_async_worker.py", facts["failed_check"])
+                if reason == "STORAGE_UNAVAILABLE":
+                    self.assertEqual(facts["failed_path"], "/mnt/media/Anime-Trial/Show/S01E01.mkv")
+
+    async def test_a_database_error_in_one_attempt_never_stops_the_worker(self):
         # Prod 2026-11-22 06:07: one "database is locked" in an attempt exited the worker.
-        from src.anime.storage.job_queue import QueueUnavailable
         done = asyncio.Event()
         async def handler(context):
             done.set()
@@ -147,7 +178,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         async def attempt():
             if not failures:
                 failures.append(1)
-                raise QueueUnavailable()
+                raise sqlite3.OperationalError("disk I/O error")
             return await real()
         worker.attempt = attempt
         running = asyncio.create_task(worker.run())
