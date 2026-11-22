@@ -25,6 +25,18 @@ class StagingBusy(RuntimeError):
     def __init__(self):super().__init__('Another staging attempt is still draining.')
 
 
+def torrent_left_in_place(plan):
+    """A staging plan that never moved the torrent's own file.
+
+    COPY copies the torrent's file. MOVE is allowed only when the source already
+    lives in the staging root: a transcoded output, renamed into place. The
+    download root and staging root are disjoint, so the torrent is untouched.
+    """
+    return (type(plan) is dict and (plan.get('transfer')=='COPY' or (
+        plan.get('transfer')=='MOVE' and type(plan.get('root')) is str
+        and plan.get('source_root')==plan['root'])))
+
+
 def staging_retry_delay_ms(attempt):
     """Wait before retrying an unavailable staging folder: 2, 4, 6... minutes.
 

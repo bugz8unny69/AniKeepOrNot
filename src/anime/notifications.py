@@ -156,6 +156,12 @@ _UNSUPPORTED = {
     'ANIME_LISTS_ENTRY_MISSING': ('Not linked to TVDB yet',
         'AniDB has this anime, but Anime-Lists does not link it to a TVDB series yet, so this release '
         'was canceled. Nothing was downloaded. Once Anime-Lists adds it, new releases work on their own.'),
+    'RELEASE_SPECIAL_UNSUPPORTED': ('Special not supported',
+        'This release is a special (TVDB season 0). Specials are not supported yet, so it was canceled. '
+        'Nothing was downloaded.'),
+    'RELEASE_TYPE_UNSUPPORTED': ('Release type not supported',
+        'This release is not a regular episode or season pack (for example an OVA or a specials pack). '
+        'It is not supported yet, so it was canceled. Nothing was downloaded.'),
 }
 
 

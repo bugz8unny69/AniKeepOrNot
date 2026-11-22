@@ -10,7 +10,14 @@ import re
 from src.anime.acquisition.metadata import BatchInventory, ObservedBatchInventory, safe_path
 
 VIDEO = frozenset(('.mkv', '.mp4', '.m4v', '.avi'))
-_SPECIAL = re.compile(r'(?<![A-Za-z0-9])(?:OVA|OAV|ONA|SPECIALS?|NCOP|NCED|PV|TRAILER|RECAP|EXTRAS?|MOVIE)(?![A-Za-z0-9])', re.I)
+_SPECIAL = re.compile(r'(?<![A-Za-z0-9])(?:OVA|OAV|ONA|SPECIALS?|NCOP|NCED|PV|TRAILER|RECAP|EXTRAS?|MOVIE)(?![A-Za-z0-9])'
+                      # Disc extras: 'Clean Opening', 'Creditless Ending', 'Menu 1', 'Loss Time insert song'.
+                      r'|(?<![A-Za-z0-9])(?:(?:Clean|Creditless|Textless)[ ._-]+(?:Opening|Closing|Ending)'
+                      r'|Menu(?:[ ._-]*\d{1,2})?|Insert[ ._-]+Song)(?![A-Za-z0-9])'
+                      # Opening/ending files: 'OP.mkv', 'NC/ED.mkv', 'S01OP-Daten', 'S01ED-Yofukashi no Uta'.
+                      r'|^(?:S\d{1,2})?(?:NC)?(?:OP|ED)\d{0,2}(?![A-Za-z0-9])', re.I)
+# A folder of creditless openings/endings ('NC/ED.mkv').
+_EXTRA_DIR = re.compile(r'NC|NCOP|NCED|Creditless', re.I)
 # An optional release version ('E01v2', 'E01 v2') belongs to the episode tag.
 _SE = re.compile(r'(?<![A-Za-z0-9])S(?P<season>\d{1,2})[ ._-]*E(?P<ep>\d{1,4})(?:\s?v\d{1,2})?(?![A-Za-z0-9])', re.I)
 _X = re.compile(r'(?<![A-Za-z0-9])(?P<season>\d{1,2})x(?P<ep>\d{1,4})(?:v\d{1,2})?(?![A-Za-z0-9])', re.I)
@@ -27,7 +34,8 @@ _ORDINARY = (re.compile(r'(?<![A-Za-z0-9])(?:Episode|EP|E)[ ._-]*(?P<ep>\d{1,4})
 # A range starts at an episode number, not inside a season tag ('S2 - 10').
 _RANGE = re.compile(r'(?:(?<![A-Za-z0-9.])|(?<=E)|(?<=EP))\d{1,4}\s*(?:-|~|\+|&|,|to)\s*(?:E(?:P)?\s*)?\d{1,4}(?!\d)', re.I)
 # Right after an explicit S01E01: '-E02', ' & E02', '-02'. Not ' - 0 + 2 = 1' (an episode title).
-_RANGE_AFTER = re.compile(r'(?:\s*(?:-|~|\+|&|,|to)\s*E(?:P)?\s*\d{1,4}|[-~]\d{1,4})(?!\d)', re.I)
+# Not an ordinal episode title right after the tag ('S01E01-1st Night Night Flight').
+_RANGE_AFTER = re.compile(r'(?:\s*(?:-|~|\+|&|,|to)\s*E(?:P)?\s*\d{1,4}|[-~]\d{1,4})(?!\d)(?!st|nd|rd|th)', re.I)
 # Bracketed CRC32 checksum, e.g. [E02FF655]. Its letters and digits are not episode numbers.
 _CRC = re.compile(r'[\[(][0-9A-F]{8}[\])]', re.I)
 # Half episodes such as recaps: 'Show - 20.5', 'E20.5'.
@@ -59,7 +67,8 @@ def _episode(path, season):
     folder_seasons = [int(m.group(1)) for d in dirs if (m := _SEASON_DIR.fullmatch(d))]
     seasons = {int(m.group('season') or m.group('word') or m.group('ordinal')) for m in _SEASON.finditer(stem)}
     seasons.update(folder_seasons)
-    special = bool(_SPECIAL.search(stem) or any(_SPECIAL.fullmatch(d) for d in dirs) or 0 in seasons
+    special = bool(_SPECIAL.search(stem) or any(_SPECIAL.fullmatch(d) or _EXTRA_DIR.fullmatch(d) for d in dirs)
+                   or 0 in seasons
                    or (_HALF.search(stem) and not _SE.search(stem)))
     if special:
         # A regular-episode declaration and a special label in one video are
