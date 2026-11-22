@@ -315,7 +315,7 @@ def close_skipped_release(db,claim,now,reason='RELEASE_MOVIE_SKIPPED'):
         return request_automatic_cleanup(db,claim)
     # The job keeps its skip reason; the operation records a finished cancel.
     db.execute("UPDATE job_operations SET state='CANCELED',cleanup_state='COMPLETE',"
-               "reason_code='CANCELLATION_COMPLETE',updated_at_ms=? WHERE operation_id=?",(now,op[0]))
+               "reason_code='CANCELLATION_COMPLETE',updated_at_ms=max(?,created_at_ms) WHERE operation_id=?",(now,op[0]))
     return ()
 
 

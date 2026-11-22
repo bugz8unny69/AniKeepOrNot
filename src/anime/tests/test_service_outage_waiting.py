@@ -202,9 +202,10 @@ class GiveUpTests(Base):
             self.assertEqual(self.state(job), ('RETRY_WAIT', 'SERVICE_UNAVAILABLE'), hours)
         self.clock.now = 10_000_000 + 72 * HOUR
         self.wait_once()
-        self.assertEqual(self.state(job), ('NEEDS_REVIEW', 'SERVICE_UNAVAILABLE'))
+        # Review policy: a torrent step that gave up on a service is canceled with a notification.
+        self.assertEqual(self.state(job), ('CANCELED', 'SERVICE_UNAVAILABLE'))
         details = json.loads(self.rows("SELECT details_json FROM job_history WHERE job_id=? "
-                                       "AND event_code='NEEDS_REVIEW'", (job,))[0][0])
+                                       "AND event_code='CANCELED'", (job,))[0][0])
         self.assertEqual(details['waiting_since_ms'], 10_000_000)
 
     async def test_a_manual_retry_starts_a_new_waiting_period(self):

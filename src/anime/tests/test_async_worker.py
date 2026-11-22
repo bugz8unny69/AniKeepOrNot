@@ -62,7 +62,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await worker.attempt())
         self.assertTrue(await worker.attempt())
         self.assertEqual(calls,[first])
-        self.assertEqual(self.rows(),[("DONE",1,None),("NEEDS_REVIEW",1,"UNSUPPORTED_JOB_KIND")])
+        self.assertEqual(self.rows(),[("DONE",1,None),("CANCELED",1,"UNSUPPORTED_JOB_KIND")])
 
     async def test_current_configuration_per_attempt_and_no_whole_anime_serialization(self):
         release, first_started, second_started = asyncio.Event(),asyncio.Event(),asyncio.Event()
@@ -283,7 +283,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.enqueue()
             worker = self.worker(async_handler if mode == "async" else thread_handler,mode)
             self.assertTrue(await asyncio.wait_for(worker.attempt(),2))
-        self.assertEqual([row[2] for row in self.rows()],["JOB_RETRY_EXHAUSTED"]*2)
+        self.assertEqual([row[2] for row in self.rows()],["JOB_HANDLER_FAILED"]*2)
 
     async def test_embedded_attempts_share_limit_and_close_drains_them(self):
         entered, release = asyncio.Event(),asyncio.Event()
@@ -328,7 +328,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
             db.close()
         worker = self.worker(handler)
         await worker.attempt()
-        self.assertEqual(self.rows(),[("NEEDS_REVIEW",1,"JOB_PAYLOAD_INVALID")])
+        self.assertEqual(self.rows(),[("CANCELED",1,"JOB_PAYLOAD_INVALID")])
 
 
     async def test_unsafe_live_destination_and_pinned_database_prevent_claim(self):
@@ -367,16 +367,17 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
             db.close()
         # Attempt 2: exhausts retries
         self.assertTrue(await worker.attempt())
-        self.assertEqual(self.rows()[0][0], "NEEDS_REVIEW")
-        self.assertEqual(self.rows()[0][2], "JOB_RETRY_EXHAUSTED")
+        # Review policy: canceled, and the step's own reason replaces the retry counter.
+        self.assertEqual(self.rows()[0][0], "CANCELED")
+        self.assertEqual(self.rows()[0][2], "JOB_HANDLER_FAILED")
         db = sqlite3.connect(self.database)
         try:
             row = db.execute(
-                "SELECT details_json FROM job_history WHERE event_code='NEEDS_REVIEW' AND reason_code='JOB_RETRY_EXHAUSTED'"
+                "SELECT details_json FROM job_history WHERE event_code='CANCELED' AND reason_code='JOB_HANDLER_FAILED'"
             ).fetchone()
             self.assertIsNotNone(row)
             details = json.loads(row[0])
-            self.assertEqual(details.get("cause_reason_code"), "JOB_HANDLER_FAILED")
+            self.assertNotIn("cause_reason_code", details)
             self.assertIn("failed_check", details)
             self.assertTrue(_CHECK.fullmatch(details["failed_check"]))
         finally:

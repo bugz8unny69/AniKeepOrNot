@@ -394,10 +394,10 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker._recover()
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind=?",(DISCOVER_KIND,)),[('ON_HOLD',)])
 
-    async def test_configuration_review_is_labeled_and_retryable_from_dashboard(self):
+    async def test_configuration_error_retries_and_continues_once_settings_are_fixed(self):
+        # Review policy (2026-11-22): only identification stops in Needs review.
         from src.anime.acquisition.prowlarr_search import SearchConfiguration
         from src.anime.dashboard.presentation import HANDLERS
-        from src.anime.storage.review_retry import capability, request_review_retry
         self.assertEqual(HANDLERS.require(DISCOVER_KIND).code, DISCOVER_KIND)
         self.source(7)
         fake = FakeDiscovery()
@@ -406,15 +406,14 @@ class BackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
         def misconfigured(*args, **kwargs): raise SearchConfiguration()
         fake.backfill = misconfigured
         await worker.attempt()
-        job, attempt = self.rows("SELECT job_id,attempt_count FROM jobs WHERE kind=?",(DISCOVER_KIND,))[0]
+        job = self.rows("SELECT job_id FROM jobs WHERE kind=?",(DISCOVER_KIND,))[0][0]
         self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),
-                         [('NEEDS_REVIEW','SERVICE_SETUP_INVALID')])
-        db = connect(self.database)
-        try: self.assertTrue(capability(db, job)['enabled'])
-        finally: db.close()
-        request_review_retry(self.database, job, expected_attempt=attempt,
-                             expected_reason='SERVICE_SETUP_INVALID')
+                         [('RETRY_WAIT','SERVICE_SETUP_INVALID')])
         del fake.backfill  # settings fixed: the real fake search answers again
+        db = connect(self.database)
+        try:
+            with transaction(db): db.execute("UPDATE jobs SET available_at_ms=0 WHERE job_id=?",(job,))
+        finally: db.close()
         await worker.attempt()
         self.assertEqual(self.rows("SELECT count(*) FROM episode_discovery_results"),[(4,)])
 

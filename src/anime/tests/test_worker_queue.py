@@ -73,13 +73,15 @@ class WorkerQueueTests(unittest.TestCase):
             self.now += 1
         claim = self.started("a"*32)
         self.finish(claim,Outcome("retry","JOB_HANDLER_FAILED"))
-        self.assertEqual(self.state(),("RETRY_WAIT",6))
+        # Five identical waits leave one attempt (quiet polls); the retry is the second.
+        self.assertEqual(self.state(),("RETRY_WAIT",2))
         self.now += 10
         claim = self.started("b"*32)
         self.finish(claim,Outcome("retry","JOB_HANDLER_FAILED"),"b"*32)
-        self.assertEqual(self.state(),("NEEDS_REVIEW",7))
+        # Review policy: out of retries, canceled with the step's own reason.
+        self.assertEqual(self.state(),("CANCELED",3))
         with self.queue.connection() as db:
-            self.assertEqual(db.execute("SELECT last_reason_code FROM jobs").fetchone()[0],"JOB_RETRY_EXHAUSTED")
+            self.assertEqual(db.execute("SELECT last_reason_code FROM jobs").fetchone()[0],"JOB_HANDLER_FAILED")
 
     def test_successor_and_fact_adapter_commit_once_with_completion(self):
         def persist(db,claim,value):
@@ -140,9 +142,9 @@ class WorkerQueueTests(unittest.TestCase):
         self.assertEqual(self.state(),("RETRY_WAIT",1))
         with self.queue.connection() as db:
             self.assertEqual(db.execute("SELECT state,attempt_count,last_reason_code,lease_token FROM jobs WHERE job_id=?",(other,)).fetchone(),
-                             ("NEEDS_REVIEW",0,"JOB_STATE_INVALID",None))
-            self.assertEqual(db.execute("SELECT event_code FROM job_history WHERE job_id=? ORDER BY history_id",(other,)).fetchall(),
-                             [("CREATED",),("NEEDS_REVIEW",)])
+                             ("CANCELED",0,"JOB_STATE_INVALID",None))
+            self.assertEqual(db.execute("SELECT event_code FROM job_history WHERE job_id=? ORDER BY history_id",(other,)).fetchall()[:2],
+                             [("CREATED",),("CANCELED",)])
         with self.assertRaises(LeaseLost): self.finish(claim,Outcome())
 
     def test_producer_rejects_oversized_payload_before_insert(self):
@@ -166,7 +168,7 @@ class WorkerQueueTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM identified_anime").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT count(*) FROM job_history WHERE event_code='HANDLER_COMPLETED'").fetchone()[0],0)
         self.queue.finish(claim,rejected.exception.outcome,spec=spec,invocation="a"*32,registry=registry)
-        self.assertEqual(self.state(),("NEEDS_REVIEW",1))
+        self.assertEqual(self.state(),("CANCELED",1))
         for outcome in (Outcome(),Outcome("retry","JOB_HANDLER_FAILED")):
             with self.assertRaises(ValueError): CompletionRejected(outcome)
 

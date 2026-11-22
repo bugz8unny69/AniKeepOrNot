@@ -297,7 +297,11 @@ def log_history(logger, record):
     level = _LEVELS[reason.severity] if reason else logging.INFO
     # INFO shows lifecycle changes only (JD-1d). Claiming and handler start/end
     # repeat every attempt; a wait repeated on later attempts is a poll.
-    if record.event_code in _QUIET_EVENTS or (record.event_code == "DEFERRED" and (details.get("attempt") or 0) > 1):
+    if record.event_code in _QUIET_EVENTS:
+        # "Job started", "Step started", "Step finished" say nothing a reader
+        # needs (user, 2026-11-22): TRACE only.
+        level = TRACE
+    elif record.event_code == "DEFERRED" and (details.get("attempt") or 0) > 1:
         level = min(level, logging.DEBUG)
     return event(logger, level, record.event_code,
                  reason_code=record.reason_code, component=record.component,

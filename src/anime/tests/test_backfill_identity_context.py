@@ -590,7 +590,8 @@ class BackfillIdentityContextTests(unittest.IsolatedAsyncioTestCase):
             state,reason=db.execute(
                 'SELECT state,last_reason_code FROM jobs WHERE job_id=?',(job,)
             ).fetchone()
-            self.assertEqual((state,reason),('NEEDS_REVIEW','EPISODE_CONTEXT_CONFLICT'))
+            # Review policy: discovery is housekeeping and retries within its budget.
+            self.assertEqual((state,reason),('RETRY_WAIT','EPISODE_CONTEXT_CONFLICT'))
             details=db.execute(
                 "SELECT details_json FROM job_history WHERE job_id=? AND reason_code=?",
                 (job,'EPISODE_CONTEXT_CONFLICT')).fetchone()

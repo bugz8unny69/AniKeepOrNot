@@ -82,9 +82,10 @@ class MovieSkippedTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.rows('SELECT type,title FROM notifications'),
                                  [('RELEASE_UNSUPPORTED', heading + ': ' + release)])
 
-    async def test_other_release_stops_still_review(self):
+    async def test_other_release_stops_are_canceled_not_reviewed(self):
+        # Review policy (2026-11-22): only identification stops in Needs review.
         await self.start('Show S01E05 1080p', 'TV Series', error='RELEASE_EPISODE_MAPPING_MISSING')
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?', self.job), [('NEEDS_REVIEW',)])
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?', self.job), [('CANCELED',)])
 
 
 if __name__ == '__main__':

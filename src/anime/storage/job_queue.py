@@ -12,7 +12,7 @@ import time
 import uuid
 
 from src.anime.cancellation import CancellationRequested
-from src.anime.history import HistoryRecord, append_job_history, integer
+from src.anime.history import HistoryRecord, append_job_history, encode_details, integer
 from src.anime.job_contracts import Outcome, Policy, Successor, parse_payload
 from src.anime.matching import from_json as matching_from_json
 from src.anime.messages import validate_job_activity
@@ -270,6 +270,46 @@ class JobQueue:
         return append_job_history(db,job_id=claim.job_id,event_code=code,reason_code=reason,
                                   component="worker",occurred_at_ms=now,details=details)
 
+    def _repeats_wait(self, db, claim, outcome, now):
+        """A poll that found nothing new leaves no trace (prod 2026-11-22).
+
+        A job waiting on a download is checked every 30 s. Each check used to
+        store four history rows (job started, step started, step finished,
+        waiting) and count as another attempt: 94% of production history.
+        When this check ends in the same wait as the last one, with the same
+        activity, and nothing else was recorded since, the claim and step-start
+        rows of this check are removed, the attempt count goes back, and only
+        the next time is updated. The first wait, and every change, stays in
+        History.
+        """
+        if (outcome.kind != "defer" or outcome.metadata_evidence is not None
+                or getattr(outcome, "search_snapshots", None) or getattr(outcome, "candidate_evidence", None)):
+            return False
+        rows = db.execute(
+            "SELECT history_id,event_code,reason_code,activity_code,json_extract(details_json,'$.attempt'),details_json "
+            "FROM job_history WHERE job_id=? ORDER BY history_id DESC LIMIT 3",
+            (claim.job_id,)).fetchall()
+        if len(rows) != 3 or [r[1] for r in rows[:2]] != ["HANDLER_STARTED", "CLAIMED"] \
+                or any(r[4] != claim.attempt for r in rows[:2]):
+            return False
+        last = rows[2]
+        if last[1] != "DEFERRED" or last[2] != outcome.reason_code or last[3] != outcome.activity_code \
+                or last[4] != claim.attempt - 1:
+            return False
+        before = {k: v for k, v in json.loads(last[5]).items() if k not in ("attempt", "waiting_since_ms")}
+        if before != json.loads(encode_details(outcome.facts or {})):
+            return False   # Same wait, new facts: recorded.
+        if outcome.reason_code == "SERVICE_UNAVAILABLE" and \
+                now - self._service_wait_start(db, claim.job_id, now) >= self.policy.service_give_up_ms:
+            return False   # Giving up on the service is a change: recorded.
+        validate_job_activity("RETRY_WAIT", outcome.activity_code)
+        db.execute("DELETE FROM job_history WHERE history_id IN (?,?)", (rows[0][0], rows[1][0]))
+        db.execute("UPDATE jobs SET state='RETRY_WAIT',available_at_ms=?,attempt_count=?,lease_token=NULL,"
+                   "lease_expires_at_ms=NULL,last_reason_code=?,activity_code=?,updated_at_ms=? WHERE job_id=?",
+                   (now + outcome.delay_ms, claim.attempt - 1, outcome.reason_code,
+                    outcome.activity_code, now, claim.job_id))
+        return True
+
     def finish(self, claim, outcome, *, spec, invocation, registry):
         if type(outcome) is not Outcome:
             raise ValueError("handler must return a typed outcome")
@@ -278,6 +318,8 @@ class JobQueue:
         with self.connection() as db, transaction(db):
             now = self.now()
             self._owns(db,claim,now)
+            if self._repeats_wait(db, claim, outcome, now):
+                return ()
             records = []
             if spec is not None:
                 failed = outcome.kind in ("retry", "blocked")

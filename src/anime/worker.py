@@ -478,7 +478,6 @@ class Worker:
                     outcome = await self._invoke(claim,spec,context)
             self._observe_services(spec, outcome)
             outcome = self._service_wait(spec, outcome)
-            self._log_unfinished(logger, claim, outcome)
             await self._save_services()
             try:
                 records = await self._io(self.queue.finish,claim,outcome,spec=spec,
@@ -503,6 +502,8 @@ class Worker:
                     rej_outcome = replace(rej_outcome, **replacements)
                 records = await self._io(self.queue.finish,claim,rej_outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
+            if records:   # A repeated wait records nothing and logs nothing.
+                self._log_unfinished(logger, claim, outcome)
             for record in records:
                 try:
                     log_history(logger, record)
