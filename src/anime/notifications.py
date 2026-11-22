@@ -32,6 +32,7 @@ EVENT_TYPES = {
     'TRANSCODE_BATCH_DONE': ('open_jobs',),
     'MOVIE_SKIPPED': ('open_job',),
     'RELEASE_UNSUPPORTED': ('open_job',),
+    'JOB_FAILED': ('open_job',),
 }
 
 
@@ -165,9 +166,18 @@ _UNSUPPORTED = {
 }
 
 
+def _canceled_automatically(reason):
+    """Heading and message for a torrent canceled by the review policy."""
+    from src.anime.reasons import get_reason
+    known = get_reason(reason)
+    why = known.description if known is not None else 'A step could not use this torrent.'
+    return ('Canceled', f'{why} Canceled automatically: anything this app downloaded for it is removed, '
+            'and the next torrent for this episode is tried.')
+
+
 def release_unsupported(db, claim, reason, now=None):
-    """A release identification cannot support was canceled (not on AniDB, or not in Anime-Lists)."""
-    heading, message = _UNSUPPORTED[reason]
+    """A torrent that was canceled: unsupported, or one a step could not use."""
+    heading, message = _UNSUPPORTED.get(reason) or _canceled_automatically(reason)
     row = db.execute("SELECT e.raw_body FROM jobs j JOIN incoming_events e ON e.event_id=j.event_id "
                      "WHERE j.job_id=?", (claim.job_id,)).fetchone()
     release = None
@@ -180,6 +190,32 @@ def release_unsupported(db, claim, reason, now=None):
     notify(db, {'type': 'RELEASE_UNSUPPORTED',
                 'title': (f'{heading}: {release}' if release else heading)[:120],
                 'message': message, 'anidb_id': None, 'job_id': claim.job_id,
+                'release_name': release[:1024] if release else None}, now=now)
+
+
+def job_failed(db, claim, reason, now=None):
+    """A housekeeping job that could not finish within its retries: a program bug, shown, not retried forever."""
+    from src.anime.reasons import get_reason
+    import json
+    row = db.execute("SELECT e.raw_body FROM jobs j LEFT JOIN incoming_events e ON e.event_id=j.event_id "
+                     "WHERE j.job_id=?", (claim.job_id,)).fetchone()
+    try:
+        release = json.loads(row[0]).get('release_name') if row and row[0] else None
+    except (ValueError, TypeError, AttributeError):
+        release = None
+    release = release if isinstance(release, str) and release.strip() else None
+    check = db.execute("SELECT json_extract(details_json,'$.failed_check') FROM job_history WHERE job_id=? "
+                       "AND json_extract(details_json,'$.failed_check') IS NOT NULL ORDER BY history_id DESC LIMIT 1",
+                       (claim.job_id,)).fetchone()
+    known = get_reason(reason)
+    why = known.description if known is not None else 'The step stopped without a known reason.'
+    where = f' It stopped at {check[0]}.' if check and check[0] else ''
+    step = claim.kind.replace('_', ' ').lower()
+    notify(db, {'type': 'JOB_FAILED',
+                'title': (f'Could not finish {step}: {release}' if release else f'Could not finish {step}')[:120],
+                'message': (f'{why}{where} It was retried and still failed, so it stopped as failed: '
+                            'this is a program bug to report, not something to fix by hand.')[:1024],
+                'anidb_id': None, 'job_id': claim.job_id,
                 'release_name': release[:1024] if release else None}, now=now)
 
 

@@ -67,7 +67,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'transcode_media',  # v72 records transcode attempts/results
             'transcode_batches',  # v73 adds staged batches
             None,  # v74 rebuilds notifications to allow MOVIE_SKIPPED
-            None)  # v75 rebuilds notifications to allow RELEASE_UNSUPPORTED
+            None,  # v75 rebuilds notifications to allow RELEASE_UNSUPPORTED
+            None)  # v76 rebuilds notifications to allow JOB_FAILED
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

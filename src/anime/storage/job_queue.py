@@ -180,6 +180,29 @@ class JobQueue:
             (job_id, job_id)).fetchone()
         return row[0] if row and row[0] is not None else now
 
+    def _route_review(self, db, claim, details, reason, now):
+        """Only identification stops in Needs review; see storage/review_policy.py."""
+        from src.anime.storage import review_policy
+        route = review_policy.route(claim.kind)
+        if route == "review":
+            return "NEEDS_REVIEW", "NEEDS_REVIEW", now, None, reason
+        # Retries exhausted: the step's own reason is the why, not the counter.
+        if reason == "JOB_RETRY_EXHAUSTED" and details.get("cause_reason_code"):
+            reason = details.pop("cause_reason_code")
+        if route == "retry":
+            failures = db.execute(
+                "SELECT count(*) FROM job_history WHERE job_id=? AND event_code='RETRY_SCHEDULED' "
+                "AND history_id>COALESCE((SELECT max(history_id) FROM job_history "
+                "WHERE job_id=? AND event_code='RETRY_REQUESTED'),0)",
+                (claim.job_id, claim.job_id)).fetchone()[0]
+            if failures < self.policy.max_retries:
+                delay = min(self.policy.max_backoff_ms, self.policy.backoff_ms * 2**min(failures, 30))
+                return "RETRY_WAIT", "RETRY_SCHEDULED", now + delay, None, reason
+            # Still not done after its retries: a program bug. Never retried
+            # forever, never left in review: failed, with a notification.
+            return "FAILED", "FAILED", now, None, reason
+        return "CANCELED", "CANCELED", now, None, reason
+
     def _transition(self, db, claim, outcome, now):
         details = {"attempt":claim.attempt,**(outcome.facts or {})}
         if outcome.metadata_evidence is not None:
@@ -238,6 +261,8 @@ class JobQueue:
         else:
             state = {"hold":"ON_HOLD","review":"NEEDS_REVIEW","blocked":"BLOCKED","cancel":"CANCELED","fail":"FAILED"}[outcome.kind]
             code, available = state, now
+        if state == "NEEDS_REVIEW":
+            state, code, available, activity, reason = self._route_review(db, claim, details, reason, now)
         validate_job_activity(state,activity)
         db.execute("UPDATE jobs SET state=?,available_at_ms=?,lease_token=NULL,lease_expires_at_ms=NULL,"
                    "last_reason_code=?,activity_code=?,updated_at_ms=? WHERE job_id=?",
@@ -308,8 +333,14 @@ class JobQueue:
                 job_needs_review(db,claim,now)
             ended=db.execute('SELECT state,last_reason_code FROM jobs WHERE job_id=?',(claim.job_id,)).fetchone()
             from src.anime.storage.release_candidates import SKIPPED_REASONS,close_skipped_release
-            if ended[0]=='CANCELED' and ended[1] in SKIPPED_REASONS:
+            # A torrent the job could not use is canceled automatically (review
+            # policy) exactly like a skipped one: notify, then clean up what it owns.
+            if ended[0]=='CANCELED' and (ended[1] in SKIPPED_REASONS or outcome.kind!='cancel'):
                 records.extend(close_skipped_release(db,claim,now,ended[1]))
+            if ended[0]=='FAILED' and outcome.kind!='fail':
+                # Housekeeping that ran out of retries (review policy): show it as a bug.
+                from src.anime.notifications import job_failed
+                job_failed(db,claim,ended[1],now)
             # Failed Sonarr candidates use the existing cancellation worker,
             # never the user-facing Cancel button. Non-Sonarr jobs are untouched.
             if db.execute('SELECT state FROM jobs WHERE job_id=?',

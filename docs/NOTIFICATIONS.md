@@ -30,6 +30,7 @@ and **Mark read**. The panel closes on an outside click or Esc.
 | `KEEP_SEARCH_FAILED` | Keep's one missing-episode search did not start. | Open job |
 | `MOVIE_SKIPPED` | A movie release was canceled because movies are not supported yet (AniDB type Movie, or a movie title with no season or episode). Nothing was downloaded. | Open job |
 | `RELEASE_UNSUPPORTED` | A release was canceled because identification cannot support it: AniDB has no entry for its title (`ANIDB_ENTRY_MISSING`), or AniDB has it but Anime-Lists does not link it to TVDB yet (`ANIME_LISTS_ENTRY_MISSING`). Nothing was downloaded. A tie between AniDB entries still stops for review. | Open job |
+| `JOB_FAILED` | A cleanup, Keep, Reject, refresh or search job still failed after its retries. That is a program bug: it is shown as failed with the check that stopped it, never left in Needs review or retried forever. | Open job |
 
 ## API
 
