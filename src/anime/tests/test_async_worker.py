@@ -134,6 +134,32 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(running,3)
         self.assertEqual([row[0] for row in self.rows()],["DONE","PENDING"])
 
+    async def test_a_storage_error_in_one_attempt_never_stops_the_worker(self):
+        # Prod 2026-11-22 06:07: one "database is locked" in an attempt exited the worker.
+        from src.anime.storage.job_queue import QueueUnavailable
+        done = asyncio.Event()
+        async def handler(context):
+            done.set()
+            return Outcome()
+        self.enqueue()
+        worker = self.worker(handler)
+        real, failures = worker.attempt, []
+        async def attempt():
+            if not failures:
+                failures.append(1)
+                raise QueueUnavailable()
+            return await real()
+        worker.attempt = attempt
+        running = asyncio.create_task(worker.run())
+        try:
+            await asyncio.wait_for(done.wait(), 3)
+            self.assertFalse(running.done())
+        finally:
+            worker.stop()
+            await asyncio.wait_for(running, 3)
+        self.assertEqual(failures, [1])
+        self.assertEqual(self.rows()[0][0], "DONE")
+
     async def test_maintenance_and_readiness_block_new_claims(self):
         async def handler(context):
             return Outcome()

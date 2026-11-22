@@ -209,11 +209,13 @@ def _publish(queue, batch, index, item, temporary, target, folder, stop):
                 raise TranscodeFailed('Published result is missing or changed')
         output['file'] = list(signature(target.stat()))
         _catalog(db, item, output)
-        if target != source:
-            if source.exists() and list(signature(source.stat()))[2:4] == item['file'][2:4]: source.unlink()
         files = json.loads(db.execute('SELECT progress_json FROM transcode_batches WHERE batch_id=?', (batch,)).fetchone()[0])
         files[index].update(state='done', result=output)
         _save(db, batch, files)
+    # The catalog now names the new file; nothing uses the original. Deleting a
+    # large file on the staging share takes seconds, so never under the write lock.
+    if target != source:
+        if source.exists() and list(signature(source.stat()))[2:4] == item['file'][2:4]: source.unlink()
 
 
 def _intake_waiting(queue):

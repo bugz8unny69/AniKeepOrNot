@@ -150,14 +150,13 @@ def _open(database, *, readonly, timeout_ms=0):
     path = Path(database).absolute()
     if not stat.S_ISREG(path.lstat().st_mode):
         raise MigrationSchemaInvalid()
+    from src.anime.storage.adapter import BUSY_TIMEOUT_MS, configure
+    # Maintenance opens with 0 to fail fast; runtime callers wait like everyone else.
+    wait_ms = 0 if timeout_ms == 0 else max(timeout_ms, BUSY_TIMEOUT_MS)
     db = sqlite3.connect(path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
-                         uri=True, timeout=timeout_ms/1000)
+                         uri=True, timeout=wait_ms/1000)
     try:
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute(f"PRAGMA busy_timeout={timeout_ms}")
-        if not readonly:
-            db.execute("PRAGMA synchronous=FULL")
-        return db
+        return configure(db, readonly=readonly, busy_timeout_ms=wait_ms)
     except BaseException:
         db.close()
         raise

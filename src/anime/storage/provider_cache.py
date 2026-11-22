@@ -30,7 +30,6 @@ class ProviderStore:
         db = None
         try:
             db = _open(self.database,readonly=False,timeout_ms=5000)
-            db.execute("PRAGMA busy_timeout=5000")
             if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
                 raise QueueUnavailable()
             yield db
