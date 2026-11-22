@@ -297,7 +297,8 @@ def auto_cleanup_metadata_timeout(db,claim):
 
 # Releases canceled with a notification instead of review: movies, and
 # releases with no AniDB entry or no Anime-Lists TVDB link.
-SKIPPED_REASONS=frozenset(('RELEASE_MOVIE_SKIPPED','ANIDB_ENTRY_MISSING','ANIME_LISTS_ENTRY_MISSING'))
+SKIPPED_REASONS=frozenset(('RELEASE_MOVIE_SKIPPED','ANIDB_ENTRY_MISSING','ANIME_LISTS_ENTRY_MISSING',
+                           'RELEASE_SPECIAL_UNSUPPORTED','RELEASE_TYPE_UNSUPPORTED'))
 
 
 def close_skipped_release(db,claim,now,reason='RELEASE_MOVIE_SKIPPED'):

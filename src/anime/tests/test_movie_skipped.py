@@ -11,7 +11,7 @@ from src.anime.worker import Worker
 
 
 class MovieSkippedTests(unittest.IsolatedAsyncioTestCase):
-    async def start(self, release, anime_type):
+    async def start(self, release, anime_type, error=None):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
@@ -29,6 +29,9 @@ class MovieSkippedTests(unittest.IsolatedAsyncioTestCase):
         self.verified = []
         async def verify(source, *args, **kwargs):
             self.verified.append(source)
+            if error is not None:
+                from src.anime.release_contracts import ReleaseNotReady
+                raise ReleaseNotReady(error)
             raise AssertionError('a movie must not be verified')
         self.worker = Worker(store, startup, Registry((registration(verify),)), policy=Policy(lease_ms=30000))
         self.addAsyncCleanup(self.worker.close)
@@ -60,6 +63,28 @@ class MovieSkippedTests(unittest.IsolatedAsyncioTestCase):
         await self.start('[Group] Shiki S01 + Movie [BD 1080p] [Dual Audio]', 'TV Series')
         self.assertEqual(len(self.verified), 1)
         self.assertEqual(self.rows('SELECT count(*) FROM notifications'), [(0,)])
+
+
+    async def test_specials_and_ova_releases_are_canceled_with_a_notification(self):
+        # Prod 709-714, 934 (My Happy Marriage S00E02-E04), 10003 (Vampire Princess Miyu OVA).
+        for release, reason, heading in (
+                ('My Happy Marriage S00E02 Special Part 1 1080p NF WEB-DL', 'RELEASE_SPECIAL_UNSUPPORTED',
+                 'Special not supported'),
+                ('[RUBaDUB] Vampire Princess Miyu (OVA) (Complete) (1080p)', 'RELEASE_TYPE_UNSUPPORTED',
+                 'Release type not supported')):
+            with self.subTest(reason):
+                await self.start(release, 'TV Series', error=reason)
+                self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs WHERE job_id=?', self.job),
+                                 [('CANCELED', reason)])
+                self.assertEqual(self.rows('SELECT o.state,o.cleanup_state FROM job_operations o JOIN '
+                                           'job_operation_members m USING(operation_id) WHERE m.job_id=?', self.job),
+                                 [('CANCELED', 'COMPLETE')])
+                self.assertEqual(self.rows('SELECT type,title FROM notifications'),
+                                 [('RELEASE_UNSUPPORTED', heading + ': ' + release)])
+
+    async def test_other_release_stops_still_review(self):
+        await self.start('Show S01E05 1080p', 'TV Series', error='RELEASE_EPISODE_MAPPING_MISSING')
+        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?', self.job), [('NEEDS_REVIEW',)])
 
 
 if __name__ == '__main__':

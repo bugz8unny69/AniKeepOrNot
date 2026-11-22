@@ -33,7 +33,8 @@ def staged_keep(manifest, receipts, data, plan_id, *, copy_only=False):
                 or media[0]['file']!=data['source_file']
                 or media[0]['root']!=data['source_parent']):
             raise KeepReview()
-        if copy_only and plan.get('transfer')!='COPY':
+        from src.anime.staging import torrent_left_in_place
+        if copy_only and not torrent_left_in_place(plan):
             raise KeepReview()
         return selection
     except (KeyError,TypeError,ValueError,IndexError):

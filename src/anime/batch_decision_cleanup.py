@@ -39,7 +39,8 @@ def protected_staging_roots(publications):
     try:
         for row in publications:
             plan=json.loads(row[2])
-            if (plan.get('transfer')!='COPY'
+            from src.anime.staging import torrent_left_in_place
+            if (not torrent_left_in_place(plan)
                     or type(plan.get('root')) is not str):
                 raise CancellationError('STAGING_TRANSFER_INVALID')
             roots.add(plan['root'])

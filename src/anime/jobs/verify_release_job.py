@@ -33,6 +33,9 @@ class ReleaseCompletion:
     verification_job_id: int
 
 
+UNSUPPORTED_RELEASES=frozenset(('RELEASE_SPECIAL_UNSUPPORTED','RELEASE_TYPE_UNSUPPORTED'))
+
+
 def movie_release(database,source):
     """True for a movie: AniDB calls the work a Movie, or the title says movie
     without naming a season or episode (a "S01 + Movie" pack is not one)."""
@@ -119,7 +122,13 @@ def registration(verify, *, user_evaluation_kind=None, batch_kind=None):
         except ProviderAuthenticationFailed as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         except SizeLimitExceeded as exc: return Outcome("fail", exc.reason_code, facts=exc.facts)
         except MediaInvalid as exc: return Outcome("fail" if exc.reason_code == 'MEDIA_AUDIO_REQUIRED' else "review", exc.reason_code, facts=failure_facts(exc))
-        except (ReleaseNotReady,ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
+        except ReleaseNotReady as exc:
+            if exc.reason_code in UNSUPPORTED_RELEASES:
+                # Specials (TVDB season 0) and OVA-only releases are not supported:
+                # notify and cancel, never review. Nothing was downloaded.
+                return Outcome("cancel",exc.reason_code,facts=failure_facts(exc))
+            return Outcome("review",exc.reason_code, facts=failure_facts(exc))
+        except (ReleaseConflict,MetadataInvalid,SourceMissing) as exc: return Outcome("review",exc.reason_code, facts=failure_facts(exc))
         # A season pack whose files cannot be told apart stops once, naming the
         # file check, instead of being retried as an unexpected failure.
         except BatchPlanningError as exc: return Outcome("review","SEASON_PACK_FILES_UNCLEAR", facts=failure_facts(exc))

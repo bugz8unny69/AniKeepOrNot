@@ -116,6 +116,27 @@ class ReleaseFileNameTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(BatchPlanningError):
                 self.episode(name, 1)
 
+    def test_disc_extras_are_set_aside(self):   # Call of the Night: RUBaDUB, Anime Time, TTGA
+        for name in ('[RUBaDUB][1080p] Call of the Night - S01 Clean Closing [BD x265 10bit AC3][416D9C8E].mkv',
+                     '[RUBaDUB][1080p] Call of the Night - S01 Clean Opening [BD x265 10bit AC3][751CB56D].mkv',
+                     '[RUBaDUB][1080p] Call of the Night - S01 Menu 2 [BD x265 10bit AC3][9D6EAAFD].mkv',
+                     '[RUBaDUB][1080p] Call of the Night - S01 Loss Time insert song [BD x265 10bit SUB AC3][B452145A].mkv',
+                     'NC/ED.mkv', 'NC/OP.mkv', 'OP.mkv', 'S01OP-Daten [Creepy Nuts].mkv',
+                     'S01ED-Yofukashi no Uta [Creepy Nuts].mkv'):
+            with self.subTest(name=name):
+                self.assertIsNone(self.episode(name, 1))
+        self.assertEqual(self.episode('[RUBaDUB][1080p] Call of the Night - S01 E05 [BD x265 10bit Dual Audio AC3][79AD46BB].mkv', 1), 5)
+        # A labeled extra that also declares a regular episode is still a conflict.
+        with self.assertRaises(BatchPlanningError):
+            self.episode('Show S01E05 Clean Opening.mkv', 1)
+
+    def test_ordinal_episode_title_after_the_tag_is_not_a_range(self):   # EMBER, TTGA Call of the Night
+        self.assertEqual(self.episode('S01E01-1st Night Night Flight [170B4E00].mkv', 1), 1)
+        self.assertEqual(self.episode('S01E12-12th Night My Mom\'s Out Tonight [F06097E6].mkv', 1), 12)
+        self.assertEqual(self.episode('S01E03-3rd Night A Lot Came Out.mkv', 1), 3)
+        with self.assertRaises(BatchPlanningError):
+            self.episode('Show S01E01-02.mkv', 1)
+
     def test_sidecar_audio_and_subtitle_tracks_are_allowed(self):   # 782, 844
         from src.anime.acquisition.metadata import MetadataInvalid
         files = inventory('Pack/Show - S01E01.mkv', 'Pack/Show - S01E01.mka', 'Pack/Show - S01E01.mks')

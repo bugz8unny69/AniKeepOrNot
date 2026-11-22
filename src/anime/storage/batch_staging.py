@@ -172,7 +172,8 @@ def persist_batch_stage(db,claim,value):
     if row is None or row[:2]!=(claim.job_id,verification) or row[3]!='PLANNED':
         raise StagingReview()
     plan=json.loads(row[2])
-    if plan.get('transfer')!='COPY':raise StagingReview()
+    from src.anime.staging import torrent_left_in_place
+    if not torrent_left_in_place(plan):raise StagingReview()
     receipts=value['receipts']
     if type(receipts) is not list or len(receipts)!=len(plan['entries']):
         raise StagingReview()

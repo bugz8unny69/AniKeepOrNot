@@ -10,7 +10,7 @@ import json
 from src.anime.history import integer
 from src.anime.keep_selection import KeepSelection
 from src.anime.sonarr import KeepReview, Options
-from src.anime.staging import disjoint
+from src.anime.staging import disjoint, torrent_left_in_place
 from src.anime.storage.cancellation import operation
 from src.anime.storage.job_queue import JobQueue
 from src.anime.storage.review_decisions import require_allowed
@@ -96,7 +96,7 @@ class BatchKeepJournal:
                 checked=[e for e in receipts if e['role']=='media']
                 if (len(media)!=1 or len(checked)!=1
                         or media[0]['path']!=checked[0]['path']
-                        or recorded.get('transfer')!='COPY'):
+                        or not torrent_left_in_place(recorded)):
                     raise KeepReview(failed_check=here('MEDIA_RECEIPT_INVALID'))
                 identity=tuple(row[4:10])
                 selection=KeepSelection(
