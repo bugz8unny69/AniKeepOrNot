@@ -179,3 +179,25 @@ Add --apply to back up the database, cancel, and send them again. Only release
 checks stopped for an episode-mapping reason are touched; anything else is
 reported and left alone. A second --apply does nothing. If a cancel is still
 cleaning up, the job shows cancel_pending: rerun --apply later.
+
+## Start downloads stuck on "Waiting to confirm the download started"
+
+Before the start-not-sent fix, a download or unlock job could record "start
+sent" and then give up before sending it, when a re-read of the torrent raced
+a state change. An uncertain start is never sent again, so the job waited
+forever on a paused torrent (for example UNLOCK_BATCH at thousands of attempts,
+torrent paused in qBittorrent). This puts each given job's transfer back to
+"selected" only when its history proves the start was not sent; the job's next
+attempt then sends the start once. Nothing is sent to qBittorrent by the script.
+
+Preview (read-only, services may be running):
+
+```sh
+sudo -u anime-discovery /opt/anime-discovery/current/.venv/bin/python \
+  /opt/anime-discovery/current/fixes/rearm_unsent_starts.py \
+  --config-dir /etc/anime-discovery/branches/develop 8766 9106 10121 10376
+```
+
+Add --apply to back up the database and re-arm them. A start that may have been
+sent is reported as start_may_have_been_sent and left alone. A second --apply
+does nothing.

@@ -80,6 +80,10 @@ class BatchUnlockJournal:
     def __init__(self,database,*,clock=None):
         self.queue=JobQueue(database,clock=clock)
 
+    def start_not_sent(self,claim,plan_id):
+        from src.anime.storage.start_not_sent import start_not_sent
+        return start_not_sent(self.queue,claim,'batch_torrent_unlocks',plan_id)
+
     def _current(self,db,claim,reservation_job_id,inventory):
         self.queue._owns(db,claim,self.queue.now())
         if claim.kind!='UNLOCK_BATCH':raise AcquisitionConflict()

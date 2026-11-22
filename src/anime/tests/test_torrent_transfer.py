@@ -4,7 +4,7 @@ from dataclasses import replace
 import unittest
 
 from src.anime.acquisition.submission import Observation, ClientUnavailable
-from src.anime.acquisition.transfers import TransferSnapshot, verify_snapshot, exact_selection
+from src.anime.acquisition.transfers import TransferSnapshot, SnapshotChanged, verify_snapshot, exact_selection
 from src.anime.job_contracts import Policy, Registry
 from src.anime.jobs.select_user_evaluation_job import registration as evaluate
 from src.anime.jobs.reserve_episode_job import registration as reserve
@@ -28,7 +28,7 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
     def worker(self,*,mode='normal',journal_factory=TransferJournal,verification=None,additional=()):
         test=self
         self.adds=self.starts=0
-        self.selection_calls=[];self.targets=[];self.snapshot=None
+        self.selection_calls=[];self.targets=[];self.snapshot=None;self.raced=False
         class FakeClient:
             major=5
             def __init__(self,options,credentials):test.targets.append(options)
@@ -53,6 +53,8 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
                                  for i,p in enumerate(test.snapshot.priorities))
                 test.snapshot=replace(test.snapshot,priorities=priorities)
             def start_selected(self,intent,fingerprint,permit):
+                if mode=='start_snapshot_changed' and not test.raced:
+                    test.raced=True;raise SnapshotChanged()  # Re-read raced a state change: nothing sent.
                 verify_snapshot(intent,test.snapshot)
                 if not exact_selection(intent,test.snapshot):raise ValueError('wrong selection')
                 permit.take(fingerprint,'start');test.starts+=1
@@ -120,6 +122,14 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):self.due();await worker.attempt()
         self.assertEqual(self.starts,1)
         self.assertEqual(self.rows('SELECT phase FROM torrent_transfers'),[('START_UNCERTAIN',)])
+
+    async def test_start_given_up_before_sending_is_started_by_the_next_attempt(self):
+        worker=self.worker(mode='start_snapshot_changed');await self.queued(worker);await worker.attempt()
+        self.assertEqual(self.starts,0)
+        self.assertEqual(self.rows('SELECT phase,start_job_id FROM torrent_transfers'),[('SELECTED',None)])
+        self.due();await worker.attempt()
+        self.assertEqual(self.starts,1)
+        self.assertEqual(self.rows('SELECT phase FROM torrent_transfers'),[('ACTIVE',)])
 
     async def test_start_timeout_after_acceptance_reconciles_without_another_start(self):
         worker=self.worker(mode='start_timeout_present');await self.queued(worker);await worker.attempt()

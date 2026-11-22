@@ -53,6 +53,10 @@ class BatchTransferJournal:
     def __init__(self,database,*,clock=None):
         self.queue=JobQueue(database,clock=clock)
 
+    def start_not_sent(self,claim,plan_id):
+        from src.anime.storage.start_not_sent import start_not_sent
+        return start_not_sent(self.queue,claim,'batch_torrent_transfers',plan_id)
+
     def _fence(self,db,claim,submission_job_id):
         self.queue._owns(db,claim,self.queue.now())
         if claim.kind!='TRANSFER_BATCH':raise AcquisitionConflict()

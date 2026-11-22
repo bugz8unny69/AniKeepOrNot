@@ -156,13 +156,19 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
                     journal.start,context.claim,intent,snapshot,reservation)
                 log(receipts)
                 if permit is not None:
-                    if context.cancelled.is_set():return wait('TORRENT_START_UNCERTAIN')
-                    await blocking(
-                        journal.guard,context.claim,intent,record,'start',reservation)
-                    try:await blocking(
-                        client.start_audio_verified_batch,intent,record.intent,permit)
-                    except (ClientUnavailable,ClientInvalid,ClientAuthenticationFailed):
-                        return wait('TORRENT_START_UNCERTAIN')
+                    try:
+                        if context.cancelled.is_set():return wait('TORRENT_START_UNCERTAIN')
+                        await blocking(
+                            journal.guard,context.claim,intent,record,'start',reservation)
+                        try:await blocking(
+                            client.start_audio_verified_batch,intent,record.intent,permit)
+                        except (ClientUnavailable,ClientInvalid,ClientAuthenticationFailed):
+                            return wait('TORRENT_START_UNCERTAIN')
+                    finally:
+                        # Never sent: undo START_UNCERTAIN so the next attempt starts it.
+                        if permit.unused('start'):
+                            await blocking(journal.start_not_sent,context.claim,
+                                           intent.candidate.plan_id)
             snapshot=await blocking(client.inspect_transfer,digest)
             record,receipts=await blocking(
                 journal.observe,context.claim,intent,snapshot,reservation,
