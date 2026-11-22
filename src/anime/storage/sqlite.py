@@ -955,10 +955,9 @@ CREATE INDEX IF NOT EXISTS resource_operations_by_resource ON resource_operation
 """
 
 def connect(path):
-    db = sqlite3.connect(path, timeout=5)
-    db.execute("PRAGMA foreign_keys=ON")
-    db.execute("PRAGMA busy_timeout=5000")
-    db.execute("PRAGMA synchronous=FULL")
+    from src.anime.storage.adapter import BUSY_TIMEOUT_MS, configure
+    db = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS/1000)
+    configure(db)
     db.execute("PRAGMA journal_mode=WAL")
     return db
 
@@ -981,7 +980,6 @@ def admitted_connection(gate):
             try:
                 if db.execute("PRAGMA user_version").fetchone()[0] != LATEST_VERSION:
                     raise MigrationUnsupported()
-                db.execute("PRAGMA busy_timeout=5000")
                 db.execute("PRAGMA journal_mode=WAL")
             except sqlite3.Error:
                 raise MigrationError() from None
@@ -1016,16 +1014,14 @@ def initialize(db):
 
 @contextmanager
 def transaction(db):
-    """Own one atomic unit; reject nesting rather than committing caller work."""
-    if db.in_transaction:
-        raise ValueError("requires a connection outside an active transaction")
-    db.execute("BEGIN IMMEDIATE")
-    try:
+    """Own one atomic unit; reject nesting rather than committing caller work.
+
+    Writers queue for the write lock through the SQLite adapter instead of
+    failing with "database is locked" (see storage/adapter.py).
+    """
+    from src.anime.storage.adapter import write_transaction
+    with write_transaction(db):
         yield
-        db.commit()
-    except BaseException:
-        db.rollback()
-        raise
 
 
 def _delivery(source, raw_body):

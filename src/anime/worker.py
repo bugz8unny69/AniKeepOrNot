@@ -531,6 +531,15 @@ class Worker:
                 worked = False
             await asyncio.sleep(1)
 
+    async def _storage_unavailable(self, exc):
+        """A database error in one attempt: log it and keep running. Never stop.
+
+        One failed transaction used to stop the whole worker. Job leases and
+        retries already make an interrupted attempt safe; the run loop's poll
+        interval paces the next attempt.
+        """
+        self._log_error(exc)
+
     async def run(self, *, on_ready=None):
         if self._running or self._closed:
             raise RuntimeError("worker cannot be started in its current state")
@@ -540,7 +549,11 @@ class Worker:
             while not self._stop.is_set():
                 worked = False
                 if not self._paused:
-                    await self._recover()
+                    try:
+                        await self._recover()
+                    except QueueUnavailable as exc:
+                        await self._storage_unavailable(exc)
+                        continue
                     if not ready:
                         if self._service_health is not None and self._secrets is not None:
                             await self._check_services_at_startup()
@@ -558,7 +571,10 @@ class Worker:
                                                  return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
                         self._tasks.remove(task)
-                        worked = bool(task.result()) or worked
+                        try:
+                            worked = bool(task.result()) or worked
+                        except QueueUnavailable as exc:
+                            await self._storage_unavailable(exc)
                 if not worked:
                     try:
                         await asyncio.wait_for(self._stop.wait(),timeout=self.policy.poll_ms/1000)
