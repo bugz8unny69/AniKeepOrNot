@@ -178,6 +178,16 @@ class IdentifyAnimeJobTests(unittest.IsolatedAsyncioTestCase):
         # A series that is not found still stops for review.
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE job_id=?",(series,)),[("NEEDS_REVIEW",)])
 
+    async def test_anime_lists_movie_is_skipped_with_a_notification(self):   # e.g. job 9164 Look Back
+        from src.anime.storage.sqlite import AnimeListsMovie
+        _, job = self.enqueue(raw_body=b'{"release_name":"Look Back (2024) (BD 1080p HEVC h265 Dual-Audio EAC3/Opus)"}')
+        async def resolve(*args): raise AnimeListsMovie()
+        worker = self.worker(registration(resolve))
+        await worker.attempt()
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE job_id=?",(job,)),
+                         [("CANCELED","RELEASE_MOVIE_SKIPPED")])
+        self.assertEqual(self.rows("SELECT type,job_id FROM notifications"),[("MOVIE_SKIPPED",job)])
+
     async def test_release_without_anidb_or_anime_lists_entry_is_canceled_with_a_notification(self):
         # Prod: Tom and Jerry Forbidden Compass (not on AniDB), Welsh and Shedar
         # (AniDB 20379, no Anime-Lists entry yet). A tie between entries still reviews.

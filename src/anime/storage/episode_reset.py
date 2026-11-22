@@ -319,7 +319,8 @@ def _replay(db,claim,source,aid,season,number,now):
     document=json.loads(bytes(raw))
     if (document.get('torrent_infohash')!=digest
             or type(document.get('release_name')) is not str
-            or type(document.get('magnet_uri')) is not str
+            # Auto BR delivers only the info hash; the pipeline builds the magnet from it.
+            or ('magnet_uri' in document and type(document['magnet_uri']) is not str)
             or method not in ('torrent','magnet')):
         raise EpisodeResetUnavailable(Review('REPLAY_SOURCE_INVALID'))
     new_event=db.execute(

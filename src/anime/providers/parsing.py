@@ -7,7 +7,8 @@ import unicodedata
 import xml.etree.ElementTree as ET
 
 from src.anime.providers.errors import ProviderInvalidResponse
-from src.anime.storage.sqlite import IdentityConflict, IdentityNotReady
+from src.anime.storage.sqlite import (AnimeListsEntryMissing, AnimeListsMovie,
+                                      IdentityConflict, IdentityNotReady)
 from src.anime.release_names import norm
 
 
@@ -113,6 +114,10 @@ def mapping_id(payload, aid):
     if len(rows)!=1: raise IdentityConflict()
     value = rows[0].get("tvdbid")
     if value in (None,"","0","unknown"): raise IdentityNotReady()
+    # Anime-Lists writes a word instead of an ID for entries with no TVDB series:
+    # "movie", "OVA", "hentai", "web", "tv special", "music video", "other".
+    if value.strip().casefold()=="movie": raise AnimeListsMovie()
+    if not re.fullmatch(r"[0-9]+",value): raise AnimeListsEntryMissing()
     return positive_text(value)
 
 

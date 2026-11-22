@@ -368,8 +368,9 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
             stage = "anime_lists"
             try:
                 tid = client.mapping(aid)
-            except AnimeListsEntryMissing:
-                raise
+            except AnimeListsEntryMissing as exc:
+                # A word, not a TVDB ID ("movie", "OVA", "web"...): no TVDB series.
+                incomplete("anime_lists_entry_missing", type(exc))
             except IdentityNotReady:
                 # AniDB is the root of trust; Anime-Lists is the only TVDB link.
                 incomplete("anime_lists_entry_missing", AnimeListsEntryMissing)
