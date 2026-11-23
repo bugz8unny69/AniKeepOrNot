@@ -195,7 +195,7 @@ class IdentityWorkerConfigurationTests(unittest.IsolatedAsyncioTestCase):
                          (request, "identified", 124))
         db = connect(self.database)
         try:   # Reported, not applied yet: kept for the API, not tried again meanwhile.
-            self.assertEqual(db.execute("SELECT last_reason_code FROM identity_requests").fetchall(), [("REPORTED",)])
+            self.assertEqual(db.execute("SELECT last_reason_code FROM identity_requests WHERE outcome IS NULL").fetchall(), [("REPORTED",)])
         finally: db.close()
 
 

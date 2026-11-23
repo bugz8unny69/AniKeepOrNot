@@ -99,7 +99,7 @@ class WebhookRefusalTests(unittest.IsolatedAsyncioTestCase):
         status, data, _ = await self.request('POST', '/api/v1/webhook', self.release(release_name=NAME), token=WEB)
         self.assertEqual(status, 202)
         self.seed('ACCEPT')
-        status, _, _ = await self.request('POST', '/api/v1/webhook', self.release(release_name='Dandadan - 03'), token=WEB)
+        status, _, _ = await self.request('POST', '/api/v1/webhook', self.release(release_name='Dandadan - 03', torrent_infohash='d' * 40), token=WEB)
         self.assertEqual(status, 202)
         with connect(self.database) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM identity_requests').fetchone()[0], 2)

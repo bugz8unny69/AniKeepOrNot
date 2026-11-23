@@ -46,7 +46,7 @@ class BridgeStoreTests(unittest.TestCase):
         done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'identified',
                                                             'series': SERIES}, LOG)
         self.assertEqual(done, 'identified')
-        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'), [(0,)])
+        self.assertEqual(self.rows('SELECT outcome,last_reason_code FROM identity_requests'), [('accepted', None)])
         self.assertEqual(self.rows('SELECT state FROM incoming_events'), [('IDENTIFIED',)])
         self.assertEqual(self.rows('SELECT anidb_id FROM identity_results'), [(16999,)])
         self.assertEqual(self.rows('SELECT kind,payload_json,state FROM jobs'),
@@ -60,7 +60,8 @@ class BridgeStoreTests(unittest.TestCase):
         self.assertEqual(done, 'rejected')
         self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(0,)])
         self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'), [(0,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'), [(0,)])
+        self.assertEqual(self.rows('SELECT outcome,last_reason_code FROM identity_requests'),
+                         [('rejected', 'IDENTITY_INCOMPLETE')])
         kind, title, raw = self.rows('SELECT type,title,raw_body FROM notifications')[0]
         self.assertEqual((kind, bytes(raw)), ('API_REJECTION', RAW))
         self.assertTrue(title.startswith('Not identified: '), title)
@@ -88,6 +89,27 @@ class BridgeStoreTests(unittest.TestCase):
         identity_bridge.apply_result(self.database, result, LOG)
         self.assertEqual(identity_bridge.apply_result(self.database, result, LOG), 'gone')
         self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(1,)])
+
+    def test_one_row_per_torrent_and_a_decided_answer_is_kept_for_a_day(self):
+        first = self.queue()
+        self.assertEqual(self.queue(), first)            # Autobrr's retry or its later action.
+        identity_bridge.apply_result(self.database, {'request_id': first, 'result': 'rejected',
+                                                     'reason_code': 'IDENTITY_INCOMPLETE'}, LOG)
+        db = connect(self.database)
+        try:
+            self.assertEqual(identity_bridge.status(db, first), ('rejected', 'IDENTITY_INCOMPLETE'))
+            self.assertFalse(identity_bridge.due(db))
+            self.assertEqual(identity_bridge.prune(db, identity_bridge.now_ms()), 0)
+            self.assertEqual(identity_bridge.prune(db, identity_bridge.now_ms() + identity_bridge.KEEP_DONE_MS + 1), 1)
+        finally:
+            db.close()
+
+    def test_process_anyway_queues_a_rejected_release_again(self):
+        first = self.queue()
+        identity_bridge.apply_result(self.database, {'request_id': first, 'result': 'rejected',
+                                                     'reason_code': 'IDENTITY_INCOMPLETE'}, LOG)
+        self.assertEqual(self.queue(process_anyway=True), first)
+        self.assertEqual(self.rows('SELECT outcome,process_anyway,tries FROM identity_requests'), [(None, 1, 0)])
 
 
 class IdentifyTests(unittest.IsolatedAsyncioTestCase):
@@ -185,8 +207,9 @@ class OldIdentificationMigrationTests(unittest.TestCase):
         db.executescript(scripts[76][1])
         rows = lambda sql: db.execute(sql).fetchall()
         self.assertEqual(rows('PRAGMA user_version'), [(77,)])
-        self.assertEqual([(bytes(r[0]), r[1], r[2]) for r in rows(
-            'SELECT raw_body,process_anyway,received_at_ms FROM identity_requests')], [(raw('Show 1 - 01'), 1, 11)])
+        self.assertEqual([(bytes(r[0]), r[1], r[2], r[3]) for r in rows(
+            'SELECT raw_body,process_anyway,received_at_ms,infohash FROM identity_requests')],
+            [(raw('Show 1 - 01'), 1, 11, None)])
         self.assertEqual(rows('SELECT job_id FROM jobs ORDER BY job_id'), [(13,), (14,)])
         self.assertEqual(rows('SELECT event_id FROM incoming_events'), [(3,)])
         self.assertEqual(rows('SELECT operation_id FROM job_operations'), [(13,)])

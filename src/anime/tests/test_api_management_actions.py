@@ -123,7 +123,7 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
         jobs=[]
         for index in range(6):
             _,created,_=await self.request('POST','/api/v1/webhook',
-                self.release(release_name=f'Test Anime - {index}'),token=WEB)
+                self.release(release_name=f'Test Anime - {index}',torrent_infohash=str(index)*40),token=WEB)
             jobs.append(created['data']['job_id'])
         body={'action':'cancel','job_ids':jobs}
         for invalid in (
@@ -161,7 +161,7 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
         jobs=[]
         for index in range(6):
             _,created,_=await self.request('POST','/api/v1/webhook',
-                self.release(release_name=f'Test Anime - {index}'),token=WEB)
+                self.release(release_name=f'Test Anime - {index}',torrent_infohash=str(index)*40),token=WEB)
             jobs.append(created['data']['job_id'])
         # Leave targets pending but defer their normal processing, so the
         # explicitly submitted batch is the only claimable work.
@@ -186,7 +186,7 @@ class ApiManagementActionTests(unittest.IsolatedAsyncioTestCase):
         jobs = []
         for index in range(6):
             _, created, _ = await self.request('POST', '/api/v1/webhook',
-                self.release(release_name=f'Test Anime - {index}'), token=WEB)
+                self.release(release_name=f'Test Anime - {index}',torrent_infohash=str(index)*40), token=WEB)
             jobs.append(created['data']['job_id'])
         # Cancel one of them first so retry/cancel on it will reject
         with connect(self.database) as db, transaction(db):

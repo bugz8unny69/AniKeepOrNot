@@ -82,6 +82,31 @@ POST to `/webhook` with the bearer token. The service accepts
 The source GUID and magnet URI are optional; the torrent hash is used
 as the GUID fallback and a magnet is generated from it.
 
+#### Autobrr External filter: `AKON Check`
+
+Add it on the filter's **External** tab so Autobrr asks before it hands a
+release over. It works like SMTP greylisting: a release never seen before gets
+`503` ("ask again later") while AKON gets the real data from AniDB at AniDB's
+pace; Autobrr asks again and then gets the answer.
+
+| Field | Value |
+|---|---|
+| Name | `AKON Check` |
+| Type | Webhook |
+| Endpoint | `https://<host>/anime-discovery/api/v1/check` |
+| HTTP method | `POST` |
+| Data | the same JSON as the action (with `token`) |
+| Expected HTTP status | `200` (accepted) |
+| Retry HTTP status codes | `503` |
+| Maximum retry attempts | `10` |
+| Retry delay in seconds | `15` |
+| On Error | Reject |
+
+`422` means rejected: the body's `reason_code` says why, and the release is in
+API Reject. A release already identified (a recognized name or a hand match)
+is answered at once from local data. Keep the webhook action: it finds the
+same release by its info hash and adds nothing twice.
+
 Episodes enqueue automatically with explicit TVDB/AniDB and season/episode
 values **or** via the dashboard's **Recognized anime names** mappings.
 Configured aliases recognize `S01E02` and `[Group] Example Show - 02`.

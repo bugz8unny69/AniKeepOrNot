@@ -36,7 +36,7 @@ def _next(database, now):
     from src.anime.storage.job_queue import JobQueue
     with JobQueue(database).connection() as db:
         row = db.execute('SELECT request_id,raw_body,process_anyway,next_try_at_ms,tries FROM identity_requests '
-                         'ORDER BY next_try_at_ms,request_id LIMIT 1').fetchone()
+                         'WHERE outcome IS NULL ORDER BY next_try_at_ms,request_id LIMIT 1').fetchone()
     if row is None:
         return None, None
     return row, max(0, row[3] - now)
@@ -47,7 +47,7 @@ def _schedule(database, request_id, at_ms, reason_code=None, *, spend=False):
     from src.anime.storage.sqlite import transaction
     with JobQueue(database).connection() as db, transaction(db):
         db.execute('UPDATE identity_requests SET next_try_at_ms=?,last_reason_code=?,tries=tries+? '
-                   'WHERE request_id=?', (at_ms, reason_code, 1 if spend else 0, request_id))
+                   'WHERE request_id=? AND outcome IS NULL', (at_ms, reason_code, 1 if spend else 0, request_id))
 
 
 async def identify(resolve, configuration, row, logger):

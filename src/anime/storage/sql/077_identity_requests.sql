@@ -1,17 +1,22 @@
 -- v76 -> v77: releases waiting for the API's identity process (identity bridge).
--- A row lives only until its release is identified (the API then gives the
--- worker a job) or rejected (API Reject keeps the release in the notification).
+-- A row is keyed by the torrent's info hash. Once identified (the worker gets a
+-- job) or rejected (API Reject keeps the release) it keeps only that outcome for
+-- a day, so Autobrr's retries and its later webhook get the same answer.
 BEGIN IMMEDIATE;
 CREATE TEMP TABLE anime_v77_guard(ok INTEGER CHECK(ok=1));
 INSERT OR ROLLBACK INTO anime_v77_guard SELECT user_version=76 FROM pragma_user_version;
 CREATE TABLE identity_requests (
  request_id INTEGER PRIMARY KEY,
+ infohash TEXT UNIQUE CHECK(infohash IS NULL OR (length(infohash)=40 AND infohash NOT GLOB '*[^0-9a-f]*')),
  raw_body BLOB NOT NULL CHECK(length(raw_body) BETWEEN 1 AND 65536),
  process_anyway INTEGER NOT NULL DEFAULT 0 CHECK(process_anyway IN (0,1)),
  received_at_ms INTEGER NOT NULL CHECK(received_at_ms>=0),
  next_try_at_ms INTEGER NOT NULL CHECK(next_try_at_ms>=0),
  tries INTEGER NOT NULL DEFAULT 0 CHECK(tries>=0),
- last_reason_code TEXT
+ last_reason_code TEXT,
+ outcome TEXT CHECK(outcome IS NULL OR outcome IN ('accepted','rejected')),
+ decided_at_ms INTEGER CHECK(decided_at_ms IS NULL OR decided_at_ms>=0),
+ CHECK((outcome IS NULL)=(decided_at_ms IS NULL))
 );
 CREATE INDEX idx_identity_requests_next ON identity_requests(next_try_at_ms,request_id);
 -- The old identification job is gone: the API identifies now. Its unfinished
@@ -34,8 +39,12 @@ WHERE j.kind='IDENTIFY_ANIME' AND j.state<>'DONE' AND e.state<>'IDENTIFIED'
   AND NOT EXISTS (SELECT 1 FROM prowlarr_search_snapshots m WHERE m.job_id=j.job_id)
   AND NOT EXISTS (SELECT 1 FROM resources m WHERE m.job_id=j.job_id)
   AND NOT EXISTS (SELECT 1 FROM resource_operations m WHERE m.job_id=j.job_id);
-INSERT INTO identity_requests(raw_body,process_anyway,received_at_ms,next_try_at_ms)
-SELECT e.raw_body,CASE WHEN json_extract(o.payload_json,'$.process_anyway') IS 1 THEN 1 ELSE 0 END,
+INSERT OR IGNORE INTO identity_requests(infohash,raw_body,process_anyway,received_at_ms,next_try_at_ms)
+SELECT CASE WHEN json_valid(CAST(e.raw_body AS TEXT))
+            AND length(json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash'))=40
+            AND json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash') NOT GLOB '*[^0-9a-f]*'
+       THEN json_extract(CAST(e.raw_body AS TEXT),'$.torrent_infohash') END,
+       e.raw_body,CASE WHEN json_extract(o.payload_json,'$.process_anyway') IS 1 THEN 1 ELSE 0 END,
        e.received_at_ms,e.received_at_ms
 FROM anime_v77_old_identity o JOIN incoming_events e USING(event_id)
 WHERE o.state NOT IN ('CANCELED','FAILED') ORDER BY e.event_id;

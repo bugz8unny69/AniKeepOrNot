@@ -21,7 +21,7 @@ class InstantBridge:
         import logging,sqlite3
         from src.anime.identity_bridge import apply_result
         db=sqlite3.connect(self.test.database)
-        try:waiting=[row[0] for row in db.execute('SELECT request_id FROM identity_requests ORDER BY request_id')]
+        try:waiting=[row[0] for row in db.execute('SELECT request_id FROM identity_requests WHERE outcome IS NULL ORDER BY request_id')]
         finally:db.close()
         for request_id in waiting:
             series=getattr(self.test,'identity',IDENTITY)
@@ -105,7 +105,8 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_webhook_body_bearer_and_query_auth_commit_sanitized_intake(self):
         attempts=[('/api/v1/webhook',self.release(token=WEB,source='untrusted-feed',tvdb_id=123),None),
-                  ('/api/v1/webhook',self.release(),WEB),('/api/v1/webhook?token='+WEB,self.release(),None)]
+                  ('/api/v1/webhook',self.release(torrent_infohash='b'*40),WEB),
+                  ('/api/v1/webhook?token='+WEB,self.release(torrent_infohash='c'*40),None)]
         for path,body,token in attempts:
             status,result,headers=await self.request('POST',path,body,token=token)
             self.assertEqual(status,202)
@@ -117,6 +118,48 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         # The API identified each release; the worker got its first job, never an identification job.
         self.assertEqual(self.rows('SELECT kind,state FROM jobs'),[('VERIFY_RELEASE','PENDING')]*3)
         self.assertEqual(self.rows("SELECT component FROM job_history WHERE event_code='CREATED'"),[('api',)]*3)
+        # Each release keeps only its answer, for Autobrr's retries and its later action.
+        self.assertEqual(self.rows('SELECT outcome FROM identity_requests'),[('accepted',)]*3)
+
+    async def test_check_asks_autobrr_to_retry_until_anidb_answers_then_the_action_adds_nothing(self):
+        self.identity=None    # Not known locally: the identity process must ask AniDB first.
+        status,result,headers=await self.request('POST','/api/v1/check',self.release(token=WEB))
+        self.assertEqual((status,result['data']['reason_code'],headers[b'retry-after']),(503,'IDENTITY_PENDING',b'15'))
+        self.assertEqual(self.rows('SELECT count(*) FROM jobs'),[(0,)])
+        self.identity=IDENTITY  # AniDB answered.
+        await self.request('POST','/api/v1/check',self.release(token=WEB))
+        status,result,_=await self.request('POST','/api/v1/check',self.release(token=WEB))
+        self.assertEqual((status,result['data']['accepted']),(200,True))
+        status,result,_=await self.request('POST','/api/v1/webhook',self.release(token=WEB))
+        self.assertEqual((status,result['data']['accepted']),(200,True))
+        self.assertEqual(self.rows('SELECT kind FROM jobs'),[('VERIFY_RELEASE',)])
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(1,)])
+
+    async def test_check_rejects_with_why_once_identification_refuses_it(self):
+        import logging
+        from src.anime.identity_bridge import apply_result
+        self.identity=None
+        status,result,_=await self.request('POST','/api/v1/check',self.release(token=WEB))
+        apply_result(self.database,{'request_id':result['data']['request_id'],'result':'rejected',
+                                    'reason_code':'RELEASE_MOVIE_SKIPPED'},logging.getLogger('test'))
+        status,result,_=await self.request('POST','/api/v1/check',self.release(token=WEB))
+        self.assertEqual((status,result['data']['accepted'],result['data']['reason_code']),
+                         (422,False,'RELEASE_MOVIE_SKIPPED'))
+        self.assertEqual(self.rows("SELECT count(*) FROM notifications WHERE type='API_REJECTION'"),[(1,)])
+
+    async def test_check_answers_a_known_release_at_once_from_local_data(self):
+        from src.anime.storage import manual_identity
+        release=self.release(release_name='Test Anime S01E10')
+        manual_identity.save(self.database,json.dumps(release).encode(),anidb_id=1001,
+                             tvdb_series_id=2002,title='Test Anime',season=1)
+        self.identity=None    # The identity process is never needed.
+        status,result,_=await self.request('POST','/api/v1/check',{**release,'token':WEB})
+        self.assertEqual((status,result['data']['accepted']),(200,True))
+        self.assertEqual(self.rows('SELECT kind FROM jobs'),[('VERIFY_RELEASE',)])
+
+    async def test_check_needs_the_webhook_token(self):
+        status,_,_=await self.request('POST','/api/v1/check',self.release())
+        self.assertEqual(status,401)
         self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])
 
     async def test_bad_conflicting_or_management_webhook_credentials_create_no_work(self):

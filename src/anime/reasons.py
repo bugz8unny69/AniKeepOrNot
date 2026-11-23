@@ -169,6 +169,7 @@ _ENTRIES = (
     Reason('DATABASE_MIGRATION_CONFLICT','The database or the upgrade files changed after the upgrade was previewed.','The database upgrade plan changed.','Preview the upgrade again before applying it.','WARNING',False),
     Reason('DATABASE_MIGRATION_FAILED','The upgrade or its backup failed. Some upgrade steps may already be applied.','The database upgrade stopped; maintenance is still on.','Check the current database version and the backup before continuing.','ERROR',None),
 
+    Reason('IDENTITY_PENDING','The release is being identified with AniDB. Autobrr asks again on its own.','Identifying the release with AniDB.','Nothing to do. Autobrr asks again shortly.','INFO',None),
     Reason('JOB_WAITING','The job is waiting for something it needs, such as another job or an outside service.','Waiting for something this job needs.','Nothing to do. Open the job to see what it is waiting for.','INFO',None),
     Reason('JOB_STATE_INVALID',"The job's saved progress does not add up, so it was stopped.","This job's progress needs review.",'Check the job history, then press Retry.','ERROR',False),
     Reason('JOB_PAYLOAD_INVALID',"The job's saved input is not valid or is too large.","This job's input is not valid.",'Check the job in the report. It usually needs to be recreated rather than retried.','ERROR',False),

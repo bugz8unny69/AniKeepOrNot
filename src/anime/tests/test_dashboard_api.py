@@ -198,8 +198,8 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_intake_newest_pagination_preserves_deliveries_and_excludes_control_scopes(self):
         targets=[]
-        for _ in range(3):
-            _,result,_=await self.request('POST','/api/v1/webhook',self.release(),token=WEB)
+        for index in range(3):   # One delivery per torrent: each its own info hash.
+            _,result,_=await self.request('POST','/api/v1/webhook',self.release(torrent_infohash=str(index)*40),token=WEB)
             targets.append(result['data']['job_id'])
         from src.anime.storage.job_queue import JobQueue
         JobQueue(self.database).claim()
@@ -216,7 +216,7 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(job['data']['is_management_action'])
 
     async def test_reverse_job_pagination_is_additive_and_rejects_mixed_cursors(self):
-        for _ in range(3):await self.request('POST','/api/v1/webhook',self.release(),token=WEB)
+        for index in range(3):await self.request('POST','/api/v1/webhook',self.release(torrent_infohash=str(index)*40),token=WEB)
         _,old,_=await self.request('GET','/api/v1/jobs?limit=2',token=ADMIN)
         self.assertEqual([r['job_id'] for r in old['data']['items']],[1,2])
         self.assertEqual(old['data']['next_after_id'],2)
@@ -232,7 +232,7 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         jobs=[]
         for index in range(7):
             _,created,_=await self.request('POST','/api/v1/webhook',
-                self.release(release_name=f'Test Anime - {index}'),token=WEB)
+                self.release(release_name=f'Test Anime - {index}',torrent_infohash=str(index)*40),token=WEB)
             jobs.append(created['data']['job_id'])
         with connect(self.database) as db,transaction(db):
             db.execute("UPDATE jobs SET state='DONE' WHERE job_id IN (?,?)",(jobs[-1],jobs[-3]))

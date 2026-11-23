@@ -124,7 +124,11 @@ Decided by the owner, 2026-11-22.
 
 **Stage 1, built on branch `feat/api-identity-bridge` (not deployed): the API identifies.**
 
-- **Webhook:** refuses a decided series from local data (API Reject, as before) and queues everything else in `identity_requests`. Autobrr gets 202 at once.
+- **Autobrr asks first** through the External filter `AKON Check` (`POST /api/v1/check`), which works like SMTP greylisting:
+  - `200` accepted, `422` rejected (with why), `503` "ask again later" while the identity process gets the real data from AniDB. Autobrr retries on 503 (15 s apart, 10 tries).
+  - A decided series, a hand match or a recognized name is answered at once from local data.
+  - One row per torrent (info hash). Its answer is kept for a day, so retries and the webhook action get the same answer and nothing is identified twice.
+- **Webhook action:** the same intake; 202 while the release waits.
 - **Identity process:** the API starts `src/anime/identity_process.py` when releases are due. It runs the AniDB-first resolver with the shared pacing and reports one JSON line per release on stdout. AniDB is the truth: the API checks only that a result is well-formed. The process exits when nothing is due within a minute, and the API stops it on shutdown.
 - **The API applies each result** (`src/anime/identity_bridge.py`):
   - identified: the delivery, its identity and the worker's first job (`VERIFY_RELEASE`) are saved in one transaction;

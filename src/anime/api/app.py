@@ -342,7 +342,7 @@ class Application:
             (b'x-content-type-options',b'nosniff'),(b'referrer-policy',b'no-referrer'),
             (b'content-security-policy',b"default-src 'none'; frame-ancestors 'none'"),
             (b'x-request-id',request_id.encode()),(b'content-length',str(len(encoded)).encode()),*extra]
-        if status in (429,503):response_headers.append((b'retry-after',b'60'))
+        if status in (429,503) and not any(k==b'retry-after' for k,_ in extra):response_headers.append((b'retry-after',b'60'))
         await send({'type':'http.response.start','status':status,'headers':response_headers})
         await send({'type':'http.response.body','body':encoded})
 
@@ -362,33 +362,48 @@ class Application:
         except sqlite3.Error:raise ApiError(503,'DATABASE_ERROR') from None
         except CancellationError as exc:raise ApiError(409,exc.reason_code) from None
 
+    def _release(self,check,normalized):
+        """Autobrr's two calls for one release, answered alike from one queue row per info hash.
+
+        /check is Autobrr's External filter and works like SMTP greylisting:
+        200 accepted, 422 rejected, 503 "ask again later" while the identity
+        process gets the real data from AniDB (Autobrr retries on 503).
+        /webhook is Autobrr's action; it gets 202 while the release waits.
+        """
+        from src.anime.identity_bridge import take_release
+        desired=self.store.read();configuration=for_operation(desired,self.startup,component='api')
+        configure_logging(configuration.logging_settings(),'api',logger=self.logger)
+        database=configuration.value('storage.database_path')
+        with MaintenanceGate(database).operation():
+            # A decided series is refused here from local data only.
+            try:decided=webhook_decision(configuration,normalized)
+            except Exception:
+                self.logger.debug('Webhook decision check skipped',exc_info=True);decided=None
+            if decided is not None:
+                with JobQueue(database).connection() as db:
+                    from src.anime.storage.sqlite import transaction
+                    with transaction(db):notify_refused(db,*decided,normalized)
+                # Final for Autobrr: no event and no job.
+                return (422 if check else 200),{'accepted':False,'reason_code':DECISION_REASONS[decided[1]]},[]
+            request_id,outcome,reason=take_release(database,normalized,self.logger)
+        if outcome is None:
+            self.bridge.wake()
+            if check:
+                return 503,{'accepted':None,'request_id':request_id,'reason_code':'IDENTITY_PENDING'},[(b'retry-after',b'15')]
+            return 202,{'request_id':request_id},[]
+        if outcome=='accepted':
+            return 200,{'accepted':True,'request_id':request_id},[]
+        return (422 if check else 200),{'accepted':False,'request_id':request_id,'reason_code':reason},[]
+
     def _route(self,method,path,headers,query,body,peer):
         access=self.secrets.access_credentials()  # Fresh, fail closed. No fallback.
-        if path==PREFIX+'/webhook':
+        if path in (PREFIX+'/webhook',PREFIX+'/check'):
             if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
             if set(query)-{'token'}:raise ApiError(400,'API_REQUEST_INVALID')
             webhook_key(headers,query,body,access.webhook_token)
             normalized=normalize_webhook(body)
             if any(key and key.encode() in normalized for key in (access.webhook_token,)):raise ApiError(400,'API_WEBHOOK_INVALID')
-            desired=self.store.read();configuration=for_operation(desired,self.startup,component='api')
-            configure_logging(configuration.logging_settings(),'api',logger=self.logger)
-            with MaintenanceGate(configuration.value('storage.database_path')).operation():
-                # A decided series is refused here from local data only; anything
-                # unknown, ambiguous or undecided is queued exactly as before.
-                try:decided=webhook_decision(configuration,normalized)
-                except Exception:
-                    self.logger.debug('Webhook decision check skipped',exc_info=True);decided=None
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    if decided is not None:
-                        from src.anime.storage.sqlite import transaction
-                        with transaction(db):notify_refused(db,*decided,normalized)
-                        # 200, so autobrr never retries; no event and no job.
-                        return 200,{'accepted':False,'reason_code':DECISION_REASONS[decided[1]]},[]
-                    # Identified by the identity process; only then does the worker get a job.
-                    from src.anime.identity_bridge import queue_release
-                    request_id=queue_release(db,normalized)
-            self.bridge.wake()
-            return 202,{'request_id':request_id},[]
+            return self._release(path==PREFIX+'/check',normalized)
         check_origin(headers,self.origin)
         try:
             password_revision, password_digest = self.passwords.read()
@@ -616,7 +631,7 @@ class Application:
                 return 200,self._search(configuration,query),[]
             if path==PREFIX+'/' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                return 200,{'version':'v1','resources':['health','settings','credentials','intake','jobs','jobs/{id}/matching','auth/session','auth/password','recognized','search','webhook']},[]
+                return 200,{'version':'v1','resources':['health','settings','credentials','intake','jobs','jobs/{id}/matching','auth/session','auth/password','recognized','search','webhook','check']},[]
             series_match=re.fullmatch(PREFIX+r'/recognized/([1-9][0-9]{0,17})/episodes',path)
             if series_match:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
