@@ -20,6 +20,7 @@ it hashes the file; no call registers a file by path. So:
 
 The job works on the whole series: a file already linked to its episode is left
 alone, so it can run any number of times (adm shoko link --id <anidb_id>).
+When every file is linked it queues a Jellyfin rescan (Jellyfin reads Shoko's VFS).
 """
 from contextlib import closing
 import logging
@@ -128,6 +129,15 @@ def waiting_since(database, job_id, now):
     return now if row[0] is None else row[0]
 
 
+def _persist(db, claim, value):
+    # Jellyfin reads Shoko's VFS: rescan once the links are in (owner, 2026-11-23).
+    # Keep's own rescan runs before Shoko is linked, so this one is the one that counts.
+    if value['refresh']:
+        from src.anime.jobs.refresh_jellyfin_job import enqueue
+        enqueue(db, claim)
+    return ()
+
+
 def registration(secrets, *, client=Shoko):
     async def execute(context):
         anidb_id = context.data()['anidb_id']
@@ -143,8 +153,10 @@ def registration(secrets, *, client=Shoko):
             LOG.error('Shoko link for AniDB %s stopped: %s', anidb_id, exc)
             return Outcome('fail', exc.reason_code)
         if not no_file and not no_episode:
-            LOG.info('Shoko: every kept file of AniDB %s is linked (%s new)', anidb_id, linked)
-            return Outcome()
+            LOG.info('Shoko: every kept file of AniDB %s is linked (%s new); asking Jellyfin to rescan',
+                     anidb_id, linked)
+            return Outcome(value={'linked': linked,
+                                  'refresh': bool(context.configuration.value('jellyfin.base_url'))})
         now = time.time_ns() // 1_000_000
         waited = now - await blocking(waiting_since, database, context.claim.job_id, now)
         if no_file and waited >= FILE_DEADLINE_MS:
@@ -159,4 +171,4 @@ def registration(secrets, *, client=Shoko):
             LOG.info('Shoko: AniDB %s waiting for Shoko to record %s file(s) and fetch %s episode(s); '
                      'checking every %s s', anidb_id, len(no_file), len(no_episode), WAIT_MS // 1000)
         return Outcome('defer', WAITING, delay_ms=WAIT_MS)
-    return Registration(KIND, DEFINITION, execute, services=SERVICES)
+    return Registration(KIND, DEFINITION, execute, services=SERVICES, persist=_persist)

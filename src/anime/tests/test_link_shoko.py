@@ -119,7 +119,21 @@ class WaitingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.outcome((0, [], ['a.mkv (AniDB episode 1)']))).kind, 'defer')
 
     async def test_done_when_everything_is_linked(self):
-        self.assertEqual((await self.outcome((2, [], []))).kind, 'complete')
+        done = await self.outcome((2, [], []))
+        self.assertEqual((done.kind, done.value['linked'], done.value['refresh']), ('complete', 2, True))
+
+    def test_finishing_queues_a_jellyfin_rescan(self):
+        # Jellyfin reads Shoko's VFS, so it rescans after the links (owner, 2026-11-23).
+        db = sqlite3.connect(self.database)
+        db.execute('PRAGMA foreign_keys=OFF')
+        claim = mock.Mock(job_id=7, event_id=None)
+        db.execute('BEGIN')
+        link_shoko_job._persist(db, claim, {'linked': 0, 'refresh': True})
+        link_shoko_job._persist(db, claim, {'linked': 3, 'refresh': False})
+        db.commit()
+        self.assertEqual(db.execute("SELECT kind,payload_json,created_by_job_id FROM jobs WHERE job_id<>7").fetchall(),
+                         [('REFRESH_JELLYFIN', '{"source_job_id": 7}', 7)])
+        db.close()
 
 
 class PrepareSeriesTests(unittest.TestCase):
