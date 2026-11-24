@@ -59,6 +59,14 @@ class FindDubsTests(unittest.TestCase):
         grabbed, _ = find_dubs_job.find_and_push(sonarr, FakeProwlarr({7: (pack,), 8: (pack,)}), catalog, 1, 2)
         self.assertEqual((sonarr.pushed, len(grabbed)), ([pack.title], 2))
 
+    def test_episodes_without_a_tvdb_placement_use_the_anime_lists_map(self):
+        def unplaced(aid, tid):
+            return SimpleNamespace(episodes={n: EpisodeTarget(None, 'SEARCHABLE', n) for n in range(1, 13)})
+        sonarr = FakeSonarr({(1, 7)})
+        prowlarr = FakeProwlarr({7: (release('Show - 07 [Dual Audio English]', 'd' * 40),)})
+        grabbed, _ = find_dubs_job.find_and_push(sonarr, prowlarr, unplaced, 1, 2, {n: (1, n) for n in range(1, 13)})
+        self.assertEqual((prowlarr.asked, grabbed), ([(7,)], ['Dungeon People S01E07']))
+
     def test_nothing_missing_searches_nothing(self):
         prowlarr = FakeProwlarr({})
         self.assertEqual(find_dubs_job.find_and_push(FakeSonarr(set()), prowlarr, catalog, 1, 2), ([], []))
@@ -72,7 +80,8 @@ class AudioCheckTests(unittest.IsolatedAsyncioTestCase):
         context = mock.Mock(configuration=configuration, data=lambda: {'anidb_id': 1, 'tvdb_series_id': 2})
         job = find_dubs_job.registration(mock.Mock(), catalog_factory=lambda c: asked.append('catalog'),
                                          sonarr_factory=lambda *a: asked.append('sonarr'),
-                                         prowlarr_factory=lambda *a, **k: mock.Mock())
+                                         prowlarr_factory=lambda *a, **k: mock.Mock(),
+                                         mapping_factory=lambda *a: {})
         with mock.patch.object(find_dubs_job, 'find_and_push', return_value=([], [])):
             outcome = await job.execute(context)
         return outcome.kind, asked
