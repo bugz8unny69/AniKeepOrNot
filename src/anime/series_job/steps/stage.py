@@ -37,5 +37,5 @@ async def stage(series: SeriesRow, torrent: dict, context) -> StepResult:
 
     torrent["step"] = "done"
     torrent["state"] = "done"
-    note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · staged for evaluation")
+    note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · staged for evaluation (stage finished)")
     return StepResult.done(next_step="done")

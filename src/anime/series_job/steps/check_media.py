@@ -36,5 +36,5 @@ async def check_media(series: SeriesRow, torrent: dict, context) -> StepResult:
             return StepResult.drop(reason)
 
     torrent["step"] = "transcode"
-    note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · media checked")
+    note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · media checked (check media finished)")
     return StepResult.done(next_step="transcode")

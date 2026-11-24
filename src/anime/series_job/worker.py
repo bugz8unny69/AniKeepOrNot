@@ -51,12 +51,23 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
     to_run = active_torrents[:n]
     min_wake_ms: int | None = None
 
+    logger.info("series %s %s · work started", series.anidb_id, series.title)
+
     for torrent in to_run:
         step_name = torrent.get("step") or "check_release"
         handler = STEP_HANDLERS.get(step_name)
         if handler is None:
             await drop_torrent(series, torrent, f"UNKNOWN_STEP_{step_name}", context)
             continue
+
+        episodes = torrent.get("episodes", [])
+        ep_label = ", ".join(episodes) if episodes else "release"
+        release_name = torrent.get("release_name", "")
+        step_label = step_name.replace("_", " ")
+
+        if torrent.get("state") == "waiting" and step_name != "download":
+            logger.info("series %s %s · %s %s · %s started",
+                        series.anidb_id, series.title, ep_label, release_name, step_label)
 
         try:
             result = await handler(series, torrent, context)
