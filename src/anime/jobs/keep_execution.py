@@ -15,7 +15,7 @@ from src.anime.services.base import service_facts
 from src.anime.checks import here
 
 
-async def execute_keep(context, secrets, *, service_factory, journals=None, shoko=False):
+async def execute_keep(context, secrets, *, service_factory, journals=None):
     """Apply the same outcome contract to one or more durable Sonarr imports.
 
     journals, when provided, is a trusted synchronous callable returning
@@ -28,6 +28,11 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
         target = await blocking(actions.bind, context.claim, 'KEEP')
     except (ActionUnavailable, ValueError, TypeError):
         return Outcome('review', 'JOB_PAYLOAD_INVALID')
+    if context.claim.attempt == 1:
+        # Shoko fetches the series now, so its episodes exist when the files land.
+        from src.anime.jobs.link_shoko_job import prepare_series
+        await blocking(prepare_series, context.configuration, secrets,
+                       context.configuration.value('storage.database_path'), context.claim.event_id)
     try:
         factories = (None,) if journals is None else await blocking(journals, actions, target)
         if (not isinstance(factories, tuple) or not 1 <= len(factories) <= 32
@@ -45,9 +50,6 @@ async def execute_keep(context, secrets, *, service_factory, journals=None, shok
         searched = None if request_search is None else await blocking(request_search, context.claim)
         if searched is not None:
             value['search'] = searched
-        if shoko:
-            # Optional Shoko enrichment currently has a single-file journal.
-            value['shoko'] = bool(context.configuration.value('shoko.base_url'))
         return Outcome(value=value)
     except StagingBusy:
         return Outcome('defer', 'KEEP_IMPORT_WAITING', delay_ms=30000)

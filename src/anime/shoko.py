@@ -112,10 +112,13 @@ class Shoko:
         """Ask Shoko to fetch the AniDB series and create its entry if it has none."""
         self.call('POST', f'Series/AniDB/{anidb_id}/Refresh?createSeriesEntry=true')
 
-    def scan(self):
-        """Ask Shoko to scan every import folder for new files."""
-        for folder in self.call('GET', 'ImportFolder'):
-            self.call('GET', f"ImportFolder/{folder['ID']}/Scan")
+    def import_new_files(self):
+        """Ask Shoko to pick up new files in its import folders now.
+
+        Shoko runs on another VM and reads the library over NFS, so its folder
+        watcher can miss files; this makes it look.
+        """
+        self.call('GET', 'Action/ImportNewFiles')
 
     def find_file(self, relative_path):
         """(Shoko file ID, AniDB episode IDs it is linked to), or None if Shoko hasn't seen the file."""

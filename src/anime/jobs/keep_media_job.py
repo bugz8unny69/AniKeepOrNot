@@ -31,6 +31,5 @@ def _persist(db,claim,value):
 
 def registration(secrets=None,*,service_factory=Service):
     async def execute(context):
-        return await execute_keep(context, secrets, service_factory=service_factory,
-                                  shoko=True)
+        return await execute_keep(context, secrets, service_factory=service_factory)
     return Registration(KIND,DEFINITION,execute,services=SERVICES,persist=_persist)
