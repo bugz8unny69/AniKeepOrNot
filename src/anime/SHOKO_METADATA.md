@@ -1,3 +1,22 @@
+# Shoko: link every kept file to its episode
+
+**Owner, 2026-11-23.** Jellyfin gets its metadata through Shoko (Shokofin), and
+it only shows files Shoko has linked to an episode. Shoko's own hash match often
+fails, so **every Keep** (single episode or season pack) queues `LINK_SHOKO`
+(`jobs/link_shoko_job.py`) for the series. It uses Shoko v5.3 API v3:
+
+1. `POST Series/AniDB/{aid}/Refresh?createSeriesEntry=true`: Shoko fetches the series.
+2. `GET File/PathEndsWith?path=<library-relative path>`: Shoko's record of the file.
+   Not found: `GET ImportFolder/{id}/Scan` for each import folder, and check again in 10 minutes.
+3. `GET Episode/AniDB/{eid}/Episode`: Shoko's episode ID for the AniDB episode ID.
+4. `POST File/{fileID}/Link {"EpisodeIDs": [id]}`.
+
+A file already linked to its episode is left alone, so the job can run any number
+of times. After a day of waiting it fails (`MEDIA_LINK_INCOMPLETE`) and the log
+lists the files. For a series kept before this existed: `adm shoko link --id <anidb_id>`.
+
+The section below describes the older read-only title lookup, which Keep no longer queues.
+
 # Optional Shoko metadata
 
 Configured Keep completions enqueue ENRICH_SHOKO_METADATA in a separate control

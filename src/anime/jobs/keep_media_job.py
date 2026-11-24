@@ -19,9 +19,11 @@ def _persist(db,claim,value):
     if value and value.get('refresh'):
         from src.anime.jobs.refresh_jellyfin_job import enqueue
         enqueue(db,claim)
-    if value and value.get('shoko'):
-        from src.anime.jobs.enrich_shoko_job import enqueue as enqueue_shoko
-        enqueue_shoko(db,claim)
+    # Always tell Shoko which episode the kept file is (owner, 2026-11-23).
+    from src.anime.jobs.link_shoko_job import enqueue as link_shoko
+    import json
+    data=json.loads(db.execute('SELECT data_json FROM keep_imports WHERE job_id=?',(claim.job_id,)).fetchone()[0])
+    link_shoko(db,data['selection']['anidb_id'],claim=claim)
     from src.anime.jobs.keep_execution import library_history
     return library_history(db,claim,value)+(append_job_history(db,job_id=claim.job_id,event_code='KEEP_COMPLETED',reason_code='KEEP_COMPLETE',
         component='worker',occurred_at_ms=time.time_ns()//1000000,details={'attempt':job_attempt(db,claim.job_id)}),)
