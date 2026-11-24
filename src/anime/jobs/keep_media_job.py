@@ -24,6 +24,9 @@ def _persist(db,claim,value):
     import json
     data=json.loads(db.execute('SELECT data_json FROM keep_imports WHERE job_id=?',(claim.job_id,)).fetchone()[0])
     link_shoko(db,data['selection']['anidb_id'],claim=claim)
+    # Sonarr can't find dubs by itself; AKON finds them for its missing episodes (owner, 2026-11-23).
+    from src.anime.jobs.find_dubs_job import enqueue as find_dubs
+    find_dubs(db,data['selection']['anidb_id'],data['selection']['tvdb_series_id'],claim=claim)
     from src.anime.jobs.keep_execution import library_history
     return library_history(db,claim,value)+(append_job_history(db,job_id=claim.job_id,event_code='KEEP_COMPLETED',reason_code='KEEP_COMPLETE',
         component='worker',occurred_at_ms=time.time_ns()//1000000,details={'attempt':job_attempt(db,claim.job_id)}),)
