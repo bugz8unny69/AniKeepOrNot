@@ -1,6 +1,6 @@
 """adm report: read-only diagnostics straight from the database; the API need not run."""
 NAME = 'report'
-SUMMARY = 'Read-only job reports (job)'
+SUMMARY = 'Read-only reports (job, intake)'
 
 
 def main(argv, prog):

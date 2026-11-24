@@ -1222,10 +1222,67 @@ def report_identity_matching(db, job_id, attempt=None, out=print, is_short=False
     return 0
 
 
+def report_intake(db, anidb_id, is_json=False, out=print):
+    from src.anime.series_job.store import get_series
+    series = get_series(db, anidb_id)
+    if series is None:
+        if is_json:
+            out(json.dumps({'error': f'Series {anidb_id} not found'}))
+        else:
+            out(f'Series {anidb_id} not found.')
+        return 1
+    if is_json:
+        data = {
+            'anidb_id': series.anidb_id,
+            'title': series.title,
+            'state': series.state,
+            'wake_at_ms': series.wake_at_ms,
+            'torrents_at_once': series.torrents_at_once,
+            'torrents': series.torrents,
+            'episodes': series.episodes,
+            'recent': series.recent,
+            'created_at_ms': series.created_at_ms,
+            'updated_at_ms': series.updated_at_ms,
+        }
+        out(json.dumps(data, indent=2))
+        return 0
+
+    out(f"Series AniDB ID: {series.anidb_id} - {series.title}")
+    out(f"State: {series.state} | Torrents at once: {series.torrents_at_once} | Wake: {when(series.wake_at_ms)}")
+    out("")
+    out("Torrents:")
+    if not series.torrents:
+        out("  (none)")
+    for t in series.torrents:
+        name = t.get("release_name") or t.get("infohash") or "unknown"
+        state = t.get("state", "waiting")
+        step = t.get("step", "check_release")
+        pct = int(t.get("progress", 0.0) * 100)
+        why = f" (why: {t['why']})" if t.get("why") else ""
+        eps = f" [episodes: {', '.join(t.get('episodes', []))}]" if t.get("episodes") else ""
+        out(f"  [{state}] {name} · step: {step} · {pct}%{why}{eps}")
+    out("")
+    out("Episodes:")
+    if not series.episodes:
+        out("  (none)")
+    for ep_code, ep_data in sorted(series.episodes.items()):
+        ep_state = ep_data.get("state", "unknown")
+        file_path = f" · file: {ep_data['file']}" if ep_data.get("file") else ""
+        torrent = f" · torrent: {ep_data['torrent'][:8]}" if ep_data.get("torrent") else ""
+        out(f"  {ep_code}: {ep_state}{file_path}{torrent}")
+    out("")
+    out("Recent history:")
+    if not series.recent:
+        out("  (none)")
+    for line in series.recent:
+        out(f"  {line}")
+    return 0
+
+
 def main(argv):
     import argparse
-    # Short form alias support: if 'job' is omitted but '--id' is present, insert 'job'
-    if 'job' not in argv and any(arg == '--id' or arg.startswith('--id=') for arg in argv):
+    # Short form alias support: if neither 'job' nor 'intake' is specified but '--id' is present, insert 'job'
+    if 'job' not in argv and 'intake' not in argv and any(arg == '--id' or arg.startswith('--id=') for arg in argv):
         for idx, arg in enumerate(argv):
             if arg == '--id' or arg.startswith('--id='):
                 argv = argv[:idx] + ['job'] + argv[idx:]
@@ -1245,7 +1302,7 @@ def main(argv):
                         help='Include matching section for provider')
     parser.add_argument('--attempt', type=int, default=None,
                         help='Specific captured search attempt')
-    kinds = parser.add_subparsers(dest='what', required=True, metavar='{job}')
+    kinds = parser.add_subparsers(dest='what', required=True, metavar='{job,intake}')
     job = kinds.add_parser('job', help='Everything about one job: history, failed check, paths')
     job.add_argument('--id', dest='job_id', type=int, required=True, help='Job number, e.g. 2593')
     job.add_argument('--compress', action='store_true', default=argparse.SUPPRESS,
@@ -1262,6 +1319,16 @@ def main(argv):
                      help='Include matching section for provider')
     job.add_argument('--attempt', type=int, default=argparse.SUPPRESS,
                      help='Specific captured search attempt')
+    intake = kinds.add_parser('intake', help='Series intake report: torrents, episodes, history')
+    intake.add_argument('--id', dest='anidb_id', type=int, required=True, help='AniDB ID, e.g. 16999')
+    intake.add_argument('--compress', action='store_true', default=argparse.SUPPRESS,
+                        help='Save as a .tar.gz (default /tmp/<kind>-report-<id>.tar.gz)')
+    intake.add_argument('--dest', default=argparse.SUPPRESS,
+                        help='File or directory to save the report to')
+    intake.add_argument('--config-dir', default=argparse.SUPPRESS,
+                        help='Configuration directory')
+    intake.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
+                        help='Print the report as JSON instead of text')
     args = parser.parse_args(argv)
 
     is_json = getattr(args, 'json', False)
@@ -1285,7 +1352,9 @@ def main(argv):
     out = print if printing else lines.append
     try:
         with db:
-            if is_json:
+            if args.what == 'intake':
+                status = report_intake(db, args.anidb_id, is_json=is_json, out=out)
+            elif is_json:
                 if is_short:
                     if include_matching == 'prowlarr':
                         matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
@@ -1333,7 +1402,8 @@ def main(argv):
                         elif include_matching == 'identity':
                             report_identity_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
         if not printing:
-            saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{args.job_id}',
+            report_id = args.anidb_id if args.what == 'intake' else args.job_id
+            saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{report_id}',
                          dest=dest, compress=compress)
             print(f'Report saved to {saved}')
     finally:
