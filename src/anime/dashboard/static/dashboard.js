@@ -67,7 +67,7 @@ const node = (tag, text, cls) => {
 const state = {
   csrf: null, generation: 0, requests: new Set(), jobs: [], pending: new Set(),
   selected: new Set(), bulkSubmitting: false,
-  page: location.pathname === '/settings' ? 'settings' : location.pathname === '/jobs' ? 'jobs' : location.pathname === '/recognized' ? 'recognized' : 'intake',
+  page: location.pathname === '/settings' ? 'settings' : location.pathname === '/running' ? 'running' : location.pathname === '/jobs' ? 'jobs' : location.pathname === '/recognized' ? 'recognized' : 'intake',
   cursor: MAX_CURSOR, previous: [], next: null, loading: null, timer: null,
   settings: null, credentials: null, dirty: false, settingsVersion: 0,
   historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
@@ -527,11 +527,235 @@ function renderSeries() {
   $('intake-previous').disabled = state.previous.length === 0;
   $('intake-next').disabled = state.next === null;
 }
+async function loadRunning(silent = false) {
+  try {
+    const data = await request(API + '/running');
+    liveStatus(true);
+    renderRunning(data);
+  } catch (error) {
+    liveStatus(false);
+    if (!silent) displayError(error);
+  }
+}
+function renderRunning(data) {
+  const seriesRows = $('running-series-rows');
+  if (!seriesRows) return;
+  seriesRows.replaceChildren();
+  const seriesList = data?.series || [];
+  const noSeries = $('no-running-series');
+  if (noSeries) noSeries.hidden = seriesList.length !== 0;
+
+  for (const s of seriesList) {
+    const tr = node('tr');
+    const titleTd = node('td');
+    const link = node('a', s.title + ' (#' + s.anidb_id + ')');
+    link.href = '#';
+    link.addEventListener('click', (e) => { e.preventDefault(); openSeries(s.anidb_id); });
+    titleTd.appendChild(link);
+    tr.appendChild(titleTd);
+
+    const torrentsTd = node('td');
+    const active = (s.torrents || []).filter(t => t.state === 'waiting' || t.state === 'working');
+    if (!active.length) {
+      torrentsTd.appendChild(node('span', 'Waiting for downloads or wake', 'muted'));
+    } else {
+      for (const t of active) {
+        const line = (t.episodes?.length ? t.episodes.join(', ') + ' · ' : '') + (t.release_name || t.infohash?.slice(0, 8));
+        torrentsTd.appendChild(node('div', line));
+      }
+    }
+    tr.appendChild(torrentsTd);
+
+    const stepTd = node('td');
+    if (!active.length) {
+      stepTd.appendChild(node('span', 'asleep', 'muted'));
+    } else {
+      for (const t of active) {
+        stepTd.appendChild(node('div', t.step || 'unknown'));
+      }
+    }
+    tr.appendChild(stepTd);
+
+    const progTd = node('td');
+    if (!active.length) {
+      progTd.appendChild(node('span', '-', 'muted'));
+    } else {
+      for (const t of active) {
+        const pct = Math.round((t.progress || 0) * 100);
+        progTd.appendChild(node('div', pct + '%'));
+      }
+    }
+    tr.appendChild(progTd);
+
+    const actTd = node('td');
+    const openBtn = node('button', 'open', 'secondary');
+    openBtn.type = 'button';
+    openBtn.addEventListener('click', () => openSeries(s.anidb_id));
+    actTd.appendChild(openBtn);
+
+    const cancelBtn = node('button', 'cancel', 'danger');
+    cancelBtn.type = 'button';
+    cancelBtn.addEventListener('click', async () => {
+      if (!confirm('Cancel active work on ' + s.title + '?')) return;
+      try {
+        await request(API + '/series/' + s.anidb_id + '/cancel', {method: 'POST'});
+        notice('Canceled ' + s.title);
+        await loadRunning();
+      } catch (err) { displayError(err); }
+    });
+    actTd.appendChild(cancelBtn);
+
+    tr.appendChild(actTd);
+    seriesRows.appendChild(tr);
+  }
+
+  const idRows = $('running-identity-rows');
+  if (idRows) {
+    idRows.replaceChildren();
+    const waiting = data?.waiting_identity || [];
+    const noId = $('no-running-identity');
+    if (noId) noId.hidden = waiting.length !== 0;
+
+    for (const w of waiting) {
+      const tr = node('tr');
+      tr.appendChild(node('td', '#' + w.request_id));
+      tr.appendChild(node('td', w.infohash || '-'));
+      tr.appendChild(node('td', w.received_at_ms ? new Date(w.received_at_ms).toLocaleTimeString() : '-'));
+      tr.appendChild(node('td', String(w.tries || 0)));
+      idRows.appendChild(tr);
+    }
+  }
+}
 async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
   if (state.seriesBusy) return;
   try {
     const series = await request(API + '/intake/series/' + anidbId);
     const dialog = $('series-dialog');
+
+    if (series.torrents && Array.isArray(series.torrents)) {
+      $('series-title').textContent = series.title;
+      $('series-description').textContent = 'State: ' + series.state + (series.wake_at_ms ? ' · wake scheduled' : '');
+      const list = $('series-episodes'); list.replaceChildren();
+      const entries = Object.entries(series.episodes || {}).sort((a, b) => a[0].localeCompare(b[0]));
+      for (const [epCode, epData] of entries) {
+        const tr = node('tr');
+        tr.dataset.episode = epCode;
+        tr.appendChild(node('td', epCode));
+        let statusText = epData.state || 'unknown';
+        if (epData.file) statusText += ' (' + epData.file + ')';
+        tr.appendChild(node('td', statusText));
+        const actions = node('td');
+        tr.appendChild(actions);
+        list.appendChild(tr);
+      }
+      $('series-episodes-empty').hidden = entries.length !== 0;
+
+      const torrentsList = $('series-torrents');
+      if (torrentsList) {
+        torrentsList.replaceChildren();
+        for (const t of series.torrents) {
+          const tr = node('tr');
+          const name = t.release_name || t.infohash?.slice(0, 8) || 'unknown';
+          const eps = t.episodes?.length ? ' [' + t.episodes.join(', ') + ']' : '';
+          tr.appendChild(node('td', name + eps));
+          tr.appendChild(node('td', t.step || '-'));
+          tr.appendChild(node('td', t.state || '-'));
+          const pct = Math.round((t.progress || 0) * 100);
+          tr.appendChild(node('td', pct + '%'));
+          torrentsList.appendChild(tr);
+        }
+        const torrentsEmpty = $('series-torrents-empty');
+        if (torrentsEmpty) torrentsEmpty.hidden = series.torrents.length !== 0;
+      }
+      $('series-missing').replaceChildren();
+      $('series-missing-empty').hidden = true;
+
+      const rejected = $('series-rejected');
+      const controls = $('series-reject-controls');
+      const reject = $('series-reject');
+      const keep = $('series-keep');
+      const searchBtn = $('series-search');
+      const retryBtn = $('series-retry');
+
+      if (series.state === 'REJECTED') {
+        rejected.hidden = false;
+        rejected.textContent = 'This anime was rejected; automatic acquisition is stopped.';
+        controls.hidden = true;
+        reject.hidden = true;
+        keep.disabled = true;
+      } else if (series.state === 'KEPT') {
+        rejected.hidden = false;
+        rejected.textContent = 'This anime was accepted; Sonarr handles it from now on.';
+        controls.hidden = true;
+        reject.hidden = true;
+        keep.disabled = true;
+      } else {
+        rejected.hidden = true;
+        controls.hidden = false;
+        reject.hidden = false;
+        keep.disabled = false;
+      }
+
+      reject.onclick = async () => {
+        if (state.seriesBusy) return;
+        const reason = $('series-reject-reason').value;
+        const note = $('series-reject-note').value;
+        if (!confirm('Reject ' + series.title + ' and permanently remove its staged files; deletion cannot be undone?')) return;
+        state.seriesBusy = true; reject.disabled = true;
+        try {
+          const res = await request(API + '/series/' + anidbId + '/reject', {
+            method: 'POST', body: {reason, note}
+          });
+          notice(res.message);
+          dialog.close();
+          await refreshPage();
+        } catch (err) { displayError(err); }
+        finally { state.seriesBusy = false; reject.disabled = false; }
+      };
+
+      keep.onclick = async () => {
+        if (state.seriesBusy) return;
+        state.seriesBusy = true; keep.disabled = true;
+        try {
+          const res = await request(API + '/series/' + anidbId + '/keep', {method: 'POST'});
+          notice(res.message);
+          dialog.close();
+          await refreshPage();
+        } catch (err) { displayError(err); }
+        finally { state.seriesBusy = false; keep.disabled = false; }
+      };
+
+      if (searchBtn) {
+        searchBtn.onclick = async () => {
+          if (state.seriesBusy) return;
+          state.seriesBusy = true; searchBtn.disabled = true;
+          try {
+            const res = await request(API + '/series/' + anidbId + '/search', {method: 'POST'});
+            notice(res.message);
+            dialog.close();
+            await refreshPage();
+          } catch (err) { displayError(err); }
+          finally { state.seriesBusy = false; searchBtn.disabled = false; }
+        };
+      }
+
+      if (retryBtn) {
+        retryBtn.onclick = async () => {
+          if (state.seriesBusy) return;
+          state.seriesBusy = true; retryBtn.disabled = true;
+          try {
+            const res = await request(API + '/series/' + anidbId + '/retry', {method: 'POST'});
+            notice(res.message);
+            dialog.close();
+            await refreshPage();
+          } catch (err) { displayError(err); }
+          finally { state.seriesBusy = false; retryBtn.disabled = false; }
+        };
+      }
+
+      if (!dialog.open) dialog.showModal();
+      return;
+    }
     $('series-title').textContent = series.title;
     const alternative = series.title === series.english_title ? series.romaji_title : series.english_title;
     const description = [alternative, series.type, series.year].filter(Boolean).join(' · ');
@@ -885,7 +1109,8 @@ function liveStatus(connected) {
 }
 async function refreshPage() {
   if (!state.csrf || document.hidden) return;
-  if (state.page === 'recognized') await loadRecognized(true);
+  if (state.page === 'running') await loadRunning(true);
+  else if (state.page === 'recognized') await loadRecognized(true);
   else if (state.page === 'settings') await loadSettings(true);
   else await loadActivity();
 }
@@ -1682,15 +1907,18 @@ function queueSearch() {
 }
 async function showWorkspace() {
   $('console-prompt').textContent = APP_NAME.toLowerCase() + ':~/' + (state.page === 'recognized' ? 'names' : state.page) + '$';
-  document.title = ({intake: 'Intake', jobs: 'Jobs', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
+  document.title = ({intake: 'Intake', running: 'Running', jobs: 'Jobs', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
   await loadServices();
   $('intake-panel').hidden = state.page !== 'intake';
+  const runningPanel = $('running-panel');
+  if (runningPanel) runningPanel.hidden = state.page !== 'running';
   $('jobs-panel').hidden = state.page !== 'jobs';
   $('settings-panel').hidden = state.page !== 'settings';
   $('recognized-panel').hidden = state.page !== 'recognized';
   for (const link of document.querySelectorAll('nav a')) link.classList.toggle('selected', new URL(link.href).pathname === location.pathname);
   clearTimeout(state.timer); if (state.csrf) state.timer = setTimeout(tick, 5000);
+  if (state.page === 'running') { await loadRunning(); return; }
   if (state.page === 'settings') { await loadSettings(); return; }
   if (state.page === 'recognized') { await loadRecognized(); return; }
   if (state.page === 'jobs' && state.search) $('search').value = state.search;
