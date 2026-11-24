@@ -129,6 +129,7 @@ class Worker:
         self._closed = False
         self._last_cleanup_review_scan = None
         self._transcode_batch_task = None
+        self._series_job_task = None
         self._control_pool = ThreadPoolExecutor(max_workers=4,thread_name_prefix="nextgen-control")
 
     async def _io(self, callable_, *args, **kwargs):
@@ -572,6 +573,32 @@ class Worker:
                 worked = False
             await asyncio.sleep(1)
 
+    async def _run_series_job(self):
+        from src.anime.series_job.worker import run_series_attempt
+        from types import SimpleNamespace
+        while not self._halt_claims.is_set():
+            worked = False
+            try:
+                configuration = await self._io(self.config.operation, self.startup, component="worker")
+                from src.anime.storage.sqlite import connect
+                db = connect(configuration.value("storage.database_path"))
+                try:
+                    context = SimpleNamespace(
+                        db=db,
+                        configuration=configuration,
+                        cancelled=lambda: self._halt_claims.is_set(),
+                        now=int(time.time() * 1000),
+                    )
+                    worked = await run_series_attempt(db, context)
+                finally:
+                    db.close()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._log_error(exc)
+                worked = False
+            await asyncio.sleep(0.5 if not worked else 0.05)
+
     async def run(self, *, on_ready=None):
         if self._running or self._closed:
             raise RuntimeError("worker cannot be started in its current state")
@@ -595,6 +622,9 @@ class Worker:
                     if self._secrets is not None and (self._transcode_batch_task is None or self._transcode_batch_task.done()):
                         if self._transcode_batch_task is not None: self._transcode_batch_task.result()
                         self._transcode_batch_task = asyncio.create_task(self._run_transcode_batches())
+                    if self._series_job_task is None or self._series_job_task.done():
+                        if self._series_job_task is not None: self._series_job_task.result()
+                        self._series_job_task = asyncio.create_task(self._run_series_job())
                     while len(self._tasks) < self.concurrency and not self._stop.is_set():
                         task = asyncio.create_task(self.attempt())
                         self._tasks.add(task)
@@ -623,7 +653,7 @@ class Worker:
             self.stop()
             # Drain even on failure/cancellation; retain admission until threads
             # are finished. No forced lease release or external replay here.
-            tasks = tuple(self._tasks) + ((self._transcode_batch_task,) if self._transcode_batch_task is not None else ())
+            tasks = tuple(self._tasks) + tuple(t for t in (self._transcode_batch_task, self._series_job_task) if t is not None)
             try:
                 if tasks:
                     await settle(tasks)
