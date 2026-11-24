@@ -183,11 +183,23 @@ def notify_not_processed(db, raw_body, reason_code, now=None):
                 'raw_body': raw_body}, now=now)
 
 
-def apply_result(database, result, logger):
+def apply_result(database, result, logger, *, config_directory=None, configuration=None, series_enabled=None):
     """Apply one identity-process result in one transaction, then log it in plain words.
 
     Returns what was done: 'identified', 'rejected', 'decided', or 'gone' (already applied).
     """
+    if series_enabled is None:
+        if configuration is not None:
+            series_enabled = configuration.value('series.enabled')
+        elif config_directory is not None:
+            try:
+                from src.anime.configuration import ConfigurationStore
+                series_enabled = ConfigurationStore(config_directory).read().value('series.enabled')
+            except Exception:
+                series_enabled = False
+        else:
+            series_enabled = False
+
     from src.anime.decided_series import REASONS, WORDS, notify_refused, release_name
     from src.anime.diagnostics import log_history
     from src.anime.schema.anime_series import AnimeSeries
@@ -199,11 +211,11 @@ def apply_result(database, result, logger):
     now = now_ms()
     records = []
     with JobQueue(database).connection() as db, transaction(db):
-        row = db.execute('SELECT raw_body,process_anyway,received_at_ms,outcome FROM identity_requests '
+        row = db.execute('SELECT raw_body,process_anyway,received_at_ms,outcome,infohash FROM identity_requests '
                          'WHERE request_id=?', (request_id,)).fetchone()
         if row is None or row[3] is not None:
             return 'gone'                      # Already applied (a repeated report).
-        raw, anyway, received = bytes(row[0]), bool(row[1]), row[2]
+        raw, anyway, received, infohash = bytes(row[0]), bool(row[1]), row[2], row[4]
         name = release_name(raw) or f'Release {request_id}'
 
         def decide(outcome, reason_code):
@@ -225,6 +237,22 @@ def apply_result(database, result, logger):
                 notify_refused(db, aid, found, raw, now=now)
                 decide('rejected', REASONS[found])
                 return 'decided', f'{name}: AniDB {aid} {title} is already {WORDS[found]}; in API Reject'
+
+            if series_enabled:
+                from src.anime.series_job.store import wake, add_torrent
+                actual_hash = infohash
+                if not actual_hash:
+                    try:
+                        import json as _json
+                        parsed = _json.loads(raw.decode('utf-8', errors='replace'))
+                        actual_hash = parsed.get('torrent_infohash') or parsed.get('infohash')
+                    except Exception:
+                        actual_hash = None
+                wake(db, aid, title, now=now)
+                add_torrent(db, aid, {'infohash': actual_hash, 'release_name': name, 'raw_body': raw}, now=now)
+                decide('accepted', None)
+                return 'identified', f'gave series {aid} {title} torrent {name}'
+
             db.execute('SAVEPOINT identity')   # A conflict undoes only the delivery, not the refusal.
             event_id = db.execute('INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)',
                                   ('autobrr', raw, received)).lastrowid
@@ -254,11 +282,14 @@ def apply_result(database, result, logger):
 class IdentityBridge:
     """Starts the identity process when releases are due and applies what it reports."""
 
-    def __init__(self, config_directory, database, logger, *, apply=apply_result, command=None, executor=None):
+    def __init__(self, config_directory, database, logger, *, apply=None, command=None, executor=None):
         self.config_directory = str(config_directory)
         self.database = database
         self.logger = logger
-        self.apply = apply
+        if apply is not None and apply is not apply_result:
+            self.apply = apply
+        else:
+            self.apply = lambda db, res, log: apply_result(db, res, log, config_directory=self.config_directory)
         self.command = command or (sys.executable, '-m', 'src.anime.identity_process',
                                    '--config-dir', self.config_directory)
         self.executor = executor
