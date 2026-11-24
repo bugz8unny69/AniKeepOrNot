@@ -9,6 +9,9 @@ with AKON's rules for each, and pushes the best release to Sonarr
 it passes, grabs and imports it as if its own search had found it. A rejected
 release is logged with Sonarr's reason and the next candidate is tried.
 
+Only when the audio check is japanese_english: otherwise Sonarr's own search is
+enough and the job does nothing.
+
 It starts DELAY_MS after the Keep, so Sonarr's own search (sent by the Keep)
 finishes first and nothing is grabbed twice.
 """
@@ -16,6 +19,7 @@ from functools import partial
 import logging
 import time
 
+from src.anime.acquisition.audio import wants_english
 from src.anime.acquisition.prowlarr_search import (Client as Prowlarr, SearchConfiguration, SearchReview,
                                                    SearchUnavailable)
 from src.anime.async_io import blocking
@@ -99,6 +103,11 @@ def registration(secrets, *, catalog_factory=None, prowlarr_factory=Prowlarr.fro
     async def execute(context):
         payload = context.data()
         anidb_id, tvdb_series_id = payload['anidb_id'], payload['tvdb_series_id']
+        audio = context.configuration.value('acquisition.audio_check')
+        if not wants_english(audio):
+            # Only dubs need AKON's help; Sonarr's own search finds the rest (owner, 2026-11-23).
+            LOG.info('Dub search for AniDB %s skipped: the audio check is %s, not japanese_english', anidb_id, audio)
+            return Outcome()
         catalog = catalog_factory(context.configuration)
         try:
             sonarr = sonarr_factory(context.configuration, secrets.sonarr_api_key())

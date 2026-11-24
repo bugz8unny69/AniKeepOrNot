@@ -65,6 +65,24 @@ class FindDubsTests(unittest.TestCase):
         self.assertEqual(prowlarr.asked, [])
 
 
+class AudioCheckTests(unittest.IsolatedAsyncioTestCase):
+    async def run_with(self, audio):
+        asked = []
+        configuration = mock.Mock(value=lambda key: {'acquisition.audio_check': audio}[key])
+        context = mock.Mock(configuration=configuration, data=lambda: {'anidb_id': 1, 'tvdb_series_id': 2})
+        job = find_dubs_job.registration(mock.Mock(), catalog_factory=lambda c: asked.append('catalog'),
+                                         sonarr_factory=lambda *a: asked.append('sonarr'),
+                                         prowlarr_factory=lambda *a, **k: mock.Mock())
+        with mock.patch.object(find_dubs_job, 'find_and_push', return_value=([], [])):
+            outcome = await job.execute(context)
+        return outcome.kind, asked
+
+    async def test_nothing_is_done_unless_the_audio_check_wants_english(self):
+        for audio in ('off', 'japanese'):
+            self.assertEqual(await self.run_with(audio), ('complete', []))
+        self.assertEqual((await self.run_with('japanese_english'))[1], ['catalog', 'sonarr'])
+
+
 class SonarrCallsTests(unittest.TestCase):
     def client(self, answers):
         client = Client(Options('http://sonarr.test', '/a', '/a', '/a', 0, 5), 'k' * 32)
