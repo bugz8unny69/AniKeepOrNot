@@ -25,7 +25,7 @@ class KeepReview(ValueError):
 
 
 # One sentence for the Keep button and the job: Keep adds new series with this profile.
-PROFILE_MISSING='set the Sonarr quality profile ID in Settings; Keep adds new series with it'
+PROFILE_MISSING='choose the Sonarr quality profile in Settings; Keep adds new series with it'
 
 
 class KeepConfiguration(KeepReview):
@@ -72,6 +72,18 @@ class Options:
             configuration.value('sonarr.long_running_threshold'),configuration.value('sonarr.backfill_long_running'))
 
     def data(self):return asdict(self)
+
+
+def quality_profiles(configuration,key):
+    """Sonarr's quality profiles as [{id, name}], for the Settings drop-down.
+
+    Sonarr shows profile names but not their IDs; the setting stores the ID.
+    """
+    unused='/unused'   # Listing profiles reads no folders; Options requires the fields.
+    options=Options(configuration.value('sonarr.base_url'),unused,unused,unused,0,
+                    configuration.value('sonarr.timeout_seconds'))
+    return [{'id':row['id'],'name':row['name']} for row in Client(options,key).request('qualityprofile')
+            if type(row.get('id')) is int and type(row.get('name')) is str]
 
 
 def remote_source(options,selection):return str(PurePosixPath(options.staging_root)/selection.media_relative_path)

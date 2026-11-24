@@ -829,6 +829,16 @@ class Application:
                         'reason':None if result.reason_code is None else CATALOG.reason(result.reason_code),
                         'restart_fields':result.restart_fields,'restart_components':result.restart_components},[]
                 raise ApiError(405,'API_METHOD_INVALID')
+            if path==PREFIX+'/settings/sonarr/quality-profiles':
+                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                from src.anime.sonarr import KeepConfiguration,KeepUnavailable,quality_profiles
+                try:profiles=quality_profiles(configuration,self.secrets.sonarr_api_key())
+                except KeepConfiguration as exc:
+                    raise ApiError(409,exc.reason_code,detail='Set the Sonarr address and API key first.') from None
+                except KeepUnavailable as exc:
+                    raise ApiError(503,exc.reason_code,detail='Sonarr did not answer.') from None
+                return 200,{'profiles':profiles},[]
             if path==PREFIX+'/credentials/transcode':
                 if method!='PATCH':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')

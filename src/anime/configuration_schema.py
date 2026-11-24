@@ -92,7 +92,7 @@ FIELDS = MappingProxyType({
     "prowlarr.rank_by": FieldDefinition("resolution", "ranking", "next_operation", label="Ranking", help_text="Pick the best release by resolution then seeders, or seeders then resolution."),
     "sonarr.base_url": FieldDefinition("", "download_endpoint", "next_operation", label="Sonarr address", help_text="HTTP(S) server address for Sonarr v4. Blank turns Keep off."),
     "sonarr.timeout_seconds": FieldDefinition(30, "integer", "next_operation", minimum=1, maximum=60, label="Sonarr timeout"),
-    "sonarr.quality_profile_id": FieldDefinition(0, "integer", "next_operation", minimum=0, maximum=2147483647, label="Sonarr quality profile ID", help_text="Required for new series. Zero means unconfigured."),
+    "sonarr.quality_profile_id": FieldDefinition(0, "integer", "next_operation", minimum=0, maximum=2147483647, label="Sonarr quality profile", help_text="Required for new series. Keep adds a new series to Sonarr with this profile."),
     "sonarr.long_running_threshold": FieldDefinition(100, "integer", "next_operation", minimum=0, maximum=100000,
         label="Long-running series threshold (episodes)", help_text="When Keep adds a series to Sonarr and its AniDB entry has at least this many regular episodes (One Piece, Detective Conan), Sonarr only gets new episodes. 0 turns this off."),
     "sonarr.backfill_long_running": FieldDefinition(False, "boolean", "next_operation",
