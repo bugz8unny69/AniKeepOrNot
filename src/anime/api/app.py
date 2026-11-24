@@ -478,6 +478,41 @@ class Application:
         # Authentication and CSRF above apply equally to all explicit actions.
         # HTTP performs local admission only; network/filesystem cleanup is queued.
         with MaintenanceGate(configuration.value('storage.database_path')).operation():
+            if path==PREFIX+'/running':
+                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    series_rows = db.execute(
+                        "SELECT anidb_id, title, state, wake_at_ms, torrents_at_once, "
+                        "       torrents_json, episodes_json, recent_json, "
+                        "       created_at_ms, updated_at_ms "
+                        "FROM series WHERE state = 'WORKING' "
+                        "ORDER BY updated_at_ms DESC"
+                    ).fetchall()
+                    series_list = []
+                    for r in series_rows:
+                        series_list.append({
+                            'anidb_id': r[0],
+                            'title': r[1],
+                            'state': r[2],
+                            'wake_at_ms': r[3],
+                            'torrents_at_once': r[4],
+                            'torrents': json.loads(r[5]) if r[5] else [],
+                            'episodes': json.loads(r[6]) if r[6] else {},
+                            'recent': json.loads(r[7]) if r[7] else [],
+                            'created_at_ms': r[8],
+                            'updated_at_ms': r[9],
+                        })
+                    waiting = db.execute(
+                        "SELECT request_id, infohash, received_at_ms, tries "
+                        "FROM identity_requests WHERE outcome IS NULL "
+                        "ORDER BY received_at_ms ASC LIMIT 50"
+                    ).fetchall()
+                    waiting_identity = [
+                        {'request_id': w[0], 'infohash': w[1], 'received_at_ms': w[2], 'tries': w[3]}
+                        for w in waiting
+                    ]
+                return 200, {'series': series_list, 'waiting_identity': waiting_identity}, []
             if path==PREFIX+'/services':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -705,10 +740,35 @@ class Application:
                 if series_match[2] is None and method=='GET':
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
+                        if configuration.value('series.enabled'):
+                            from src.anime.series_job.store import get_series
+                            s = get_series(db, aid)
+                            if s is not None:
+                                return 200, {
+                                    'anidb_id': s.anidb_id,
+                                    'title': s.title,
+                                    'state': s.state,
+                                    'wake_at_ms': s.wake_at_ms,
+                                    'torrents_at_once': s.torrents_at_once,
+                                    'torrents': s.torrents,
+                                    'episodes': s.episodes,
+                                    'recent': s.recent,
+                                    'created_at_ms': s.created_at_ms,
+                                    'updated_at_ms': s.updated_at_ms,
+                                }, []
                         item=series_detail(db,aid,language=configuration.value('anime.title_language'))
                     if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
                     return 200,item,[]
                 if series_match[2]=='keep' and method=='POST':
+                    if configuration.value('series.enabled'):
+                        with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                            from src.anime.series_job.actions import keep_series_sync
+                            try:
+                                res = keep_series_sync(db, aid)
+                                return 200, res, []
+                            except ValueError as exc:
+                                if 'not found' not in str(exc).lower():
+                                    raise ApiError(409, 'ANIME_REJECTED')
                     exact(body,('operation_ids',))
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
@@ -729,6 +789,15 @@ class Application:
                     return 202,{'submitted':submitted,'failed':failed,
                                 'message':f'Keep requested for {len(submitted)} staged acquisitions.'},[]
                 if series_match[2]=='reject' and method=='POST':
+                    if configuration.value('series.enabled'):
+                        with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                            from src.anime.series_job.actions import reject_series_sync
+                            try:
+                                res = reject_series_sync(db, aid, reason=body.get('reason', 'REJECTED_BY_USER'), note_text=body.get('note', ''))
+                                return 200, res, []
+                            except ValueError as exc:
+                                if 'not found' not in str(exc).lower():
+                                    raise ApiError(409, 'ANIME_REJECTED')
                     exact(body,('operation_ids','reason','note'))
                     result=reject_intake_series(
                         configuration.value('storage.database_path'),aid,
@@ -737,6 +806,49 @@ class Application:
                                 'status_url':f'/api/v1/jobs/{result["job_id"]}',
                                 'history_url':f'/api/v1/jobs/{result["job_id"]}/history'},[]
                 raise ApiError(405,'API_METHOD_INVALID')
+            series_act=re.fullmatch(PREFIX+r'/series/([1-9][0-9]{0,18})(?:/(keep|reject|search|retry|cancel))?',path)
+            if series_act:
+                if query:raise ApiError(400,'API_REQUEST_INVALID')
+                aid=int(series_act[1])
+                if aid>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
+                action=series_act[2]
+                if action is None:
+                    if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
+                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                        from src.anime.series_job.store import get_series
+                        s=get_series(db,aid)
+                        if s is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
+                        data={
+                            'anidb_id':s.anidb_id,'title':s.title,'state':s.state,'wake_at_ms':s.wake_at_ms,
+                            'torrents_at_once':s.torrents_at_once,'torrents':s.torrents,'episodes':s.episodes,
+                            'recent':s.recent,'created_at_ms':s.created_at_ms,'updated_at_ms':s.updated_at_ms,
+                        }
+                    return 200,data,[]
+                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
+                from src.anime.series_job.actions import (
+                    keep_series_sync, reject_series_sync, search_series_sync, retry_series_sync, cancel_series_sync
+                )
+                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    try:
+                        if action=='keep':
+                            res=keep_series_sync(db,aid)
+                        elif action=='reject':
+                            res=reject_series_sync(db,aid,reason=body.get('reason','REJECTED_BY_USER'),note_text=body.get('note',''))
+                        elif action=='search':
+                            res=search_series_sync(db,aid)
+                        elif action=='retry':
+                            res=retry_series_sync(db,aid)
+                        elif action=='cancel':
+                            res=cancel_series_sync(db,aid)
+                    except ValueError as exc:
+                        msg=str(exc).lower()
+                        if 'not found' in msg:raise ApiError(404,'API_ROUTE_NOT_FOUND')
+                        if 'already kept' in msg or 'already accepted' in msg:
+                            raise ApiError(409,'ANIME_ACCEPTED')
+                        if 'already' in msg:
+                            raise ApiError(409,'ANIME_REJECTED')
+                        raise ApiError(400,'API_REQUEST_INVALID')
+                return 200,res,[]
             manual_match=re.fullmatch(
                 PREFIX+r'/intake/series/([1-9][0-9]{0,18})/episodes/([0-9]{1,4})/([1-9][0-9]{0,3})/submit',path)
             if manual_match:

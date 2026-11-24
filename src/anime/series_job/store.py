@@ -281,3 +281,31 @@ def get_series(db, anidb_id: int) -> SeriesRow | None:
     if row is None:
         return None
     return _row_from_tuple(row)
+
+
+def update_series(db, series: SeriesRow, now: int | None = None) -> None:
+    """Directly update a series row (used by administrative actions)."""
+    if now is None:
+        now = int(time.time() * 1000)
+    with _atomic(db):
+        db.execute(
+            "UPDATE series "
+            "SET title = ?, state = ?, wake_at_ms = ?, torrents_at_once = ?, "
+            "    torrents_json = ?, episodes_json = ?, recent_json = ?, "
+            "    lease_token = ?, lease_expires_at_ms = ?, updated_at_ms = ? "
+            "WHERE anidb_id = ?",
+            (
+                series.title,
+                series.state,
+                series.wake_at_ms,
+                series.torrents_at_once,
+                json.dumps(series.torrents),
+                json.dumps(series.episodes),
+                json.dumps(series.recent[-50:]),
+                series.lease_token,
+                series.lease_expires_at_ms,
+                now,
+                series.anidb_id,
+            )
+        )
+
