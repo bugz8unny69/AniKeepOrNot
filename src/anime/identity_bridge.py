@@ -145,12 +145,16 @@ def known_series(database, raw_body):
 
 
 def take_release(database, raw_body, logger, *, process_anyway=False):
-    """Queue a release and answer from local data when it can: (request_id, outcome, reason_code).
+    """Queue a release and answer from local data when it can: (request_id, outcome, reason_code, new).
 
-    outcome None means the identity process must get the real data from AniDB first.
+    outcome None means the identity process must get the real data from AniDB first;
+    new is True the first time this torrent is seen.
     """
     from src.anime.storage.job_queue import JobQueue
     with JobQueue(database).connection() as db:
+        infohash = _infohash(raw_body)
+        new = infohash is None or db.execute('SELECT 1 FROM identity_requests WHERE infohash=?',
+                                             (infohash,)).fetchone() is None
         request_id = queue_release(db, raw_body, process_anyway=process_anyway)
         outcome = status(db, request_id)
     if outcome[0] is None:
@@ -159,7 +163,7 @@ def take_release(database, raw_body, logger, *, process_anyway=False):
             apply_result(database, {'request_id': request_id, 'result': 'identified', 'series': series}, logger)
             with JobQueue(database).connection() as db:
                 outcome = status(db, request_id)
-    return (request_id, *outcome)
+    return (request_id, *outcome, new)
 
 
 def notify_not_processed(db, raw_body, reason_code, now=None):
@@ -180,8 +184,11 @@ def notify_not_processed(db, raw_body, reason_code, now=None):
 
 
 def apply_result(database, result, logger):
-    """Apply one identity-process result in one transaction. Returns what was done."""
-    from src.anime.decided_series import notify_refused
+    """Apply one identity-process result in one transaction, then log it in plain words.
+
+    Returns what was done: 'identified', 'rejected', 'decided', or 'gone' (already applied).
+    """
+    from src.anime.decided_series import REASONS, WORDS, notify_refused, release_name
     from src.anime.diagnostics import log_history
     from src.anime.schema.anime_series import AnimeSeries
     from src.anime.storage.job_queue import JobQueue
@@ -197,45 +204,51 @@ def apply_result(database, result, logger):
         if row is None or row[3] is not None:
             return 'gone'                      # Already applied (a repeated report).
         raw, anyway, received = bytes(row[0]), bool(row[1]), row[2]
+        name = release_name(raw) or f'Release {request_id}'
 
         def decide(outcome, reason_code):
             db.execute('UPDATE identity_requests SET outcome=?,last_reason_code=?,decided_at_ms=? '
                        'WHERE request_id=?', (outcome, reason_code, now, request_id))
-        if result['result'] != 'identified':
-            notify_not_processed(db, raw, result['reason_code'], now)
-            decide('rejected', result['reason_code'])
-            return 'rejected'
-        series = AnimeSeries.from_dict(result['series']).to_dict()
-        aid = series['anime']['anidb_id']
-        found = None if anyway else decision(db, aid)
-        if found is not None:
-            from src.anime.decided_series import REASONS
-            notify_refused(db, aid, found, raw, now=now)
-            decide('rejected', REASONS[found])
-            return 'decided'
-        db.execute('SAVEPOINT identity')   # A conflict undoes only the delivery, not the refusal.
-        event_id = db.execute('INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)',
-                              ('autobrr', raw, received)).lastrowid
-        records.append(append_event_history(db, event_id=event_id, event_code='ACCEPTED', component='api',
-                                            occurred_at_ms=now))
-        try:
-            _, audit = persist_identity(db, event_id, series, now)
-        except (IdentityConflict, IdentityNotReady) as exc:
-            db.execute('ROLLBACK TO identity'); db.execute('RELEASE identity')
-            records.clear()
-            notify_not_processed(db, raw, exc.reason_code, now)
-            decide('rejected', exc.reason_code)
-            return 'rejected'
-        if audit is not None:
-            records.append(audit)
-        _, created = enqueue_job_with_receipt(db, kind=RELEASE_KIND, payload={'anidb_id': aid},
-                                              component='api', event_id=event_id, available_at_ms=now)
-        records.append(created)
-        db.execute('RELEASE identity')
-        decide('accepted', None)
+
+        def rejected(reason_code):
+            notify_not_processed(db, raw, reason_code, now)
+            decide('rejected', reason_code)
+            return 'rejected', f'{name}: not identified, {reason_code}; in API Reject'
+
+        def apply():
+            if result['result'] != 'identified':
+                return rejected(result['reason_code'])
+            series = AnimeSeries.from_dict(result['series']).to_dict()
+            aid, title = series['anime']['anidb_id'], series['anime']['title']
+            found = None if anyway else decision(db, aid)
+            if found is not None:
+                notify_refused(db, aid, found, raw, now=now)
+                decide('rejected', REASONS[found])
+                return 'decided', f'{name}: AniDB {aid} {title} is already {WORDS[found]}; in API Reject'
+            db.execute('SAVEPOINT identity')   # A conflict undoes only the delivery, not the refusal.
+            event_id = db.execute('INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)',
+                                  ('autobrr', raw, received)).lastrowid
+            records.append(append_event_history(db, event_id=event_id, event_code='ACCEPTED', component='api',
+                                                occurred_at_ms=now))
+            try:
+                _, audit = persist_identity(db, event_id, series, now)
+            except (IdentityConflict, IdentityNotReady) as exc:
+                db.execute('ROLLBACK TO identity'); db.execute('RELEASE identity')
+                records.clear()
+                return rejected(exc.reason_code)
+            if audit is not None:
+                records.append(audit)
+            job_id, created = enqueue_job_with_receipt(db, kind=RELEASE_KIND, payload={'anidb_id': aid},
+                                                       component='api', event_id=event_id, available_at_ms=now)
+            records.append(created)
+            db.execute('RELEASE identity')
+            decide('accepted', None)
+            return 'identified', f'{name}: identified as AniDB {aid} {title}; gave the worker job {job_id}'
+        done, line = apply()
     for record in records:
         log_history(logger, record)
-    return 'identified'
+    logger.info(line)
+    return done
 
 
 class IdentityBridge:
@@ -281,6 +294,7 @@ class IdentityBridge:
 
     async def _serve(self):
         """Run one identity process to its end, applying each line it reports."""
+        self.logger.info('Started the identity process for releases waiting on AniDB')
         self.process = await asyncio.create_subprocess_exec(
             *self.command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE)
         try:
@@ -290,13 +304,13 @@ class IdentityBridge:
                     break
                 try:
                     result = json.loads(line)
-                    done = await self._io(self.apply, self.database, result, self.logger)
-                    self.logger.info('Identity result for release request %s: %s',
-                                     result.get('request_id'), done)
+                    await self._io(self.apply, self.database, result, self.logger)
                 except Exception as exc:  # Boundary: one bad result must not stop the others; full trace.
                     self.logger.error('Identity result could not be applied; the release is tried again '
                                       'later.\n%s', trace(exc))
             code = await self.process.wait()
+            if code == 0:
+                self.logger.info('The identity process finished: nothing left to identify')
             if code != 0 and not self._stopping:
                 self.logger.error('Identity process exited with status %s; its error is in the log above. '
                                   'Waiting releases are tried again in %ss.', code, TICK_S)

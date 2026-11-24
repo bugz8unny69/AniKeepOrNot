@@ -157,6 +157,28 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((status,result['data']['accepted']),(200,True))
         self.assertEqual(self.rows('SELECT kind FROM jobs'),[('VERIFY_RELEASE',)])
 
+    async def test_a_program_error_answers_500_with_where_and_logs_the_full_trace(self):
+        from unittest import mock
+        def broken(*args,**kwargs):return {}['missing']
+        with self.assertLogs(self.app.logger,'ERROR') as logs,\
+             mock.patch('src.anime.api.app.webhook_decision',side_effect=broken):
+            status,result,_=await self.request('POST','/api/v1/check',self.release(token=WEB))
+        self.assertEqual((status,result['error']['code']),(500,'API_PROGRAM_ERROR'))
+        self.assertIn('in broken (KeyError)',result['error']['message'])
+        text='\n'.join(logs.output)
+        self.assertIn('POST /api/v1/check failed with a program error',text)
+        self.assertIn('Traceback (most recent call last)',text)
+        self.assertNotIn(WEB,text)
+
+    async def test_the_api_logs_what_it_did_with_a_release(self):
+        self.identity=None
+        with self.assertLogs(self.app.logger,'INFO') as logs:
+            await self.request('POST','/api/v1/check',self.release(token=WEB))
+        text='\n'.join(logs.output)
+        self.assertIn('Test Anime - 10: new release, asked the identity process; waiting for AniDB',text)
+        self.assertIn('POST /api/v1/check answered 503',text)
+        self.assertNotIn(WEB,text)
+
     async def test_check_needs_the_webhook_token(self):
         status,_,_=await self.request('POST','/api/v1/check',self.release())
         self.assertEqual(status,401)

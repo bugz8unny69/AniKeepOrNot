@@ -43,9 +43,12 @@ class BridgeStoreTests(unittest.TestCase):
 
     def test_identified_release_gets_one_worker_job_and_leaves_the_queue(self):
         request = self.queue()
-        done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'identified',
-                                                            'series': SERIES}, LOG)
+        with self.assertLogs(LOG, 'INFO') as logs:
+            done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'identified',
+                                                                'series': SERIES}, LOG)
         self.assertEqual(done, 'identified')
+        self.assertIn('[Group] Cyberpunk Edgerunners - 05 (1080p): identified as AniDB 16999 Cyberpunk Edgerunners; '
+                      'gave the worker job 1', '\n'.join(logs.output))
         self.assertEqual(self.rows('SELECT outcome,last_reason_code FROM identity_requests'), [('accepted', None)])
         self.assertEqual(self.rows('SELECT state FROM incoming_events'), [('IDENTIFIED',)])
         self.assertEqual(self.rows('SELECT anidb_id FROM identity_results'), [(16999,)])

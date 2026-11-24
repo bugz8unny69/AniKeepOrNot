@@ -32,9 +32,10 @@ def webhook_decision(configuration, raw_body):
     if name is None:
         return None
     database = configuration.value('storage.database_path')
+    from src.anime.providers.errors import ProviderConfigurationError
     try:
         options = options_from_configuration(configuration)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, ProviderConfigurationError):
         options = None                      # manual matches and Recognized names still apply
     try:
         threshold = int(configuration.value('identity.match_threshold_pct'))

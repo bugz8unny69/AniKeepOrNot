@@ -106,19 +106,21 @@ class DiagnosticLoggingTests(unittest.TestCase):
             self.assertIn("error: private_secret_class_name: entire provider body", content)
             self.assertLess(len(content), 4096)
 
-    def test_formatter_discards_cached_exception_text_and_raw_stack(self):
-        record = logging.LogRecord("safe", logging.ERROR, __file__, 1, "Static message.", (), None)
-        record.exc_text = "private_cached_exception"
-        record.stack_info = "private_stack_source"
-        rendered = SafeFormatter("%(message)s").format(record)
-        self.assertNotIn("private_cached_exception", rendered)
-        self.assertNotIn("private_stack_source", rendered)
-        self.assertEqual(record.exc_text, "private_cached_exception")
+    def test_formatter_prints_the_full_stack_trace_with_credentials_redacted(self):
+        # Owner's rule (2026-11-22): an error logs its type, message and every frame.
+        def inner():
+            raise RuntimeError("bad value password=hunter2")
         try:
-            raise RuntimeError("unknown_secret_value")
+            inner()
         except RuntimeError as failure:
-            record.exc_info = (type(failure), failure, failure.__traceback__)
-            self.assertNotIn("unknown_secret_value", SafeFormatter("%(message)s").format(record))
+            record = logging.LogRecord("anime.api", logging.ERROR, __file__, 1, "Failed.", (),
+                                       (type(failure), failure, failure.__traceback__))
+        rendered = SafeFormatter("%(message)s").format(record)
+        self.assertIn("Traceback (most recent call last)", rendered)
+        self.assertIn('File "src/anime/tests/test_diagnostic_logging.py"', rendered)
+        self.assertIn("in inner", rendered)
+        self.assertIn("RuntimeError: bad value password=[REDACTED]", rendered)
+        self.assertNotIn("hunter2", rendered)
 
     def test_redaction_defense_handles_known_quoted_and_query_values(self):
         content = redact('password="two words" secret=\'three word value\' '

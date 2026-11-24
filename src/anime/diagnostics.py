@@ -30,11 +30,6 @@ _SECRETS = (
     (re.compile(r"(?i)(https?://)[^/@\s]+@"), r"\1[REDACTED]@"),
     (re.compile(r"(?i)([?&](?:" + _SECRET_NAME + r"|key|auth)=)[^&#\s]+"), r"\1[REDACTED]"),
 )
-_ERROR_TYPES = {kind: kind.__name__ for kind in (
-    Exception, RuntimeError, ValueError, TypeError, KeyError, LookupError,
-    OSError, PermissionError, FileNotFoundError, TimeoutError, ConnectionError,
-    sqlite3.Error, sqlite3.OperationalError, sqlite3.IntegrityError,
-)}
 
 
 def redact(value) -> str:
@@ -45,28 +40,16 @@ def redact(value) -> str:
     return result
 
 
-def safe_traceback(exc, tb=None):
-    """Bounded line numbers; no messages, paths, source, names or locals.
-
-    Unknown exception class names are not trusted output either. Chained
-    exception text is omitted. Full source tracebacks are deliberately avoided.
-    """
-    if tb is None and isinstance(exc, BaseException):
-        tb = exc.__traceback__
-    lines = []
-    while tb is not None and len(lines) < 16:
-        lines.append(str(tb.tb_lineno))
-        tb = tb.tb_next
-    return ("Traceback (safe): exception=" + _ERROR_TYPES.get(type(exc), "Exception")
-            + " frame_lines=" + ",".join(lines) + (" truncated=true" if tb else ""))
+def full_traceback(exc_info):
+    """The standard Python traceback, chained errors included, paths from src/ (work item 1)."""
+    import traceback
+    text = "".join(traceback.format_exception(*exc_info))
+    return re.sub(r'File "[^"]*/(src/[^"]+)"', r'File "\1"', text).rstrip("\n")
 
 
 class SafeFormatter(logging.Formatter):
     def formatException(self, exc_info):
-        return safe_traceback(exc_info[1], exc_info[2])
-
-    def formatStack(self, stack_info):
-        return "Stack details omitted."
+        return full_traceback(exc_info)
 
     def format(self, record):
         # Another handler may have cached an unsafe full traceback on record.
@@ -74,8 +57,6 @@ class SafeFormatter(logging.Formatter):
         if safe_record.name == "anime" or safe_record.name.startswith("anime."):
             safe_record.name = "anime-discovery" + safe_record.name[len("anime"): ]
         safe_record.exc_text = None
-        if not safe_record.exc_info and record.exc_text:
-            safe_record.exc_text = "Exception details omitted."
         return redact(super().format(safe_record))
 
 
@@ -281,10 +262,11 @@ def exact_error(exc, *, database=None):
 
 
 def exception(logger, name: str, exc: Exception, *, level=logging.ERROR, database=None, **fields):
-    """Catch-boundary diagnostic with the exact error."""
-    fields["error_type"] = _ERROR_TYPES.get(type(exc), "Exception")
+    """Catch-boundary diagnostic: the exact error and its full stack trace."""
+    fields["error_type"] = type(exc).__name__
     return _emit(logger, level, _message(name, fields, getattr(logger, "nextgen_context", None))
-                 + " · error: " + exact_error(exc, database=database))
+                 + " · error: " + exact_error(exc, database=database) + "\n"
+                 + redact(full_traceback((type(exc), exc, exc.__traceback__))))
 
 
 def log_history(logger, record):

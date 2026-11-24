@@ -84,6 +84,7 @@ _ENTRIES = (
     Reason('API_ROUTE_NOT_FOUND','The API address or the requested item does not exist.','Not found.','Check the address and the item ID.','INFO',False),
     Reason('API_METHOD_INVALID','This API address does not support that kind of request.','This action is not supported here.','Use the request method this address documents.','WARNING',False),
     Reason('API_RATE_LIMITED','Too many sign-in attempts or sessions in a short time.','Too many requests; try again shortly.','Wait a moment, then try again.','WARNING',None),
+    Reason('API_PROGRAM_ERROR','The server hit a program error. The answer names the file and line; the full error is in the API log.','The server hit a program error.','Read the API log for the full error, then report it.','ERROR',None),
     Reason('API_UNAVAILABLE','The request failed on the server. Details are in the server log, not shown here.','The server could not complete the request.','Check the service status and the API log, then try again.','ERROR',None),
     Reason('JOB_CANCELED','Someone canceled this work before it finished.','This work was canceled.','Nothing to do. Check the cleanup status if a download was in progress.','INFO',False),
     Reason('EPISODE_CONTEXT_CONFLICT','The saved selection, the recognized episode and the verified release disagree on where this episode is in TVDB.','The saved episode details disagree.','Check the details shown. A new search cannot override saved details that disagree; correct the wrong one, then press Retry.','WARNING',False),

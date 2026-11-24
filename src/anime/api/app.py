@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import re
+import time
+import traceback
 import uuid
 from urllib.parse import parse_qs, urlsplit
 
@@ -32,7 +34,8 @@ from src.anime.storage.adapter import DatabaseVersionMismatch
 from src.anime.storage.job_queue import JobOperationMissing, JobQueue, StorageStatementInvalid
 from src.anime.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
 from src.anime.storage import notifications as inbox
-from src.anime.decided_series import webhook_decision, notify_refused, REASONS as DECISION_REASONS
+from src.anime.decided_series import (webhook_decision, notify_refused, release_name, REASONS as DECISION_REASONS,
+                                      WORDS as DECISION_WORDS)
 from src.anime.storage.management_actions import (ManagementActions, ActionUnavailable, ActionNotFound,
     KeepServiceUnavailable, keep_blocker)
 from src.anime.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
@@ -44,6 +47,15 @@ PREFIX='/api/v1'
 MAX_BODY=65536
 MAX_TORRENT_BODY=6*1024*1024  # base64 of a bounded 4 MiB BEP3 file
 CATALOG=MessageCatalog(handlers=HANDLERS)
+
+
+def where(exc):
+    """file:line in function where the error was raised in our code (the last src/ frame)."""
+    frames=traceback.extract_tb(exc.__traceback__)
+    ours=[f for f in frames if '/src/' in f.filename] or frames
+    if not ours:return type(exc).__name__
+    f=ours[-1]
+    return f"{f.filename.rsplit('/src/',1)[-1]}:{f.lineno} in {f.name} ({type(exc).__name__})"
 
 
 def object_json(raw):
@@ -252,7 +264,8 @@ class Application:
                     try:
                         if self.admin_path:
                             self.admin_server=await start_admin(self.admin_path,self.passwords)
-                    except Exception:
+                    except Exception:  # Boundary: startup must report failure; full trace in the log.
+                        self.logger.error('The admin socket could not be started',exc_info=True)
                         await send({'type':'lifespan.startup.failed','message':'Admin socket could not be started'})
                         return
                     await send({'type':'lifespan.startup.complete'})
@@ -281,6 +294,7 @@ class Application:
             await send({'type':'websocket.close','code':1008});return
         if scope['type']!='http':return
         request_id=uuid.uuid4().hex;extra=[]
+        method=scope.get('method','');path=scope.get('path','');started=time.monotonic()
         try:
             if self.closed:raise ApiError(503,'API_UNAVAILABLE')
             headers={}
@@ -331,12 +345,17 @@ class Application:
             if exc.detail:error={**error,'message':exc.detail}
             status=exc.status;result={'api_version':'v1','request_id':request_id,'error':error}
             event(self.logger,logging.WARNING,'API_REQUEST_REJECTED',component='api',reason_code=exc.reason_code)
-        except (UnicodeError,ValueError):
+        except (UnicodeError,ValueError) as exc:
+            # Bad input from the caller; where it was refused, so the code says which check.
             status=400;result={'api_version':'v1','request_id':request_id,'error':CATALOG.reason('API_REQUEST_INVALID')}
-        except Exception:
-            # No request URL, header, body, exception text or ASGI scope is logged.
-            status=503;result={'api_version':'v1','request_id':request_id,'error':CATALOG.reason('API_UNAVAILABLE')}
-            event(self.logger,logging.ERROR,'API_REQUEST_REJECTED',component='api',reason_code='API_UNAVAILABLE')
+            self.logger.warning('%s %s: refused as invalid at %s',method,path,where(exc))
+        except Exception as exc:
+            # The API's one boundary: anything else is a program bug. The full stack
+            # trace goes to the log; the caller is told where, so the code can be read.
+            at=where(exc)
+            self.logger.error('%s %s failed with a program error at %s',method,path,at,exc_info=True)
+            status=500;result={'api_version':'v1','request_id':request_id,'error':{**CATALOG.reason('API_PROGRAM_ERROR'),
+                'message':f'Program error at {at}. The full error is in the API log.'}}
         encoded=json.dumps(result,allow_nan=False,separators=(',',':')).encode()
         response_headers=[(b'content-type',b'application/json; charset=utf-8'),(b'cache-control',b'no-store'),
             (b'x-content-type-options',b'nosniff'),(b'referrer-policy',b'no-referrer'),
@@ -345,6 +364,9 @@ class Application:
         if status in (429,503) and not any(k==b'retry-after' for k,_ in extra):response_headers.append((b'retry-after',b'60'))
         await send({'type':'http.response.start','status':status,'headers':response_headers})
         await send({'type':'http.response.body','body':encoded})
+        # Changes are INFO; the dashboard's reads are DEBUG, so polling doesn't fill the log.
+        self.logger.log(logging.DEBUG if method=='GET' else logging.INFO,'%s %s answered %s in %d ms',
+                        method,path,status,(time.monotonic()-started)*1000)
 
     def _dispatch(self,method,path,headers,query,body,peer):
         try:return self._route(method,path,headers,query,body,peer)
@@ -375,22 +397,27 @@ class Application:
         configure_logging(configuration.logging_settings(),'api',logger=self.logger)
         database=configuration.value('storage.database_path')
         with MaintenanceGate(database).operation():
+            name=release_name(normalized)
             # A decided series is refused here from local data only.
-            try:decided=webhook_decision(configuration,normalized)
-            except Exception:
-                self.logger.debug('Webhook decision check skipped',exc_info=True);decided=None
+            decided=webhook_decision(configuration,normalized)
             if decided is not None:
                 with JobQueue(database).connection() as db:
                     from src.anime.storage.sqlite import transaction
                     with transaction(db):notify_refused(db,*decided,normalized)
+                self.logger.info('%s: refused, AniDB %s is already %s; in API Reject',
+                                 name,decided[0],DECISION_WORDS[decided[1]])
                 # Final for Autobrr: no event and no job.
                 return (422 if check else 200),{'accepted':False,'reason_code':DECISION_REASONS[decided[1]]},[]
-            request_id,outcome,reason=take_release(database,normalized,self.logger)
+            request_id,outcome,reason,new=take_release(database,normalized,self.logger)
         if outcome is None:
+            self.logger.log(logging.INFO if new else logging.DEBUG,'%s: %s; waiting for AniDB (release %s)%s',
+                            name,'new release, asked the identity process' if new else 'still identifying',
+                            request_id,', Autobrr asks again' if check else '')
             self.bridge.wake()
             if check:
                 return 503,{'accepted':None,'request_id':request_id,'reason_code':'IDENTITY_PENDING'},[(b'retry-after',b'15')]
             return 202,{'request_id':request_id},[]
+        self.logger.info('%s: %s (release %s)',name,'accepted' if outcome=='accepted' else 'rejected, '+str(reason),request_id)
         if outcome=='accepted':
             return 200,{'accepted':True,'request_id':request_id},[]
         return (422 if check else 200),{'accepted':False,'request_id':request_id,'reason_code':reason},[]
@@ -604,12 +631,8 @@ class Application:
                                     release_name = decl["release_name"]
                             except (ValueError, TypeError, UnicodeError):
                                 pass
-                    candidate_evidence = []
-                    try:
-                        from src.anime.storage.candidate_evidence import load_candidate_evidence
-                        candidate_evidence = load_candidate_evidence(db, identity_job)
-                    except Exception:
-                        candidate_evidence = []
+                    from src.anime.storage.candidate_evidence import load_candidate_evidence
+                    candidate_evidence = load_candidate_evidence(db, identity_job)
                 return 200,{'job_id':identity_job,'requested_job_id':job,'available':evidence is not None,
                     'attempts':row[2],'state':row[1],
                     'reason':None if row[3] is None else CATALOG.reason(row[3]),

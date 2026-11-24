@@ -18,6 +18,8 @@ Status: open. Written 2026-11-22.
 
 ## 1. Errors log the full stack trace
 
+**Done 2026-11-23** (branch `feat/api-identity-bridge`): `SafeFormatter` prints the standard traceback, paths from `src/`, redacted; `safe_traceback` and `_ERROR_TYPES` removed.
+
 **Today:** the log formatter throws the stack away.
 
 - `SafeFormatter.formatException` ([diagnostics.py:62](../src/anime/diagnostics.py#L62)) calls `safe_traceback`, which prints only line numbers. For example:
@@ -96,7 +98,9 @@ Nothing may `pass`, return a default, or turn the error into a reason code witho
 | `acquisition/metainfo_source.py:247`, `acquisition/prowlarr_search.py:537` | torrent metadata and Prowlarr search |
 | `torrent_client/qbittorrent.py:106` | every error becomes `ClientInvalid` |
 | `services/health.py:148, 166`, `services/check.py:64`, `services/adapters/qbittorrent.py:41`, `services/adapters/metadata.py:58, 146` | service probes |
-| `api/app.py:250, 326, 369, 595`, `api/adm.py:34`, `api/admin_socket.py:41`, `__main__.py:145` | API, `adm` and startup |
+| `api/adm.py:34`, `api/admin_socket.py:41`, `__main__.py:145` | `adm` and startup |
+
+**Done in `api/app.py` (2026-11-23):** one boundary per request: a program error answers `500 API_PROGRAM_ERROR` with "Program error at file:line in function (ErrorType)" and logs the full trace. Bad input (400) logs where it was refused. The webhook decision and candidate-evidence catch-alls are removed; the admin-socket startup logs its trace.
 | `diagnostics.py:250`, `install_support.py:189`, `batch/backlog_audit.py:296` | logging, install, backlog audit |
 
 **Done when:** `grep -rn "except Exception\|except BaseException" src/anime` (outside tests) lists only the eight re-raise sites and the boundaries marked (c), each with a comment saying why it is a boundary.
