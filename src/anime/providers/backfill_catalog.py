@@ -5,10 +5,17 @@ pages as VERIFY_RELEASE, so search only targets placements that verification
 will accept. No release search or acquisition happens here.
 """
 import datetime
+import logging
 
 from src.anime.acquisition.prowlarr_search import EpisodeCatalog, EpisodeTarget
-from src.anime.providers.errors import ProviderInvalidResponse
+from src.anime.providers.errors import (ProviderAuthenticationFailed, ProviderCacheMiss, ProviderConfigurationError,
+                                        ProviderDeferred, ProviderInvalidResponse, ProviderUnavailable)
 from src.anime.providers.release_mapping import forward_mappings, absolute_lookup
+
+
+LOG = logging.getLogger('anime.worker')
+PROVIDER_ERRORS = (ProviderAuthenticationFailed, ProviderCacheMiss, ProviderConfigurationError,
+                   ProviderDeferred, ProviderInvalidResponse, ProviderUnavailable)
 
 
 def tvdb_episode_ids(client, tid, secret, cancelled=None):
@@ -43,15 +50,17 @@ def build_catalog(client, aid, tid, secret=None, *, today=None):
     mappings = {}
     placements = {}
     if tid is not None:
+        # A provider problem leaves episodes without a TVDB placement (still searchable);
+        # it is logged so it can be seen. Anything else is a program error and raises.
         try:
             mappings = forward_mappings(client.mapping_xml(), aid, tid, episodes,
                                             absolute=absolute_lookup(client, tid, secret))
-        except Exception:
-            mappings = {}
+        except PROVIDER_ERRORS as exc:
+            LOG.warning('AniDB %s: no Anime-Lists TVDB mapping (%s: %s)', aid, type(exc).__name__, exc)
         try:
             placements = tvdb_episode_ids(client, tid, secret)
-        except Exception:
-            placements = {}
+        except PROVIDER_ERRORS as exc:
+            LOG.warning('AniDB %s: no TVDB episode IDs for TVDB %s (%s: %s)', aid, tid, type(exc).__name__, exc)
     today = (today or datetime.date.today()).isoformat()
     targets = {}
     for number in episodes:
