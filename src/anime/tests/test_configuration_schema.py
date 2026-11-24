@@ -20,9 +20,13 @@ class ConfigurationSchemaTests(unittest.TestCase):
         self.assertEqual(snapshot.schema_version, CONFIGURATION_VERSION)
         self.assertEqual(snapshot.logging_settings().logging.level, "INFO")
         self.assertEqual(snapshot.value("worker.concurrency"), 4)
+        self.assertEqual(snapshot.value("series.enabled"), False)
+        self.assertEqual(snapshot.value("series.torrents_at_once"), 1)
         self.assertEqual(snapshot.value("qbittorrent.metadata_poll_seconds"), 5)
         self.assertEqual(snapshot.value("qbittorrent.metadata_poll_attempts"), 24)
         definitions = field_definitions()
+        self.assertEqual(definitions["series.torrents_at_once"]["minimum"], 1)
+        self.assertEqual(definitions["series.torrents_at_once"]["maximum"], 8)
         self.assertEqual(definitions["qbittorrent.metadata_poll_seconds"]["minimum"], 1)
         self.assertEqual(definitions["qbittorrent.metadata_poll_attempts"]["maximum"], 24)
         for definition in FIELDS.values():

@@ -132,6 +132,10 @@ FIELDS = MappingProxyType({
     "api.host": FieldDefinition("127.0.0.1", "host", "restart", ("api",)),
     "api.port": FieldDefinition(8765, "integer", "restart", ("api",), 1, 65535),
     "worker.concurrency": FieldDefinition(4, "integer", "restart", ("worker",), 1, 32),
+    "series.enabled": FieldDefinition(False, "boolean", "next_operation",
+        label="Series job enabled", help_text="New releases go to the series job. False keeps today's path."),
+    "series.torrents_at_once": FieldDefinition(1, "integer", "next_operation", minimum=1, maximum=8,
+        label="Torrents worked on at once per series", help_text="Default number of torrents a series works on at once (1–8)."),
     "storage.user_evaluation_root": FieldDefinition("", "directory", "next_operation",
         label="Staging folder", help_text="Absolute destination for verified videos staged for viewing before Keep or Reject. Leave blank until configured. Existing files are not moved."),
     "storage.keep_root": FieldDefinition("", "directory", "next_operation",
@@ -147,7 +151,7 @@ _V14_NAMES = {"user_evaluation.backfill_count": "trial.backfill_count",
               "storage.user_evaluation_root": "storage.trial_root"}
 # v16 added the long-running series settings for Keep's Sonarr add.
 _V16_ADDED = ("sonarr.long_running_threshold", "sonarr.backfill_long_running")
-V16_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if not key.startswith("transcode.")})
+V16_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if not key.startswith("transcode.") and not key.startswith("series.")})
 V15_FIELDS = MappingProxyType({key: spec for key, spec in V16_FIELDS.items() if key not in _V16_ADDED})
 V14_FIELDS = MappingProxyType({_V14_NAMES.get(key, key): spec for key, spec in V15_FIELDS.items()})
 # The obsolete HTTP metadata-source fields exist only to validate published

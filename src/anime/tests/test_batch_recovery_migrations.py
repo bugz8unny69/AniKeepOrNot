@@ -69,7 +69,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             None,  # v74 rebuilds notifications to allow MOVIE_SKIPPED
             None,  # v75 rebuilds notifications to allow RELEASE_UNSUPPORTED
             None,  # v76 rebuilds notifications to allow JOB_FAILED
-            'identity_requests')  # v77 adds the identity bridge's waiting releases
+            'identity_requests',  # v77 adds the identity bridge's waiting releases
+            'series')  # v78 adds the series job table
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):
