@@ -51,6 +51,21 @@ def enqueue(db, anidb_id, tvdb_series_id, *, claim=None, delay_ms=DELAY_MS):
                        available_at_ms=time.time_ns() // 1_000_000 + delay_ms)
 
 
+def why_not(prowlarr, number):
+    """Why AKON's rules accepted none of an episode's results, from the search's in-memory snapshot."""
+    from collections import Counter
+    rows = [row for snapshot in getattr(prowlarr, 'snapshots', ())
+            if snapshot.get('anidb_episode') == number for row in snapshot.get('results') or ()]
+    reasons = Counter(check for row in rows for check in row.get('failed_checks') or ()
+                      if check != 'PASSES_POLICY')
+    if not reasons:
+        return ''
+    policy = prowlarr.policy
+    return (f'; {len(rows)} results, failed: ' + ', '.join(f'{check} x{n}' for check, n in reasons.most_common(4))
+            + f' (AKON needs >= {policy.min_seeders} seeders, <= {policy.max_resolution}p'
+            + (', a Dual Audio tag' if policy.prefer_audio_tag else '') + ')')
+
+
 def find_and_push(sonarr, prowlarr, catalog, anidb_id, tvdb_series_id, mapping=None):
     """Push a dub release to Sonarr for each missing episode. Returns (grabbed, not found) episode labels.
 
@@ -80,7 +95,7 @@ def find_and_push(sonarr, prowlarr, catalog, anidb_id, tvdb_series_id, mapping=N
             season, episode = targets[found.number]
             label = f"{series['title']} S{season:02d}E{episode:02d}"
             if found.selection is None:
-                LOG.info('%s: no dub release found (%s)', label, found.status)
+                LOG.info('%s: no dub release found (%s)%s', label, found.status, why_not(prowlarr, found.number))
                 continue
             accepted = [r for r in found.selection.result.candidates if prowlarr.policy.accepts(r)]
             for release in accepted[:TRIES_PER_EPISODE]:
