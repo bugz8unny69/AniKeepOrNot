@@ -179,6 +179,19 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('POST /api/v1/check answered 503',text)
         self.assertNotIn(WEB,text)
 
+    async def test_settings_lists_sonarr_quality_profiles_by_name(self):
+        from unittest import mock
+        rows=[{'id':1,'name':'Any'},{'id':8,'name':'Anime'},{'name':'no id'}]
+        self.app.store.update({'sonarr':{'base_url':'http://sonarr.test:8989'}},
+                              expected_revision=self.app.store.read().revision)
+        with mock.patch.object(self.app.secrets,'sonarr_api_key',return_value='k'*32),\
+             mock.patch('src.anime.sonarr.Client.request',return_value=rows) as asked:
+            status,result,_=await self.request('GET','/api/v1/settings/sonarr/quality-profiles',token=ADMIN)
+        self.assertEqual((status,result['data']['profiles']),(200,[{'id':1,'name':'Any'},{'id':8,'name':'Anime'}]))
+        asked.assert_called_once_with('qualityprofile')
+        status,_,_=await self.request('GET','/api/v1/settings/sonarr/quality-profiles')
+        self.assertEqual(status,401)
+
     async def test_check_needs_the_webhook_token(self):
         status,_,_=await self.request('POST','/api/v1/check',self.release())
         self.assertEqual(status,401)

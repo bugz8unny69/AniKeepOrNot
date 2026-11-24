@@ -1299,6 +1299,31 @@ function transcodeModeFields(rows) {
   show();
 }
 
+// Sonarr shows profile names, not IDs: offer the names, store the ID.
+async function qualityProfileChoices(label, input) {
+  let found;
+  // Asked once per page load; Settings redraws must not call Sonarr each time.
+  qualityProfileChoices.loading ||= request(`${API}/settings/sonarr/quality-profiles`);
+  try { found = await qualityProfileChoices.loading; }
+  catch (error) {
+    if (error.name === 'AbortError') return;
+    qualityProfileChoices.loading = null;
+    label.appendChild(node('small', `Sonarr profiles could not be loaded: ${error.message} Enter the ID instead.`, 'muted'));
+    return;
+  }
+  if (!label.isConnected || label._input !== input) return;
+  const select = node('select'); select.name = input.name; select.dataset.kind = input.dataset.kind;
+  const none = node('option', 'Not set'); none.value = '0'; select.appendChild(none);
+  for (const profile of found.profiles) {
+    const option = node('option', profile.name); option.value = String(profile.id); select.appendChild(option);
+  }
+  if (![...select.options].some(option => option.value === input.value)) {
+    const missing = node('option', `ID ${input.value} (not in Sonarr)`); missing.value = input.value; select.appendChild(missing);
+  }
+  select.value = input.value; select.dataset.original = input.dataset.original;
+  select.addEventListener('change', refreshDirty);
+  input.replaceWith(select); label._input = select;
+}
 function settingLabel(value) { return String(value).replaceAll('.', ' / ').replaceAll('_', ' '); }
 function settingInput(path, definition, value) {
   const label = node('label', null, 'setting-field'); label.appendChild(node('span', settingLabel(definition.label || path)));
@@ -1327,6 +1352,7 @@ function settingInput(path, definition, value) {
   }
   input.dataset.original = input.value;
   label._input = input; label.appendChild(input);
+  if (path === 'sonarr.quality_profile_id') qualityProfileChoices(label, input);
   label.appendChild(node('small', definition.help + (definition.apply_mode === 'restart' ? ' Requires a restart.' : ''), 'muted'));
   return label;
 }
