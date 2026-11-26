@@ -38,6 +38,15 @@ class Window:
         return tuple(sorted(set(range(1,self.backfill_count+1)) |
                             set(range(anchor,anchor+self.following_count))))
 
+    def pack_episodes(self, first):
+        """Season pack window: the same trial as episodes(1), starting at the pack's first episode.
+
+        Owner, 2026-11-26: an E13-E24 pack was refused because the trial
+        always started at episode 1. For a pack that starts at 1 this is episodes(1).
+        """
+        integer(first,positive=True)
+        return tuple(episode+first-1 for episode in self.episodes(1))
+
     def anidb_episodes(self, anidb_episode_number):
         """Single-episode selection window in AniDB episode numbers.
 

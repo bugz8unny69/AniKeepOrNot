@@ -44,8 +44,9 @@ def _candidate(db,reservation_job_id,inventory,*,cleanup=False):
         "ORDER BY r.tvdb_episode,r.file_index",
         (reservation_job_id,)).fetchall()
     if not rows:raise AcquisitionConflict()
-    plan,_,_,info_hash,sha,anchor,total,_,_=rows[0]
-    if (info_hash,sha)!=(inventory.info_hash,inventory.info_sha256) or anchor!=1:
+    plan,_,first,info_hash,sha,anchor,total,_,_=rows[0]
+    # The trial starts at the pack's first episode, not always E01 (owner, 2026-11-26).
+    if (info_hash,sha)!=(inventory.info_hash,inventory.info_sha256) or anchor!=first:
         raise AcquisitionConflict()
     count=db.execute(
         "SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?",(plan,)).fetchone()[0]

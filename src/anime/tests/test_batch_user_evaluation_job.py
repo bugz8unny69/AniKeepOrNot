@@ -235,18 +235,21 @@ class BatchUserEvaluationWorkerTests(unittest.IsolatedAsyncioTestCase):
                            "ORDER BY job_id LIMIT 1")[0][0],)])
         self.assertEqual(self.rows('PRAGMA foreign_key_check'),[])
 
-    async def test_missing_episode_one_requires_review_without_reservation(self):
-        # An otherwise provider-confirmed pack cannot guess the trial anchor.
-        # Reindex a pack whose first regular episode is E02.
+    async def test_a_pack_that_starts_later_starts_its_trial_at_its_first_episode(self):
+        # Owner, 2026-11-26: an E13-E24 pack was refused because the trial looked for E01.
+        # Reindex a pack whose first regular episode is E07 (E07-E12 and the OVA).
         self.inventory=BatchInventory('a'*40,'b'*64,tuple(
-            TorrentFile(i,raw.path,raw.size) for i,raw in enumerate(self.inventory.files[1:])))
+            TorrentFile(i,raw.path,raw.size) for i,raw in enumerate(self.inventory.files[6:])))
         self.verified=verify_batch_files(
             self.inventory,client=FakeProvider(),credentials=Credentials('secret'),
             anidb_id=123,tvdb_series_id=456,season=1)
-        worker=self.worker()
-        await worker.attempt()
-        await worker.attempt()
-        self.assertEqual(self.rows('SELECT kind,state,last_reason_code FROM jobs ORDER BY job_id'),[
-            ('VERIFY_RELEASE','DONE',None),
-            ('EVALUATE_BATCH','NEEDS_REVIEW','USER_EVALUATION_PLAN_CONFLICT')])
-        self.assertEqual(self.rows('SELECT count(*) FROM batch_user_evaluation_plans'),[(0,)])
+        worker=self.worker(reserve=True)
+        for _ in range(3):
+            await worker.attempt()
+        self.assertEqual(self.rows('SELECT kind,state FROM jobs ORDER BY job_id'),[
+            ('VERIFY_RELEASE','DONE'),('EVALUATE_BATCH','DONE'),('RESERVE_BATCH','DONE')])
+        self.assertEqual(self.rows('SELECT anchor_episode FROM batch_user_evaluation_plans'),[(7,)])
+        self.assertEqual(self.rows('SELECT tvdb_episode,file_index FROM batch_episode_reservations '
+                                   'ORDER BY tvdb_episode'),[(i,i-7) for i in range(7,13)])
+        reserve_job=self.rows("SELECT job_id FROM jobs WHERE kind='RESERVE_BATCH'")[0][0]
+        self.assertEqual(load_batch_acquisition_candidate(self.database,reserve_job,self.inventory).probe_index,0)
