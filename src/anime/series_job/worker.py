@@ -54,6 +54,7 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
     claim_obj, series = claimed
     # A step records what it is about to send (a torrent add) before sending it.
     context.checkpoint = lambda: save(db, claim_obj, series, now=now)
+    context.claim = claim_obj
     active_torrents = [t for t in series.torrents if t.get("state") in ("waiting", "working")]
     to_run = _ready_first(active_torrents)[:series.torrents_at_once or 1]
     min_wake_ms: int | None = None

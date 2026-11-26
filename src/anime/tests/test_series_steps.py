@@ -199,5 +199,95 @@ class Steps(unittest.TestCase):
         self.assertIsNone(read_metainfo(self.configuration, HASH))
 
 
+    def test_media_check_reads_each_file_and_drops_wrong_audio(self):
+        from functools import partial
+        from unittest import mock
+        from src.anime.acquisition import media
+        from src.anime.series_job.steps import check_media as step
+        from src.anime.series_job.torrents import options_for
+        from src.anime.tests.test_video_verification_hash_redesign import probe_bytes
+        root = Path(self.configuration.value('storage.database_path')).parent / 'downloads'
+        self.configuration.values.update({'qbittorrent.base_url': 'http://qb.test', 'storage.download_root': str(root),
+                                          'qbittorrent.category': 'akon', 'qbittorrent.timeout_seconds': 5,
+                                          'acquisition.audio_check': 'japanese_english'})
+        folder = Path(options_for(self.configuration, 'a' * 32).download_root) / 'Show'
+        folder.mkdir(parents=True)
+        (folder / 'Show - 05.mkv').write_bytes(b'v' * 100)
+        self.torrent.update(step='check_media', episodes=['S01E05'], qb={'marker': 'a' * 32},
+                            files=[{'index': 1, 'path': 'Show/Show - 05.mkv', 'size': 100, 'episode': 'S01E05'}])
+        self.series.episodes['S01E05'] = {'state': 'downloading', 'torrent': HASH, 'file': None}
+        for languages, expected in ((('jpn',), 'drop'), (('jpn', 'eng'), 'done')):
+            self.torrent['files'][0].pop('media', None)
+            fake = partial(media.verify_path, read_probe=lambda fd, flag: probe_bytes(languages=languages))
+            with mock.patch.object(step, 'verify_path', fake):
+                result = self.run_step(step.check_media)
+            self.assertEqual(result.action, expected, languages)
+        self.assertEqual(result.why, None)
+        self.assertEqual(self.torrent['files'][0]['media']['languages'], ['eng', 'jpn'])
+        self.assertEqual(self.series.episodes['S01E05']['state'], 'verified')
+
+
+    def staged(self, *, transcode=False):
+        import sqlite3
+        from src.anime.series_job import store
+        from src.anime.series_job.steps.stage import stage
+        from src.anime.series_job.torrents import options_for
+        from src.anime.storage.sqlite import initialize
+        base = Path(self.configuration.value('storage.database_path')).parent
+        db = sqlite3.connect(self.configuration.value('storage.database_path'))
+        initialize(db)
+        store.wake(db, 18162, 'Dungeon People', now=1)
+        db.commit()
+        claim, row = store.claim(db, now=2)
+        db.commit()
+        row.torrents = [self.torrent]
+        self.series = row
+        self.configuration.values.update({
+            'qbittorrent.base_url': 'http://qb.test', 'qbittorrent.category': 'akon', 'qbittorrent.timeout_seconds': 5,
+            'storage.download_root': str(base / 'downloads'), 'storage.user_evaluation_root': str(base / 'staging'),
+            'storage.keep_root': str(base / 'keep')})
+        self.configuration.desired_revision = 3
+        (base / 'staging').mkdir()
+        source = Path(options_for(self.configuration, 'a' * 32).download_root) / 'Show'
+        source.mkdir(parents=True)
+        (source / 'Show - 05.mkv').write_bytes(b'v' * 100)
+        from src.anime.acquisition.media import verify_path
+        from src.anime.tests.test_video_verification_hash_redesign import probe_bytes
+        checked = verify_path(str(source.parent), 'Show/Show - 05.mkv', 100, threading.Event(),
+                              read_probe=lambda fd, flag: probe_bytes())
+        self.torrent.update(step='stage', episodes=['S01E05'], qb={'marker': 'a' * 32},
+                            files=[{'index': 1, 'path': 'Show/Show - 05.mkv', 'size': 100, 'episode': 'S01E05',
+                                    'anidb_episode_id': 281728, 'tvdb_episode_id': 10348661, 'media': checked}])
+        row.episodes['S01E05'] = {'state': 'verified', 'torrent': HASH, 'file': None}
+        self.context.claim = claim
+        self.context.checkpoint = lambda: store.save(db, claim, row, now=3)
+        self.configuration.values['transcode.mode'] = 'remote' if transcode else 'off'
+        def fake_transcoder(source, output, configuration, secrets, flag, *, started, attempts):
+            started()
+            Path(output).write_bytes(b't' * 40)
+            return True
+        self.context.transcoder = fake_transcoder
+        from src.anime.series_job.steps.transcode import transcode as transcode_step
+        self.assertEqual(self.run_step(transcode_step).next_step, 'stage')
+        self.assertEqual(self.run_step(stage).next_step, 'done')
+        staged = row.episodes['S01E05']['file']
+        self.assertEqual(staged, 'Dungeon People [tvdbid-438420] [anidbid-18162]/Season 01/Dungeon People - S01E05.mkv')
+        self.assertEqual((base / 'staging' / staged).read_bytes(), b't' * 40 if transcode else b'v' * 100)
+        self.assertTrue((base / 'staging' / 'Dungeon People [tvdbid-438420] [anidbid-18162]/tvshow.nfo').exists())
+        self.assertTrue((source / 'Show - 05.mkv').exists())                  # COPY: qBittorrent keeps seeding.
+        saved = json.loads(db.execute('SELECT torrents_json FROM series').fetchone()[0])[0]['staging']['artifacts']
+        self.assertEqual({a['phase'] for a in saved}, {'PUBLISHED'})          # Its records are in the row.
+        self.assertEqual(json.loads(db.execute('SELECT torrents_json FROM series').fetchone()[0])[0]['files'][0]
+                         .get('transcode_attempts'), 1 if transcode else None)   # Saved before the try.
+        self.assertFalse(list((base / 'staging' / '.transcode').glob('*')) if transcode else [])
+        db.close()
+
+
+    def test_staging_copies_the_checked_file_with_its_nfos_and_keeps_the_torrents_copy(self):
+        self.staged()
+
+    def test_a_transcoded_file_is_moved_into_staging_and_the_torrents_copy_stays(self):
+        self.staged(transcode=True)
+
 if __name__ == '__main__':
     unittest.main()

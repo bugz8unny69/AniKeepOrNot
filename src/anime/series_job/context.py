@@ -19,6 +19,9 @@ class SeriesContext:
     now: int = 0
     checkpoint: object = field(default=lambda: None)
     db: object = None
+    claim: object = None            # The series lease (staging writes its records under it)
+    secrets: object = None          # For the transcoder's agent token
+    transcoder: object = None       # Tests only: a stand-in for services.transcode.transcode
 
 
 def build(secrets, cancelled):
@@ -40,4 +43,4 @@ def build(secrets, cancelled):
     verify = make_verifier(options_from_configuration, credentials, client_pool=pool,
                            batch_verifier=make_batch_verifier(options_from_configuration, credentials,
                                                               read_saved, client_pool=pool))
-    return SeriesContext(verify=verify, torrents=Torrents(secrets), cancelled=cancelled)
+    return SeriesContext(verify=verify, torrents=Torrents(secrets), cancelled=cancelled, secrets=secrets)

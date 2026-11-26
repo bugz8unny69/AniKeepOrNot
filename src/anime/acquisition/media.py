@@ -245,3 +245,36 @@ def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_
                 finally:os.close(fd)
     except CancellationError:raise MediaInvalid() from None
     except OSError:raise MediaUnavailable() from None
+
+
+def verify_path(download_root, relative_path, size, flag, *, read_probe=probe, audio=JAPANESE_ENGLISH):
+    """The same file checks as verify_file, for the series job (no job intent).
+
+    The file is opened without following links, under the torrent's own folder;
+    its size must be the torrent's; ffprobe reads its container and audio
+    (acquisition.audio_check); the file must not change while it is read.
+    Returns {'sha256', 'duration_ms', 'languages', 'root', 'file'}.
+    """
+    try:
+        with directory(download_root) as root:
+            root_sig=(os.fstat(root).st_dev,os.fstat(root).st_ino)
+            with parent(root,relative_path) as (folder,name):
+                fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder)
+                try:
+                    before=signature(os.fstat(fd))
+                    if before[2]!=size:raise MediaInvalid()
+                    media_hash=media_fingerprint(fd,size,before)
+                    cancelled(flag)
+                    duration,languages=parse_probe(read_probe(fd,flag),PurePosixPath(relative_path).suffix.lower(),audio)
+                    cancelled(flag)
+                    if signature(os.fstat(fd))!=before:raise MediaInvalid()
+                finally:os.close(fd)
+            with parent(root,relative_path) as (latest,leaf):
+                if signature(os.stat(leaf,dir_fd=latest,follow_symlinks=False))!=before:raise MediaInvalid()
+        return {'sha256':media_hash,'duration_ms':duration,'languages':list(languages),
+                'root':list(root_sig),'file':list(before)}
+    except CancellationError:
+        # The worker stopping: check again later. Otherwise the path left the folder.
+        if flag.is_set():raise MediaUnavailable() from None
+        raise MediaInvalid() from None
+    except OSError:raise MediaUnavailable() from None
