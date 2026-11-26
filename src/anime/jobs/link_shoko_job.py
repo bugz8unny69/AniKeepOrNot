@@ -95,6 +95,11 @@ def link_series(database, shoko, anidb_id):
     """Link what Shoko can link now: (linked count, files Shoko hasn't found, episodes it hasn't fetched)."""
     with closing(connect(database)) as db:
         files = kept_files(db, anidb_id)
+    return link_files(shoko, anidb_id, files)
+
+
+def link_files(shoko, anidb_id, files):
+    """link_series for a given list of (path relative to the library, AniDB episode ID); the series job's Keep."""
     shoko.refresh_series(anidb_id)
     linked, no_file, no_episode, nudged = 0, [], [], False
     for path, anidb_episode_id in files:

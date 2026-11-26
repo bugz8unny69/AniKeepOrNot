@@ -302,5 +302,39 @@ class Steps(unittest.TestCase):
         self.assertEqual((result.action, result.why), ('drop', 'TRANSCODE_FAILED'))
 
 
+    def test_a_single_episode_wants_its_trial_window_and_the_search_adds_the_rest(self):
+        from types import SimpleNamespace
+        from src.anime.acquisition.prowlarr_search import DiscoveryPolicy, Release
+        from src.anime.series_job import search
+        save_metainfo(self.configuration, HASH, RAW)
+        async def verify(source, configuration, cancelled):
+            return VerifiedRelease(source, 5, 281728, 1, 5, 10348661)
+        self.context.verify = verify
+        self.run_step(check_release)
+        self.assertEqual(self.series.work['search']['wanted'], [1, 2, 3, 4, 5, 6])   # Backfill 6, following 1.
+
+        class FakeProwlarr:
+            policy = DiscoveryPolicy(min_seeders=1)
+            asked = []
+            def backfill(self, aid, tid, numbers, *, select_candidates, tried_by_episode):
+                self.asked.append(numbers)
+                def found(n):
+                    if n == 6:
+                        return SimpleNamespace(number=n, selection=None)
+                    digest = f'{n:040x}'
+                    return SimpleNamespace(number=n, selection=SimpleNamespace(release=Release(
+                        f'[G] Dungeon People - {n:02d}', 'Nyaa', 1080, 9, 300_000_000, None, digest,
+                        f'magnet:?xt=urn:btih:{digest}', eligible_for_handoff=True)))
+                return tuple(found(n) for n in numbers)
+        prowlarr = FakeProwlarr()
+        self.assertEqual(search.run(self.series, self.context, prowlarr), 4)
+        self.assertEqual(prowlarr.asked, [(1, 2, 3, 4), (6,)])                     # E05 is covered.
+        added = [t for t in self.series.torrents if t.get('found_for')]
+        self.assertEqual([t['step'] for t in added], ['get_metadata'] * 4)
+        self.assertEqual(added[0]['identity']['anime']['tvdb_series_id'], 438420)
+        self.assertEqual(self.series.work['search']['due_ms'], self.context.now + search.RETRY_MS)  # E06 later.
+        self.assertEqual(search.run(self.series, self.context, prowlarr), 0)    # Already tried: nothing new.
+
+
 if __name__ == '__main__':
     unittest.main()

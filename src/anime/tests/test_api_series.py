@@ -133,7 +133,7 @@ class ApiSeriesTests(unittest.IsolatedAsyncioTestCase):
         # POST keep
         status, res, _ = await self.request("POST", f"/api/v1/series/{aid}/keep", token=ADMIN)
         self.assertEqual(status, 200)
-        self.assertEqual(res["data"]["state"], "KEPT")
+        self.assertEqual(res["data"]["state"], "WORKING")
 
         # Second keep is safe
         status, res, _ = await self.request("POST", f"/api/v1/series/{aid}/keep", token=ADMIN)

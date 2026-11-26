@@ -14,7 +14,7 @@ from src.anime.series_job.steps.transcode import transcode
 from src.anime.series_job.steps.stage import stage
 from src.anime.series_job.steps.drop import drop_torrent
 from src.anime.series_job.steps.common import STEP_SEQUENCE, next_step_name
-from src.anime.series_job.store import _atomic, claim, note, renew, save
+from src.anime.series_job.store import LeaseLost, _atomic, claim, note, renew, save
 
 logger = logging.getLogger("akon.series")
 
@@ -36,6 +36,21 @@ def _ready_first(torrents):
     return sorted(torrents, key=lambda t: -order.get(t.get("step") or "get_metadata", 0))
 
 
+async def _decided(db, context, claim_obj, series, now):
+    """Keep or Reject: series work instead of torrent steps; then the series is KEPT or REJECTED."""
+    from src.anime.series_job.keep import run_keep
+    from src.anime.series_job.reject import run_reject
+    keeping = "keep" in series.work
+    result = await (run_keep if keeping else run_reject)(series, context)
+    if result.action == "done":
+        series.state, series.wake_at_ms = ("KEPT" if keeping else "REJECTED"), None
+    else:
+        series.state, series.wake_at_ms = "ASLEEP", result.wake_at_ms
+    series.lease_token = series.lease_expires_at_ms = None
+    save(db, claim_obj, series, now=now)
+    return True
+
+
 async def run_series_attempt(db, context, now: int | None = None) -> bool:
     """Take one due series, advance up to N torrents by one step, and save.
 
@@ -52,9 +67,28 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         return False
 
     claim_obj, series = claimed
-    # A step records what it is about to send (a torrent add) before sending it.
-    context.checkpoint = lambda: save(db, claim_obj, series, now=now)
+    if "keep" in series.work or "reject" in series.work:
+        return await _decided(db, context, claim_obj, series, now)
+    # A step records what it is about to send (a torrent add, a Sonarr import) before sending it.
+    # Its own connection: Keep steps run in a thread.
+    database = db.execute("PRAGMA database_list").fetchone()[2]
+
+    def checkpoint():
+        from contextlib import closing
+        from src.anime.storage.sqlite import connect
+        if not database:                      # An in-memory database (tests): same thread only.
+            return save(db, claim_obj, series, now=now)
+        with closing(connect(database)) as own:
+            save(own, claim_obj, series, now=now)
+    context.checkpoint = checkpoint
     context.claim = claim_obj
+    if series.work.pop("cancel", None) is not None:
+        for torrent in series.torrents:
+            if torrent.get("state") in ("waiting", "working", "stopped"):
+                await drop_torrent(series, torrent, "canceled by you", context)
+        series.work.get("search", {})["due_ms"] = None
+    from src.anime.series_job.search import run_search
+    search_wake = await run_search(series, context)        # May add torrents for the trial episodes.
     active_torrents = [t for t in series.torrents if t.get("state") in ("waiting", "working")]
     to_run = _ready_first(active_torrents)[:series.torrents_at_once or 1]
     min_wake_ms: int | None = None
@@ -74,6 +108,8 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
                         series.anidb_id, series.title, ep_label, release_name, step_name.replace("_", " "))
         try:
             result = await STEP_HANDLERS[step_name](series, torrent, context)
+        except LeaseLost:
+            raise                                  # An action took the series; the attempt is redone.
         except Exception as exc:
             # Boundary (plan, Errors): an unexpected error is a program bug. The torrent
             # stops with "program error" and keeps its files; Retry resumes it at this step.
@@ -113,7 +149,8 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
     if remaining_active and moved:
         series.state, series.wake_at_ms = "WORKING", None
     else:
-        series.state, series.wake_at_ms = "ASLEEP", (min_wake_ms if remaining_active else None)
+        wakes = [w for w in (min_wake_ms if remaining_active else None, search_wake) if w is not None]
+        series.state, series.wake_at_ms = "ASLEEP", (min(wakes) if wakes else None)
 
     series.lease_token = None
     series.lease_expires_at_ms = None

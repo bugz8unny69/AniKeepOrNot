@@ -65,6 +65,7 @@ class SeriesRow:
     lease_expires_at_ms: int | None = None
     created_at_ms: int = 0
     updated_at_ms: int = 0
+    work: dict = field(default_factory=dict)  # Series-level work: keep (Sonarr, Shoko, dubs, Jellyfin, cleanup)
 
 
 @contextmanager
@@ -91,6 +92,7 @@ def _row_from_tuple(t: tuple) -> SeriesRow:
         lease_expires_at_ms=t[9],
         created_at_ms=t[10],
         updated_at_ms=t[11],
+        work=json.loads(t[12]) if t[12] else {},
     )
 
 
@@ -100,7 +102,7 @@ def claim(db, now: int, lease_ms: int = DEFAULT_LEASE_MS) -> tuple[Claim, Series
         query = (
             "SELECT anidb_id, title, state, wake_at_ms, torrents_at_once, "
             "       torrents_json, episodes_json, recent_json, "
-            "       lease_token, lease_expires_at_ms, created_at_ms, updated_at_ms "
+            "       lease_token, lease_expires_at_ms, created_at_ms, updated_at_ms, work_json "
             "FROM series "
             "WHERE (state = 'WORKING' OR (state = 'ASLEEP' AND wake_at_ms IS NOT NULL AND wake_at_ms <= ?)) "
             "  AND (lease_token IS NULL OR lease_expires_at_ms <= ?) "
@@ -150,7 +152,7 @@ def save(db, claim: Claim, row: SeriesRow, now: int | None = None) -> None:
             "UPDATE series "
             "SET title = ?, state = ?, wake_at_ms = ?, torrents_at_once = ?, "
             "    torrents_json = ?, episodes_json = ?, recent_json = ?, "
-            "    lease_token = ?, lease_expires_at_ms = ?, updated_at_ms = ? "
+            "    lease_token = ?, lease_expires_at_ms = ?, updated_at_ms = ?, work_json = ? "
             "WHERE anidb_id = ? AND lease_token = ? AND lease_expires_at_ms > ?",
             (
                 row.title,
@@ -163,6 +165,7 @@ def save(db, claim: Claim, row: SeriesRow, now: int | None = None) -> None:
                 row.lease_token,
                 row.lease_expires_at_ms,
                 now,
+                json.dumps(row.work),
                 claim.anidb_id,
                 claim.token,
                 now,
@@ -183,7 +186,7 @@ def wake(db, anidb_id: int, title: str, now: int | None = None, torrents_at_once
         row = db.execute(
             "SELECT anidb_id, title, state, wake_at_ms, torrents_at_once, "
             "       torrents_json, episodes_json, recent_json, "
-            "       lease_token, lease_expires_at_ms, created_at_ms, updated_at_ms "
+            "       lease_token, lease_expires_at_ms, created_at_ms, updated_at_ms, work_json "
             "FROM series WHERE anidb_id = ?",
             (anidb_id,)
         ).fetchone()
@@ -287,7 +290,7 @@ def get_series(db, anidb_id: int) -> SeriesRow | None:
     row = db.execute(
         "SELECT anidb_id, title, state, wake_at_ms, torrents_at_once, "
         "       torrents_json, episodes_json, recent_json, "
-        "       lease_token, lease_expires_at_ms, created_at_ms, updated_at_ms "
+        "       lease_token, lease_expires_at_ms, created_at_ms, updated_at_ms, work_json "
         "FROM series WHERE anidb_id = ?",
         (anidb_id,)
     ).fetchone()
@@ -305,7 +308,7 @@ def update_series(db, series: SeriesRow, now: int | None = None) -> None:
             "UPDATE series "
             "SET title = ?, state = ?, wake_at_ms = ?, torrents_at_once = ?, "
             "    torrents_json = ?, episodes_json = ?, recent_json = ?, "
-            "    lease_token = ?, lease_expires_at_ms = ?, updated_at_ms = ? "
+            "    lease_token = ?, lease_expires_at_ms = ?, updated_at_ms = ?, work_json = ? "
             "WHERE anidb_id = ?",
             (
                 series.title,
@@ -318,6 +321,7 @@ def update_series(db, series: SeriesRow, now: int | None = None) -> None:
                 series.lease_token,
                 series.lease_expires_at_ms,
                 now,
+                json.dumps(series.work),
                 series.anidb_id,
             )
         )

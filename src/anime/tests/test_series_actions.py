@@ -32,38 +32,16 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.db.close()
 
-    async def test_keep_series_flow(self):
+    async def test_keep_is_recorded_and_the_worker_does_it(self):
         aid = 16999
         wake(self.db, aid, "Cyberpunk Edgerunners")
         add_torrent(self.db, aid, {"infohash": "a" * 40, "release_name": "Release 1"})
-        add_torrent(self.db, aid, {"infohash": "b" * 40, "release_name": "Release 2"})
-
-        series = get_series(self.db, aid)
-        series.episodes["S01E01"] = {"state": "staged", "torrent": "a" * 40, "file": "ep1.mkv"}
-        series.torrents[0]["state"] = "done"
-        series.torrents[0]["step"] = "done"
-        series.torrents[1]["state"] = "waiting"
-        update_series(self.db, series)
-
-        qb = FakeQBClient()
-        ctx = SimpleNamespace(qb_client=qb)
-
-        res = await keep_series(self.db, aid, context=ctx)
-        self.assertEqual(res["state"], "KEPT")
-
+        res = await keep_series(self.db, aid)
+        self.assertEqual(res["state"], "WORKING")
         updated = get_series(self.db, aid)
-        self.assertEqual(updated.state, "KEPT")
-        self.assertIsNone(updated.wake_at_ms)
-        self.assertEqual(updated.episodes["S01E01"]["state"], "kept")
-        self.assertEqual(updated.torrents[1]["state"], "dropped")
-        self.assertIn("series kept", updated.torrents[1]["why"])
-        self.assertTrue(any("kept; Sonarr owns it" in line for line in updated.recent))
-        self.assertEqual(decision(self.db, aid), "ACCEPT")
-        self.assertEqual(qb.deleted, [("b" * 40, True)])
-
-        # Calling keep on already kept series is a safe no-op
-        res2 = await keep_series(self.db, aid, context=ctx)
-        self.assertEqual(res2["state"], "KEPT")
+        self.assertEqual((updated.work["keep"]["step"], updated.state, updated.lease_token), ("cancel", "WORKING", None))
+        self.assertEqual(decision(self.db, aid), "ACCEPT")          # Keeping already counts as kept.
+        self.assertEqual((await keep_series(self.db, aid))["state"], "WORKING")   # A second Keep is a no-op.
 
     async def test_keep_series_not_found_or_rejected(self):
         with self.assertRaises(ValueError):
@@ -75,31 +53,29 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await keep_series(self.db, aid)
 
-    async def test_reject_series_flow(self):
+    async def test_reject_removes_akons_torrents_through_the_worker(self):
+        import asyncio as _asyncio
+        from src.anime.series_job.worker import run_series_attempt
+        from src.anime.tests.test_series_job_worker import SeriesWorkerEndToEndTests
         aid = 17001
         wake(self.db, aid, "Some Anime")
         add_torrent(self.db, aid, {"infohash": "c" * 40, "release_name": "Release 3"})
-
         series = get_series(self.db, aid)
         series.episodes["S01E01"] = {"state": "staged", "torrent": "c" * 40, "file": "ep1.mkv"}
-        series.torrents[0]["state"] = "working"
+        series.torrents[0].update(state="working", qb={"marker": "a" * 32, "added": "sent"})
         update_series(self.db, series)
-
-        qb = FakeQBClient()
-        ctx = SimpleNamespace(qb_client=qb)
-
-        res = await reject_series(self.db, aid, context=ctx, reason="BAD_QUALITY", note_text="Artifacts present")
-        self.assertEqual(res["state"], "REJECTED")
-
-        updated = get_series(self.db, aid)
-        self.assertEqual(updated.state, "REJECTED")
-        self.assertIsNone(updated.wake_at_ms)
-        self.assertEqual(updated.torrents[0]["state"], "dropped")
-        self.assertEqual(updated.torrents[0]["why"], "BAD_QUALITY")
-        self.assertEqual(updated.episodes["S01E01"]["state"], "dropped")
-        self.assertTrue(any("rejected" in line for line in updated.recent))
+        res = await reject_series(self.db, aid, reason="BAD_QUALITY", note_text="Artifacts present")
+        self.assertEqual(res["state"], "WORKING")
         self.assertEqual(decision(self.db, aid), "REJECT")
-        self.assertEqual(qb.deleted, [("c" * 40, True)])
+        holder = SeriesWorkerEndToEndTests()
+        holder.db, holder.addCleanup = self.db, self.addCleanup
+        context = holder.context(None)
+        context.configuration.values["storage.user_evaluation_root"] = "/nonexistent-staging"
+        self.assertTrue(await run_series_attempt(self.db, context, now=10**13))
+        updated = get_series(self.db, aid)
+        self.assertEqual((updated.state, updated.torrents[0]["state"], updated.episodes["S01E01"]["state"]),
+                         ("REJECTED", "dropped", "dropped"))
+        self.assertEqual(holder.qb.calls, [("remove",)])
 
         # Rejecting already kept series raises error
         aid2 = 17002
@@ -108,22 +84,13 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await reject_series(self.db, aid2)
 
-    async def test_search_series(self):
+    async def test_search_makes_the_series_search_due_now(self):
         aid = 17003
         wake(self.db, aid, "Searchable Show")
-
-        async def fake_searcher(series, ctx):
-            return [{"infohash": "d" * 40, "release_name": "Found Release"}]
-
-        ctx = SimpleNamespace(searcher=fake_searcher)
-        res = await search_series(self.db, aid, context=ctx)
-        self.assertEqual(res["candidates_added"], 1)
-
+        res = await search_series(self.db, aid, now=5000)
+        self.assertIn("search triggered", res["message"])
         updated = get_series(self.db, aid)
-        self.assertEqual(updated.state, "WORKING")
-        self.assertEqual(len(updated.torrents), 1)
-        self.assertEqual(updated.torrents[0]["infohash"], "d" * 40)
-        self.assertTrue(any("search triggered" in line for line in updated.recent))
+        self.assertEqual((updated.state, updated.work["search"]["due_ms"]), ("WORKING", 5000))
 
     async def test_retry_series(self):
         aid = 17004
@@ -146,26 +113,23 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(updated.torrents[0]["why"])
         self.assertTrue(any("retried" in line for line in updated.recent))
 
-    async def test_cancel_series(self):
+    async def test_cancel_drops_the_working_torrents_through_the_worker(self):
+        from src.anime.series_job.worker import run_series_attempt
+        from src.anime.tests.test_series_job_worker import SeriesWorkerEndToEndTests
         aid = 17005
         wake(self.db, aid, "Cancel Show")
         add_torrent(self.db, aid, {"infohash": "f" * 40, "release_name": "Working Release"})
-
         series = get_series(self.db, aid)
-        series.torrents[0]["state"] = "working"
+        series.torrents[0].update(state="working", qb={"marker": "a" * 32, "added": "sent"})
         update_series(self.db, series)
-
-        qb = FakeQBClient()
-        ctx = SimpleNamespace(qb_client=qb)
-
-        res = await cancel_series(self.db, aid, context=ctx)
-        self.assertEqual(res["state"], "ASLEEP")
-
+        self.assertEqual((await cancel_series(self.db, aid))["state"], "WORKING")
+        holder = SeriesWorkerEndToEndTests()
+        holder.db, holder.addCleanup = self.db, self.addCleanup
+        self.assertTrue(await run_series_attempt(self.db, holder.context(None), now=10**13))
         updated = get_series(self.db, aid)
-        self.assertEqual(updated.state, "ASLEEP")
-        self.assertEqual(updated.torrents[0]["state"], "dropped")
-        self.assertEqual(updated.torrents[0]["why"], "canceled by user")
-        self.assertTrue(any("canceled" in line for line in updated.recent))
+        self.assertEqual((updated.state, updated.torrents[0]["state"], updated.torrents[0]["why"]),
+                         ("ASLEEP", "dropped", "canceled by you"))
+        self.assertEqual(holder.qb.calls, [("remove",)])
 
     def test_sync_wrappers(self):
         aid = 17006
@@ -173,12 +137,12 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
         add_torrent(self.db, aid, {"infohash": "1" * 40, "release_name": "R1"})
 
         res_keep = keep_series_sync(self.db, aid)
-        self.assertEqual(res_keep["state"], "KEPT")
+        self.assertIn("Keep requested", res_keep["message"])
 
         aid2 = 17007
         wake(self.db, aid2, "Sync Show 2")
         res_reject = reject_series_sync(self.db, aid2)
-        self.assertEqual(res_reject["state"], "REJECTED")
+        self.assertIn("Reject requested", res_reject["message"])
 
         aid3 = 17008
         wake(self.db, aid3, "Sync Show 3")
@@ -189,4 +153,4 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
         self.assertIn("retried", res_retry["message"])
 
         res_cancel = cancel_series_sync(self.db, aid3)
-        self.assertEqual(res_cancel["state"], "ASLEEP")
+        self.assertEqual(res_cancel["state"], "WORKING")

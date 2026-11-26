@@ -73,8 +73,14 @@ async def check_release(series: SeriesRow, torrent: dict, context) -> StepResult
         season = verified.tvdb_season or 1
         episode = verified.tvdb_episode or verified.anidb_episode_number
         video = manifest.files[manifest.selected_index]
+        # The trial window around this episode; the series searches for the rest (series_job/search.py).
+        from src.anime.series_job.search import want
+        want(series, Window(configuration.value("user_evaluation.backfill_count"),
+                            configuration.value("user_evaluation.following_count")).anidb_episodes(
+                                verified.anidb_episode_number), now)
         torrent["files"] = [{"index": video.index, "path": video.path, "size": video.size,
                              "episode": code(season, episode),
+                             "anidb_episode_number": verified.anidb_episode_number,
                              "anidb_episode_id": verified.anidb_episode_id,
                              "tvdb_episode_id": verified.tvdb_episode_id}]
     elif type(verified) is BatchVerificationCompletion:
@@ -84,6 +90,7 @@ async def check_release(series: SeriesRow, torrent: dict, context) -> StepResult
         trial = set(window.pack_episodes(min(f.tvdb_episode for f in facts)))
         torrent["files"] = [{"index": f.index, "path": f.path, "size": verified.inventory.files[f.index].size,
                              "episode": code(f.tvdb_season, f.tvdb_episode),
+                             "anidb_episode_number": f.anidb_episode_number,
                              "anidb_episode_id": f.anidb_episode_id, "tvdb_episode_id": f.tvdb_episode_id}
                             for f in sorted(facts, key=lambda f: f.tvdb_episode) if f.tvdb_episode in trial]
     else:

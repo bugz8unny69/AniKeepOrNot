@@ -25,15 +25,14 @@ class AnimeAccepted(AnimeDecided):
 
 def decision(db,anidb_id):
     """'REJECT', 'ACCEPT' or None."""
-    try:
-        series_row = db.execute("SELECT state FROM series WHERE anidb_id=?", (anidb_id,)).fetchone()
-        if series_row is not None:
-            if series_row[0] == 'KEPT':
-                return 'ACCEPT'
-            if series_row[0] == 'REJECTED':
-                return 'REJECT'
-    except Exception:
-        pass
+    # The series job decides first: kept or keeping is ACCEPT, rejected or rejecting is REJECT.
+    series_row = db.execute("SELECT state,json_type(work_json,'$.keep'),json_type(work_json,'$.reject') "
+                            "FROM series WHERE anidb_id=?", (anidb_id,)).fetchone()
+    if series_row is not None:
+        if series_row[0] == 'KEPT' or series_row[1] is not None:
+            return 'ACCEPT'
+        if series_row[0] == 'REJECTED' or series_row[2] is not None:
+            return 'REJECT'
     row=db.execute("SELECT decision FROM anime_review_decisions WHERE anidb_id=?",(anidb_id,)).fetchone()
     return None if row is None else row[0]
 

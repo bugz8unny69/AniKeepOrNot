@@ -15,7 +15,8 @@ CREATE TABLE series (
  lease_token TEXT,
  lease_expires_at_ms INTEGER,
  created_at_ms INTEGER NOT NULL,
- updated_at_ms INTEGER NOT NULL
+ updated_at_ms INTEGER NOT NULL,
+ work_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX idx_series_state_wake ON series(state, wake_at_ms);
 DROP TABLE anime_v79_guard;

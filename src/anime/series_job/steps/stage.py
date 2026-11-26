@@ -55,8 +55,9 @@ async def stage(series: SeriesRow, torrent: dict, context) -> StepResult:
             if series.episodes[entry["episode"]]["state"] == "staged":
                 continue
             plan = plans[entry["episode"]]
-            await blocking(publisher.publish, plan)
+            receipts = await blocking(publisher.publish, plan)
             media = next(e["path"] for e in plan["entries"] if e["role"] == "media")
+            entry["staged_file"] = next(r["file"] for r in receipts if r["role"] == "media")   # Keep checks it.
             series.episodes[entry["episode"]] = {"state": "staged", "torrent": torrent["infohash"], "file": media}
             note(series, f"{label} · {entry['episode']} staged: {media}")
     except StagingConfiguration as exc:

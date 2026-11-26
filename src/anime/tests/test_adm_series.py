@@ -120,11 +120,11 @@ class TestAdmSeries(unittest.TestCase):
         with redirect_stdout(out):
             code = adm_keep.main(["--id", "17001", "--config-dir", str(self.config_dir)], prog="adm keep")
         self.assertEqual(code, 0)
-        self.assertIn("kept; Sonarr owns it", out.getvalue())
+        self.assertIn("Keep requested", out.getvalue())
 
         db = sqlite3.connect(self.db_path)
         s = get_series(db, 17001)
-        self.assertEqual(s.state, "KEPT")
+        self.assertIn("keep", s.work)
         db.close()
 
     def test_adm_reject(self):
@@ -136,11 +136,11 @@ class TestAdmSeries(unittest.TestCase):
         with redirect_stdout(out):
             code = adm_reject.main(["--id", "17002", "--reason", "BAD_ENCODE", "--config-dir", str(self.config_dir)], prog="adm reject")
         self.assertEqual(code, 0)
-        self.assertIn("rejected", out.getvalue())
+        self.assertIn("Reject requested", out.getvalue())
 
         db = sqlite3.connect(self.db_path)
         s = get_series(db, 17002)
-        self.assertEqual(s.state, "REJECTED")
+        self.assertIn("reject", s.work)
         db.close()
 
     def test_adm_search(self):
