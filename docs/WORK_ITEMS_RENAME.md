@@ -29,7 +29,7 @@ This item makes the rename a real, one-time, reversible step.
 | Commands | `/usr/local/bin/akon-install`; `/usr/local/bin/adm` (sets `ANIME_DISCOVERY_CONFIG_DIR`); `/usr/local/bin/anime-discovery-admin` (old) |
 | Source | `git@github.com:bugz8unny69/anime-discovery.git` (the repository moved to `AniKeepOrNot`; GitHub redirects) |
 | Folders AKON uses | download root `/mnt/media/Torrents/anime`, staging `/mnt/media/Anime-Trial`, keep `/mnt/media/Anime`. **None contains the old name.** |
-| qBittorrent | category `anime-discovery`. Each torrent AKON adds lives in `<download root>/ad-<marker>` and is tagged `ad-<marker>`. |
+| qBittorrent | category `anime-discovery`. Each torrent AKON adds lives in `<download root>/ad-<marker>` and is tagged `ad-<marker>`. After the rename: tag `akon-<marker>`, category `akon`; old folders stay (RN-0). |
 | nginx | `/etc/nginx/sites-available/default`: `location = /anime-discovery/api/v1/webhook` and `…/check`. **The owner edits nginx himself.** |
 | Transcode agents | on other hosts (`10.1.1.2`, `10.1.3.24`), unit `transcode-agent.service`. They don't use the old name. |
 
@@ -46,15 +46,21 @@ Check these again before you start; read-only commands only.
 - Commits: the subject ends with `[skip ci]`; the message ends with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Push `feat/series-job` when tests pass.
 
-## RN-0. Questions for the owner, before RN-3 and RN-4 (ask, don't decide)
+## RN-0. The owner's answers, and the questions still open
 
-1. **The `ad-` prefix.** "Rename the qBittorrent category and folders to akon" can only mean the
-   per-torrent folder and tag `ad-<marker>`, since the download root has no old name. That prefix is
-   how AKON knows a torrent is its own (`verify_torrent_ownership`, `delete_owned`,
-   `remove_series_torrent`). Options:
-   - (a) keep `ad-`; rename only the category (recommended: no torrent moves, no ownership risk);
-   - (b) new torrents get `akon-<marker>`, and both prefixes are accepted as AKON's;
-   - (c) move every existing torrent through qBittorrent to `akon-<marker>`, and retag it.
+1. **Folders, tags and category: answered (owner, 2026-11-26).** "We don't need to rename folders,
+   just use the new save paths for future work. Changing tags and category should be harmless."
+   - Existing torrents **stay where they are**, in `<download root>/ad-<marker>`. Nothing is moved.
+   - Existing torrents get the tag `akon-<marker>` (instead of `ad-<marker>`) and the category `akon`.
+   - New torrents get the folder `<download root>/akon-<marker>`, the tag `akon-<marker>` and the
+     category `akon`.
+
+   So after the rename, a torrent is AKON's when it has the tag `akon-<marker>`, the category `akon`,
+   and its folder is `<download root>/akon-<marker>` or, for one added before the rename,
+   `<download root>/ad-<marker>`. RN-3 implements this.
+
+Still open (ask, don't decide):
+
 2. **The other branches' data.** Should `anime-discovery.sqlite` (NextGen) and
    `anime-discovery-refactor.sqlite` be renamed too (`akon-nextgen.sqlite`, `akon-refactor.sqlite`), or
    left alone since nothing runs them?
@@ -109,19 +115,37 @@ steps already done (a written undo list, not guesses). Tests: a temporary root w
 layout above (fake `usermod`/`groupmod`/`systemctl` through the installer's existing `execute`
 injection), covering a full run, a dry run, and a failure in the middle.
 
-### RN-3. The qBittorrent category (P1)
+### RN-3. qBittorrent: the new tag and category; old folders stay (P1)
 
-- Through qBittorrent's API (only in `src/anime/torrent_client/qbittorrent.py`, which is the only
-  module allowed to call it): create category `akon` with the same save path, and move every
-  torrent in category `anime-discovery` that carries an `ad-` tag to it (`torrents/setCategory`).
-  Leave any other torrent alone. Use the version adapter for 4.x and 5.x differences.
-- Change the setting `qbittorrent.category` to `akon` in the same run. Ownership checks compare the
-  torrent's category with the setting, so both must change together, with the services stopped.
-- Then remove the empty `anime-discovery` category.
-- Prefix (`ad-` or `akon-`): follow RN-0 question 1. For (b), new torrents use `akon-` in
-  `series_job/torrents.py` and `torrent_client/qbittorrent.py`, and both prefixes count as AKON's.
-  For (c), add a move through `torrents/setLocation`, then retag and update `qb.marker` handling.
-- Test with a fake transport (see `tests/test_torrent_client.py`).
+The owner's answer is RN-0 question 1. Only `src/anime/torrent_client/qbittorrent.py` may call
+qBittorrent's API; use its version adapter for the 4.x and 5.x differences.
+
+- **New torrents:** the folder and tag prefix become `akon-` (`series_job/torrents.py`
+  `options_for`, the client's `label_fields` in `torrent_client/contract.py`, and every
+  `endswith('/ad-'+marker)` check). Each torrent entry in the series row records its folder prefix
+  (`qb.prefix`: `"akon"`, or `"ad"` for a torrent added before the rename), so the steps build the
+  right folder.
+- **Ownership:** a torrent is AKON's when it has the tag `akon-<marker>`, the category from the
+  settings, and its save path is `<download root>/<qb.prefix>-<marker>`
+  (`metadata_service.verify_torrent_ownership`, `delete_owned`, `remove_series_torrent`,
+  `_series_owned`). No other tag starting with `akon-` or `ad-` may be on it.
+- **Existing torrents (the rename step):** for each torrent in category `anime-discovery` with
+  exactly one `ad-<marker>` tag, saved in `<download root>/ad-<marker>`:
+  1. add the tag `akon-<marker>` (`torrents/addTags`) and remove `ad-<marker>` (`torrents/removeTags`);
+  2. move it to category `akon` (`torrents/createCategory` first, with no save path change, then
+     `torrents/setCategory`).
+
+  Never move files (`setLocation`). Leave every other torrent alone, and print each one changed.
+  Then set `qb.prefix = "ad"` on the matching torrents in the series rows (the cutover already gave
+  them their markers).
+- **The setting:** change `qbittorrent.category` to `akon` in the same run, with the services
+  stopped, because ownership checks compare the torrent's category with the setting. Then remove
+  the empty `anime-discovery` category.
+- **Tests (with a fake transport; see `tests/test_torrent_client.py`):**
+  - an old torrent is retagged and recategorized in place;
+  - a torrent without an `ad-` tag, or with a different save path, is left alone;
+  - a retagged old torrent is still AKON's in the download, drop and Keep cleanup steps;
+  - a new torrent is added as `akon-<marker>`.
 
 ### RN-4. The web address: `/akon/`, and `/anime-discovery/` still works (P2)
 
