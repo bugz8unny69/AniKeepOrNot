@@ -289,5 +289,18 @@ class Steps(unittest.TestCase):
     def test_a_transcoded_file_is_moved_into_staging_and_the_torrents_copy_stays(self):
         self.staged(transcode=True)
 
+    def test_a_transcode_that_fails_on_every_agent_drops_the_torrent(self):
+        from src.anime.services.transcode import TranscodeFailed
+        from src.anime.series_job.steps.transcode import transcode
+        self.configuration.values.update({'transcode.mode': 'remote', 'storage.user_evaluation_root': '/unused'})
+        self.torrent.update(files=[{'index': 1, 'path': 'Show/Show - 05.mkv', 'size': 100, 'episode': 'S01E05'}],
+                            episodes=['S01E05'])
+        from unittest import mock
+        from src.anime.series_job.steps import transcode as step
+        with mock.patch.object(step, 'transcode_file', side_effect=TranscodeFailed('all agents failed')):
+            result = self.run_step(transcode)
+        self.assertEqual((result.action, result.why), ('drop', 'TRANSCODE_FAILED'))
+
+
 if __name__ == '__main__':
     unittest.main()
