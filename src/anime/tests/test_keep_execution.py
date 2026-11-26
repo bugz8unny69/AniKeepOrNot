@@ -16,7 +16,7 @@ class KeepExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.calls = []
         self.results = []
         self.context = SimpleNamespace(
-            claim=SimpleNamespace(job_id=101),
+            claim=SimpleNamespace(job_id=101, attempt=2, event_id=None),
             cancelled=threading.Event(),
             configuration=SimpleNamespace(value=lambda key: {
                 'storage.database_path': '/tmp/keep-execution-test.sqlite',
@@ -41,12 +41,13 @@ class KeepExecutionTests(unittest.IsolatedAsyncioTestCase):
                 return result
         return FakeService()
 
-    async def test_single_handler_uses_same_executor_and_preserves_shoko(self):
+    async def test_single_handler_uses_same_executor(self):
         self.results = [True]
         result = await single_registration(object(), service_factory=self.service).execute(
             self.context)
         self.assertEqual(result.kind, 'complete')
-        self.assertEqual(result.value, {'refresh': True, 'shoko': True})
+        # Shoko is always told afterwards (LINK_SHOKO, queued when the Keep commits).
+        self.assertEqual(result.value, {'refresh': True})
         self.assertEqual(self.calls, [(99, None)])
 
     async def test_multiple_batch_journals_stop_at_first_incomplete_import(self):

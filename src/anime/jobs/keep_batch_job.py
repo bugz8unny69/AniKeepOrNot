@@ -37,6 +37,14 @@ def _persist(db,claim,value):
     if value['refresh']:
         from src.anime.jobs.refresh_jellyfin_job import enqueue
         enqueue(db,claim)
+    # Always tell Shoko which episode each kept file is (owner, 2026-11-23).
+    from src.anime.jobs.link_shoko_job import enqueue as link_shoko
+    aid,tid=db.execute('SELECT anidb_id,tvdb_series_id FROM batch_episode_reservations WHERE plan_id=(SELECT plan_id '
+                       'FROM batch_keep_imports WHERE job_id=? LIMIT 1) LIMIT 1',(claim.job_id,)).fetchone()
+    link_shoko(db,aid,claim=claim)
+    # Sonarr can't find dubs by itself; AKON finds them for its missing episodes (owner, 2026-11-23).
+    from src.anime.jobs.find_dubs_job import enqueue as find_dubs
+    find_dubs(db,aid,tid,claim=claim)
     from src.anime.jobs.keep_execution import library_history
     return library_history(db,claim,value)+(append_job_history(
         db,job_id=claim.job_id,event_code='KEEP_COMPLETED',

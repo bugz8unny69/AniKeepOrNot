@@ -74,15 +74,20 @@ class Options:
     def data(self):return asdict(self)
 
 
+def api_client(configuration,key):
+    """A Sonarr client for calls that touch no folders (profiles, episodes, queue, release push)."""
+    unused='/unused'   # These calls read no folders; Options requires the fields.
+    options=Options(configuration.value('sonarr.base_url'),unused,unused,unused,0,
+                    configuration.value('sonarr.timeout_seconds'))
+    return Client(options,key)
+
+
 def quality_profiles(configuration,key):
     """Sonarr's quality profiles as [{id, name}], for the Settings drop-down.
 
     Sonarr shows profile names but not their IDs; the setting stores the ID.
     """
-    unused='/unused'   # Listing profiles reads no folders; Options requires the fields.
-    options=Options(configuration.value('sonarr.base_url'),unused,unused,unused,0,
-                    configuration.value('sonarr.timeout_seconds'))
-    return [{'id':row['id'],'name':row['name']} for row in Client(options,key).request('qualityprofile')
+    return [{'id':row['id'],'name':row['name']} for row in api_client(configuration,key).request('qualityprofile')
             if type(row.get('id')) is int and type(row.get('name')) is str]
 
 
@@ -119,8 +124,8 @@ class Client:
 
     def request(self,path,*,query=None,body=None):
         # POST adds a series, previews a manual import, or sends a command.
-        if body is not None and path not in ('series','manualimport','command'):raise KeepReview()
-        if path not in ('system/status','series','series/lookup','rootfolder','qualityprofile','episode','manualimport','command') and not re.fullmatch(r'(?:command|episodefile)/[1-9][0-9]*',path):raise KeepReview()
+        if body is not None and path not in ('series','manualimport','command','release/push'):raise KeepReview()
+        if path not in ('system/status','series','series/lookup','rootfolder','qualityprofile','episode','manualimport','command','queue','release/push') and not re.fullmatch(r'(?:command|episodefile)/[1-9][0-9]*',path):raise KeepReview()
         url=self.options.base_url+'/api/v3/'+path
         if query:url+='?'+urllib.parse.urlencode(query)
         headers={'X-Api-Key':self._key,'Accept':'application/json','Content-Type':'application/json'}
@@ -136,7 +141,7 @@ class Client:
                 if len(raw)>4194304:raise KeepReview()
                 try:
                     result=_json(raw)
-                    is_list=path in ('series','series/lookup','rootfolder','qualityprofile','episode','manualimport') and (body is None or path=='manualimport') or path=='command' and body is None
+                    is_list=path in ('series','series/lookup','rootfolder','qualityprofile','episode','manualimport') and (body is None or path=='manualimport') or path=='command' and body is None or path=='release/push'
                     if is_list:
                         if type(result) is not list or len(result)>10000 or any(type(row) is not dict for row in result):raise KeepReview()
                     elif type(result) is not dict:raise KeepReview()
@@ -183,6 +188,26 @@ class Client:
         reply=self.request('command',body={'name':'SeriesSearch','seriesId':series_id})
         if type(reply.get('id')) is not int or reply['id']<=0:raise KeepReview()
         return reply['id']
+
+    def missing_episodes(self,series_id):
+        """(season, episode) Sonarr wants: monitored, aired, no file, not already downloading."""
+        import datetime
+        now=datetime.datetime.now(datetime.timezone.utc).isoformat()
+        queued=self.request('queue',query={'seriesIds':series_id,'pageSize':1000})
+        busy={record.get('episodeId') for record in queued.get('records') or ()}
+        return {(row['seasonNumber'],row['episodeNumber']) for row in self.request('episode',query={'seriesId':series_id})
+                if row.get('monitored') and not row.get('hasFile') and row['seasonNumber']>0
+                and (row.get('airDateUtc') or '9') <= now and row.get('id') not in busy}
+
+    def push_release(self,title,magnet,info_hash,indexer,size,seeders):
+        """Give Sonarr a release it would not find itself. Returns Sonarr's rejections ([] = grabbed)."""
+        import datetime
+        rows=self.request('release/push',body={
+            'title':title,'magnetUrl':magnet,'infoHash':info_hash,'protocol':'torrent','indexer':indexer,
+            'size':size,'seeders':seeders,
+            'publishDate':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        if not rows:raise KeepReview()
+        return [] if rows[0].get('approved') else [str(x) for x in rows[0].get('rejections') or ('not approved',)]
 
     def episode(self,selection,series):
         rows=self.request('episode',query={'seriesId':series['id']})

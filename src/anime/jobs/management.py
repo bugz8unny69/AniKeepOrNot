@@ -7,6 +7,8 @@ from src.anime.post_keep_cleanup import registration as cleanup_kept
 
 
 from src.anime.jobs.enrich_shoko_job import registration as shoko
+from src.anime.jobs.link_shoko_job import registration as link_shoko
+from src.anime.jobs.find_dubs_job import registration as find_dubs
 from src.anime.decision_download_cleanup import registration as cleanup_download
 from src.anime.jobs.reject_series_job import registration as reject_series
 from src.anime.jobs.keep_batch_job import registration as keep_batch
@@ -15,4 +17,4 @@ from src.anime.jobs.cleanup_batch_kept_media_job import registration as cleanup_
 
 def registrations(secrets):
     return (bulk(),cleanup(secrets),keep(secrets),reject_series(),keep_batch(secrets),
-            cleanup_batch(secrets),cleanup_batch_kept(secrets),refresh(secrets),cleanup_kept(secrets),cleanup_download(secrets),shoko(secrets))
+            cleanup_batch(secrets),cleanup_batch_kept(secrets),refresh(secrets),cleanup_kept(secrets),cleanup_download(secrets),shoko(secrets),link_shoko(secrets),find_dubs(secrets))

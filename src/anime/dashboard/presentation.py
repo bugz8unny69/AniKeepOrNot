@@ -34,6 +34,8 @@ from src.anime.post_keep_cleanup import DEFINITION as cleanup_kept
 from src.anime.decision_download_cleanup import DEFINITION as cleanup_download
 
 from src.anime.jobs.enrich_shoko_job import DEFINITION as shoko
+from src.anime.jobs.link_shoko_job import DEFINITION as link_shoko
+from src.anime.jobs.find_dubs_job import DEFINITION as find_dubs
 from src.anime.jobs.reset_episode_search_job import DEFINITION as reset_episode
 
-HANDLERS=HandlerCatalog((identify,verify,evaluate,evaluate_batch,reserve,reserve_batch,submit_batch,transfer_batch,verify_batch_probe,unlock_batch,verify_batch_episode,stage_batch_episode,keep_batch,cleanup_batch_download,cleanup_batch_kept_media,bulk,backfill,prepare,submit,download,media,transcode,stage,keep,reject_series,cleanup,refresh,cleanup_kept,cleanup_download,shoko,reset_episode))
+HANDLERS=HandlerCatalog((identify,verify,evaluate,evaluate_batch,reserve,reserve_batch,submit_batch,transfer_batch,verify_batch_probe,unlock_batch,verify_batch_episode,stage_batch_episode,keep_batch,cleanup_batch_download,cleanup_batch_kept_media,bulk,backfill,prepare,submit,download,media,transcode,stage,keep,reject_series,cleanup,refresh,cleanup_kept,cleanup_download,shoko,link_shoko,find_dubs,reset_episode))

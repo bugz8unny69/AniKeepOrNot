@@ -1,3 +1,31 @@
+# Shoko: link every kept file to its episode
+
+**Owner, 2026-11-23.** Jellyfin gets its metadata through Shoko (Shokofin) and
+only shows files Shoko has linked to an episode. Shoko's own hash match often
+fails, and AKON knows the AniDB episode of every kept file, so AKON tells Shoko.
+Shoko runs on its own VM and reads the library over NFS, so its folder watcher
+can miss new files; AKON nudges it.
+
+Shoko 5.3 can only link a file it has recorded, and it records a file when it
+hashes it (no call registers a file by path). So (`jobs/link_shoko_job.py`):
+
+1. **Keep starts:** `POST Series/AniDB/{aid}/Refresh?createSeriesEntry=true`, so
+   Shoko has the episodes before the files land. Never holds up the Keep.
+2. **Keep done** (single episode or season pack): `LINK_SHOKO` is queued for the series.
+   - `GET Action/ImportNewFiles` when a file isn't recorded yet;
+   - `GET File/PathEndsWith?path=<library-relative path>`: Shoko's record of the file;
+   - `GET Episode/AniDB/{eid}/Episode`: Shoko's episode for the AniDB episode;
+   - `POST File/{fileID}/Link {"EpisodeIDs": [id]}`.
+   Checked every 30 seconds until every kept file is linked.
+3. **Fails only** when a file is still not recorded 30 minutes after Shoko first
+   answered (check Shoko's NFS mount of the library), or an episode is still not
+   fetched after 2 hours (check Shoko's AniDB login). Time Shoko was down doesn't count.
+
+A file already linked to its episode is left alone, so it can run any number of
+times. For a series kept before this existed: `adm shoko link --id <anidb_id>`.
+
+The section below describes the older read-only title lookup, which Keep no longer queues.
+
 # Optional Shoko metadata
 
 Configured Keep completions enqueue ENRICH_SHOKO_METADATA in a separate control

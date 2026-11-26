@@ -90,48 +90,11 @@ class ShokoJobTests(unittest.IsolatedAsyncioTestCase):
     prepared=KeepSonarrTests.prepared
     make_due=KeepSonarrTests.make_due
 
-    async def metadata_ready(self,read):
-        worker,fake,actions,target,keep=await self.prepared()
-        current=self.store.read()
-        self.store.update({'shoko':{'base_url':'http://shoko.invalid'}},expected_revision=current.revision)
-        worker.registry=Registry((*worker.registry.entries.values(),registration(SecretStore(self.root),read=read)))
-        await worker.attempt()
-        job=self.rows("SELECT job_id FROM jobs WHERE kind='ENRICH_SHOKO_METADATA'")[0][0]
-        # Isolate the optional lookup; staging cleanup has its own fixture tests.
-        db=connect(self.database)
-        try:
-            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=9999999999999 WHERE kind='CLEANUP_KEPT_MEDIA'")
-        finally:db.close()
-        return worker,fake,actions,target,keep,job
-
-    async def test_metadata_is_independent_and_never_replaces_tvdb_mapping(self):
-        calls=[]
-        def read(config,secrets,anime,episode):
-            calls.append((anime,episode));return {'anidb_id':anime,'anidb_episode_id':episode,'title':'Shoko Title','episode_title':'Shoko Episode'}
-        worker,fake,actions,target,keep,job=await self.metadata_ready(read)
-        selection=self.rows('SELECT data_json FROM keep_imports')[0][0]
-        await worker.attempt()
-        data=json.loads(self.rows('SELECT data_json FROM keep_imports')[0][0])
-        self.assertEqual(data['selection'],json.loads(selection)['selection'])
-        self.assertEqual(calls,[(fake.selection.anidb_id,fake.selection.anidb_episode_id)])
-        self.assertEqual(data['shoko']['state'],'COMPLETE');self.assertEqual(fake.posts.count('command'),1)
-        _,receipt,_=actions.submit(target,'keep')
-        self.assertEqual(receipt['optional_shoko']['metadata']['title'],'Shoko Title')
-
-    async def test_shoko_failure_leaves_keep_and_cleanup_valid_and_retry_never_reimports(self):
-        attempts=[]
-        def read(config,secrets,anime,episode):
-            attempts.append(True)
-            if len(attempts)==1:raise ShokoConfiguration()
-            return {'anidb_id':anime,'anidb_episode_id':episode,'title':'Anime','episode_title':'Episode'}
-        worker,fake,actions,target,keep,job=await self.metadata_ready(read)
-        await worker.attempt()
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(keep,)),[('DONE',)])
-        self.assertEqual(self.rows('SELECT phase FROM keep_imports'),[('COMPLETE',)])
-        self.assertTrue((fake.root/'Series'/'episode.mkv').is_file())
-        _,receipt,_=actions.submit(target,'keep');self.assertTrue(receipt['shoko_resumed'])
-        await worker.attempt();self.assertEqual(fake.posts.count('command'),1)
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?',(job,)),[('DONE',)])
+    async def test_keep_always_queues_the_shoko_link(self):
+        # Owner, 2026-11-23: every Keep tells Shoko which episode the kept file is.
+        worker,fake,_,_,_=await self.prepared();await worker.attempt()
+        self.assertEqual(self.rows("SELECT json_extract(payload_json,'$.anidb_id') FROM jobs WHERE kind='LINK_SHOKO'"),
+                         [(fake.selection.anidb_id,)])
 
     async def test_blank_address_adds_no_optional_job(self):
         worker,_,_,_,_=await self.prepared();await worker.attempt()
