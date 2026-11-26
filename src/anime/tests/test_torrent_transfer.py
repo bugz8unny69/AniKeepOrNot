@@ -29,6 +29,7 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
         test=self
         self.adds=self.starts=0
         self.selection_calls=[];self.targets=[];self.snapshot=None;self.raced=False
+        self.restarts=[];self.disk_full=False
         class FakeClient:
             major=5
             def __init__(self,options,credentials):test.targets.append(options)
@@ -42,7 +43,12 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
                 for f in obs.files:
                     ranges.append((offset//262144,(offset+f.size-1)//262144));offset+=f.size
                 test.snapshot=TransferSnapshot(obs,(1,)*len(obs.files),(0,)*len(obs.files),262144,tuple(ranges))
-            def inspect_transfer(self,expected):return test.snapshot
+            def inspect_transfer(self,expected,*,restart_after_disk_full=False):
+                test.restarts.append(restart_after_disk_full)
+                if test.disk_full:
+                    from src.anime.acquisition.transfers import DiskSpaceWait
+                    raise DiskSpaceWait('TORRENT_DISK_FULL',600000,free=0,needed=100)
+                return test.snapshot
             def apply_selection(self,intent,fingerprint,permit,action):
                 verify_snapshot(intent,test.snapshot)
                 permit.take(fingerprint,action)
@@ -108,6 +114,23 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='DOWNLOAD_TORRENT'"),[('DONE',)])
         self.assertTrue(all(t.base_url=='https://qb.example' for t in self.targets))
         self.assertEqual(self.starts,1)
+
+    async def test_a_full_disk_waits_and_then_lets_the_client_restart_the_torrent(self):
+        self.raw,self.digest=metadata(name=b'Folder',files=[{b'length':262144,b'path':[b'info.nfo']},
+            {b'length':100,b'path':[b'Test Anime - 10.mkv']}],extra={b'pieces':b'p'*40})
+        worker=self.worker()
+        await self.queued(worker)
+        await worker.attempt()
+        self.disk_full=True
+        self.due();await worker.attempt()
+        self.assertEqual(self.rows("SELECT state,last_reason_code FROM jobs WHERE kind='DOWNLOAD_TORRENT'"),
+                         [('RETRY_WAIT','TORRENT_DISK_FULL')])
+        self.assertNotIn(True,self.restarts)                # Only after waiting for disk may it restart.
+        self.disk_full=False
+        before=len(self.restarts)
+        self.due();await worker.attempt()
+        self.assertTrue(self.restarts[before])
+        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='DOWNLOAD_TORRENT'"),[('RETRY_WAIT',)])
 
     async def test_shared_boundary_bytes_permitted_under_w19(self):
         self.raw,self.digest=metadata(name=b'Folder',files=[{b'length':10,b'path':[b'info.nfo']},

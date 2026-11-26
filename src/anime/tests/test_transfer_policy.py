@@ -117,3 +117,29 @@ class TransferPolicyTests(unittest.TestCase):
         details[0]['progress']=2
         client._request=Mock(side_effect=[(json.dumps(details).encode(),None),(b'{"piece_size":262144}',None)])
         with self.assertRaises(ClientInvalid):client.inspect_transfer(file_hash)
+
+    def test_a_full_disk_waits_and_the_torrent_restarts_once_there_is_room(self):
+        # Owner, 2026-11-26: a full disk sent every download to review; it waits now.
+        from src.anime.acquisition.transfers import DiskSpaceWait, DISK_MARGIN_BYTES
+        intent,snapshot=example(video=1000)
+        file=intent.plan.manifest.files[0]
+        details=json.dumps([{'index':0,'name':file.path,'size':file.size,'priority':1,'progress':.5,
+                             'piece_range':[0,0]}]).encode()
+        client=self.client(intent,snapshot)
+        del client.inspect_transfer
+        client.inspect=Mock(return_value=replace(snapshot.observation,state='error'))
+        def answers(free):
+            return Mock(side_effect=[(details,None),(b'{"piece_size":262144}',None),
+                                     (json.dumps({'rid':1,'server_state':{'free_space_on_disk':free}}).encode(),None),
+                                     (b'',None)])
+        client._request=answers(DISK_MARGIN_BYTES)          # Room for less than the 500 bytes left.
+        with self.assertRaises(DiskSpaceWait) as waiting:client.inspect_transfer(intent.plan.manifest.info_hash)
+        self.assertEqual((waiting.exception.reason_code,waiting.exception.needed),('TORRENT_DISK_FULL',500))
+        client._request=answers(DISK_MARGIN_BYTES+500)       # Room, but the job was not waiting for disk.
+        self.assertEqual(client.inspect_transfer(intent.plan.manifest.info_hash).observation.state,'error')
+        self.assertEqual(client._request.call_count,3)       # Not restarted; the error goes to review as before.
+        client._request=answers(DISK_MARGIN_BYTES+500)
+        with self.assertRaises(DiskSpaceWait) as waiting:
+            client.inspect_transfer(intent.plan.manifest.info_hash,restart_after_disk_full=True)
+        self.assertEqual(waiting.exception.reason_code,'TORRENT_DOWNLOAD_IN_PROGRESS')
+        self.assertEqual(client._request.call_args.args[0],client.protocol.start_endpoint)

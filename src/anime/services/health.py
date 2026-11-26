@@ -9,10 +9,13 @@ Each change is returned once as a Transition, so callers log "went down" and
 "came back" a single time instead of on every attempt.
 """
 from dataclasses import dataclass, replace
+import logging
 import threading
 import time
 
 from src.anime.services.base import DISABLED, DOWN, NOT_A_FAILURE, UNKNOWN, UP, USABLE, ProbeResult
+
+LOG = logging.getLogger('anime.services')
 
 
 @dataclass(frozen=True)
@@ -145,11 +148,18 @@ class ServiceHealth:
         now = self.now()
         try:
             result = adapter.probe(configuration, secrets, now_ms=now)
-        except Exception as exc:  # A probe bug must not stop the caller.
-            status = adapter.classify(exc)
-            status = DOWN if status in (None, NOT_A_FAILURE) else status
-            result = ProbeResult(service, status, f'check failed: {type(exc).__name__}', now)
+        except Exception as exc:  # Boundary (work item 3c): one broken check must not stop the others.
+            result = self._failed(adapter, service, exc, now)
         return self.record(result)
+
+    def _failed(self, adapter, service, exc, now):
+        """A check that raised: a known service error is its status; anything else is a bug, logged in full."""
+        status = adapter.classify(exc)
+        if status in (None, NOT_A_FAILURE):
+            LOG.error('The %s check failed with a program error; %s counts as down until the next check',
+                      service, service, exc_info=exc)
+            status = DOWN
+        return ProbeResult(service, status, f'check failed: {type(exc).__name__}', now)
 
     def startup(self, configuration, secrets, previous=None):
         """Check every service once with its startup check. Returns the transitions.
@@ -163,10 +173,8 @@ class ServiceHealth:
             try:
                 result = adapter.startup_probe(configuration, secrets, now_ms=now,
                                                previous=(previous or {}).get(adapter.name))
-            except Exception as exc:  # A probe bug must not stop the caller.
-                status = adapter.classify(exc)
-                status = DOWN if status in (None, NOT_A_FAILURE) else status
-                result = ProbeResult(adapter.name, status, f'check failed: {type(exc).__name__}', now)
+            except Exception as exc:  # Boundary (work item 3c): one broken check must not stop the others.
+                result = self._failed(adapter, adapter.name, exc, now)
             change = self.record(result)
             if change is not None:
                 changes.append(change)

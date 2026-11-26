@@ -486,6 +486,22 @@ class ProwlarrMatchingReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("5 raw", out_att1)
         self.assertIn("max 720p", out_att1)
 
+    def test_only_the_latest_result_of_each_search_is_kept(self):
+        # Owner, 2026-11-26: every search added a row (22 MB); keep the latest per search.
+        db = connect(self.database)
+        try:
+            with transaction(db):
+                job_id = enqueue_job(db, kind=DISCOVER_KIND, payload={"plan_id": 1, "start": 1},
+                                     component="worker", available_at_ms=0)
+                search = {"tvdb_series_id": 9, "season": 1, "episode": 3, "search_mode": "initial"}
+                save_snapshots(db, job_id, 1, [dict(search, results=[])], now_ms=1)
+                save_snapshots(db, job_id, 2, [dict(search, results=[]), dict(search, results=[])], now_ms=2)
+                save_snapshots(db, job_id, 2, [dict(search, episode=4, results=[])], now_ms=2)
+            self.assertEqual(db.execute("SELECT attempt,episode FROM prowlarr_search_snapshots "
+                                        "ORDER BY snapshot_id").fetchall(), [(2, 3), (2, 3), (2, 4)])
+        finally:
+            db.close()
+
     def test_missing_snapshot_and_partial_queries(self):
         """8. Missing snapshot reports Not recorded; partial query failure reports Partial."""
         db = connect(self.database)

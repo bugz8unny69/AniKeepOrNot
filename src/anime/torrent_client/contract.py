@@ -25,6 +25,13 @@ class TorrentChange:
     save_path: str | None = None
     category: str | None = None
     tags: str | None = None
+    # Download progress for the Running page (owner, 2026-11-26): "downloading, 53%".
+    dlspeed: int | None = None        # bytes per second
+    eta: int | None = None            # seconds; ETA_UNKNOWN when the client can't tell
+    amount_left: int | None = None    # bytes of the selected files still to download
+
+
+ETA_UNKNOWN = 8640000                 # qBittorrent's "infinity" (100 days)
 
 
 @dataclass(frozen=True)
@@ -34,6 +41,7 @@ class Changes:
     full: bool                                # the client sent everything (not a delta)
     torrents: dict                            # info hash -> TorrentChange
     removed: tuple                            # info hashes no longer in the client
+    free_space: int | None = None             # free bytes on the download disk; None: unchanged
 
 
 class VersionAdapter:

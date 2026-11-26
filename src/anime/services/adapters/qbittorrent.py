@@ -38,8 +38,8 @@ class QbittorrentAdapter(ServiceAdapter):
         try:
             client.login()
             strategy = client.metadata_strategy
-        except Exception as exc:
-            status = self.classify(exc) or DOWN
+        except (ClientAuthenticationFailed, ClientUnsupported, ClientUnavailable, ClientInvalid) as exc:
+            status = self.classify(exc)
             return self.result(status, _DETAIL.get(status, '') + f' at {options.base_url}', now_ms=now_ms)
         if strategy not in ('fetch', 'guarded_export'):
             return self.result(UNSUPPORTED, 'qBittorrent 4.5 or newer (Web API 2.8.14+) is required',

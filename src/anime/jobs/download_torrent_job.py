@@ -3,7 +3,7 @@ from src.anime.acquisition.metadata import AcquisitionConflict, MetadataInvalid,
 from src.anime.acquisition.settings import DownloadConfigurationError, SizeEvidenceMissing
 from src.anime.acquisition.submission import ClientUnavailable, ClientInvalid, ClientAuthenticationFailed, ClientUnsupported
 from src.anime.torrent_client.qbittorrent import Client
-from src.anime.acquisition.transfers import (TransferConflict, PieceOverlap, SnapshotChanged, CHECKING,
+from src.anime.acquisition.transfers import (DiskSpaceWait, waited_for_disk, TransferConflict, PieceOverlap, SnapshotChanged, CHECKING,
                                              verify_snapshot)
 from src.anime.diagnostics import log_history
 from src.anime.handlers import HandlerDefinition
@@ -51,7 +51,9 @@ def registration(secrets,*,client_factory=Client,journal_factory=TransferJournal
             credentials=await blocking(secrets.qbittorrent_credentials)
             client=client_factory(intent.options,credentials)
             await blocking(client.login)
-            snapshot=await blocking(client.inspect_transfer,intent.plan.manifest.info_hash)
+            restart=await blocking(waited_for_disk,context.configuration.value('storage.database_path'),
+                                   context.claim.job_id)
+            snapshot=await blocking(client.inspect_transfer,intent.plan.manifest.info_hash,restart_after_disk_full=restart)
             if snapshot is None:return wait('TORRENT_DOWNLOAD_WAITING')
             verify_snapshot(intent,snapshot)
             if snapshot.observation.state in CHECKING:return wait('TORRENT_SNAPSHOT_CHANGED')
@@ -101,6 +103,12 @@ def registration(secrets,*,client_factory=Client,journal_factory=TransferJournal
         except (TransferConflict,PieceOverlap) as exc:
             if intent is not None:log(await blocking(journal.review,context.claim,intent,exc.reason_code))
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
+        except DiskSpaceWait as exc:
+            # A full disk waits instead of going to review (owner, 2026-11-26).
+            if exc.reason_code=='TORRENT_DISK_FULL':
+                context.logger.warning('qBittorrent has %s MB free; this download needs %s MB more. '
+                                       'Waiting for disk space', exc.free//2**20, exc.needed//2**20)
+            return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms,activity_code='WAITING_FOR_DOWNLOAD')
         except SnapshotChanged:return wait('TORRENT_SNAPSHOT_CHANGED')
         except ClientUnavailable:return Outcome('retry','SERVICE_UNAVAILABLE',facts=service_facts('qbittorrent'))
         except (AcquisitionConflict,MetadataInvalid,SourceMissing,SizeEvidenceMissing,DownloadConfigurationError,

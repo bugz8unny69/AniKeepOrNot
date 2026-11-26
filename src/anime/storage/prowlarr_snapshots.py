@@ -54,6 +54,14 @@ def save_snapshots(db, job_id, attempt, snapshots, now_ms=None):
             payload['results'] = raw_results[:MAX_STORED_ROWS]
 
         payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+        # Only the latest result of each search is kept (owner, 2026-11-26): one
+        # search is the series, season, episode and mode. Rows of this same
+        # attempt stay, so a search saved in several parts keeps them all.
+        db.execute(
+            """DELETE FROM prowlarr_search_snapshots
+               WHERE tvdb_series_id IS ? AND season IS ? AND episode IS ? AND search_mode=?
+                 AND NOT (job_id=? AND attempt=?)""",
+            (tvdb_series_id, season, episode, search_mode, job_id, attempt))
         db.execute(
             """INSERT INTO prowlarr_search_snapshots (
                 job_id, attempt, captured_at_ms, plan_id, tvdb_series_id,

@@ -251,10 +251,7 @@ def make_resolver(options, credentials, *, title_extractor=delivery_title, clien
                 check(stage, "skipped")
 
             # Threshold for candidate eligibility (defaults to 90%)
-            try:
-                threshold_pct = int(configuration.value("identity.match_threshold_pct"))
-            except Exception:
-                threshold_pct = 90
+            threshold_pct = int(configuration.value("identity.match_threshold_pct"))   # Validated: 50-100.
 
             variants, _, _ = generate_title_variants(title, seasons=seasons, episode=episode)
             # Score against the cleaned aliases too, not only the variants that

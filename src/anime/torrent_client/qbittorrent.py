@@ -3,7 +3,7 @@
 Version differences live in qbittorrent_versions.py (picked at login). This
 module never touches files; files() and changes() report them uniformly.
 """
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 import json
 import re
 import urllib.error
@@ -103,7 +103,7 @@ class Client:
             try:
                 parsed=SimpleCookie();parsed.load(value)
                 if 'SID' in parsed:found.append(parsed['SID'].value)
-            except Exception:raise ClientInvalid() from None
+            except CookieError:raise ClientInvalid() from None
         # qBittorrent generates Base64 SIDs, which can include +, / and =.
         if len(found)!=1 or not re.fullmatch('[A-Za-z0-9_+/=-]{8,256}',found[0]):raise ClientAuthenticationFailed()
         self._sid=found[0]
@@ -407,7 +407,32 @@ class Client:
         permit.take(intent)
         self._request('torrents/add',body=b''.join(chunks),content_type='multipart/form-data; boundary='+boundary,limit=4096)
 
-    def inspect_transfer(self,expected_hash):
+    def free_space(self):
+        """Free bytes on qBittorrent's download disk, as qBittorrent reports it."""
+        free=self.changes(0).free_space
+        if free is None:raise ClientInvalid()
+        return free
+
+    def _disk_full(self,snapshot,restart):
+        """A torrent in qBittorrent's error state: wait while the disk has no room for the rest.
+
+        restart: the job was waiting for disk space; with room again, AKON restarts its
+        own torrent (qBittorrent does not retry it). Any other error goes to review.
+        """
+        from src.anime.acquisition.transfers import DiskSpaceWait, DISK_FULL_WAIT_MS, DISK_MARGIN_BYTES
+        observation=snapshot.observation
+        left=sum(int(item.size*(1-progress)) for item,priority,progress
+                 in zip(observation.files,snapshot.priorities,snapshot.progress) if priority)
+        free=self.free_space()
+        if free<left+DISK_MARGIN_BYTES:
+            raise DiskSpaceWait('TORRENT_DISK_FULL',DISK_FULL_WAIT_MS,free=free,needed=left)
+        if (restart and observation.category==self.options.category
+                and observation.save_path.rstrip('/')==self.options.download_root
+                and any(t.startswith('ad-') for t in observation.tags)):
+            self._request(self.protocol.start_endpoint,form={'hashes':observation.info_hash},limit=4096)
+            raise DiskSpaceWait('TORRENT_DOWNLOAD_IN_PROGRESS',30000,free=free,needed=left)
+
+    def inspect_transfer(self,expected_hash,*,restart_after_disk_full=False):
         from src.anime.acquisition.transfers import TransferSnapshot, SnapshotChanged
         before=self.inspect(expected_hash)
         if before is None:return None
@@ -430,8 +455,11 @@ class Client:
         if type(properties) is not dict:raise ClientInvalid()
         after=self.inspect(expected_hash)
         if before!=after:raise SnapshotChanged()
-        return TransferSnapshot(after,tuple(r[1] for r in rows),tuple(r[2] for r in rows),
-                                properties.get('piece_size'),tuple(r[3] for r in rows))
+        snapshot=TransferSnapshot(after,tuple(r[1] for r in rows),tuple(r[2] for r in rows),
+                                  properties.get('piece_size'),tuple(r[3] for r in rows))
+        if after.state=='error':
+            self._disk_full(snapshot,restart_after_disk_full)
+        return snapshot
 
     def apply_selection(self,intent,fingerprint,permit,action):
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
@@ -522,7 +550,8 @@ class Client:
         return tuple(result)
 
     _CHANGE_FIELDS={'state':str,'progress':float,'downloaded':int,'size':int,
-                    'save_path':str,'category':str,'tags':str}
+                    'save_path':str,'category':str,'tags':str,
+                    'dlspeed':int,'eta':int,'amount_left':int}
 
     def changes(self,rid=0):
         """One incremental update for all torrents (sync/maindata): what changed since rid.
@@ -556,4 +585,8 @@ class Client:
             torrents[digest]=TorrentChange(**seen)
         removed=data.get('torrents_removed') or []
         if type(removed) is not list or any(type(h) is not str for h in removed):raise ClientInvalid()
-        return Changes(data['rid'],full,torrents,tuple(h for h in removed if re.fullmatch('[0-9a-f]{40}',h)))
+        server=data.get('server_state') or {}
+        if type(server) is not dict:raise ClientInvalid()
+        free=server.get('free_space_on_disk')
+        if free is not None and (type(free) is not int or free<0):raise ClientInvalid()
+        return Changes(data['rid'],full,torrents,tuple(h for h in removed if re.fullmatch('[0-9a-f]{40}',h)),free)

@@ -65,7 +65,7 @@ def _facts(db,evaluation_job_id,event_id):
     if (source.batch_id,source.anidb_id,source.tvdb_series_id,source.season)!=(batch_id,aid,tid,season):
         raise ReservationConflict()
     from src.anime.user_evaluation_policy import Window
-    try:allowed=set(Window(backfill,following).episodes(anchor))
+    try:allowed=set(Window(backfill,following).pack_episodes(anchor))
     except (ValueError,UserEvaluationConflict):raise ReservationConflict() from None
     selected=db.execute(
         "SELECT f.file_index,f.anidb_episode_id,f.tvdb_episode,f.tvdb_episode_id,"

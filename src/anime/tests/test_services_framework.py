@@ -152,9 +152,12 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(self.health.mark_failed('fake', ValueError('odd')).new, DOWN)
 
     def test_a_buggy_adapter_cannot_break_the_caller(self):
-        change = self.health.probe('broken', None, None)
+        with self.assertLogs('anime.services', 'ERROR') as logged:
+            change = self.health.probe('broken', None, None)
         self.assertEqual(change.new, DOWN)
         self.assertIn('KeyError', self.health.state('broken').detail)
+        # The bug is visible with its full trace, not only as "down" (work item 3).
+        self.assertIn("KeyError: 'bug in the adapter'", logged.output[0])
 
     def test_probe_due_checks_only_what_is_due(self):
         changes = self.health.probe_due(None, None)

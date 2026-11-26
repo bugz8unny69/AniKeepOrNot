@@ -63,7 +63,7 @@ class BatchUserEvaluationProposal:
             raise UserEvaluationConflict()
         integer(self.configuration_revision,positive=True)
         integer(self.anchor_episode,positive=True)
-        allowed=set(self.window.episodes(self.anchor_episode))
+        allowed=set(self.window.pack_episodes(self.anchor_episode))
         expected=tuple(sorted((x for x in self.source.episodes if x.tvdb_episode in allowed),
                               key=lambda x:(x.tvdb_episode,x.file_index)))
         if not expected or expected != self.selected:
@@ -75,12 +75,11 @@ class BatchUserEvaluationProposal:
 
 
 def propose_batch_user_evaluation(source,window,limits,revision):
-    """The season pack has no webhook episode anchor: require E01 explicitly."""
+    """The season pack has no webhook episode: the trial starts at the pack's first episode."""
     if type(source) is not BatchUserEvaluationSource:
         raise UserEvaluationConflict()
-    if 1 not in {x.tvdb_episode for x in source.episodes}:
-        raise UserEvaluationConflict()
+    first=min(x.tvdb_episode for x in source.episodes)
     selected=tuple(sorted((x for x in source.episodes
-                           if x.tvdb_episode in set(window.episodes(1))),
+                           if x.tvdb_episode in set(window.pack_episodes(first))),
                           key=lambda x:(x.tvdb_episode,x.file_index)))
-    return BatchUserEvaluationProposal(source,window,limits,revision,1,selected)
+    return BatchUserEvaluationProposal(source,window,limits,revision,first,selected)

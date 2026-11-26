@@ -11,7 +11,7 @@ from src.anime.acquisition.metainfo_source import (
     MetadataSourceWaiting, MetadataSourceUnavailable,
     MetadataSourceConfigurationError, MetadataSourceDenied,
 )
-from src.anime.acquisition.transfers import (
+from src.anime.acquisition.transfers import (DiskSpaceWait, waited_for_disk, 
     TransferConflict, PieceOverlap, SnapshotChanged, CHECKING,
 )
 from src.anime.batch.probe_transfer import verify_probe_snapshot
@@ -91,7 +91,9 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
             credentials=await blocking(secrets.qbittorrent_credentials)
             client=client_factory(intent.options,credentials)
             await blocking(client.login)
-            snapshot=await blocking(client.inspect_transfer,digest)
+            restart=await blocking(waited_for_disk,context.configuration.value('storage.database_path'),
+                                   context.claim.job_id)
+            snapshot=await blocking(client.inspect_transfer,digest,restart_after_disk_full=restart)
             if snapshot is None:return wait('TORRENT_DOWNLOAD_WAITING')
             verify_probe_snapshot(intent,snapshot)
             if snapshot.observation.state in CHECKING:
@@ -164,6 +166,12 @@ def registration(read_batch_metainfo,secrets,*,client_factory=BatchClient,
                 log(await blocking(
                     journal.review,context.claim,intent,submission,exc.reason_code))
             return Outcome('review',exc.reason_code, facts=failure_facts(exc))
+        except DiskSpaceWait as exc:
+            # A full disk waits instead of going to review (owner, 2026-11-26).
+            if exc.reason_code=='TORRENT_DISK_FULL':
+                context.logger.warning('qBittorrent has %s MB free; this download needs %s MB more. '
+                                       'Waiting for disk space', exc.free//2**20, exc.needed//2**20)
+            return Outcome('defer',exc.reason_code,delay_ms=exc.delay_ms,activity_code='WAITING_FOR_DOWNLOAD')
         except SnapshotChanged:
             return wait('TORRENT_SNAPSHOT_CHANGED')
         except ClientUnavailable:

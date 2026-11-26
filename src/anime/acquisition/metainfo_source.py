@@ -8,7 +8,7 @@ import re
 import urllib.parse
 
 from src.anime.async_io import blocking
-from src.anime.acquisition.metadata import infohash
+from src.anime.acquisition.metadata import AcquisitionConflict, infohash
 from src.anime.acquisition.metadata_service import (
     MetadataSourceTimeout, is_metadata_expired, verify_torrent_ownership,
     poll_or_stop_metadata, shared_limiter,
@@ -244,11 +244,8 @@ async def _qb_metadata(source, digest, configuration, cancelled, *,
         raise MetadataSourceUnavailable() from None
     except (ClientAuthenticationFailed,ClientInvalid):
         raise MetadataSourceDenied() from None
-    except Exception as exc:
-        from src.anime.acquisition.metadata import AcquisitionConflict
-        if isinstance(exc,AcquisitionConflict):
-            raise MetadataSourceDenied() from None
-        raise
+    except AcquisitionConflict:
+        raise MetadataSourceDenied() from None
 
 def make_reader(*, client_factory=QbClient, secrets=None):
     """Single-episode metadata reader. Older clients use PREPARE bootstrap."""

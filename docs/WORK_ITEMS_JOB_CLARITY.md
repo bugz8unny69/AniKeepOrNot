@@ -100,6 +100,8 @@ Nothing may `pass`, return a default, or turn the error into a reason code witho
 | `services/health.py:148, 166`, `services/check.py:64`, `services/adapters/qbittorrent.py:41`, `services/adapters/metadata.py:58, 146` | service probes |
 | `api/adm.py:34`, `api/admin_socket.py:41`, `__main__.py:145` | `adm` and startup |
 
+**Done in the libraries (2026-11-26):** qBittorrent client (cookie parse: `CookieError`), providers (TVDB credentials and the match threshold: no catch, errors pass through), Prowlarr search (`SearchReview`/`SearchUnavailable`), torrent metadata (`AcquisitionConflict`), service checks (qBittorrent login: the four client errors; provider cache reads: database and file errors; `adm services check`: settings errors). `services/health.py:151, 176` stay as boundaries (c): a check that raises anything else logs its full trace at ERROR and counts as down.
+
 **Done in `api/app.py` (2026-11-23):** one boundary per request: a program error answers `500 API_PROGRAM_ERROR` with "Program error at file:line in function (ErrorType)" and logs the full trace. Bad input (400) logs where it was refused. The webhook decision and candidate-evidence catch-alls are removed; the admin-socket startup logs its trace.
 | `diagnostics.py:250`, `install_support.py:189`, `batch/backlog_audit.py:296` | logging, install, backlog audit |
 
