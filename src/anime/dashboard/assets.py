@@ -8,7 +8,6 @@ ROOT=Path(__file__).with_name('static')
 FILES={
     '/':('index.html','text/html; charset=utf-8'),
     '/recognized':('index.html','text/html; charset=utf-8'),
-    '/jobs':('index.html','text/html; charset=utf-8'),
     '/running':('index.html','text/html; charset=utf-8'),
     '/settings':('index.html','text/html; charset=utf-8'),
     '/assets/dashboard.css':('dashboard.css','text/css; charset=utf-8'),

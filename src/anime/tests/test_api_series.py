@@ -1,13 +1,16 @@
 """Tests for series actions and running endpoints in the API."""
 import json
+from pathlib import Path
 import sqlite3
+import tempfile
 import unittest
 
 from src.anime.api.app import Application
 from src.anime.api.auth import COOKIE
+from src.anime.configuration import ConfigurationStore
 from src.anime.secrets import SecretStore
 from src.anime.series_job.store import wake, add_torrent
-from src.anime.tests import test_acquisition_preparation as fixture
+from src.anime.storage.sqlite import connect, initialize
 
 WEB = "w" * 43
 ADMIN = "m" * 43
@@ -20,10 +23,23 @@ class DummyBridge:
 
 
 class ApiSeriesTests(unittest.IsolatedAsyncioTestCase):
-    rows = fixture.AcquisitionPreparationTests.rows
+    def rows(self, sql, args=()):
+        db = connect(self.database)
+        try:
+            return db.execute(sql, args).fetchall()
+        finally:
+            db.close()
 
     async def asyncSetUp(self):
-        await fixture.AcquisitionPreparationTests.asyncSetUp(self)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.database = self.root / "queue.sqlite"
+        self.store = ConfigurationStore(self.root)
+        self.startup = self.store.initialize({"storage": {"database_path": str(self.database)}}).snapshot
+        db = connect(self.database)
+        initialize(db)
+        db.close()
         self.secrets = SecretStore(self.root)
         self.secrets.initialize(webhook_token=WEB)
         self.app = Application(self.root, origin=ORIGIN)

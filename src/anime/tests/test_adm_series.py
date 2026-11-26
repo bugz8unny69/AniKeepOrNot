@@ -72,6 +72,16 @@ class TestAdmSeries(unittest.TestCase):
             code = report_main(["intake", "--id", "99999", "--config-dir", str(self.config_dir)])
         self.assertEqual(code, 1)
 
+        # Short-form --id defaults to intake, and 'job' subcommand is removed
+        out_short = io.StringIO()
+        with redirect_stdout(out_short):
+            code = report_main(["--id", str(aid), "--config-dir", str(self.config_dir)])
+        self.assertEqual(code, 0)
+        self.assertIn("Series AniDB ID: 16999", out_short.getvalue())
+        with self.assertRaises(SystemExit) as ctx:
+            report_main(["job", "--id", "1", "--config-dir", str(self.config_dir)])
+        self.assertEqual(ctx.exception.code, 2)
+
     def test_adm_running(self):
         db = sqlite3.connect(self.db_path)
         wake(db, 16999, "Cyberpunk Edgerunners")

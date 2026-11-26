@@ -1281,11 +1281,10 @@ def report_intake(db, anidb_id, is_json=False, out=print):
 
 def main(argv):
     import argparse
-    # Short form alias support: if neither 'job' nor 'intake' is specified but '--id' is present, insert 'job'
-    if 'job' not in argv and 'intake' not in argv and any(arg == '--id' or arg.startswith('--id=') for arg in argv):
+    if 'intake' not in argv and any(arg == '--id' or arg.startswith('--id=') for arg in argv):
         for idx, arg in enumerate(argv):
             if arg == '--id' or arg.startswith('--id='):
-                argv = argv[:idx] + ['job'] + argv[idx:]
+                argv = argv[:idx] + ['intake'] + argv[idx:]
                 break
 
     parser = argparse.ArgumentParser(prog='adm report', description='Read-only reports')
@@ -1295,30 +1294,8 @@ def main(argv):
                         help='File or directory to save the report to')
     parser.add_argument('--config-dir', default=cli_config_dir())
     parser.add_argument('--json', action='store_true', default=False,
-                        help='Print diagnostics or matching report as JSON')
-    parser.add_argument('--short', action='store_true', default=False,
-                        help='Output only the selected matching report section')
-    parser.add_argument('--include-matching', choices=('prowlarr', 'identity'), default=None,
-                        help='Include matching section for provider')
-    parser.add_argument('--attempt', type=int, default=None,
-                        help='Specific captured search attempt')
-    kinds = parser.add_subparsers(dest='what', required=True, metavar='{job,intake}')
-    job = kinds.add_parser('job', help='Everything about one job: history, failed check, paths')
-    job.add_argument('--id', dest='job_id', type=int, required=True, help='Job number, e.g. 2593')
-    job.add_argument('--compress', action='store_true', default=argparse.SUPPRESS,
-                     help='Save as a .tar.gz (default /tmp/<kind>-report-<id>.tar.gz)')
-    job.add_argument('--dest', default=argparse.SUPPRESS,
-                     help='File or directory to save the report to')
-    job.add_argument('--config-dir', default=argparse.SUPPRESS,
-                     help='Configuration directory')
-    job.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
-                     help='Print the diagnostics as JSON instead of text')
-    job.add_argument('--short', action='store_true', default=argparse.SUPPRESS,
-                     help='Output only the selected matching report section')
-    job.add_argument('--include-matching', choices=('prowlarr', 'identity'), default=argparse.SUPPRESS,
-                     help='Include matching section for provider')
-    job.add_argument('--attempt', type=int, default=argparse.SUPPRESS,
-                     help='Specific captured search attempt')
+                        help='Print the report as JSON')
+    kinds = parser.add_subparsers(dest='what', required=True, metavar='{intake}')
     intake = kinds.add_parser('intake', help='Series intake report: torrents, episodes, history')
     intake.add_argument('--id', dest='anidb_id', type=int, required=True, help='AniDB ID, e.g. 16999')
     intake.add_argument('--compress', action='store_true', default=argparse.SUPPRESS,
@@ -1332,78 +1309,23 @@ def main(argv):
     args = parser.parse_args(argv)
 
     is_json = getattr(args, 'json', False)
-    is_short = getattr(args, 'short', False)
-    include_matching = getattr(args, 'include_matching', None)
-    attempt = getattr(args, 'attempt', None)
     compress = getattr(args, 'compress', False)
     dest = getattr(args, 'dest', None)
     config_dir = getattr(args, 'config_dir', cli_config_dir())
-
-    if is_short and not include_matching:
-        parser.error('--short requires --include-matching <section>')
 
     try:
         db = connect(config_dir)
     except Exception as exc:  # Explain plainly; the usual cause is permissions.
         parser.exit(2, f'Cannot open the database read-only ({exc.__class__.__name__}: {exc}). '
-                       'Run with sudo, or as the anime-discovery service account.\n')
+                       'Run with sudo, or as the akon service account.\n')
     lines = []
     printing = not (compress or dest)
     out = print if printing else lines.append
     try:
         with db:
-            if args.what == 'intake':
-                status = report_intake(db, args.anidb_id, is_json=is_json, out=out)
-            elif is_json:
-                if is_short:
-                    if include_matching == 'prowlarr':
-                        matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
-                    elif include_matching == 'identity':
-                        matching_doc = identity_matching_json(db, args.job_id, attempt=attempt)
-                    else:
-                        matching_doc = None
-                    result_data = {
-                        'job_id': args.job_id,
-                        'matching': {
-                            include_matching: matching_doc,
-                        }
-                    }
-                    out(json.dumps(result_data, indent=2, default=str))
-                    status = 0
-                else:
-                    from src.anime.job_diagnostics import diagnose
-                    data = diagnose(db, args.job_id)
-                    if data and include_matching:
-                        if include_matching == 'prowlarr':
-                            matching_doc = prowlarr_matching_json(db, args.job_id, attempt=attempt)
-                        elif include_matching == 'identity':
-                            matching_doc = identity_matching_json(db, args.job_id, attempt=attempt)
-                        else:
-                            matching_doc = None
-                        data['matching'] = {
-                            include_matching: matching_doc,
-                        }
-                    out(json.dumps(data, indent=2, default=str) if data else json.dumps({'error': 'job not found'}))
-                    status = 0 if data else 1
-            else:
-                if is_short:
-                    if include_matching == 'prowlarr':
-                        status = report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=True)
-                    elif include_matching == 'identity':
-                        status = report_identity_matching(db, args.job_id, attempt=attempt, out=out, is_short=True)
-                    else:
-                        status = 1
-                else:
-                    status = report(db, args.job_id, out=out)
-                    if status == 0 and include_matching:
-                        out('')
-                        if include_matching == 'prowlarr':
-                            report_prowlarr_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
-                        elif include_matching == 'identity':
-                            report_identity_matching(db, args.job_id, attempt=attempt, out=out, is_short=False)
+            status = report_intake(db, args.anidb_id, is_json=is_json, out=out)
         if not printing:
-            report_id = args.anidb_id if args.what == 'intake' else args.job_id
-            saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{report_id}',
+            saved = save('\n'.join(lines) + '\n', f'{args.what}-report-{args.anidb_id}',
                          dest=dest, compress=compress)
             print(f'Report saved to {saved}')
     finally:

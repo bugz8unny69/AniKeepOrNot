@@ -67,7 +67,7 @@ const node = (tag, text, cls) => {
 const state = {
   csrf: null, generation: 0, requests: new Set(), jobs: [], pending: new Set(),
   selected: new Set(), bulkSubmitting: false,
-  page: location.pathname === '/settings' ? 'settings' : location.pathname === '/running' ? 'running' : location.pathname === '/jobs' ? 'jobs' : location.pathname === '/recognized' ? 'recognized' : 'intake',
+  page: location.pathname === '/settings' ? 'settings' : location.pathname === '/running' ? 'running' : location.pathname === '/recognized' ? 'recognized' : 'intake',
   cursor: MAX_CURSOR, previous: [], next: null, loading: null, timer: null,
   settings: null, credentials: null, dirty: false, settingsVersion: 0,
   historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
@@ -1907,13 +1907,13 @@ function queueSearch() {
 }
 async function showWorkspace() {
   $('console-prompt').textContent = APP_NAME.toLowerCase() + ':~/' + (state.page === 'recognized' ? 'names' : state.page) + '$';
-  document.title = ({intake: 'Intake', running: 'Running', jobs: 'Jobs', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
+  document.title = ({intake: 'Intake', running: 'Running', recognized: 'Recognized names', settings: 'Settings'}[state.page] || 'Intake') + ' · ' + APP_NAME;
   $('login-panel').hidden = true; $('workspace').hidden = false; $('sign-out').hidden = false;
   await loadServices();
   $('intake-panel').hidden = state.page !== 'intake';
   const runningPanel = $('running-panel');
   if (runningPanel) runningPanel.hidden = state.page !== 'running';
-  $('jobs-panel').hidden = state.page !== 'jobs';
+  if ($('jobs-panel')) $('jobs-panel').hidden = true;
   $('settings-panel').hidden = state.page !== 'settings';
   $('recognized-panel').hidden = state.page !== 'recognized';
   for (const link of document.querySelectorAll('nav a')) link.classList.toggle('selected', new URL(link.href).pathname === location.pathname);
@@ -1921,13 +1921,6 @@ async function showWorkspace() {
   if (state.page === 'running') { await loadRunning(); return; }
   if (state.page === 'settings') { await loadSettings(); return; }
   if (state.page === 'recognized') { await loadRecognized(); return; }
-  if (state.page === 'jobs' && state.search) $('search').value = state.search;
-  $('page-note').textContent = state.episodeFilter ?
-    'Related jobs for AniDB #' + state.episodeFilter.anidb_id + ' · TVDB ' +
-      tvdbLabel({season: state.episodeFilter.season, episode: state.episodeFilter.episode}) +
-      '. Includes released reservations and completed jobs.' :
-    'Select up to 100 jobs across pages to apply the same action.';
-  if (state.episodeFilter) $('status-filter').value = 'ALL';
   await loadActivity();
   if (state.page === 'intake') {
     const params = new URLSearchParams((location.hash || '').slice(1));
@@ -2130,7 +2123,7 @@ function keyboardShortcut(event) {
     event.preventDefault(); return;
   }
   if (!state.csrf) return;
-  const pages = {'1': '/', '2': '/jobs', '3': '/recognized', '4': '/settings'};
+  const pages = {'1': '/', '2': '/running', '3': '/recognized', '4': '/settings'};
   if (pages[event.key]) { event.preventDefault(); location.assign(pages[event.key]); }
   else if (event.key === '/') {
     const id = state.page === 'recognized' ? 'recognized-search' : state.page === 'settings' ? 'settings-search' : state.page === 'intake' ? 'intake-search' : 'search';

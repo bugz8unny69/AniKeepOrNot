@@ -80,9 +80,11 @@ class DashboardSeriesApiTests(unittest.IsolatedAsyncioTestCase):
     def test_running_route_in_assets(self):
         assets = load_assets()
         self.assertIn("/running", assets)
+        self.assertNotIn("/jobs", assets)
         mime, content = assets["/running"]
         self.assertEqual(mime, "text/html; charset=utf-8")
         self.assertIn(b"running-panel", content)
+        self.assertNotIn(b"jobs-panel", content)
         self.assertIn(b"[2] running", content)
 
     async def test_get_running_html_page(self):
