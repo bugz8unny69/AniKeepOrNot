@@ -107,10 +107,11 @@ class ProviderStorageTests(unittest.TestCase):
             db.executescript((SQL_DIR / "022_keep_imports.sql").read_text())
             db.executescript((SQL_DIR / "023_reservation_release.sql").read_text())
             from src.anime.storage.migrations import SCRIPTS as current_scripts
-            for name in current_scripts[23:]:db.executescript((SQL_DIR/name).read_text())
+            for name in current_scripts[23:79]:db.executescript((SQL_DIR/name).read_text())
+            self.assertEqual(db.execute("SELECT * FROM incoming_events").fetchall(),before)   # Kept up to v79.
+            db.executescript((SQL_DIR/current_scripts[79]).read_text())    # v80: the old pipeline's tables go.
             initialize(fresh)
             self.assertEqual(_structure(db),_structure(fresh))
-            self.assertEqual(db.execute("SELECT * FROM incoming_events").fetchall(),before)
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],len(current_scripts))
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(),[])
         finally:

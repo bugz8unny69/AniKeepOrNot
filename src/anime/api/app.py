@@ -19,34 +19,26 @@ from src.anime.api.admin_socket import start_admin
 from src.anime.api.auth import (ApiError, COOKIE, Sessions, public_origin, check_origin, valid_host, webhook_key)
 from src.anime.configuration import ConfigurationStore
 from src.anime.configuration_schema import ConfigurationError, ConfigurationConflict, ConfigurationSnapshot, for_operation, field_definitions
-from src.anime.cancellation import CancellationError
 from src.anime.diagnostics import configure_logging, event, log_history
-from src.anime.history import encode_details
-from src.anime.matching import validated as validate_matching
 from src.anime.maintenance import MaintenanceGate, MaintenanceError, MaintenancePending, MaintenanceBusy
 from src.anime.messages import MessageCatalog
 from src.anime.dashboard.assets import load_assets, CSP as DASHBOARD_CSP
-from src.anime.dashboard.presentation import HANDLERS
 from src.anime.search import SearchInvalid, match as search_match, words as search_words
 from src.anime.secrets import SecretStore
 import sqlite3
 from src.anime.storage.adapter import DatabaseVersionMismatch
-from src.anime.storage.job_queue import JobOperationMissing, JobQueue, StorageStatementInvalid
-from src.anime.storage.review_retry import request_review_retry, capability as retry_capability, RetryNotAllowed, RetryStale
 from src.anime.storage import notifications as inbox
-from src.anime.decided_series import (webhook_decision, notify_refused, release_name, REASONS as DECISION_REASONS,
-                                      WORDS as DECISION_WORDS)
-from src.anime.storage.management_actions import (ManagementActions, ActionUnavailable, ActionNotFound,
-    KeepServiceUnavailable, keep_blocker)
-from src.anime.storage.series_intake import (preferred_title, detail as series_detail, list_items as series_items,
-    SERIES_STATUSES, keep_targets as series_keep_targets, retry_episode as retry_missing_episode, reject_series as reject_intake_series, IntakeUnavailable)
+from src.anime.decided_series import (webhook_decision, notify_refused, release_name, REASONS as DECISION_REASONS,WORDS as DECISION_WORDS)
 from src.anime.storage.migrations import LATEST_VERSION
-from src.anime.storage.sqlite import accept_event_and_job
+from src.anime.anime_titles import preferred_title
+from src.anime.storage.connection import database
+from src.anime.storage.connection import database as connection
+from src.anime.series_job.views import running, series_list, series_view
 
 PREFIX='/api/v1'
 MAX_BODY=65536
 MAX_TORRENT_BODY=6*1024*1024  # base64 of a bounded 4 MiB BEP3 file
-CATALOG=MessageCatalog(handlers=HANDLERS)
+CATALOG=MessageCatalog()
 
 
 def where(exc):
@@ -135,13 +127,6 @@ def size_detail(details):
     if used is None:return f'The video is {video:,} MB; the episode limit is {limit:,} MB.'
     return (f'The video is {video:,} MB; this anime\'s trial episodes already use {used:,} MB '
             f'of their {limit:,} MB total limit.')
-
-
-def intake_status(query):
-    value=query.get('status',[])
-    if not value:return None
-    if len(value)!=1 or value[0] not in SERIES_STATUSES:raise ApiError(400,'API_REQUEST_INVALID')
-    return value[0]
 
 
 def service_line(name,status=None):
@@ -377,18 +362,11 @@ class Application:
     def _dispatch(self,method,path,headers,query,body,peer):
         try:return self._route(method,path,headers,query,body,peer)
         except ApiError:raise
-        except ActionNotFound as exc:raise ApiError(404,exc.reason_code) from None
-        except KeepServiceUnavailable as exc:
-            raise ApiError(503 if exc.reason_code=='SERVICE_UNAVAILABLE' else 409,exc.reason_code,detail=exc.detail) from None
-        except ActionUnavailable as exc:raise ApiError(409,exc.reason_code) from None
-        except IntakeUnavailable as exc:raise ApiError(409,exc.reason_code) from None
-        except (RetryNotAllowed,RetryStale) as exc:raise ApiError(409,exc.reason_code) from None
         except ConfigurationConflict as exc:raise ApiError(409,exc.reason_code) from None
         except ConfigurationError as exc:raise ApiError(503,exc.reason_code) from None
         except (MaintenancePending,MaintenanceBusy,MaintenanceError) as exc:raise ApiError(503,exc.reason_code) from None
-        except (DatabaseVersionMismatch,StorageStatementInvalid,JobOperationMissing) as exc:raise ApiError(503,exc.reason_code) from None
+        except DatabaseVersionMismatch as exc:raise ApiError(503,exc.reason_code) from None
         except sqlite3.Error:raise ApiError(503,'DATABASE_ERROR') from None
-        except CancellationError as exc:raise ApiError(409,exc.reason_code) from None
 
     def _release(self,check,normalized):
         """Autobrr's two calls for one release, answered alike from one queue row per info hash.
@@ -407,7 +385,7 @@ class Application:
             # A decided series is refused here from local data only.
             decided=webhook_decision(configuration,normalized)
             if decided is not None:
-                with JobQueue(database).connection() as db:
+                with connection(database) as db:
                     from src.anime.storage.sqlite import transaction
                     with transaction(db):notify_refused(db,*decided,normalized)
                 self.logger.info('%s: refused, AniDB %s is already %s; in API Reject',
@@ -484,224 +462,36 @@ class Application:
         # Authentication and CSRF above apply equally to all explicit actions.
         # HTTP performs local admission only; network/filesystem cleanup is queued.
         with MaintenanceGate(configuration.value('storage.database_path')).operation():
+            db_path=configuration.value('storage.database_path')
+            language=configuration.value('anime.title_language')
             if path==PREFIX+'/running':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    series_rows = db.execute(
-                        "SELECT anidb_id, title, state, wake_at_ms, torrents_at_once, "
-                        "       torrents_json, episodes_json, recent_json, "
-                        "       created_at_ms, updated_at_ms "
-                        "FROM series WHERE state = 'WORKING' "
-                        "ORDER BY updated_at_ms DESC"
-                    ).fetchall()
-                    series_list = []
-                    for r in series_rows:
-                        series_list.append({
-                            'anidb_id': r[0],
-                            'title': r[1],
-                            'state': r[2],
-                            'wake_at_ms': r[3],
-                            'torrents_at_once': r[4],
-                            'torrents': json.loads(r[5]) if r[5] else [],
-                            'episodes': json.loads(r[6]) if r[6] else {},
-                            'recent': json.loads(r[7]) if r[7] else [],
-                            'created_at_ms': r[8],
-                            'updated_at_ms': r[9],
-                        })
-                    waiting = db.execute(
-                        "SELECT request_id, infohash, received_at_ms, tries "
-                        "FROM identity_requests WHERE outcome IS NULL "
-                        "ORDER BY received_at_ms ASC LIMIT 50"
-                    ).fetchall()
-                    waiting_identity = [
-                        {'request_id': w[0], 'infohash': w[1], 'received_at_ms': w[2], 'tries': w[3]}
-                        for w in waiting
-                    ]
-                return 200, {'series': series_list, 'waiting_identity': waiting_identity}, []
+                with database(db_path) as db:
+                    return 200,running(db),[]
             if path==PREFIX+'/services':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                data=service_statuses(configuration.value('storage.database_path'),configuration=configuration)
+                data=service_statuses(db_path,configuration=configuration)
                 # The bell's unread count rides on this poll, which runs on every page.
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                with database(db_path) as db:
                     data['notifications_unread']=inbox.unread(db)
                 return 200,data,[]
             if path==PREFIX+'/notifications' or path.startswith(PREFIX+'/notifications/'):
                 return self._notifications(configuration,method,path,query,body)
-            if path==PREFIX+'/jobs/bulk':
-                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                exact(body,('action','job_ids'))
-                action,ids=body['action'],body['job_ids']
-                if type(action) is not str or action not in ('cancel','retry','cleanup') or (
-                        type(ids) is not list or not 6<=len(ids)<=100 or
-                        any(type(job) is not int or not 1<=job<=(1<<63)-1 for job in ids) or
-                        len(set(ids))!=len(ids)):
-                    raise ApiError(400,'API_REQUEST_INVALID')
-                queue=JobQueue(configuration.value('storage.database_path'))
-                from src.anime.storage.sqlite import transaction,enqueue_job_with_receipt
-                from src.anime.jobs.management_bulk_job import KIND
-                with queue.connection() as db,transaction(db):
-                    placeholders=','.join('?' for _ in ids)
-                    found=db.execute('SELECT count(*) FROM jobs WHERE job_id IN ('+placeholders+')',ids).fetchone()[0]
-                    if found!=len(ids):raise ApiError(400,'API_REQUEST_INVALID')
-                    batch,audit=enqueue_job_with_receipt(db,kind=KIND,payload={'action':action,'job_ids':ids},component='api')
-                log_history(self.logger,audit)
-                location=f'/api/v1/jobs/{batch}'
-                return 202,{'job_id':batch,'state':'PENDING','status_url':location,
-                    'history_url':location+'/history','count':len(ids),
-                    'notification':CATALOG.reason('MANAGEMENT_JOB_SUBMITTED')},[(b'location',location.encode())]
-            match=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})/(keep|cancel|cleanup|cancellation|retry)',path)
-            if match:
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                job=int(match[1]);action=match[2]
-                if job>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
-                if action=='retry' and method=='POST':
-                    exact(body,('expected_attempt','expected_reason'))
-                    receipt=request_review_retry(configuration.value('storage.database_path'),job,
-                        expected_attempt=body['expected_attempt'],expected_reason=body['expected_reason'])
-                    location=f'/api/v1/jobs/{job}'
-                    return 202,{'job_id':job,'state':'PENDING','status_url':location,
-                        'history_url':location+'/history','reused':receipt.outcome=='ALREADY_QUEUED',
-                        'notification':CATALOG.reason('MANAGEMENT_JOB_SUBMITTED')},[(b'location',location.encode())]
-                actions=ManagementActions(configuration.value('storage.database_path'),configuration)
-                if action=='cancellation' and method=='GET':
-                    with actions.queue.connection() as db:
-                        db.execute('BEGIN')
-                        row=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code FROM jobs WHERE job_id=?',(job,)).fetchone()
-                        if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                        data=self._job(actions.queue,db,row,configuration=configuration)
-                        return 200,{**data['cancellation'],'actions':data['actions']},[]
-                if action in ('keep','cancel','cleanup') and method=='POST':
-                    exact(body,())
-                    status,data,records=actions.submit(job,action)
-                    for record in records:log_history(self.logger,record)
-                    return status,data,([] if 'status_url' not in data else [(b'location',data['status_url'].encode())])
-                raise ApiError(405,'API_METHOD_INVALID')
-            coverage=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})/coverage',path)
-            if coverage:
-                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                job=int(coverage[1])
-                if job>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    db.execute('BEGIN')
-                    row=db.execute("SELECT state,attempt_count,last_reason_code FROM jobs "
-                                   "WHERE job_id=? AND kind='VERIFY_RELEASE'",(job,)).fetchone()
-                    if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    proof=db.execute("SELECT batch_id,tvdb_season,info_hash FROM batch_verifications "
-                                     "WHERE job_id=?",(job,)).fetchone()
-                    if proof is not None:
-                        plan=db.execute('SELECT plan_id,planned_size_bytes FROM batch_user_evaluation_plans '
-                                        'WHERE batch_id=?',(proof[0],)).fetchone()
-                        planned_count=0 if plan is None else db.execute(
-                            'SELECT count(*) FROM batch_user_evaluation_files WHERE plan_id=?',
-                            (plan[0],)).fetchone()[0]
-                        total=db.execute("SELECT count(*) FROM batch_verified_files WHERE batch_id=?",
-                                         (proof[0],)).fetchone()[0]
-                        rows=db.execute("SELECT f.file_index,f.file_path,f.anidb_episode_number,"
-                                        "f.tvdb_episode,f.file_size_bytes,"
-                                        "CASE WHEN p.file_index IS NOT NULL THEN 1 ELSE 0 END "
-                                        "FROM batch_verified_files f LEFT JOIN batch_user_evaluation_files p "
-                                        "ON p.plan_id=? AND p.file_index=f.file_index "
-                                        "WHERE f.batch_id=? ORDER BY f.tvdb_episode,f.file_index LIMIT 100",
-                                        (None if plan is None else plan[0],proof[0])).fetchall()
-                        evidence={'kind':'batch','tvdb_season':proof[1],'episode_count':total,
-                                  'user_evaluation_plan_ready':plan is not None,
-                                  'planned_episode_count':planned_count,
-                                  'planned_size_bytes':None if plan is None else plan[1],
-                                  'truncated':total>len(rows),'episodes':[
-                            {'file_index':item[0],'path':item[1],
-                             'anidb_episode':item[2],'tvdb_episode':item[3],
-                             'size_bytes':item[4],'planned':bool(item[5])} for item in rows]}
-                    else:
-                        single=db.execute("SELECT tvdb_season,tvdb_episode,anidb_episode_number "
-                                          "FROM release_verifications WHERE job_id=?",(job,)).fetchone()
-                        evidence=None if single is None else {
-                            'kind':'single','tvdb_season':single[0],'episode_count':1,
-                            'truncated':False,'episodes':[{'file_index':None,'path':None,
-                                'anidb_episode':single[2],'tvdb_episode':single[1],
-                                'size_bytes':None}]}
-                    return 200,{'job_id':job,'available':evidence is not None,
-                                'state':row[0],'attempts':row[1],
-                                'reason':None if row[2] is None else CATALOG.reason(row[2]),
-                                'evidence':evidence},[]
-            matching=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})/matching',path)
-            if matching:
-                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                job=int(matching[1])
-                if job>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    db.execute('BEGIN')
-                    row=db.execute('SELECT kind,state,attempt_count,last_reason_code,event_id FROM jobs WHERE job_id=?',(job,)).fetchone()
-                    if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    identity_job=job
-                    if row[0]!='IDENTIFY_ANIME':
-                        if row[4] is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                        source=db.execute("SELECT job_id,kind,state,attempt_count,last_reason_code,event_id FROM jobs "
-                            "WHERE event_id=? AND kind='IDENTIFY_ANIME' ORDER BY job_id LIMIT 1",(row[4],)).fetchone()
-                        # Identified by the API (identity process): no identification job, no evidence.
-                        if source is not None:
-                            identity_job=source[0]
-                            row=source[1:]
-                    evidence=None
-                    # Review a bounded set of durable, fenced lifecycle outcomes.
-                    # Older jobs legitimately have no trace and must not be guessed.
-                    records=db.execute(
-                        "SELECT details_json FROM job_history WHERE job_id=? AND "
-                        "event_code IN ('NEEDS_REVIEW','DONE','RETRY_SCHEDULED','DEFERRED','ON_HOLD','BLOCKED') "
-                        "ORDER BY history_id DESC LIMIT 64",(identity_job,)).fetchall()
-                    for record in records:
-                        try:
-                            details=json.loads(record[0] or '{}')
-                            if type(details) is not dict or 'matching' not in details:continue
-                            validate_matching(details['matching'])
-                            evidence=details['matching']
-                            break
-                        except (ValueError,TypeError,KeyError,OverflowError):
-                            continue
-                    release_name = None
-                    if row[4] is not None:
-                        event_row = db.execute("SELECT raw_body FROM incoming_events WHERE event_id=?", (row[4],)).fetchone()
-                        if event_row and event_row[0]:
-                            try:
-                                decl = json.loads(event_row[0])
-                                if type(decl) is dict and type(decl.get("release_name")) is str:
-                                    release_name = decl["release_name"]
-                            except (ValueError, TypeError, UnicodeError):
-                                pass
-                    from src.anime.storage.candidate_evidence import load_candidate_evidence
-                    candidate_evidence = load_candidate_evidence(db, identity_job)
-                return 200,{'job_id':identity_job,'requested_job_id':job,'available':evidence is not None,
-                    'attempts':row[2],'state':row[1],
-                    'reason':None if row[3] is None else CATALOG.reason(row[3]),
-                    'evidence':evidence,'candidate_evidence':candidate_evidence,'release_name':release_name},[]
-            single=re.fullmatch(PREFIX+r'/jobs/([1-9][0-9]{0,18})',path)
-            if single:
-                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                job=int(single[1])
-                if job>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
-                queue=JobQueue(configuration.value('storage.database_path'))
-                with queue.connection() as db:
-                    db.execute('BEGIN')
-                    row=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code FROM jobs WHERE job_id=?',(job,)).fetchone()
-                    if row is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    return 200,self._job(queue,db,row,language=configuration.value('anime.title_language'),configuration=configuration),[]
             if path==PREFIX+'/search':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._search(configuration,query),[]
             if path==PREFIX+'/' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                return 200,{'version':'v1','resources':['health','settings','credentials','intake','jobs','jobs/{id}/matching','auth/session','auth/password','recognized','search','webhook','check']},[]
+                return 200,{'version':'v1','resources':['health','settings','credentials','intake','series','running',
+                    'auth/session','auth/password','recognized','search','webhook','check']},[]
             series_match=re.fullmatch(PREFIX+r'/recognized/([1-9][0-9]{0,17})/episodes',path)
             if series_match:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 aid=int(series_match.group(1))
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                with database(db_path) as db:
                     db.execute('BEGIN')
                     parent=db.execute("SELECT display_title,tvdb_series_id FROM recognized_series WHERE anidb_id=?",
                                       (aid,)).fetchone()
@@ -711,8 +501,7 @@ class Application:
                         (aid,)).fetchone()
                     recognized_title=preferred_title(parent[0],
                         translated[0] if translated else None,
-                        translated[1] if translated else None,
-                        configuration.value('anime.title_language'))
+                        translated[1] if translated else None,language)
                     records=db.execute(
                         "SELECT anidb_episode_number,anidb_episode_id,tvdb_season,tvdb_episode,tvdb_episode_id "
                         "FROM recognized_episodes WHERE anidb_id=? ORDER BY anidb_episode_number LIMIT 501",
@@ -725,91 +514,15 @@ class Application:
             if path==PREFIX+'/recognized':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                with database(db_path) as db:
                     db.execute('BEGIN')
-                    return 200,self._recognized(db,configuration.value('anime.title_language')),[]
-            # Series-first Intake reuses existing jobs and staging evidence.
-            if path==PREFIX+'/intake/series':
+                    return 200,self._recognized(db,language),[]
+            # Intake: one row per series (the series job). /intake/series/... and /series/... are the same.
+            if path in (PREFIX+'/intake',PREFIX+'/intake/series'):
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                if set(query)-{'before_id','limit','status'}:raise ApiError(400,'API_REQUEST_INVALID')
-                before=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1)
-                limit=page_number(query,'limit',30,1,100)
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    db.execute('BEGIN')
-                    return 200,series_items(db,before,limit,language=configuration.value('anime.title_language'),
-                                            status=intake_status(query)),[]
-            series_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})(?:/(keep|reject))?',path)
-            if series_match:
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                aid=int(series_match[1])
-                if aid>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
-                if series_match[2] is None and method=='GET':
-                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                        db.execute('BEGIN')
-                        from src.anime.series_job.store import get_series
-                        s = get_series(db, aid)
-                        if s is not None:
-                            return 200, {
-                                'anidb_id': s.anidb_id,
-                                'title': s.title,
-                                'state': s.state,
-                                'wake_at_ms': s.wake_at_ms,
-                                'torrents_at_once': s.torrents_at_once,
-                                'torrents': s.torrents,
-                                'episodes': s.episodes,
-                                'recent': s.recent,
-                                'created_at_ms': s.created_at_ms,
-                                'updated_at_ms': s.updated_at_ms,
-                            }, []
-                        item=series_detail(db,aid,language=configuration.value('anime.title_language'))
-                    if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    return 200,item,[]
-                if series_match[2]=='keep' and method=='POST':
-                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                        from src.anime.series_job.store import get_series
-                        if get_series(db, aid) is not None:
-                            from src.anime.series_job.actions import keep_series_sync
-                            try:
-                                return 200, keep_series_sync(db, aid), []
-                            except ValueError:
-                                raise ApiError(409, 'ANIME_REJECTED') from None
-                    exact(body,('operation_ids',))
-                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                        db.execute('BEGIN')
-                        targets=series_keep_targets(db,aid,body['operation_ids'])
-                        blocked=keep_blocker(db,configuration)
-                    # Refuse the whole request with the reason; never report
-                    # every acquisition as "failed" because Sonarr is down.
-                    if blocked is not None:raise KeepServiceUnavailable(blocked)
-                    actions=ManagementActions(configuration.value('storage.database_path'),configuration)
-                    submitted=[];failed=[]
-                    # Each existing Keep is durable; report partial submissions.
-                    for job in targets:
-                        try:
-                            _,receipt,_=actions.submit(job,'keep')
-                            submitted.append(receipt['job_id'])
-                        except ActionUnavailable:
-                            failed.append(job)
-                    return 202,{'submitted':submitted,'failed':failed,
-                                'message':f'Keep requested for {len(submitted)} staged acquisitions.'},[]
-                if series_match[2]=='reject' and method=='POST':
-                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                        from src.anime.series_job.store import get_series
-                        if get_series(db, aid) is not None:
-                            from src.anime.series_job.actions import reject_series_sync
-                            try:
-                                return 200, reject_series_sync(db, aid, reason=body.get('reason', 'REJECTED_BY_USER'), note_text=body.get('note', '')), []
-                            except ValueError:
-                                raise ApiError(409, 'ANIME_REJECTED') from None
-                    exact(body,('operation_ids','reason','note'))
-                    result=reject_intake_series(
-                        configuration.value('storage.database_path'),aid,
-                        body['operation_ids'],body['reason'],body['note'])
-                    return 202,{**result,'message':'Series rejection recorded; cleanup queued.',
-                                'status_url':f'/api/v1/jobs/{result["job_id"]}',
-                                'history_url':f'/api/v1/jobs/{result["job_id"]}/history'},[]
-                raise ApiError(405,'API_METHOD_INVALID')
-            series_act=re.fullmatch(PREFIX+r'/series/([1-9][0-9]{0,18})(?:/(keep|reject|search|retry|cancel))?',path)
+                return 200,self._intake(configuration,query),[]
+            series_act=re.fullmatch(
+                PREFIX+r'/(?:intake/)?series/([1-9][0-9]{0,18})(?:/(keep|reject|search|retry|cancel|release))?',path)
             if series_act:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 aid=int(series_act[1])
@@ -817,117 +530,16 @@ class Application:
                 action=series_act[2]
                 if action is None:
                     if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                        from src.anime.series_job.store import get_series
-                        s=get_series(db,aid)
-                        if s is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                        data={
-                            'anidb_id':s.anidb_id,'title':s.title,'state':s.state,'wake_at_ms':s.wake_at_ms,
-                            'torrents_at_once':s.torrents_at_once,'torrents':s.torrents,'episodes':s.episodes,
-                            'recent':s.recent,'created_at_ms':s.created_at_ms,'updated_at_ms':s.updated_at_ms,
-                        }
-                    return 200,data,[]
+                    with database(db_path) as db:
+                        item=series_view(db,aid,language)
+                    if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
+                    return 200,item,[]
                 if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-                from src.anime.series_job.actions import (
-                    keep_series_sync, reject_series_sync, search_series_sync, retry_series_sync, cancel_series_sync
-                )
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    try:
-                        if action=='keep':
-                            res=keep_series_sync(db,aid)
-                        elif action=='reject':
-                            res=reject_series_sync(db,aid,reason=body.get('reason','REJECTED_BY_USER'),note_text=body.get('note',''))
-                        elif action=='search':
-                            res=search_series_sync(db,aid)
-                        elif action=='retry':
-                            res=retry_series_sync(db,aid)
-                        elif action=='cancel':
-                            res=cancel_series_sync(db,aid)
-                    except ValueError as exc:
-                        msg=str(exc).lower()
-                        if 'not found' in msg:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                        if 'already kept' in msg or 'already accepted' in msg:
-                            raise ApiError(409,'ANIME_ACCEPTED')
-                        if 'already' in msg:
-                            raise ApiError(409,'ANIME_REJECTED')
-                        raise ApiError(400,'API_REQUEST_INVALID')
-                return 200,res,[]
-            manual_match=re.fullmatch(
-                PREFIX+r'/intake/series/([1-9][0-9]{0,18})/episodes/([0-9]{1,4})/([1-9][0-9]{0,3})/submit',path)
-            if manual_match:
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-                if set(body) not in (set(('release_name','magnet_uri')),
-                                    set(('release_name','torrent_b64'))):
-                    raise ApiError(400,'API_REQUEST_INVALID')
-                from src.anime.storage.manual_release import (
-                    submit as manual_submit, ManualSubmissionInvalid, ManualSubmissionUnavailable)
-                try:
-                    result=manual_submit(
-                        configuration.value('storage.database_path'),
-                        *(int(value) for value in manual_match.groups()),
-                        release_name=body['release_name'],
-                        magnet_uri=body.get('magnet_uri'),
-                        torrent_b64=body.get('torrent_b64'))
-                except ManualSubmissionInvalid as exc:
-                    raise ApiError(400,exc.reason_code) from None
-                except ManualSubmissionUnavailable:
-                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
-                return (200 if result['reused'] else 202),{
-                    **result,'message':'Manual release candidate ' +
-                    ('already submitted.' if result['reused'] else 'submitted.'),
-                    'status_url':f'/api/v1/jobs/{result["job_id"]}'},[]
-            # Missing episodes are addressed by AniDB episode number.
-            retry_match=re.fullmatch(PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([1-9][0-9]{0,8})/retry',path)
-            if retry_match:
-                if query:raise ApiError(400,'API_REQUEST_INVALID')
-                if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
-                if set(body) not in (set(), {'delete_cache'}) or (
-                        'delete_cache' in body and type(body['delete_cache']) is not bool):
-                    raise ApiError(400,'API_REQUEST_INVALID')
-                aid,episode=map(int,retry_match.groups())
-                return 202,retry_missing_episode(
-                    configuration.value('storage.database_path'),aid,episode,
-                    delete_cache=body.get('delete_cache',False)),[]
-            if path==PREFIX+'/intake':
-                if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
-                return 200,self._intake(configuration,query),[]
-            # Series-scoped batch controller diagnostics & views (WI-09)
-            size_retry_match=re.fullmatch(
-                PREFIX+r'/intake/series/([1-9][0-9]{0,18})/backfill/([1-9][0-9]{0,8})/acquire',path)
-            if size_retry_match:
-                if query or body: raise ApiError(400,'API_REQUEST_INVALID')
-                if method!='POST': raise ApiError(405,'API_METHOD_INVALID')
-                from src.anime.storage.episode_reset import schedule,EpisodeResetUnavailable
-                aid,episode=map(int,size_retry_match.groups())
-                try:
-                    result=schedule(configuration.value('storage.database_path'),
-                                    aid,episode,mode='replay')
-                except EpisodeResetUnavailable:
-                    raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE') from None
-                return 202,result,[]
-            batch_scope_match = re.fullmatch(PREFIX + r'/intake/series/([1-9][0-9]{0,18})/batch/([1-9][0-9]{0,3})', path)
-            if batch_scope_match:
-                if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
-                if query: raise ApiError(400, 'API_REQUEST_INVALID')
-                aid, season = map(int, batch_scope_match.groups())
-                from src.anime.storage.batch_candidates import get_batch_scope_operation_view
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    db.execute('BEGIN')
-                    view = get_batch_scope_operation_view(db, aid, season)
-                if view is None: raise ApiError(404, 'API_ROUTE_NOT_FOUND')
-                return 200, view, []
-            if path == PREFIX + '/batch/scopes':
-                if method != 'GET': raise ApiError(405, 'API_METHOD_INVALID')
-                if set(query) - {'limit'}: raise ApiError(400, 'API_REQUEST_INVALID')
-                limit = page_number(query, 'limit', 50, 1, 100)
-                from src.anime.storage.batch_candidates import list_batch_scopes
-                with JobQueue(configuration.value('storage.database_path')).connection() as db:
-                    db.execute('BEGIN')
-                    return 200, {'scopes': list_batch_scopes(db, limit=limit)}, []
+                return self._series_action(db_path,aid,action,body)
+
             if path==PREFIX+'/health' and method=='GET':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                with JobQueue(configuration.value('storage.database_path')).connection():pass
+                with database(db_path):pass
                 return 200,{'ready':True,'database_schema_version':LATEST_VERSION},[]
             if path==PREFIX+'/settings':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -988,190 +600,23 @@ class Application:
                 if result.saved:event(self.logger,logging.INFO,'API_CREDENTIALS_UPDATED',component='api')
                 return 200,{'status':asdict(result.status),'saved':result.saved,'durability_confirmed':result.durability_confirmed,'reason_code':result.reason_code,
                             'reason':None if result.reason_code is None else CATALOG.reason(result.reason_code)},[]
-            if method=='GET' and (path==PREFIX+'/jobs' or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/history',path)):
-                return 200,self._jobs(configuration,path,query),[]
-        if path in (PREFIX+'/',PREFIX+'/health',PREFIX+'/credentials',PREFIX+'/jobs',PREFIX+'/batch/scopes') or re.fullmatch(PREFIX+r'/jobs/[1-9][0-9]{0,18}/(history|matching)',path):raise ApiError(405,'API_METHOD_INVALID')
+        if path in (PREFIX+'/',PREFIX+'/health',PREFIX+'/credentials'):raise ApiError(405,'API_METHOD_INVALID')
         raise ApiError(404,'API_ROUTE_NOT_FOUND')
 
     def _cookie(self,token,*,clear=False,secure=False):
         return COOKIE+'='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+('0' if clear else str(self.sessions.ttl))+('; Secure' if secure else '')
 
-    def _jobs(self,configuration,path,query,match=None):
-        transcode_batch=None
-        episode_keys={'anidb_id','season','episode'}
-        selected=set(query)&episode_keys
-        if selected and selected!=episode_keys:raise ApiError(400,'API_REQUEST_INVALID')
-        if set(query)-{'after_id','before_id','limit','state','show_completed','show_canceled'}-episode_keys or 'after_id' in query and 'before_id' in query:raise ApiError(400,'API_REQUEST_INVALID')
-        episode_filter=(page_number(query,'anidb_id',0,1,(1<<63)-1),
-                        page_number(query,'season',0,0,1000),
-                        page_number(query,'episode',0,1,1000)) if selected else None
-        after=page_number(query,'after_id',0,0,(1<<63)-1);limit=page_number(query,'limit',50,1,100)
-        history=path.endswith('/history')
-        if history and (set(query)&{'state','show_completed','show_canceled'} or episode_filter):raise ApiError(400,'API_REQUEST_INVALID')
-        state_filter=query.get('state',[])
-        if len(state_filter)>1 or state_filter and state_filter[0] not in ('PENDING','RUNNING','RETRY_WAIT','ON_HOLD','NEEDS_REVIEW','BLOCKED','DONE','CANCELED'):
-            raise ApiError(400,'API_REQUEST_INVALID')
-        show_completed=page_number(query,'show_completed',1,0,1)
-        show_canceled=page_number(query,'show_canceled',1,0,1)
-        queue=JobQueue(configuration.value('storage.database_path'))
-        with queue.connection() as db:
-            db.execute('BEGIN')
-            if history:
-                if 'before_id' in query:raise ApiError(400,'API_REQUEST_INVALID')
-                job=int(path.split('/')[-2])
-                if job>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
-                kind=db.execute('SELECT kind FROM jobs WHERE job_id=?',(job,)).fetchone()
-                if kind is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                # Name the job that did the work: its kind, label and src/anime/jobs module.
-                module=kind[0].lower()+'_job'
-                from importlib.util import find_spec
-                about={'job_id':job,'kind':kind[0],'label':CATALOG.handler(kind[0]),
-                       'module':module if find_spec('src.anime.jobs.'+module) else None}
-                # A deferred observation is not another failed processing attempt.
-                # Keep the historical claim count for leases/CAS; expose the
-                # successfully deferred checks separately in History.
-                counts=db.execute("SELECT j.attempt_count, "
-                    "(SELECT count(*) FROM job_history h WHERE h.job_id=j.job_id AND h.event_code='DEFERRED') "
-                    "FROM jobs j WHERE j.job_id=?",(job,)).fetchone()
-                about['scheduler_claim_count']=counts[0]
-                about['poll_check_count']=counts[1]
-                about['work_attempt_count']=counts[0]-counts[1]
-                if kind[0]=='CLEANUP_DECIDED_DOWNLOAD':
-                    about['cleanup_progress']=self._cleanup_progress(db,job)
-                target=db.execute("SELECT target_job_id FROM management_actions WHERE job_id=?",(job,)).fetchone()
-                if target:about['target_job_id']=target[0]
-                if kind[0]=='REJECT_SERIES':
-                    rejection=db.execute(
-                        'SELECT reason_text,cleanup_state FROM anime_review_decisions '
-                        'WHERE job_id=?',(job,)).fetchone()
-                    if rejection:
-                        about['rejection_reason']=rejection[0]
-                        about['cleanup_state']=rejection[1]
-                rows=db.execute('SELECT history_id,occurred_at_ms,event_code,reason_code,component,details_json,handler_code,handler_label,invocation_id '
-                    'FROM job_history WHERE job_id=? AND history_id>? ORDER BY history_id LIMIT ?',(job,after,limit+1)).fetchall()
-                items=[]
-                for row in rows[:limit]:
-                    try:details=json.loads(encode_details(json.loads(row[5] or '{}')))
-                    except (ValueError,TypeError):details={}
-                    items.append({'history_id':row[0],'occurred_at_ms':row[1],'event':CATALOG.event(row[2]),
-                        'reason':None if row[3] is None else CATALOG.reason(row[3]),'component':row[4],'details':details,
-                        'handler':None if row[6] is None else CATALOG.handler(row[6],recorded_label=row[7]),'invocation_id':row[8],
-                        'detail':size_detail(details) or failed_detail(details)})
-                # Every release tried for this backfill episode, with why it stopped.
-                attempts=None
-                if after==0:
-                    from src.anime.storage.backfill_attempts import backfill_attempts
-                    found=backfill_attempts(db,job)
-                    if found is not None:
-                        attempts={'episode':found['episode'],'attempts':[
-                            {**item,'reason':None if item['reason_code'] is None else CATALOG.reason(item['reason_code']),
-                             'detail':size_detail(item['details'])} for item in found['attempts']]}
-            else:
-                newest='before_id' in query
-                cursor=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1) if newest else after
-                criteria=['job_id<?' if newest else 'job_id>?']
-                values=[cursor]
-                if state_filter:
-                    criteria.append('state=?')
-                    values.append(state_filter[0])
-                if match:
-                    criteria.append('('+match[0]+')')
-                    values.extend(match[1])
-                if episode_filter:
-                    # Include all operations for exact verified episode reservations;
-                    # never infer an episode from a torrent title. Released
-                    # reservations remain visible for diagnosis.
-                    criteria.append("""(
-                        EXISTS (SELECT 1 FROM episode_reservations r
-                            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
-                            JOIN job_operation_members member ON member.operation_id=owner.operation_id
-                            WHERE member.job_id=jobs.job_id AND r.anidb_id=?
-                            AND r.tvdb_season=? AND r.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM batch_episode_reservations r
-                            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
-                            JOIN job_operation_members member ON member.operation_id=owner.operation_id
-                            WHERE member.job_id=jobs.job_id AND r.anidb_id=?
-                            AND r.tvdb_season=? AND r.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM management_actions a
-                            JOIN job_operation_members member ON member.operation_id=a.operation_id
-                            JOIN episode_reservations r ON r.owner_job_id=member.job_id
-                            WHERE a.job_id=jobs.job_id AND r.anidb_id=?
-                            AND r.tvdb_season=? AND r.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM management_actions a
-                            JOIN job_operation_members member ON member.operation_id=a.operation_id
-                            JOIN batch_episode_reservations r ON r.owner_job_id=member.job_id
-                            WHERE a.job_id=jobs.job_id AND r.anidb_id=?
-                            AND r.tvdb_season=? AND r.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM manual_release_submissions submission
-                            WHERE submission.event_id=jobs.event_id
-                            AND submission.anidb_id=? AND submission.tvdb_season=?
-                            AND submission.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM manual_release_archive archived
-                            WHERE archived.event_id=jobs.event_id
-                            AND archived.anidb_id=? AND archived.tvdb_season=?
-                            AND archived.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM episode_discovery_results b
-                            JOIN user_evaluation_plans p USING(plan_id)
-                            JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
-                                  FROM recognized_episodes UNION
-                                  SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                                  FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id)) x
-                            ON x.anidb_id=p.anidb_id AND x.anidb_episode_number=b.anidb_episode_number
-                            WHERE b.job_id=jobs.job_id AND p.anidb_id=?
-                            AND x.tvdb_season=? AND x.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM user_evaluation_plans p
-                            JOIN (SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
-                                  FROM recognized_episodes UNION
-                                  SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                                  FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id)) x
-                            ON x.anidb_id=p.anidb_id
-                            AND x.anidb_episode_number=json_extract(jobs.payload_json,'$.exhausted_episode')
-                            WHERE jobs.kind='DISCOVER_EPISODE_RELEASES'
-                            AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
-                            AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM user_evaluation_plans p JOIN (
-                            SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode FROM recognized_episodes
-                            UNION SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                            FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id)
-                            UNION SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
-                            FROM release_verifications WHERE tvdb_order='official'
-                            ) x ON x.anidb_id=p.anidb_id
-                            AND x.anidb_episode_number=json_extract(jobs.payload_json,'$.episode')
-                            WHERE jobs.kind='RESET_EPISODE_SEARCH'
-                            AND p.plan_id=json_extract(jobs.payload_json,'$.plan_id')
-                            AND p.anidb_id=? AND x.tvdb_season=? AND x.tvdb_episode=?)
-                        OR EXISTS (SELECT 1 FROM prowlarr_search_snapshots s
-                            JOIN user_evaluation_plans p ON p.plan_id=s.plan_id
-                            WHERE s.job_id=jobs.job_id AND p.anidb_id=?
-                            AND s.season=? AND s.episode=?)
-                        )""")
-                    values.extend(episode_filter*10)
-                if not show_completed:criteria.append("state<>'DONE'")
-                if not show_canceled:
-                    criteria.append("state<>'CANCELED'")
-                    criteria.append("NOT EXISTS (SELECT 1 FROM job_operation_members m JOIN job_operations o USING(operation_id) "
-                                    "WHERE m.job_id=jobs.job_id AND o.state='CANCELED')")
-                ordering=' ORDER BY job_id DESC' if newest else ' ORDER BY job_id'
-                rows=db.execute('SELECT job_id,event_id,created_by_job_id,kind,state,activity_code,attempt_count,last_reason_code '
-                                'FROM jobs WHERE '+' AND '.join(criteria)+ordering+' LIMIT ?',(*values,limit+1)).fetchall()
-                from src.anime.transcode_batch import status as transcode_status
-                transcode_batch=transcode_status(db)
-                items=[self._job(queue,db,r,language=configuration.value('anime.title_language'),configuration=configuration) for r in rows[:limit]]
-                if newest:return {'items':items,'transcode_batch':transcode_batch,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
-        page={'items':items,'transcode_batch':transcode_batch,'next_after_id':rows[limit-1][0] if len(rows)>limit else None}
-        return {**page,'job':about,'backfill_attempts':attempts} if history else page
-
     def _notifications(self,configuration,method,path,query,body):
         """The bell: list, mark read (delete), mark all read, and item actions."""
         from src.anime.notifications import EVENT_TYPES
         from src.anime.storage.sqlite import transaction
-        queue=JobQueue(configuration.value('storage.database_path'))
+        db_path=configuration.value('storage.database_path')
         if path==PREFIX+'/notifications':
             if method=='GET':
                 if set(query)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
                 before=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1)
                 limit=page_number(query,'limit',20,1,100)
-                with queue.connection() as db:
+                with database(db_path) as db:
                     db.execute('BEGIN')
                     rows=inbox.items(db,before_id=before,limit=limit+1);unread=inbox.unread(db)
                 items=[{**row,'actions':list(EVENT_TYPES[row['type']])} for row in rows[:limit]]
@@ -1179,7 +624,7 @@ class Application:
                             'next_before_id':items[-1]['notification_id'] if len(rows)>limit else None},[]
             if method=='DELETE':
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
-                with queue.connection() as db,transaction(db):deleted=inbox.delete_all(db)
+                with database(db_path) as db,transaction(db):deleted=inbox.delete_all(db)
                 return 200,{'deleted':deleted,'unread':0},[]
             raise ApiError(405,'API_METHOD_INVALID')
         match=re.fullmatch(PREFIX+r'/notifications/([1-9][0-9]{0,18})(?:/actions/([a-z_]{1,32}))?',path)
@@ -1188,30 +633,25 @@ class Application:
         if number>(1<<63)-1:raise ApiError(400,'API_REQUEST_INVALID')
         if match[2] is None:
             if method!='DELETE':raise ApiError(405,'API_METHOD_INVALID')
-            with queue.connection() as db,transaction(db):
+            with database(db_path) as db,transaction(db):
                 if not inbox.delete(db,number):raise ApiError(404,'API_ROUTE_NOT_FOUND')
                 unread=inbox.unread(db)
             return 200,{'deleted':1,'unread':unread},[]
         if method!='POST':raise ApiError(405,'API_METHOD_INVALID')
         exact(body,('anidb_id','tvdb_series_id','title','season') if match[2]=='match_by_hand' else ())
-        with queue.connection() as db:
+        with database(db_path) as db:
             db.execute('BEGIN')
             item=inbox.get(db,number)
         if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
         action=match[2]
         if action not in EVENT_TYPES[item['type']]:raise ApiError(400,'API_REQUEST_INVALID')
-        return self._notification_action(configuration,queue,item,action,body)
+        return self._notification_action(configuration,db_path,item,action,body)
 
-    def _notification_action(self,configuration,queue,item,action,body=None):
+    def _notification_action(self,configuration,db_path,item,action,body=None):
         """Each action runs existing code; open_* are links the dashboard follows."""
-        if action=='open_jobs':
-            return 200,{'action':action},[]
         if action=='open_series':
             if item['anidb_id'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
             return 200,{'action':action,'anidb_id':item['anidb_id']},[]
-        if action=='open_job':
-            if item['job_id'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
-            return 200,{'action':action,'job_id':item['job_id']},[]
         if action=='add_release':
             # The existing manual release form, for this series (and episode when known).
             return 200,{'action':action,'anidb_id':item['anidb_id'],'release_name':item['release_name']},[]
@@ -1229,10 +669,10 @@ class Application:
         # skipping the decision check for this one delivery (work item P4 4.5).
         if item['raw_body'] is None:raise ApiError(409,'MANAGEMENT_ACTION_UNAVAILABLE')
         from src.anime.identity_bridge import queue_release
-        with queue.connection() as db:
+        with database(db_path) as db:
             request_id=queue_release(db,bytes(item['raw_body']),process_anyway=True)
         from src.anime.storage.sqlite import transaction
-        with queue.connection() as db,transaction(db):
+        with database(db_path) as db,transaction(db):
             inbox.delete(db,item['notification_id'])
         self.bridge.wake()
         return 202,{'action':action,'request_id':request_id},[]
@@ -1258,171 +698,50 @@ class Application:
     def _search(self,configuration,query):
         # One route for every page; the scope decides which page's list is filtered.
         scope=query.get('scope',[]);text=query.get('q',[])
-        if len(scope)!=1 or len(text)!=1:raise ApiError(400,'API_REQUEST_INVALID')
+        if len(scope)!=1 or len(text)!=1 or scope[0] not in ('intake','recognized'):raise ApiError(400,'API_REQUEST_INVALID')
         try:found=search_match(scope[0],search_words(text[0]))
         except SearchInvalid:raise ApiError(400,'API_REQUEST_INVALID') from None
         rest={key:value for key,value in query.items() if key not in ('scope','q')}
         language=configuration.value('anime.title_language')
-        if scope[0]=='jobs':return self._jobs(configuration,PREFIX+'/jobs',rest,match=found)
-        with JobQueue(configuration.value('storage.database_path')).connection() as db:
+        with database(configuration.value('storage.database_path')) as db:
             db.execute('BEGIN')
             if scope[0]=='recognized':
                 if rest:raise ApiError(400,'API_REQUEST_INVALID')
                 return self._recognized(db,language,found)
-            if set(rest)-{'before_id','limit','status'}:raise ApiError(400,'API_REQUEST_INVALID')
-            before=page_number(rest,'before_id',(1<<63)-1,1,(1<<63)-1)
-            limit=page_number(rest,'limit',30,1,100)
-            return series_items(db,before,limit,language=language,match=found,status=intake_status(rest))
+        return self._intake(configuration,rest,match=found)
 
-    def _intake(self,configuration,query):
-        if set(query)-{'before_id','limit'}:raise ApiError(400,'API_REQUEST_INVALID')
-        before=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1)
-        limit=page_number(query,'limit',50,1,100)
-        queue=JobQueue(configuration.value('storage.database_path'))
-        with queue.connection() as db:
-            db.execute('BEGIN')
-            rows=db.execute('SELECT o.operation_id,j.job_id,j.event_id,j.created_by_job_id,j.kind,j.state,'
-                'j.activity_code,j.attempt_count,j.last_reason_code FROM job_operations o '
-                'JOIN jobs j ON j.job_id=(SELECT MAX(m.job_id) FROM job_operation_members m WHERE m.operation_id=o.operation_id) '
-                'WHERE o.operation_id<? AND NOT EXISTS (SELECT 1 FROM management_actions a WHERE a.job_id=j.job_id) '
-                'ORDER BY o.operation_id DESC LIMIT ?',(before,limit+1)).fetchall()
-            items=[self._job(queue,db,row[1:],language=configuration.value('anime.title_language'),configuration=configuration) for row in rows[:limit]]
-        return {'items':items,'next_before_id':rows[limit-1][0] if len(rows)>limit else None}
+    def _intake(self,configuration,query,*,match=None):
+        """Series, newest change first: one row each (the series job)."""
+        if set(query)-{'before_id','limit','status'}:raise ApiError(400,'API_REQUEST_INVALID')
+        limit=page_number(query,'limit',30,1,100)
+        status=query.get('status',[None])[0]
+        if status not in (None,'working','asleep','kept','rejected'):raise ApiError(400,'API_REQUEST_INVALID')
+        with database(configuration.value('storage.database_path')) as db:
+            return series_list(db,configuration.value('anime.title_language'),limit=limit,
+                               before=page_number(query,'before_id',(1<<63)-1,1,(1<<63)-1),
+                               state=None if status is None else status.upper(),match=match)
 
-    @staticmethod
-    def _cleanup_progress(db,job_id):
-        """Current recorded checkpoint, not an instruction to repeat deletion."""
-        source=db.execute(
-            "SELECT json_extract(payload_json,'$.staging_job_id'), "
-            "json_extract(payload_json,'$.decision_job_id') "
-            "FROM jobs WHERE job_id=? AND kind='CLEANUP_DECIDED_DOWNLOAD'",(job_id,)).fetchone()
-        if not source:return None
-        if source[0] is not None:
-            row=db.execute("SELECT c.phase,c.updated_at_ms FROM staging_publications s "
-                "JOIN cancellation_cleanup c ON c.plan_id=s.plan_id "
-                "WHERE s.job_id=?",(source[0],)).fetchone()
-        elif source[1] is not None:
-            row=db.execute("SELECT c.phase,c.updated_at_ms FROM management_actions a "
-                "JOIN job_operation_members m ON m.operation_id=a.operation_id "
-                "JOIN staging_publications s ON s.job_id=m.job_id "
-                "JOIN cancellation_cleanup c ON c.plan_id=s.plan_id "
-                "WHERE a.job_id=?",(source[1],)).fetchone()
-        else:return None
-        return None if row is None else {'phase':row[0],'since_ms':row[1]}
-
-    @staticmethod
-    def _episode_targets(db,job_id,kind,event_id):
-        # Prefer verified reservations within this operation over release labels,
-        # whose numbering may not match TVDB placements.
-        records=db.execute("""
-            SELECT r.tvdb_season,r.tvdb_episode FROM episode_reservations r
-            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
-            JOIN job_operation_members member ON member.operation_id=owner.operation_id
-            WHERE member.job_id=?
-            UNION
-            SELECT r.tvdb_season,r.tvdb_episode FROM batch_episode_reservations r
-            JOIN job_operation_members owner ON owner.job_id=r.owner_job_id
-            JOIN job_operation_members member ON member.operation_id=owner.operation_id
-            WHERE member.job_id=?
-            ORDER BY 1,2 LIMIT 101
-        """,(job_id,job_id)).fetchall()
-        if not records:
-            records=db.execute("""
-                SELECT r.tvdb_season,r.tvdb_episode FROM management_actions a
-                JOIN job_operation_members member ON member.operation_id=a.operation_id
-                JOIN episode_reservations r ON r.owner_job_id=member.job_id
-                WHERE a.job_id=?
-                UNION
-                SELECT r.tvdb_season,r.tvdb_episode FROM management_actions a
-                JOIN job_operation_members member ON member.operation_id=a.operation_id
-                JOIN batch_episode_reservations r ON r.owner_job_id=member.job_id
-                WHERE a.job_id=? ORDER BY 1,2 LIMIT 101
-            """,(job_id,job_id)).fetchall()
-        if not records and event_id is not None:
-            records=db.execute(
-                "SELECT tvdb_season,tvdb_episode FROM manual_release_submissions "
-                "WHERE event_id=? LIMIT 1",(event_id,)).fetchall()
-        if not records and kind=='DISCOVER_EPISODE_RELEASES':
-            # Discovery keys are AniDB numbers; show their verified TVDB placement.
-            placed="""(SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
-                FROM recognized_episodes UNION
-                SELECT p2.anidb_id,s2.anidb_episode_number,s2.tvdb_season,s2.tvdb_episode
-                FROM episode_release_selections s2 JOIN user_evaluation_plans p2 USING(plan_id) UNION
-                SELECT anidb_id,anidb_episode_number,tvdb_season,tvdb_episode
-                FROM release_verifications WHERE tvdb_order='official') x"""
-            records=db.execute(f"""
-                SELECT x.tvdb_season,x.tvdb_episode FROM episode_discovery_results b
-                JOIN user_evaluation_plans p USING(plan_id) JOIN {placed}
-                ON x.anidb_id=p.anidb_id AND x.anidb_episode_number=b.anidb_episode_number
-                WHERE b.job_id=?
-                UNION
-                SELECT x.tvdb_season,x.tvdb_episode
-                FROM jobs j JOIN user_evaluation_plans p
-                ON p.plan_id=json_extract(j.payload_json,'$.plan_id') JOIN {placed}
-                ON x.anidb_id=p.anidb_id
-                AND x.anidb_episode_number=COALESCE(
-                    json_extract(j.payload_json,'$.exhausted_episode'),
-                    json_extract(j.payload_json,'$.fallback_episode'),
-                    json_extract(j.payload_json,'$.retry_episode')
-                )
-                WHERE j.job_id=? AND (
-                    json_type(j.payload_json,'$.exhausted_episode')='integer' OR
-                    json_type(j.payload_json,'$.fallback_episode')='integer' OR
-                    json_type(j.payload_json,'$.retry_episode')='integer'
-                )
-                ORDER BY 1,2 LIMIT 101
-            """,(job_id,job_id)).fetchall()
-        if not records and kind in ('VERIFY_RELEASE','SELECT_USER_EVALUATION','IDENTIFY_ANIME') and event_id is not None:
-            records=db.execute("""
-                SELECT DISTINCT tvdb_season,tvdb_episode FROM release_verifications
-                WHERE job_id=? OR job_id IN
-                  (SELECT job_id FROM jobs WHERE event_id=? AND kind='VERIFY_RELEASE')
-                ORDER BY tvdb_season,tvdb_episode LIMIT 101
-            """,(job_id,event_id)).fetchall()
-        return [{'season':season,'episode':episode} for season,episode in records[:100]
-                if type(season) is int and type(episode) is int]
-
-    def _job(self,queue,db,row,language='english',configuration=None):
-        op=db.execute('SELECT o.operation_id,o.state,o.cleanup_state,o.reason_code FROM job_operations o JOIN job_operation_members m USING(operation_id) WHERE m.job_id=?',(row[0],)).fetchone()
-        actions=ManagementActions(queue.database,configuration).capabilities(db,row[0])
-        actions['retry']=retry_capability(db,row[0])
-        context=db.execute('SELECT j.created_at_ms,e.received_at_ms,CASE WHEN length(e.raw_body)<=65536 THEN e.raw_body ELSE NULL END '
-                           'FROM jobs j LEFT JOIN incoming_events e ON e.event_id=j.event_id WHERE j.job_id=?',(row[0],)).fetchone()
-        release=None
+    def _series_action(self,db_path,aid,action,body):
+        from src.anime.series_job import actions
         try:
-            declaration=json.loads(context[2] or b'{}')
-            value=declaration.get('release_name') if type(declaration) is dict else None
-            if type(value) is str and len(value.encode('utf-8'))<=1024:release=value
-        except (ValueError,UnicodeError,TypeError,RecursionError):pass
-        sized=db.execute("SELECT details_json FROM job_history WHERE job_id=? AND reason_code IN "
-                         "('ACQUISITION_SIZE_LIMIT','ACQUISITION_PLAN_SIZE_LIMIT') ORDER BY history_id DESC LIMIT 1",(row[0],)).fetchone()
-        try:sized=size_detail(json.loads(sized[0])) if sized else None
-        except (ValueError,TypeError):sized=None
-        stopped=None
-        if row[4] in ('NEEDS_REVIEW','BLOCKED','ON_HOLD'):
-            found=db.execute("SELECT details_json FROM job_history WHERE job_id=? AND ("
-                             "json_extract(details_json,'$.failed_check') IS NOT NULL OR "
-                             "json_extract(details_json,'$.cause_reason_code') IS NOT NULL OR "
-                             "json_extract(details_json,'$.blocking_job_id') IS NOT NULL) "
-                             "ORDER BY history_id DESC LIMIT 1",(row[0],)).fetchone()
-            try:stopped=failed_detail(json.loads(found[0])) if found else None
-            except (ValueError,TypeError):stopped=None
-        titles=db.execute('SELECT a.title,t.english_title,t.romaji_title '
-                          'FROM identity_results r JOIN identified_anime a USING(anidb_id) '
-                          'LEFT JOIN anime_title_metadata t USING(anidb_id) '
-                          'WHERE r.event_id=? LIMIT 2',(row[1],)).fetchall()
-        anime_title=(preferred_title(*titles[0],language) if len(titles)==1
-                     and len(titles[0][0].encode('utf-8'))<=1024 else None)
-        targets=self._episode_targets(db,row[0],row[3],row[1])
-        return {'job_id':row[0],'event_id':row[1],'created_by_job_id':row[2],'kind':row[3],'state':row[4],
-                'is_management_action':db.execute('SELECT 1 FROM management_actions WHERE job_id=?',(row[0],)).fetchone() is not None,
-                'transcode_step':(db.execute('SELECT step FROM transcode_media WHERE job_id=?',(row[0],)).fetchone() or (None,))[0] if row[4] in ('RUNNING','RETRY_WAIT') else None,
-                'label':CATALOG.handler(row[3]),'created_at_ms':context[0],'received_at_ms':context[1],
-                'release_name':release,'anime_title':anime_title,'episode_targets':targets,
-                'acquisition_status':CATALOG.state('acquisition',op[1]),
-                'status':CATALOG.job_status(row[4],row[5],kind=row[3]),'attempt_count':row[6],
-                'cleanup_progress':self._cleanup_progress(db,row[0]) if row[3]=='CLEANUP_DECIDED_DOWNLOAD' else None,
-                'reason':None if row[7] is None else CATALOG.reason(row[7]),'size_detail':sized,'failed_detail':stopped,'actions':actions,
-                'cancellation':{'operation_id':op[0],'state':op[1],'cleanup_state':op[2],'reason_code':op[3],
-                                 'reason':None if op[3] is None else CATALOG.reason(op[3]),
-                                'can_cancel':actions['cancel']['enabled'],'can_cleanup':actions['cleanup']['enabled']}}
+            with database(db_path) as db:
+                if action=='keep':result=actions.keep_series_sync(db,aid)
+                elif action=='reject':result=actions.reject_series_sync(
+                    db,aid,reason=body.get('reason','REJECTED_BY_USER'),note_text=body.get('note',''))
+                elif action=='search':result=actions.search_series_sync(db,aid)
+                elif action=='retry':result=actions.retry_series_sync(db,aid)
+                elif action=='cancel':result=actions.cancel_series_sync(db,aid)
+                else:
+                    if set(body) not in ({'release_name','magnet_uri'},{'release_name','torrent_b64'}):
+                        raise ApiError(400,'API_REQUEST_INVALID')
+                    result=actions.add_release(db,aid,body['release_name'],magnet_uri=body.get('magnet_uri'),
+                                               torrent_b64=body.get('torrent_b64'))
+        except actions.SeriesNotFound:
+            raise ApiError(404,'API_ROUTE_NOT_FOUND') from None
+        except actions.SeriesDecided as exc:
+            raise ApiError(409,exc.reason_code) from None
+        except actions.ReleaseInvalid as exc:
+            raise ApiError(400,exc.reason_code) from None
+        return 200,result,[]
+
+

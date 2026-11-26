@@ -22,11 +22,6 @@ from src.anime.acquisition.media import (
 from src.anime.acquisition.metadata import TorrentFile, Manifest, BatchInventory
 from src.anime.acquisition.settings import DownloadOptions
 from src.anime.acquisition.submission import SubmissionPlan, Intent
-from src.anime.batch.media import verify_batch_probe_file, verify_batch_episode_file
-from src.anime.storage.batch_acquisition_candidate import BatchAcquisitionCandidate
-from src.anime.storage.batch_submission_journal import BatchSubmissionIntent
-from src.anime.storage.batch_transfer_journal import BatchTransferRecord
-from src.anime.storage.batch_unlock_journal import BatchUnlockRecord, BatchUnlockIntent
 
 
 def probe_bytes(*, languages=('jpn', 'eng'), duration='1440', container='matroska,webm'):
@@ -156,99 +151,7 @@ class VideoVerificationHashRedesignTests(unittest.TestCase):
         # Total bytes read for fingerprinting should not exceed 64KB (never reading the 15MB payload)
         self.assertLessEqual(read_bytes, 65536)
 
-    def test_verify_batch_probe_file_does_not_stream_large_video_payload(self):
-        """verify_batch_probe_file avoids sequential multi-gigabyte disk streaming."""
-        large_size = 20 * 1024 * 1024  # 20 MB
-        video_file = self.root / 'Show.S01E01.mkv'
-        header = b'\x1a\x45\xdf\xa3' + b'\x00' * 65532
-        with open(video_file, 'wb') as f:
-            f.write(header)
-            f.truncate(large_size)
 
-        files = (TorrentFile(0, 'Show.S01E01.mkv', large_size),)
-        inventory = BatchInventory('a' * 40, 'b' * 64, files)
-        options = DownloadOptions('http://localhost:8080', str(self.root), 'trial', 10)
-        candidate = BatchAcquisitionCandidate(1, 2, inventory.info_hash, inventory.info_sha256, 0,
-                                             ((1, 0),), (), 200)
-        intent = BatchSubmissionIntent(candidate, inventory, options, 'a' * 32, 'OWNED_STOPPED', 'b' * 64, 5)
-
-        from src.anime.batch.probe_transfer import selection_fingerprint
-        piece_size = 200
-        fp = selection_fingerprint(intent, piece_size)
-        record = BatchTransferRecord(
-            fingerprint=fp, phase='COMPLETE', piece_size=piece_size, selected_index=0,
-            transfer_job_id=3, transfer_attempt=1, start_job_id=2, start_attempt=1,
-            progress=1.0, reason_code='DOWNLOAD_PROGRESS'
-        )
-
-        read_bytes = 0
-        real_read = os.read
-
-        def tracked_read(fd, count):
-            nonlocal read_bytes
-            chunk = real_read(fd, count)
-            read_bytes += len(chunk)
-            return chunk
-
-        with patch('os.read', side_effect=tracked_read):
-            verified = verify_batch_probe_file(intent, record, 3, self.flag,
-                                               read_probe=lambda *_: probe_bytes())
-
-        self.assertIsNotNone(verified)
-        self.assertEqual(verified.file_signature[2], large_size)
-        self.assertLessEqual(read_bytes, 65536)
-
-    def test_verify_batch_episode_file_does_not_stream_large_video_payload(self):
-        """verify_batch_episode_file avoids sequential multi-gigabyte disk streaming."""
-        large_size = 20 * 1024 * 1024  # 20 MB
-        video_file = self.root / 'Show.S01E01.mkv'
-        header = b'\x1a\x45\xdf\xa3' + b'\x00' * 65532
-        with open(video_file, 'wb') as f:
-            f.write(header)
-            f.truncate(large_size)
-
-        files = (TorrentFile(0, 'Show.S01E01.mkv', large_size),)
-        inventory = BatchInventory('a' * 40, 'b' * 64, files)
-        options = DownloadOptions('http://localhost:8080', str(self.root), 'trial', 10)
-        candidate = BatchAcquisitionCandidate(1, 2, inventory.info_hash, inventory.info_sha256, 0,
-                                             ((1, 0),), (), 200)
-        intent = BatchSubmissionIntent(candidate, inventory, options, 'a' * 32, 'OWNED_STOPPED', 'b' * 64, 5)
-
-        from src.anime.batch.unlock import planned_priorities
-        priorities = planned_priorities(intent)
-        unlock_intent = BatchUnlockIntent(
-            plan_id=intent.candidate.plan_id,
-            fingerprint='d' * 64,
-            priorities=priorities,
-            piece_size=200,
-            verification_job_id=3
-        )
-        record = BatchUnlockRecord(
-            intent=unlock_intent,
-            phase='COMPLETE',
-            first_job_id=7,
-            first_attempt=1,
-            start_job_id=5,
-            start_attempt=1,
-            reason_code='BATCH_UNLOCKED'
-        )
-
-        read_bytes = 0
-        real_read = os.read
-
-        def tracked_read(fd, count):
-            nonlocal read_bytes
-            chunk = real_read(fd, count)
-            read_bytes += len(chunk)
-            return chunk
-
-        with patch('os.read', side_effect=tracked_read):
-            verified = verify_batch_episode_file(intent, record, 7, 0, self.flag,
-                                                 read_probe=lambda *_: probe_bytes())
-
-        self.assertIsNotNone(verified)
-        self.assertEqual(verified.file_signature[2], large_size)
-        self.assertLessEqual(read_bytes, 65536)
 
     def test_verified_media_evidence_json_and_storage_roundtrip(self):
         """VerifiedMedia serialization matches exact keys and formats expected by storage and staging."""

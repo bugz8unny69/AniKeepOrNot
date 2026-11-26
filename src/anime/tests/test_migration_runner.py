@@ -77,7 +77,10 @@ class MigrationRunnerTests(unittest.TestCase):
               INSERT INTO event_history VALUES(10,7,1,'HISTORICAL','OLD_CODE','old detail');
               INSERT INTO job_history VALUES(11,8,1,'HISTORICAL','OLD_CODE','{}');
             """)
-            result = self.run_upgrade(migrations.preview(self.path))
+            # The jobs are unfinished, so v80 (old pipeline tables dropped) refuses: every row stays, at v79.
+            with self.assertRaises(migrations.MigrationError):
+                self.run_upgrade(migrations.preview(self.path))
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone(), (79,))
             self.assertEqual(db.execute("SELECT created_by_job_id FROM jobs WHERE job_id=9").fetchone(), (8,))
             self.assertEqual(db.execute("SELECT raw_body FROM incoming_events WHERE event_id=7").fetchone(), (b"ab",))
             self.assertEqual(db.execute("SELECT * FROM result_episode_links").fetchall(), [(4,1,3)])

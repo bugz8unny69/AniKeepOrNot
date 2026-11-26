@@ -7,18 +7,14 @@ import unittest
 
 from src.anime.configuration import ConfigurationStore
 from src.anime.configuration_schema import ConfigurationSnapshot
-from src.anime.job_contracts import Outcome, Registry, Policy
-from src.anime.jobs.verify_release_job import registration
 from src.anime.providers.errors import ProviderInvalidResponse
 from src.anime.providers.http import Options, Credentials
 from src.anime.providers.release_mapping import declared_episode, forward_mappings
 from src.anime.batch.recognition import release_scope_hint
 from src.anime.providers.releases import make_verifier
 from src.anime.release_contracts import VerifiedRelease, ReleaseInput, ReleaseNotReady, ReleaseConflict
-from src.anime.storage.job_queue import LeaseLost
-from src.anime.storage.releases import load_release
-from src.anime.storage.sqlite import connect, initialize, save_identity, accept_event_and_job
 from src.anime.worker import Worker
+from src.anime.storage.sqlite import connect, initialize
 
 MAPPING=b'<anime-list><anime anidbid="123" tvdbid="456" defaulttvdbseason="2" episodeoffset="12"/></anime-list>'
 
@@ -279,90 +275,3 @@ class ReleaseVerifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.tvdb_episode_id)
 
 
-class ReleaseJobTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.temporary=tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.root=Path(self.temporary.name)
-        self.database=self.root/'queue.sqlite'
-        self.store=ConfigurationStore(self.root)
-        self.startup=self.store.initialize({'storage':{'database_path':str(self.database)}}).snapshot
-        db=connect(self.database)
-        initialize(db)
-        self.event,self.job=accept_event_and_job(db,'test',b'{"release_name":"Test - 01"}',
-                                                kind='VERIFY_RELEASE',payload={'anidb_id':123})
-        save_identity(db,self.event,{'schema_version':2,'anime':{'anidb_id':123,'tvdb_series_id':456,'title':'Test'}})
-        db.close()
-
-    def rows(self,sql,args=()):
-        db=connect(self.database)
-        try:return db.execute(sql,args).fetchall()
-        finally:db.close()
-
-    def worker(self,verify):
-        worker=Worker(self.store,self.startup,Registry((registration(verify),)),policy=Policy(lease_ms=30000))
-        self.addAsyncCleanup(worker.close)
-        return worker
-
-    async def test_worker_persists_declared_scope_without_mutating_identity_or_starting_acquisition(self):
-        before=self.rows('SELECT series_json FROM identity_results')
-        async def verify(source,*args):return VerifiedRelease(source,1,987,2,13,100)
-        worker=self.worker(verify)
-        await worker.attempt()
-        self.assertEqual(self.rows('SELECT verification_scope,anidb_episode_id,tvdb_season,tvdb_episode,tvdb_order FROM release_verifications'),
-                         [('DECLARED_SINGLE_EPISODE',987,2,13,'official')])
-        self.assertEqual(self.rows('SELECT series_json FROM identity_results'),before)
-        self.assertEqual(self.rows('SELECT kind,state FROM jobs'),[('VERIFY_RELEASE','DONE')])
-        self.assertEqual(self.rows('SELECT * FROM identified_episodes'),[(987,123)])
-        self.assertEqual(self.rows('SELECT tvdb_series_id,tvdb_season,anidb_id FROM recognized_seasons'),[(456,2,123)])
-        self.assertEqual(self.rows('SELECT anidb_episode_id,tvdb_episode_id FROM recognized_episodes'),[(987,100)])
-        self.assertTrue(self.rows('SELECT alias_key FROM recognized_aliases'))
-        self.assertEqual(self.rows('PRAGMA foreign_key_check'),[])
-
-    async def test_source_change_during_provider_work_rolls_back_facts_and_reviews_job(self):
-        async def verify(source,*args):
-            db=connect(self.database)
-            try:
-                with db:db.execute('UPDATE incoming_events SET raw_body=? WHERE event_id=?',(b'changed',self.event))
-            finally:db.close()
-            return VerifiedRelease(source,1,987,2,13,100)
-        await self.worker(verify).attempt()
-        self.assertEqual(self.rows('SELECT count(*) FROM release_verifications'),[(0,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM identified_episodes'),[(0,)])
-        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs'),[('NEEDS_REVIEW','RELEASE_CONFLICT')])
-
-    async def test_stale_lease_cannot_commit_release_facts(self):
-        async def verify(source,*args): return VerifiedRelease(source,1,987,2,13,100)
-        worker=self.worker(verify)
-        now=worker.queue.now()
-        worker.queue.clock=lambda:now
-        claim,_=worker.queue.claim()
-        spec=worker.registry.entries['VERIFY_RELEASE']
-        worker.queue.start(claim,spec,'a'*32,worker.registry)
-        source=load_release(self.database,self.event,123)
-        worker.queue.clock=lambda:now+worker.policy.lease_ms
-        with self.assertRaises(LeaseLost):
-            worker.queue.finish(claim,Outcome(value=VerifiedRelease(source,1,987,2,13,100)),
-                                spec=spec,invocation='a'*32,registry=worker.registry)
-        self.assertEqual(self.rows('SELECT count(*) FROM release_verifications'),[(0,)])
-
-    async def test_ambiguous_release_goes_to_review(self):
-        async def verify(*args):raise ReleaseNotReady()
-        await self.worker(verify).attempt()
-        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs'),[('NEEDS_REVIEW','RELEASE_UNRESOLVED')])
-
-    async def test_specific_episode_reason_reaches_job_and_history_without_acquisition(self):
-        async def verify(*args):raise ReleaseNotReady('RELEASE_EPISODE_MAPPING_MISSING')
-        await self.worker(verify).attempt()
-        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs'),[('NEEDS_REVIEW','RELEASE_EPISODE_MAPPING_MISSING')])
-        self.assertTrue(self.rows("SELECT 1 FROM job_history WHERE reason_code='RELEASE_EPISODE_MAPPING_MISSING'"))
-        self.assertEqual(self.rows('SELECT count(*) FROM release_verifications'),[(0,)])
-
-
-    async def test_provider_wait_defers_without_persisting_release_or_spending_retry_budget(self):
-        from src.anime.providers.errors import ProviderDeferred
-        async def verify(*args): raise ProviderDeferred(2000)
-        await self.worker(verify).attempt()
-        self.assertEqual(self.rows('SELECT state,last_reason_code FROM jobs'),[('RETRY_WAIT','JOB_WAITING')])
-        self.assertEqual(self.rows("SELECT count(*) FROM job_history WHERE event_code='RETRY_SCHEDULED'"),[(0,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM release_verifications'),[(0,)])

@@ -133,15 +133,3 @@ class DiagnosticMigrationTests(unittest.TestCase):
             initialize(self.db)
         self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 3)
 
-    def test_component_constraint_and_historical_null(self):
-        initialize(self.db)
-        self.db.execute("INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES('test',X'61',1)")
-        self.db.commit()
-        for component in (None, "intake", "worker", "identity", "acquisition", "supervisor", "api"):
-            with self.db:
-                self.db.execute("INSERT INTO event_history(event_id,occurred_at_ms,event_code,component)"
-                                " VALUES(1,1,'HISTORICAL',?)", (component,))
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("INSERT INTO event_history(event_id,occurred_at_ms,event_code,component)"
-                            " VALUES(1,1,'HISTORICAL','unknown')")
-        self.db.rollback()

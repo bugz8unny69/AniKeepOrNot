@@ -26,7 +26,7 @@ def webhook_decision(configuration, raw_body):
     """(anidb_id, 'ACCEPT'|'REJECT') when the delivery is for a decided series, else None."""
     from src.anime.providers.configuration import options_from_configuration
     from src.anime.providers.identity import cached_anidb_id
-    from src.anime.storage.job_queue import JobQueue
+    from src.anime.storage.connection import database as connection
     from src.anime.storage.review_decisions import decision
     name = release_name(raw_body)
     if name is None:
@@ -44,7 +44,7 @@ def webhook_decision(configuration, raw_body):
     aid = cached_anidb_id(database, options, name, threshold_pct=threshold)
     if aid is None:
         return None
-    with JobQueue(database).connection() as db:
+    with connection(database) as db:
         found = decision(db, aid)
     return None if found is None else (aid, found)
 
@@ -53,7 +53,7 @@ def notify_refused(db, anidb_id, found, raw_body, *, job_id=None, now=None):
     """The API_REJECTION bell item for one refused delivery."""
     from src.anime.notifications import notify
     name = release_name(raw_body) or 'A delivery'
-    row = db.execute('SELECT title FROM identified_anime WHERE anidb_id=?', (anidb_id,)).fetchone()
+    row = db.execute('SELECT title FROM series WHERE anidb_id=?', (anidb_id,)).fetchone()
     anime = row[0].strip()[:80] if row else f'AniDB {anidb_id}'
     notify(db, {'type': 'API_REJECTION', 'title': f'Not processed: {anime}'[:120],
                 'message': f'{name[:300]} was not processed: {anime} was {WORDS[found]}.'[:500],

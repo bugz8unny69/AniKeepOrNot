@@ -156,35 +156,3 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
     series.lease_expires_at_ms = None
     save(db, claim_obj, series, now=now)
     return True
-
-
-class SeriesWorker:
-    """Background series worker loop."""
-
-    def __init__(self, database_path: str, context, *, poll_interval_s: float = 0.5):
-        self.database_path = database_path
-        self.context = context
-        self.poll_interval_s = poll_interval_s
-        self._stop = asyncio.Event()
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    async def run(self) -> None:
-        from src.anime.storage.sqlite import connect
-        while not self._stop.is_set():
-            worked = False
-            try:
-                db = connect(self.database_path)
-                try:
-                    worked = await run_series_attempt(db, self.context)
-                finally:
-                    db.close()
-            except Exception as exc:
-                logger.error("Series worker loop error:\n%s", traceback.format_exc())
-
-            if not worked:
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval_s)
-                except asyncio.TimeoutError:
-                    pass

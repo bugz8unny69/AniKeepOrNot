@@ -8,17 +8,11 @@ from unittest.mock import Mock
 import urllib.error
 
 from src.anime.configuration_schema import ConfigurationSnapshot, CONVERSIONS, convert_document, ConfigurationError
-from src.anime.job_contracts import Registry
-from src.anime.jobs.enrich_shoko_job import registration
 from src.anime.secrets import SecretStore
 from src.anime.shoko import lookup, ShokoConfiguration, ShokoReview, ShokoUnavailable
 from src.anime.storage.sqlite import connect, transaction
-from src.anime.tests.test_acquisition_preparation import AcquisitionPreparationTests
+from src.anime.tests.support import DatabaseSetup as AcquisitionPreparationTests
 from src.anime.tests.test_api_v1 import ApiV1Tests, ADMIN, WEB
-from src.anime.tests.test_keep_sonarr import KeepSonarrTests
-from src.anime.tests.test_stage_media_job import StageMediaJobTests
-from src.anime.tests.test_torrent_transfer import TorrentTransferTests
-from src.anime.tests.test_verify_media_job import VerifyMediaJobTests
 
 
 class Response(io.BytesIO):
@@ -79,26 +73,6 @@ class ShokoTests(unittest.TestCase):
             self.assertEqual(json.loads((Path(directory)/'secrets.json').read_text())['schema_version'],9)
 
 
-class ShokoJobTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp=AcquisitionPreparationTests.asyncSetUp
-    rows=AcquisitionPreparationTests.rows
-    source=AcquisitionPreparationTests.source
-    queued=TorrentTransferTests.queued
-    due=TorrentTransferTests.due
-    ready=VerifyMediaJobTests.ready
-    staged_ready=StageMediaJobTests.staged_ready
-    prepared=KeepSonarrTests.prepared
-    make_due=KeepSonarrTests.make_due
-
-    async def test_keep_always_queues_the_shoko_link(self):
-        # Owner, 2026-11-23: every Keep tells Shoko which episode the kept file is.
-        worker,fake,_,_,_=await self.prepared();await worker.attempt()
-        self.assertEqual(self.rows("SELECT json_extract(payload_json,'$.anidb_id') FROM jobs WHERE kind='LINK_SHOKO'"),
-                         [(fake.selection.anidb_id,)])
-
-    async def test_blank_address_adds_no_optional_job(self):
-        worker,_,_,_,_=await self.prepared();await worker.attempt()
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='ENRICH_SHOKO_METADATA'"),[(0,)])
 
 
 class ShokoCredentialApiTests(ApiV1Tests):

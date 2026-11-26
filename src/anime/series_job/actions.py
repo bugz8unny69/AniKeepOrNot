@@ -7,6 +7,21 @@ import logging
 import os
 import time
 
+class SeriesNotFound(ValueError):
+    reason_code = "API_ROUTE_NOT_FOUND"
+
+
+class SeriesDecided(ValueError):
+    """Keep or Reject was already chosen."""
+    def __init__(self, message, reason_code):
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+class ReleaseInvalid(ValueError):
+    reason_code = "API_REQUEST_INVALID"
+
+
 from src.anime.series_job.store import (
     get_series, update_series, note
 )
@@ -33,11 +48,11 @@ async def keep_series(db, anidb_id: int, context=None, now: int | None = None) -
         now = int(time.time() * 1000)
     series = get_series(db, anidb_id)
     if series is None:
-        raise ValueError(f"Series {anidb_id} not found")
+        raise SeriesNotFound(f"Series {anidb_id} not found")
     if series.state == "KEPT" or "keep" in series.work:
         return {"anidb_id": anidb_id, "state": series.state, "message": f"Series {anidb_id} is already kept or keeping."}
     if series.state == "REJECTED" or "reject" in series.work:
-        raise ValueError(f"Series {anidb_id} was already rejected")
+        raise SeriesDecided(f"Series {anidb_id} was already rejected", "ANIME_REJECTED")
     request(series, now)
     series.lease_token = series.lease_expires_at_ms = None    # A running attempt is redone, never saved over this.
     note(series, f"series {series.anidb_id} {series.title} · Keep requested: Sonarr will own it")
@@ -58,11 +73,11 @@ async def reject_series(
         now = int(time.time() * 1000)
     series = get_series(db, anidb_id)
     if series is None:
-        raise ValueError(f"Series {anidb_id} not found")
+        raise SeriesNotFound(f"Series {anidb_id} not found")
     if series.state == "REJECTED" or "reject" in series.work:
         return {"anidb_id": anidb_id, "state": series.state, "message": f"Series {anidb_id} is already rejected."}
     if series.state == "KEPT" or "keep" in series.work:
-        raise ValueError(f"Series {anidb_id} was already kept")
+        raise SeriesDecided(f"Series {anidb_id} was already kept", "ANIME_ACCEPTED")
     series.work["reject"] = {"requested_at_ms": now, "reason": reason, "note": note_text}
     series.state, series.wake_at_ms = "WORKING", None
     series.lease_token = series.lease_expires_at_ms = None
@@ -84,9 +99,9 @@ async def search_series(db, anidb_id: int, context=None, now: int | None = None)
         now = int(time.time() * 1000)
     series = get_series(db, anidb_id)
     if series is None:
-        raise ValueError(f"Series {anidb_id} not found")
+        raise SeriesNotFound(f"Series {anidb_id} not found")
     if series.state in ("KEPT", "REJECTED"):
-        raise ValueError(f"Series {anidb_id} is already {series.state.lower()}")
+        raise SeriesDecided(f"Series {anidb_id} is already {series.state.lower()}", "ANIME_ACCEPTED" if series.state == "KEPT" else "ANIME_REJECTED")
     series.work.setdefault("search", {"wanted": [], "tried": {}})["due_ms"] = now
     series.state, series.wake_at_ms = "WORKING", None
     series.lease_token = series.lease_expires_at_ms = None
@@ -105,7 +120,7 @@ async def retry_series(db, anidb_id: int, context=None, now: int | None = None) 
         now = int(time.time() * 1000)
     series = get_series(db, anidb_id)
     if series is None:
-        raise ValueError(f"Series {anidb_id} not found")
+        raise SeriesNotFound(f"Series {anidb_id} not found")
 
     retried_count = 0
     if series.work.get("keep", {}).pop("stopped", None):
@@ -146,7 +161,7 @@ async def cancel_series(db, anidb_id: int, context=None, now: int | None = None)
         now = int(time.time() * 1000)
     series = get_series(db, anidb_id)
     if series is None:
-        raise ValueError(f"Series {anidb_id} not found")
+        raise SeriesNotFound(f"Series {anidb_id} not found")
     if series.state in ("KEPT", "REJECTED"):
         return {"anidb_id": anidb_id, "state": series.state, "message": f"Series {anidb_id} is already {series.state.lower()}."}
     series.work["cancel"] = now
@@ -159,3 +174,60 @@ async def cancel_series(db, anidb_id: int, context=None, now: int | None = None)
 
 def cancel_series_sync(db, anidb_id: int, context=None, now: int | None = None) -> dict:
     return _run_sync(cancel_series(db, anidb_id, context=context, now=now))
+
+
+def add_release(db, anidb_id, release_name, *, magnet_uri=None, torrent_b64=None, now=None):
+    """A release you add by hand: a magnet, or a .torrent file. It becomes a torrent of the series.
+
+    A .torrent file's bytes are saved as its metadata, so qBittorrent is given the file itself.
+    """
+    import base64
+    import binascii
+    import json
+    from src.anime.acquisition.metadata import hash_magnet, metainfo_hash, parse_batch_metainfo
+    from src.anime.acquisition.prowlarr_search import _magnet_hash
+    if now is None:
+        now = int(time.time() * 1000)
+    series = get_series(db, anidb_id)
+    if series is None:
+        raise SeriesNotFound(f"Series {anidb_id} not found")
+    if series.state in ("KEPT", "REJECTED") or "keep" in series.work or "reject" in series.work:
+        raise SeriesDecided(f"Series {anidb_id} is already decided", "ANIME_ACCEPTED" if
+                            series.state == "KEPT" or "keep" in series.work else "ANIME_REJECTED")
+    if type(release_name) is not str or not release_name.strip() or len(release_name) > 1024:
+        raise ReleaseInvalid()
+    identity = next((t["identity"] for t in series.torrents if t.get("identity")), None)
+    if identity is None:
+        raise ReleaseInvalid("The series has no identified release yet to take its TVDB series from.")
+    raw = None
+    if magnet_uri is not None:
+        digest = _magnet_hash(magnet_uri) if type(magnet_uri) is str else None
+        magnet_uri = digest and hash_magnet(digest, magnet_uri)
+        if not magnet_uri:
+            raise ReleaseInvalid()
+    else:
+        try:
+            raw = base64.b64decode(torrent_b64, validate=True)
+            digest = metainfo_hash(raw)
+            parse_batch_metainfo(raw, digest)
+        except (TypeError, ValueError, binascii.Error):        # MetadataInvalid is a ValueError.
+            raise ReleaseInvalid() from None
+    if any(t["infohash"] == digest for t in series.torrents):
+        return {"anidb_id": anidb_id, "message": "This release is already one of the series' torrents."}
+    body = {"release_name": release_name.strip(), "torrent_infohash": digest}
+    if magnet_uri:
+        body["magnet_uri"] = magnet_uri
+    if raw is not None:
+        # The file itself is the metadata: the metadata step finds it, and qBittorrent is given it.
+        from src.anime.series_job.torrents import save_metainfo
+        save_metainfo(None, digest, raw, database=db.execute("PRAGMA database_list").fetchone()[2])
+    series.torrents.append({"infohash": digest, "release_name": release_name.strip(),
+                            "raw_body": json.dumps(body, sort_keys=True), "step": "get_metadata", "state": "waiting",
+                            "why": None, "episodes": [], "files": [], "progress": 0.0, "identity": identity,
+                            "added_by_hand": True})
+    series.state, series.wake_at_ms = "WORKING", None
+    series.lease_token = series.lease_expires_at_ms = None
+    note(series, f"series {series.anidb_id} {series.title} · release added by hand: {release_name.strip()}")
+    update_series(db, series, now=now)
+    return {"anidb_id": anidb_id, "infohash": digest,
+            "message": f"Release added to {series.title}; the worker checks it next."}

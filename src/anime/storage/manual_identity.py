@@ -7,7 +7,7 @@ import json
 from src.anime.release_names import release_title
 from src.anime.release_names import norm
 from src.anime.batch.recognition import release_scope_hint
-from src.anime.storage.job_queue import JobQueue
+from src.anime.storage.connection import database as connection
 from src.anime.storage.sqlite import transaction
 
 
@@ -44,7 +44,7 @@ def for_release(database, release, season=None):
         key = _key(release)
     except ManualMatchError:
         return None
-    with JobQueue(database).connection() as db:
+    with connection(database) as db:
         row = db.execute(
             "SELECT anidb_id,tvdb_series_id,title FROM manual_identity_matches "
             "WHERE alias_key=? AND tvdb_season=?", (key, scope)).fetchone()
@@ -80,7 +80,7 @@ def save(database, raw_body, *, anidb_id, tvdb_series_id, title, season):
     if season is not None and season != scope:
         raise ManualMatchError('Season conflicts with parsed release')
     wanted = (anidb_id, tvdb_series_id, title.strip())
-    with JobQueue(database).connection() as db, transaction(db):
+    with connection(database) as db, transaction(db):
         prior = db.execute(
             "SELECT anidb_id,tvdb_series_id,title FROM manual_identity_matches "
             "WHERE alias_key=? AND tvdb_season=?", (key, scope)).fetchone()

@@ -11,6 +11,7 @@ import copy
 import ipaddress
 import json
 import re
+import urllib.parse
 
 from src.anime.settings import COMPONENTS, Settings, parse_settings
 
@@ -18,6 +19,26 @@ CONFIGURATION_VERSION = 17
 MAX_REVISION = (1 << 63) - 1
 MAX_BYTES = 65536
 
+
+
+def _source_url(value):
+    """Historical v7-v11 URL validation; never used to fetch current metadata."""
+    try:
+        if type(value) is not str or not value or len(value)>2048:raise ValueError()
+        parsed=urllib.parse.urlsplit(value)
+        from src.anime.acquisition.settings import endpoint
+        authority=endpoint(urllib.parse.urlunsplit((parsed.scheme,parsed.netloc,'','','')))
+        if (parsed.query or parsed.fragment or '?' in value or '#' in value or '%' in value
+                or '\\' in value or not value.isascii() or any(ord(c)<=32 or ord(c)==127 for c in value)):
+            raise ValueError()
+        path=parsed.path.rstrip('/')
+        if path and (not path.startswith('/')
+                     or any(not re.fullmatch('[A-Za-z0-9_-]+',p)
+                            for p in path[1:].split('/'))):
+            raise ValueError()
+        return authority+path
+    except (ValueError, TypeError, AttributeError):
+        raise MetadataSourceConfigurationError() from None
 
 class ConfigurationError(ValueError):
     reason_code = "CONFIGURATION_INVALID"
@@ -264,8 +285,7 @@ def validate_values(value, *, fields=FIELDS):
             elif spec.kind == "metadata_source":
                 if type(item) is not str:raise ConfigurationError()
                 if item:
-                    from src.anime.acquisition.metainfo_source import source_url
-                    try:source_url(item)
+                    try:_source_url(item)
                     except ValueError:raise ConfigurationError() from None
             elif spec.kind == "download_endpoint":
                 if type(item) is not str:raise ConfigurationError()

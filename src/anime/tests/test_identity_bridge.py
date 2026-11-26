@@ -49,8 +49,6 @@ class BridgeStoreTests(unittest.TestCase):
         self.assertEqual(done, 'identified')
         self.assertIn('[Group] Cyberpunk Edgerunners - 05 (1080p): identified as AniDB 16999 Cyberpunk Edgerunners; '
                       'woke series 16999', '\n'.join(logs.output))
-        # No jobs row created
-        self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(0,)])
         # Series row created
         series_rows = self.rows('SELECT anidb_id, title, state, torrents_json FROM series WHERE anidb_id=16999')
         self.assertEqual(len(series_rows), 1)
@@ -87,15 +85,13 @@ class BridgeStoreTests(unittest.TestCase):
             self.assertEqual(done, 'decided')
             self.assertIn('already rejected; in API Reject', '\n'.join(logs.output))
             self.assertEqual(self.rows('SELECT count(*) FROM series'), [(0,)])
-            self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(0,)])
 
     def test_unidentified_release_is_refused_with_why_and_kept_in_the_notification(self):
         request = self.queue()
         done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'rejected',
                                                             'reason_code': 'IDENTITY_INCOMPLETE'}, LOG)
         self.assertEqual(done, 'rejected')
-        self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(0,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'), [(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM series'), [(0,)])
         self.assertEqual(self.rows('SELECT outcome,last_reason_code FROM identity_requests'),
                          [('rejected', 'IDENTITY_INCOMPLETE')])
         kind, title, raw = self.rows('SELECT type,title,raw_body FROM notifications')[0]
@@ -113,7 +109,6 @@ class BridgeStoreTests(unittest.TestCase):
             request = self.queue()
             self.assertEqual(identity_bridge.apply_result(
                 self.database, {'request_id': request, 'result': 'identified', 'series': SERIES}, LOG), 'decided')
-            self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(0,)])
             request = self.queue(process_anyway=True)
             self.assertEqual(identity_bridge.apply_result(
                 self.database, {'request_id': request, 'result': 'identified', 'series': SERIES}, LOG), 'identified')

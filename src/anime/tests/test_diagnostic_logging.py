@@ -8,7 +8,6 @@ from src.anime.diagnostics import (
 )
 from src.anime.messages import EVENTS, DEFAULT_CATALOG
 from src.anime.settings import LoggingSettings, Settings, parse_settings
-from src.anime.storage.sqlite import accept_event_and_job, initialize
 import sqlite3
 
 
@@ -146,24 +145,3 @@ class DiagnosticLoggingTests(unittest.TestCase):
             configure_logging({"logging": "bad"}, "worker", logger=logger)
         self.assertEqual(previous, (logger.level, logger.handlers[0].level, logger.handlers[0].formatter))
 
-    def test_failed_sink_cannot_turn_committed_work_into_failure(self):
-        class Broken(logging.Handler):
-            def emit(self, record):
-                raise OSError("sink failure")
-        logger = logging.getLogger("anime.intake")
-        old = (logger.handlers[:], logger.level, logger.propagate, logger.disabled)
-        db = sqlite3.connect(":memory:")
-        try:
-            logger.handlers = [Broken()]
-            logger.setLevel(TRACE)
-            logger.propagate = False
-            logger.disabled = False
-            initialize(db)
-            event_id, job_id = accept_event_and_job(db, "test", b"x", kind="identity", payload={})
-            self.assertGreater(event_id, 0)
-            self.assertGreater(job_id, 0)
-            self.assertEqual(db.execute("SELECT count(*) FROM job_history").fetchone()[0], 1)
-            self.assertFalse(db.in_transaction)
-        finally:
-            db.close()
-            logger.handlers, logger.level, logger.propagate, logger.disabled = old

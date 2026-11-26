@@ -18,7 +18,6 @@ from src.anime.api.adm_commands import (
     running as adm_running,
     search as adm_search,
 )
-from src.anime.job_report import main as report_main
 
 
 class TestAdmSeries(unittest.TestCase):
@@ -36,51 +35,6 @@ class TestAdmSeries(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def test_adm_report_intake(self):
-        db = sqlite3.connect(self.db_path)
-        aid = 16999
-        wake(db, aid, "Cyberpunk Edgerunners")
-        add_torrent(db, aid, {"infohash": "a" * 40, "release_name": "Release 1"})
-        series = get_series(db, aid)
-        series.episodes["S01E01"] = {"state": "staged", "torrent": "a" * 40, "file": "ep1.mkv"}
-        update_series(db, series)
-        db.close()
-
-        # Plain text
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = report_main(["intake", "--id", str(aid), "--config-dir", str(self.config_dir)])
-        self.assertEqual(code, 0)
-        output = out.getvalue()
-        self.assertIn("Series AniDB ID: 16999 - Cyberpunk Edgerunners", output)
-        self.assertIn("Release 1", output)
-        self.assertIn("S01E01: staged", output)
-
-        # JSON
-        out_json = io.StringIO()
-        with redirect_stdout(out_json):
-            code = report_main(["intake", "--id", str(aid), "--json", "--config-dir", str(self.config_dir)])
-        self.assertEqual(code, 0)
-        data = json.loads(out_json.getvalue())
-        self.assertEqual(data["anidb_id"], aid)
-        self.assertEqual(data["title"], "Cyberpunk Edgerunners")
-        self.assertIn("S01E01", data["episodes"])
-
-        # Missing series
-        out_missing = io.StringIO()
-        with redirect_stdout(out_missing):
-            code = report_main(["intake", "--id", "99999", "--config-dir", str(self.config_dir)])
-        self.assertEqual(code, 1)
-
-        # Short-form --id defaults to intake, and 'job' subcommand is removed
-        out_short = io.StringIO()
-        with redirect_stdout(out_short):
-            code = report_main(["--id", str(aid), "--config-dir", str(self.config_dir)])
-        self.assertEqual(code, 0)
-        self.assertIn("Series AniDB ID: 16999", out_short.getvalue())
-        with self.assertRaises(SystemExit) as ctx:
-            report_main(["job", "--id", "1", "--config-dir", str(self.config_dir)])
-        self.assertEqual(ctx.exception.code, 2)
 
     def test_adm_running(self):
         db = sqlite3.connect(self.db_path)
@@ -100,7 +54,7 @@ class TestAdmSeries(unittest.TestCase):
         output = out.getvalue()
         self.assertIn("Cyberpunk Edgerunners", output)
         self.assertIn("Working Release", output)
-        self.assertIn("step download, 45%", output)
+        self.assertIn("Working Release: download, 45%", output)
 
         # JSON
         out_json = io.StringIO()

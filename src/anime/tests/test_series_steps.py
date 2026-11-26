@@ -105,7 +105,12 @@ class Steps(unittest.TestCase):
         self.qb = FakeQb()
         self.saved = []
         qb = self.qb
-        self.context = SeriesContext(verify=None, torrents=type('T', (), {'client': lambda s, c, m: qb})(),
+        import sqlite3
+        from src.anime.storage.sqlite import initialize
+        db = sqlite3.connect(self.configuration.value('storage.database_path'))
+        initialize(db)
+        self.addCleanup(db.close)
+        self.context = SeriesContext(verify=None, torrents=type('T', (), {'client': lambda s, c, m: qb})(), db=db,
                                      cancelled=threading.Event(), configuration=self.configuration, now=1000,
                                      checkpoint=lambda: self.saved.append(json.dumps(self.torrent)))
         self.series = SeriesRow(18162, 'Dungeon People', 'WORKING', None, 1)

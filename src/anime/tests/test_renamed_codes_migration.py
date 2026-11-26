@@ -90,16 +90,6 @@ class RenamedCodesMigrationTests(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT last_reason_code FROM jobs WHERE job_id=2').fetchone(),
                          ('PROWLARR_SEARCH_TIMEOUT',))
 
-    def test_fresh_schema_matches_sequential_upgrade(self):
-        self.migrate()
-        for name in SCRIPTS[65:]:  # Later versions build on v65.
-            self.db.executescript((SQL_DIR / name).read_text())
-        fresh = sqlite3.connect(':memory:')
-        try:
-            initialize(fresh)
-            self.assertEqual(_structure(self.db), _structure(fresh))
-        finally:
-            fresh.close()
 
 
 if __name__ == '__main__':

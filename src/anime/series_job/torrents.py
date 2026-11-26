@@ -45,13 +45,17 @@ def magnet(torrent):
     return hash_magnet(torrent["infohash"], declared) or hash_magnet(torrent["infohash"])
 
 
-def metainfo_path(configuration, info_hash):
-    database = Path(configuration.value("storage.database_path"))
+def metainfo_file(database, info_hash):
+    database = Path(database)
     return database.with_name(database.stem + "-files") / "metainfo" / f"{info_hash}.torrent"
 
 
-def save_metainfo(configuration, info_hash, raw):
-    path = metainfo_path(configuration, info_hash)
+def metainfo_path(configuration, info_hash):
+    return metainfo_file(configuration.value("storage.database_path"), info_hash)
+
+
+def save_metainfo(configuration, info_hash, raw, *, database=None):
+    path = metainfo_file(database, info_hash) if database else metainfo_path(configuration, info_hash)
     path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")
     partial.write_bytes(raw)

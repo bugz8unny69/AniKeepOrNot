@@ -96,5 +96,21 @@ async def check_release(series: SeriesRow, torrent: dict, context) -> StepResult
     else:
         raise TypeError(f"release verifier returned {type(verified).__name__}")
     torrent["episodes"] = [f["episode"] for f in torrent["files"]]
+    # Recognized names: /check answers this series at once next time, from local data.
+    from src.anime.series_job.store import _atomic
+    from src.anime.storage.recognition import RecognitionConflict, remember_release
+    try:
+        with _atomic(context.db):
+            remember_release(context.db, anidb_id=series.anidb_id, title=series.title,
+                             tvdb_series_id=source.tvdb_series_id, raw_body=source.raw_body,
+                             # Only a TVDB placement proves the season (S01 is the default otherwise).
+                             season=next((int(f["episode"][1:3]) for f in torrent["files"]
+                                          if f.get("tvdb_episode_id")), None),
+                             episodes=[(f["anidb_episode_number"], f["anidb_episode_id"], int(f["episode"][1:3]),
+                                        int(f["episode"][4:]), f.get("tvdb_episode_id")) for f in torrent["files"]],
+                             when=now)
+    except RecognitionConflict as exc:
+        note(series, f"{label} · dropped: it contradicts a remembered episode placement ({exc})")
+        return StepResult.drop("RELEASE_CONFLICT")
     note(series, f"{label} · release checked: {', '.join(torrent['episodes'])}")
     return StepResult.done(next_step="reserve_episodes")

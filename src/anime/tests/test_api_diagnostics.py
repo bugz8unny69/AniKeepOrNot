@@ -6,42 +6,12 @@ import sqlite3
 import unittest
 
 from src.anime.diagnostics import configure_logging, log_history
-from src.anime.history import append_job_history
 from src.anime.settings import parse_settings
-from src.anime.storage.sqlite import (
-    accept_event, enqueue_job, initialize, transaction,
-)
+from src.anime.storage.sqlite import transaction
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "storage" / "sql"
 
 
-class ApiDiagnosticsTests(unittest.TestCase):
-    def test_separate_api_logger_and_history_preserve_actual_emitter(self):
-        db = sqlite3.connect(":memory:")
-        db.execute("PRAGMA foreign_keys=ON")
-        logger = logging.Logger("anime.api.test")
-        stream = io.StringIO()
-        logger.addHandler(logging.StreamHandler(stream))
-        settings = parse_settings({"logging": {"components": {"api": "DEBUG", "worker": "WARNING"}}})
-        configure_logging(settings, "api", logger=logger)
-        try:
-            initialize(db)
-            event_id = accept_event(db, "test", b"private")
-            with transaction(db):
-                job_id = enqueue_job(db, component="api", kind="requested-work", payload={}, event_id=event_id)
-                db.execute("UPDATE jobs SET state='CANCELED' WHERE job_id=?", (job_id,))
-                receipt = append_job_history(
-                    db, job_id=job_id, event_code="CANCELED", component="api",
-                    occurred_at_ms=2, reason_code="UNSUPPORTED_JOB_KIND", details={"attempt": 0})
-            log_history(logger, receipt)
-            self.assertEqual(db.execute("SELECT component FROM job_history").fetchall(),
-                             [("api",), ("api",)])
-            self.assertIn("from api", stream.getvalue())
-            self.assertNotIn("from worker", stream.getvalue())
-            self.assertEqual(logger.level, logging.DEBUG)
-            self.assertEqual(settings.logging.level_for("worker"), "WARNING")
-        finally:
-            db.close()
 
 
 class ApiDiagnosticMigrationTests(unittest.TestCase):

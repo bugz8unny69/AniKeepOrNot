@@ -91,6 +91,10 @@ class ApiSeriesTests(unittest.IsolatedAsyncioTestCase):
     async def test_running_endpoint(self):
         db = sqlite3.connect(self.database)
         wake(db, 16999, "Cyberpunk Edgerunners")
+        wake(db, 17000, "Nothing To Do")           # Woken with no torrent: not running anything.
+        from src.anime.series_job.store import add_torrent
+        add_torrent(db, 16999, {"infohash": "a" * 40, "release_name": "[G] Cyberpunk - 05", "state": "working"})
+        db.commit()
         db.close()
 
         status, result, _ = await self.request("GET", "/api/v1/running", token=ADMIN)

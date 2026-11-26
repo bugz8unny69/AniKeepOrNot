@@ -60,25 +60,6 @@ class QBTransportTests(unittest.TestCase):
                 with self.assertRaises((ClientAuthenticationFailed,ClientInvalid)):client.login()
                 self.assertEqual(len(self.requests),1)
 
-    def test_login_and_version_specific_stopped_upload_have_no_start_or_retry(self):
-        raw,digest=metadata()
-        for version,parameter in ((b'v5.0.0',b'name="stopped"'),(b'v4.5.2',b'name="paused"')):
-            client=self.client(self.login_responses(version)+[Response(b'Ok.')])
-            client.login()
-            plan=SubmissionPlan(1,1,2,3,'a'*32,parse_metainfo(raw,digest))
-            intent=Intent(plan,client.options,'UNCERTAIN','b'*64,client.major)
-            permit=SendPermit(intent.fingerprint)
-            client.add_stopped(raw,intent,permit)
-            request,timeout=self.requests[-1]
-            self.assertEqual(request.full_url,'https://qb.example/api/v2/torrents/add')
-            self.assertIn(parameter+b'\r\n\r\ntrue',request.data)
-            self.assertIn(b'name="autoTMM"\r\n\r\nfalse',request.data)
-            self.assertIn(b'name="useDownloadPath"\r\n\r\nfalse',request.data)
-            self.assertIn(b'name="contentLayout"\r\n\r\nOriginal',request.data)
-            self.assertEqual(timeout,10)
-            self.assertEqual(len(self.requests),4)
-            with self.assertRaises(ClientInvalid):client.add_stopped(raw,intent,permit)
-            self.assertEqual(len(self.requests),4)
 
     def test_redirect_authentication_unsupported_versions_and_response_bounds(self):
         for responses,error in (([Response(b'',302)],ClientUnavailable),([Response(b'Fails.')],ClientAuthenticationFailed),

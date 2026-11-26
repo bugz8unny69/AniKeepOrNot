@@ -11,12 +11,13 @@ disk waits and restarts the torrent once there is room (owner, 2026-11-26);
 any other qBittorrent error drops the torrent with why.
 """
 from src.anime.acquisition.metadata_service import STOPPED
-from src.anime.acquisition.transfers import DISK_FULL_WAIT_MS, DISK_MARGIN_BYTES
 from src.anime.series_job.steps.common import StepResult, with_client
 from src.anime.series_job.store import SeriesRow, note
 from src.anime.series_job.torrents import read_metainfo
 
 POLL_MS = 5000
+DISK_FULL_WAIT_MS = 10 * 60_000                  # A full download disk: check again in 10 minutes.
+DISK_MARGIN_BYTES = 256 * 1024 * 1024            # Room needed beyond what the download still needs.
 
 
 async def download(series: SeriesRow, torrent: dict, context) -> StepResult:

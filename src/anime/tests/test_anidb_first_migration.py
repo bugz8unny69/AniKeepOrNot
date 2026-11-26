@@ -69,36 +69,6 @@ class AniDBFirstMigrationTests(unittest.TestCase):
         finally:
             fresh.close()
 
-    def test_anchor_and_keys_become_anidb_and_unconvertible_observations_are_dropped(self):
-        self.result(1, 'CANDIDATES')      # S02E01 -> AniDB E1000 (verified)
-        self.result(4, 'NOT_AIRED')       # S02E04: never verified -> dropped
-        self.db.execute("INSERT INTO sonarr_episode_candidates(plan_id,tvdb_episode,rank,info_hash) "
-                        "VALUES(1,1,1,?)", (HASH,))
-        self.db.execute("INSERT INTO sonarr_episode_selections VALUES(1,1,9001,?,1)", (HASH,))
-        self.db.execute("INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,"
-                        "created_at_ms,updated_at_ms) VALUES(4,1,'DISCOVER_SONARR_BACKFILL',?,"
-                        "'ON_HOLD',0,0,0)", (json.dumps({'plan_id': 1, 'start': 1, 'exhausted_episode': 1}),))
-        self.db.execute("INSERT INTO jobs(job_id,event_id,kind,payload_json,state,available_at_ms,"
-                        "created_at_ms,updated_at_ms) VALUES(5,1,'DISCOVER_SONARR_BACKFILL',?,"
-                        "'DONE',0,0,0)", (json.dumps({'plan_id': 1, 'start': 1, 'retry_episode': 4}),))
-        db = self.migrate()
-        self.assertEqual(db.execute('PRAGMA user_version').fetchone(), (LATEST_VERSION,))
-        self.assertEqual(db.execute('SELECT tvdb_season,anchor_episode FROM user_evaluation_plans').fetchall(),
-                         [(2, 1000)])
-        self.assertEqual(db.execute('SELECT anidb_episode_number,status FROM episode_discovery_results').fetchall(),
-                         [(1000, 'CANDIDATES')])
-        self.assertEqual(db.execute('SELECT anidb_episode_number,tvdb_season,tvdb_episode,tvdb_episode_id,'
-                                    'info_hash FROM episode_release_selections').fetchall(),
-                         [(1000, 2, 1, 9001, HASH)])
-        self.assertEqual(db.execute('SELECT anidb_episode_number FROM episode_release_candidates').fetchall(),
-                         [(1000,)])
-        self.assertEqual(json.loads(db.execute('SELECT payload_json FROM jobs WHERE job_id=4').fetchone()[0]),
-                         {'plan_id': 1, 'start': 1, 'exhausted_episode': 1000})
-        # A finished job without evidence keeps its historical payload untouched.
-        self.assertEqual(json.loads(db.execute('SELECT payload_json FROM jobs WHERE job_id=5').fetchone()[0]),
-                         {'plan_id': 1, 'start': 1, 'retry_episode': 4})
-        self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
-        self.assertEqual(db.execute('PRAGMA integrity_check').fetchall(), [('ok',)])
 
     def assertAborts(self):
         before = _structure(self.db)

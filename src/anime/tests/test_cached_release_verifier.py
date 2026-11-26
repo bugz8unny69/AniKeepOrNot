@@ -23,15 +23,10 @@ class CachedReleaseVerifierTests(unittest.IsolatedAsyncioTestCase):
         db = sqlite3.connect(self.database)
         db.execute("PRAGMA foreign_keys=ON")
         initialize(db)
-        db.execute("INSERT INTO identified_anime VALUES(1001,2001,'Example Anime')")
-        db.execute("INSERT INTO incoming_events(event_id,source,raw_body,received_at_ms) VALUES(1,'autobrr',X'7B7D',1)")
-        db.execute("INSERT INTO jobs(job_id,event_id,kind,payload_json,available_at_ms,created_at_ms,updated_at_ms) VALUES(1,1,'VERIFY_RELEASE','{}',1,1,1)")
-        db.execute("INSERT INTO identity_results VALUES(1,1,1001,2,'{}',1)")
-        db.execute("INSERT INTO identified_episodes VALUES(30013,1001)")
-        db.execute("INSERT INTO release_verifications VALUES(1,1,1,1001,?,'DECLARED_SINGLE_EPISODE',13,30013,2001,2,1,40001,'official',1000)",('a'*64,))
-        db.execute("INSERT INTO recognized_seasons VALUES(2001,2,1001,'Example Anime',1,1000)")
+        # A remembered episode (series job, release check): AniDB 13 is TVDB S02E01.
         db.execute("INSERT INTO recognized_series VALUES(1001,'Example Anime',2001,NULL,1000)")
-        db.execute("INSERT INTO recognized_episodes VALUES(2001,2,1001,13,30013,1,40001,1,1000)")
+        db.execute("INSERT INTO recognized_seasons VALUES(2001,2,1001,'Example Anime',1000)")
+        db.execute("INSERT INTO recognized_episodes VALUES(2001,2,1001,13,30013,1,40001,1000)")
         db.commit()
         db.close()
 

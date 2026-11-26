@@ -43,7 +43,7 @@ def request(series, now):
 
 
 def _selection(configuration, series, code, episode):
-    from src.anime.keep_selection import KeepSelection
+    from src.anime.series_job.keep_selection import KeepSelection
     torrent = next(t for t in series.torrents if t["infohash"] == episode["torrent"])
     entry = next(f for f in torrent["files"] if f["episode"] == code)
     return KeepSelection(anidb_id=series.anidb_id, anidb_episode_id=entry["anidb_episode_id"],
@@ -89,7 +89,7 @@ def _sonarr(context, series):
 def sonarr_series(series, keep, context):
     from src.anime.checks import here
     from src.anime.sonarr import KeepReview
-    from src.anime.storage.keep_imports import monitor_mode
+    from src.anime.series_job.keep_selection import monitor_mode
     client, options = _sonarr(context, series)
     version = client.request("system/status")
     if not re.match(r"^4\.", str(version.get("version", ""))):
@@ -124,7 +124,7 @@ def sonarr_import(series, keep, context):
     """One step of each staged episode's import; 'search' once all are in Sonarr."""
     from src.anime.checks import here
     from src.anime.sonarr import KeepReview, existing_file
-    from src.anime.storage.keep_imports import check_source
+    from src.anime.series_job.keep_selection import check_source
     client, options = _sonarr(context, series)
     state = keep["sonarr"]
     found = client.series(state["tvdb_series_id"])
@@ -211,16 +211,21 @@ def search(series, keep, context):
     return "shoko"
 
 
+def kept_files(series):
+    """(path in the library, AniDB episode ID) of every file Keep imported."""
+    return [(record["result"]["relative_path"], next(
+        f["anidb_episode_id"] for t in series.torrents for f in t.get("files", []) if f.get("episode") == code
+        and t["infohash"] == series.episodes[code]["torrent"]))
+        for code, record in sorted(series.work["keep"]["imports"].items()) if record.get("phase") == "COMPLETE"]
+
+
 def shoko(series, keep, context):
-    from src.anime.jobs.link_shoko_job import link_files
+    from src.anime.series_job.shoko_link import link_files
     from src.anime.shoko import Shoko
     if not context.configuration.value("shoko.base_url"):
         return "dubs"
-    files = [(record["result"]["relative_path"], next(
-        f["anidb_episode_id"] for t in series.torrents for f in t.get("files", []) if f.get("episode") == code
-        and t["infohash"] == series.episodes[code]["torrent"]))
-        for code, record in sorted(keep["imports"].items())]
-    linked, no_file, no_episode = link_files(Shoko(context.configuration, context.secrets), series.anidb_id, files)
+    linked, no_file, no_episode = link_files(Shoko(context.configuration, context.secrets), series.anidb_id,
+                                             kept_files(series))
     state = keep.setdefault("shoko", {"since_ms": context.now})
     state["linked"] = state.get("linked", 0) + linked
     if not no_file and not no_episode:
@@ -241,7 +246,14 @@ def dubs(series, keep, context):
         return "jellyfin"
     if context.now < keep["requested_at_ms"] + DUBS_DELAY_MS:
         return None                                # Sonarr's own search goes first.
-    from src.anime.jobs.find_dubs_job import find_and_push, mappings
+    grabbed, missing = find_dubs_now(series, keep["sonarr"]["tvdb_series_id"], context.configuration, context.secrets)
+    keep["dubs"] = {"grabbed": grabbed, "missing": missing}
+    return "jellyfin"
+
+
+def find_dubs_now(series, tvdb, configuration, secrets):
+    """AKON's dub search for Sonarr's missing episodes of a kept series (also adm sonarr find-dubs)."""
+    from src.anime.series_job.dubs import find_and_push, mappings
     from src.anime.acquisition.prowlarr_search import Client as Prowlarr
     from src.anime.providers.backfill_catalog import make_catalog_factory
     from src.anime.providers.configuration import episode_placement_credentials, options_from_configuration
@@ -249,18 +261,15 @@ def dubs(series, keep, context):
     from src.anime.sonarr import api_client
     from functools import partial
     pool = ClientPool()
-    catalog = make_catalog_factory(options_from_configuration, partial(episode_placement_credentials, context.secrets),
-                                   client_pool=pool)(context.configuration)
-    tvdb = keep["sonarr"]["tvdb_series_id"]
-    prowlarr = Prowlarr.from_context(context.configuration, context.secrets, catalog=catalog)
+    catalog = make_catalog_factory(options_from_configuration, partial(episode_placement_credentials, secrets),
+                                   client_pool=pool)(configuration)
+    prowlarr = Prowlarr.from_context(configuration, secrets, catalog=catalog)
     prowlarr.set_context(anidb_id=series.anidb_id, tvdb_series_id=tvdb, search_mode="sonarr_missing")
-    grabbed, missing = find_and_push(api_client(context.configuration, context.secrets.sonarr_api_key()), prowlarr,
-                                     catalog, series.anidb_id, tvdb,
-                                     mappings(pool, context.configuration, series.anidb_id, tvdb))
-    keep["dubs"] = {"grabbed": grabbed, "missing": missing}
+    grabbed, missing = find_and_push(api_client(configuration, secrets.sonarr_api_key()), prowlarr,
+                                     catalog, series.anidb_id, tvdb, mappings(pool, configuration, series.anidb_id, tvdb))
     note(series, f"series {series.anidb_id} {series.title} · dub search: Sonarr grabbed {len(grabbed)}"
                  + (f"; nothing usable for {', '.join(missing)}" if missing else ""))
-    return "jellyfin"
+    return grabbed, missing
 
 
 def jellyfin(series, keep, context):

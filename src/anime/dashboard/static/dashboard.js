@@ -510,13 +510,19 @@ function renderSeries() {
   for (const series of state.jobs) {
     const tr = node('tr');
     const td = value => { const cell = node('td', value); tr.appendChild(cell); return cell; };
-    td('—');
+    // One row per series (the series job): its episodes by state, what it is doing.
+    const episodes = series.episodes || {};
+    const staged = (episodes.staged || 0) + (episodes.kept || 0);
+    const working = (episodes.reserved || 0) + (episodes.downloading || 0) + (episodes.verified || 0);
+    const label = series.keep ? (series.keep.stopped ? 'Keep stopped' : 'Keeping')
+      : {KEPT: 'Kept', REJECTED: 'Rejected', WORKING: 'Working', ASLEEP: 'Waiting'}[series.state] || series.state;
+    td(String(series.anidb_id));
     td().appendChild(node('strong', series.title));
-    td(series.staged_count + ' staged');
-    td().appendChild(node('span', INTAKE_STATUS[series.status] || 'Tracking',
-      'status ' + (series.status === 'REJECTED' ? 'blocked' :
-        ['ACCEPTED', 'STAGED'].includes(series.status) ? 'completed' : 'waiting')));
-    td(series.missing_count + ' not staged');
+    td(staged + (episodes.kept ? ' kept' : ' staged'));
+    td().appendChild(node('span', label,
+      'status ' + (series.state === 'REJECTED' || series.torrents_stopped || series.keep?.stopped ? 'blocked' :
+        series.state === 'KEPT' ? 'completed' : 'waiting')));
+    td(working ? working + ' on the way' : (series.torrents_active ? series.torrents_active + ' torrent(s)' : '—'));
     const actions = td();
     const open = node('button', 'View series', 'secondary');
     open.type = 'button';

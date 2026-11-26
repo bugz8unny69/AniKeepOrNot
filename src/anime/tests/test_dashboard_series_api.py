@@ -8,7 +8,7 @@ from src.anime.api.auth import COOKIE
 from src.anime.dashboard.assets import load_assets
 from src.anime.secrets import SecretStore
 from src.anime.series_job.store import wake, add_torrent, get_series, update_series
-from src.anime.tests import test_acquisition_preparation as fixture
+from src.anime.tests import support as fixture
 
 WEB = "w" * 43
 ADMIN = "m" * 43
@@ -21,10 +21,10 @@ class DummyBridge:
 
 
 class DashboardSeriesApiTests(unittest.IsolatedAsyncioTestCase):
-    rows = fixture.AcquisitionPreparationTests.rows
+    rows = fixture.DatabaseSetup.rows
 
     async def asyncSetUp(self):
-        await fixture.AcquisitionPreparationTests.asyncSetUp(self)
+        await fixture.DatabaseSetup.asyncSetUp(self)
         self.secrets = SecretStore(self.root)
         self.secrets.initialize(webhook_token=WEB)
         self.app = Application(self.root, origin=ORIGIN)

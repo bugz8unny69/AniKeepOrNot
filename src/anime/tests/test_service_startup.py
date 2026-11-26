@@ -13,7 +13,6 @@ import urllib.error
 
 from src.anime.configuration import ConfigurationStore
 from src.anime.handlers import HandlerDefinition
-from src.anime.job_contracts import Outcome, Policy, Registration, Registry
 from src.anime.services import (
     AUTH_FAILED, DISABLED, DOWN, NOT_CONFIGURED, UNKNOWN, UP, ServiceAdapter, ServiceHealth, ServiceRegistry,
     status_store,
@@ -273,14 +272,10 @@ class WorkerStartupTests(unittest.IsolatedAsyncioTestCase):
             db.close()
 
     def worker(self, *adapters):
-        async def handler(context):
-            return Outcome('complete')
-        registry = Registry((Registration('JOB', HandlerDefinition('JOB', 'Job'), handler, mode='async'),))
+        from types import SimpleNamespace
         health = ServiceHealth(ServiceRegistry(adapters))
-        worker = Worker(self.store, self.startup, registry, policy=Policy(lease_ms=30000, poll_ms=10),
-                        service_health=health, secrets=Secrets())
-        self.addAsyncCleanup(worker.close)
-        return worker
+        return Worker(self.store, self.startup, service_health=health, secrets=Secrets(),
+                      context_factory=lambda secrets, cancelled: SimpleNamespace(cancelled=cancelled))
 
     async def test_a_misconfigured_required_service_stops_startup_with_a_clear_log(self):
         worker = self.worker(Fixed('qbittorrent', NOT_CONFIGURED, required=True,
@@ -318,7 +313,7 @@ class ExitCodeTests(unittest.TestCase):
             raise StartupRefused((state,))
         stderr = io.StringIO()
         with mock.patch.object(entry, 'check_local'), \
-                mock.patch('src.anime.providers.configuration.run_identity_worker', refuse), \
+                mock.patch('src.anime.worker.run_worker', refuse), \
                 mock.patch('asyncio.run', lambda value: value), mock.patch('sys.stderr', stderr):
             code = entry.main(['worker', '--config-dir', '/nonexistent'])
         self.assertEqual(code, EXIT_CODE)

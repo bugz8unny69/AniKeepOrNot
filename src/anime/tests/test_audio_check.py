@@ -5,15 +5,6 @@ import unittest
 from src.anime.acquisition.audio import dual_audio_tagged, required_languages, wants_english
 from src.anime.acquisition.media import AudioMissing, parse_probe
 from src.anime.acquisition.prowlarr_search import DiscoveryPolicy, Release
-from src.anime.jobs.select_user_evaluation_job import (
-    EvaluationCompletion, registration as user_evaluation_registration,
-)
-from src.anime.jobs.discover_episode_releases_job import KIND as DISCOVER_KIND
-from src.anime.storage.episode_discovery import window
-from src.anime.storage.sqlite import (
-    accept_event_and_job, connect, enqueue_job, save_identity, transaction,
-)
-from src.anime.tests import test_backfill_discovery as backfill
 from src.anime.tests.test_media_verification import probe_bytes
 
 
@@ -111,81 +102,8 @@ class AudioRankingTests(unittest.TestCase):
         self.assertEqual(DiscoveryPolicy().rank((plain, dual)), (plain, dual))
 
 
-class AnchorWindowTests(unittest.TestCase):
-    def test_include_anchor_adds_the_delivered_episode(self):
-        self.assertEqual(window(7, 6, 1), (1, 2, 3, 4, 5, 6))
-        self.assertEqual(window(7, 6, 1, True), (1, 2, 3, 4, 5, 6, 7))
-        # AniDB window: a later anchor backfills the episodes just before it.
-        self.assertEqual(window(10, 6, 1), (4, 5, 6, 7, 8, 9))
-
-    def test_untagged_delivery_does_not_route_to_reservation(self):
-        spec = user_evaluation_registration(reservation_kind='RESERVE_EPISODE', discovery_kind=DISCOVER_KIND)
-        skipped = EvaluationCompletion(None, 1, True)
-        kept = EvaluationCompletion(None, 1, False)
-        self.assertEqual(spec.route(skipped), ())
-        self.assertEqual(len(spec.route(kept)), 1)
 
 
-class IntakeAudioSearchTests(unittest.IsolatedAsyncioTestCase):
-    """An untagged autobrr release is not downloaded; Prowlarr searches its episode."""
-    asyncSetUp = backfill.BackfillWorkerTests.asyncSetUp
-    rows = backfill.BackfillWorkerTests.rows
-    worker = backfill.BackfillWorkerTests.worker
-
-    def autobrr(self, episode, title):
-        db = connect(self.database)
-        try:
-            body = json.dumps({'release_name': title}).encode()
-            event, release_job = accept_event_and_job(db, 'autobrr', body, kind='VERIFY_RELEASE',
-                                                      payload={'anidb_id': 123})
-            identity = save_identity(db, event, {'schema_version': 2, 'anime': {
-                'anidb_id': 123, 'tvdb_series_id': 456, 'title': 'Test'}})
-            eid = 11000 + episode
-            with transaction(db):
-                db.execute("UPDATE jobs SET state='DONE',attempt_count=1 WHERE job_id=?", (release_job,))
-                db.execute('INSERT OR IGNORE INTO identified_episodes VALUES(?,123)', (eid,))
-                db.execute(
-                    "INSERT INTO release_verifications(job_id,identity_result_id,anidb_id,release_sha256,"
-                    "verification_scope,anidb_episode_number,anidb_episode_id,tvdb_series_id,tvdb_season,"
-                    "tvdb_episode,tvdb_episode_id,verified_at_ms) "
-                    "VALUES(?,?,123,?,'DECLARED_SINGLE_EPISODE',?,?,456,1,?,?,1)",
-                    (release_job, identity, 'a'*64, episode, eid, episode, eid+100000))
-                enqueue_job(db, kind='SELECT_USER_EVALUATION', payload={'verification_job_id': release_job},
-                            component='worker', event_id=event, created_by_job_id=release_job,
-                            available_at_ms=0)
-        finally:
-            db.close()
-
-    async def run_pages(self, title, *, audio=None):
-        if audio is not None:
-            self.store.update({'acquisition': {'audio_check': audio}}, expected_revision=1)
-        self.autobrr(7, title)
-        fake = backfill.FakeDiscovery()
-        worker = self.worker(fake)
-        for _ in range(3):
-            await worker.attempt()
-        marked = self.rows("SELECT reason_code FROM job_history WHERE event_code='USER_EVALUATION_AUDIO_SEARCH'")
-        return [call[1] for call in fake.calls], marked
-
-    async def test_untagged_release_searches_its_own_episode(self):
-        calls, marked = await self.run_pages('[SubsPlease] Test - 07 (1080p)')
-        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 7)])
-        self.assertEqual(marked, [('RELEASE_AUDIO_UNTAGGED',)])
-
-    async def test_dual_audio_release_is_downloaded_as_before(self):
-        calls, marked = await self.run_pages('[Group] Test - 07 (1080p) [Dual Audio]')
-        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6)])
-        self.assertEqual(marked, [])
-
-    async def test_english_only_autobrr_release_falls_back_to_prowlarr(self):
-        calls, marked = await self.run_pages('[Group] Test - 07 (1080p) [English Dub]')
-        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6, 7)])
-        self.assertEqual(marked, [('RELEASE_AUDIO_UNTAGGED',)])
-
-    async def test_japanese_only_mode_never_skips_the_delivery(self):
-        calls, marked = await self.run_pages('[SubsPlease] Test - 07 (1080p)', audio='japanese')
-        self.assertEqual(calls, [(1, 2, 3, 4), (5, 6)])
-        self.assertEqual(marked, [])
 
 
 

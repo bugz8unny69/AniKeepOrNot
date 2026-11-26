@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from src.anime.jobs import link_shoko_job
 from src.anime.shoko import Shoko, ShokoRefused
 from src.anime.storage.sqlite import initialize
 
@@ -35,8 +34,8 @@ class LinkShokoTests(unittest.TestCase):
         db.close()
 
     def files(self, rows):
-        with mock.patch.object(link_shoko_job, 'kept_files', return_value=rows):
-            return link_shoko_job.link_series(self.database, self.shoko, 18162)
+        from src.anime.series_job.shoko_link import link_files
+        return link_files(self.shoko, 18162, rows)
 
     def test_links_each_kept_file_to_its_episode(self):
         self.shoko = FakeShoko({'Show/Season 1/E01.mkv': (77, set()), 'Show/Season 1/E02.mkv': (78, {2002})},
@@ -54,112 +53,6 @@ class LinkShokoTests(unittest.TestCase):
     def test_an_episode_shoko_has_not_fetched_waits(self):
         self.shoko = FakeShoko({'a.mkv': (77, set())}, {})
         self.assertEqual(self.files([('a.mkv', 2001)]), (0, [], ['a.mkv (AniDB episode 2001)']))
-
-    def test_kept_files_of_a_season_pack_come_with_their_anidb_episode(self):
-        db = sqlite3.connect(self.database)
-        db.execute('PRAGMA foreign_keys=OFF')
-        db.execute("INSERT INTO batch_keep_imports VALUES(5,41,0,'COMPLETE',?,1)",
-                   (json.dumps({'result': {'relative_path': 'Show/Season 1/E01.mkv'}}),))
-        db.execute("INSERT INTO batch_episode_reservations(plan_id,owner_job_id,file_index,anidb_id,anidb_episode_id,"
-                   "tvdb_series_id,tvdb_season,tvdb_episode,tvdb_episode_id,reserved_at_ms) "
-                   "VALUES(41,1,0,18162,281724,438420,1,1,10348657,1)")
-        db.commit()
-        self.assertEqual(link_shoko_job.kept_files(db, 18162), [('Show/Season 1/E01.mkv', 281724)])
-        self.assertEqual(link_shoko_job.kept_files(db, 1), [])
-        db.close()
-
-
-class WaitingTests(unittest.IsolatedAsyncioTestCase):
-    """Wait while Shoko catches up; fail only past the deadline; Shoko being down doesn't count."""
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory()
-        self.addCleanup(temp.cleanup)
-        self.database = str(Path(temp.name) / 'anime.sqlite')
-        db = sqlite3.connect(self.database)
-        initialize(db)
-        db.execute('PRAGMA foreign_keys=OFF')
-        db.execute("INSERT INTO jobs(job_id,kind,payload_json,available_at_ms,created_at_ms,updated_at_ms) "
-                   "VALUES(7,'LINK_SHOKO','{\"anidb_id\": 18162}',0,0,0)")
-        db.commit()
-        db.close()
-
-    def history(self, at_ms, reason):
-        db = sqlite3.connect(self.database)
-        db.execute("INSERT INTO job_history(job_id,occurred_at_ms,event_code,reason_code) VALUES(7,?,'DEFERRED',?)",
-                   (at_ms, reason))
-        db.commit()
-        db.close()
-
-    async def outcome(self, result):
-        configuration = mock.Mock(value=lambda key: self.database)
-        context = mock.Mock(configuration=configuration, claim=mock.Mock(job_id=7),
-                            data=lambda: {'anidb_id': 18162})
-        with mock.patch.object(link_shoko_job, 'link_series', return_value=result):
-            return await link_shoko_job.registration(None, client=lambda *a: None).execute(context)
-
-    async def test_waits_then_fails_after_thirty_minutes_without_the_file(self):
-        import time
-        now = time.time_ns() // 1_000_000
-        self.assertEqual((await self.outcome((0, ['a.mkv'], []))).kind, 'defer')
-        self.history(now - link_shoko_job.FILE_DEADLINE_MS - 1, 'MEDIA_LINK_WAITING')
-        failed = await self.outcome((0, ['a.mkv'], []))
-        self.assertEqual((failed.kind, failed.reason_code), ('fail', 'MEDIA_LINK_INCOMPLETE'))
-
-    async def test_time_shoko_was_down_does_not_count(self):
-        import time
-        now = time.time_ns() // 1_000_000
-        self.history(now - 5 * 3600_000, 'MEDIA_LINK_WAITING')
-        self.history(now - 60_000, 'SERVICE_UNAVAILABLE')     # Shoko was down; back now.
-        self.assertEqual((await self.outcome((0, ['a.mkv'], []))).kind, 'defer')
-
-    async def test_an_episode_gets_two_hours(self):
-        import time
-        now = time.time_ns() // 1_000_000
-        self.history(now - link_shoko_job.FILE_DEADLINE_MS - 1, 'MEDIA_LINK_WAITING')
-        self.assertEqual((await self.outcome((0, [], ['a.mkv (AniDB episode 1)']))).kind, 'defer')
-
-    async def test_done_when_everything_is_linked(self):
-        done = await self.outcome((2, [], []))
-        self.assertEqual((done.kind, done.value['linked'], done.value['refresh']), ('complete', 2, True))
-
-    def test_finishing_queues_a_jellyfin_rescan(self):
-        # Jellyfin reads Shoko's VFS, so it rescans after the links (owner, 2026-11-23).
-        db = sqlite3.connect(self.database)
-        db.execute('PRAGMA foreign_keys=OFF')
-        claim = mock.Mock(job_id=7, event_id=None)
-        db.execute('BEGIN')
-        link_shoko_job._persist(db, claim, {'linked': 0, 'refresh': True})
-        link_shoko_job._persist(db, claim, {'linked': 3, 'refresh': False})
-        db.commit()
-        self.assertEqual(db.execute("SELECT kind,payload_json,created_by_job_id FROM jobs WHERE job_id<>7").fetchall(),
-                         [('REFRESH_JELLYFIN', '{"source_job_id": 7}', 7)])
-        db.close()
-
-
-class PrepareSeriesTests(unittest.TestCase):
-    def test_keep_asks_shoko_to_fetch_the_series_and_never_waits_on_it(self):
-        from src.anime.shoko import ShokoUnavailable
-        temp = tempfile.TemporaryDirectory()
-        self.addCleanup(temp.cleanup)
-        database = str(Path(temp.name) / 'anime.sqlite')
-        db = sqlite3.connect(database)
-        initialize(db)
-        db.execute('PRAGMA foreign_keys=OFF')
-        db.execute("INSERT INTO identity_results(event_id,anidb_id,schema_version,series_json,validated_at_ms) "
-                   "VALUES(3,18162,2,'{}',0)")
-        db.commit()
-        db.close()
-        configuration = mock.Mock(value=lambda key: 'https://shoko.test')
-        asked = []
-        class Client:
-            def __init__(self, *args): pass
-            def refresh_series(self, aid): asked.append(aid)
-        link_shoko_job.prepare_series(configuration, None, database, 3, client=Client)
-        self.assertEqual(asked, [18162])
-        class Down(Client):
-            def refresh_series(self, aid): raise ShokoUnavailable()
-        with self.assertLogs(link_shoko_job.LOG, 'WARNING'):
-            link_shoko_job.prepare_series(configuration, None, database, 3, client=Down)
 
 
 class ShokoClientTests(unittest.TestCase):

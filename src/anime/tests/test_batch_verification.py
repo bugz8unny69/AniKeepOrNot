@@ -3,7 +3,6 @@ import unittest
 
 from src.anime.acquisition.metadata import BatchInventory, ObservedBatchInventory, TorrentFile
 from src.anime.batch.verification import verify_batch_files, plan_provider_verified_batch
-from src.anime.batch.window import plan_batch_user_evaluation_window
 from src.anime.user_evaluation_policy import Window
 from src.anime.providers.http import Credentials
 from src.anime.release_contracts import ReleaseNotReady, ReleaseConflict
@@ -125,33 +124,4 @@ class ProviderBatchTests(unittest.TestCase):
             with self.subTest(names=names),self.assertRaises(expected):
                 self.check(inventory(*names),FakeClient())
 
-    def test_custom_user_evaluation_window_intersects_existing_batch_proofs(self):
-        files=inventory(*tuple(f'Shiki/Season 01/Shiki S01E{i:02d}.mkv'
-                                for i in range(1,13)),
-                        'Shiki/OVA/Shiki OVA 01.mkv')
-        verified=self.check(files,FakeClient())
-        plan=plan_batch_user_evaluation_window(files,verified,window=Window(6,1),
-                                     anchor_episode=10)
-        self.assertEqual(plan.eligible_episodes,(1,2,3,4,5,6,10))
-        self.assertEqual(plan.present_episodes,
-                         ((1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(10,9)))
-        self.assertEqual(plan.probe_index,0)
-        self.assertEqual(plan.remaining_indices,(1,2,3,4,5,9))
-        self.assertIn(12,plan.skipped_indices)
-        following=plan_batch_user_evaluation_window(files,verified,window=Window(0,2),
-                                          anchor_episode=10)
-        self.assertEqual(following.present_episodes,((10,9),(11,10)))
-        self.assertEqual(following.probe_index,9)
-        with self.assertRaises(BatchPlanningError):
-            plan_batch_user_evaluation_window(files,verified,window=Window(0,1),
-                                    anchor_episode=13)
 
-    def test_verified_user_evaluation_plans_reject_omitted_regular_file_proofs(self):
-        from dataclasses import replace
-        files=inventory('Shiki/Season 01/Shiki S01E01.mkv',
-                        'Shiki/Season 01/Shiki S01E02.mkv')
-        verified=self.check(files,FakeClient())
-        incomplete=replace(verified,files=verified.files[:1])
-        with self.assertRaises(BatchPlanningError):
-            plan_batch_user_evaluation_window(files,incomplete,window=Window(6,1),
-                                    anchor_episode=1)

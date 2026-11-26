@@ -12,6 +12,8 @@ Preview by default. With --apply:
    `anime-discovery` category/folders to `akon` and updates saved DB paths.
 """
 import argparse
+import os
+import uuid
 from contextlib import closing
 import json
 from pathlib import Path
@@ -21,7 +23,35 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fixes.cleanup_legacy_not_listed import backup, configured_database, open_database  # noqa: E402
+# Database helpers (from the earlier one-time fixes).
+def configured_database(config_dir):
+    settings = json.loads((Path(config_dir) / 'settings.json').read_text())
+    path = settings['settings']['storage']['database_path']
+    if not isinstance(path, str) or not Path(path).is_absolute():
+        raise ValueError('storage.database_path must be an absolute path')
+    return Path(path)
+
+
+def open_database(path, readonly=False):
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('Database must be an existing regular file, not a symlink')
+    return sqlite3.connect(path.resolve().as_uri() + ('?mode=ro' if readonly else '?mode=rw'), uri=True, timeout=5)
+
+
+def backup(db, path, label='not-listed'):
+    target = path.with_name(path.name + '.before-' + label + '-' + uuid.uuid4().hex + '.sqlite')
+    fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    os.close(fd)
+    try:
+        with closing(sqlite3.connect(target)) as dest:
+            db.backup(dest)
+            if dest.execute('PRAGMA quick_check').fetchone() != ('ok',):
+                raise RuntimeError('SQLite backup integrity check failed')
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return target
+
 
 SERIES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS series (
