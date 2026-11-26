@@ -3,7 +3,7 @@
 Version differences live in qbittorrent_versions.py (picked at login). This
 module never touches files; files() and changes() report them uniformly.
 """
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 import json
 import re
 import urllib.error
@@ -103,7 +103,7 @@ class Client:
             try:
                 parsed=SimpleCookie();parsed.load(value)
                 if 'SID' in parsed:found.append(parsed['SID'].value)
-            except Exception:raise ClientInvalid() from None
+            except CookieError:raise ClientInvalid() from None
         # qBittorrent generates Base64 SIDs, which can include +, / and =.
         if len(found)!=1 or not re.fullmatch('[A-Za-z0-9_+/=-]{8,256}',found[0]):raise ClientAuthenticationFailed()
         self._sid=found[0]

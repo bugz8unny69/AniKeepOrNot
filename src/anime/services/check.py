@@ -14,6 +14,7 @@ import json
 import sys
 
 from src.anime.configuration import cli_config_dir
+from src.anime.configuration_schema import ConfigurationError
 from src.anime.services.base import DISABLED, UNKNOWN, UP
 from src.anime.services.health import ServiceHealth
 from src.anime.services.registry import default_registry
@@ -61,7 +62,7 @@ def main(argv=None, *, out=print, registry=None):
         from src.anime.secrets import SecretStore
         configuration = ConfigurationStore(args.config_dir).read()
         secrets = SecretStore(args.config_dir)
-    except Exception as exc:
+    except (ConfigurationError, OSError) as exc:
         print(f'Settings in {args.config_dir} could not be read: {exc}', file=sys.stderr)
         return 2
     try:

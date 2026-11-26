@@ -534,7 +534,7 @@ class Client:
             try:
                 rows = self._get(query)
                 q_elapsed = time.monotonic() - q_start
-            except Exception as exc:
+            except (SearchReview, SearchUnavailable) as exc:
                 q_elapsed = time.monotonic() - q_start
                 status_code = getattr(exc, 'reason_code', exc.__class__.__name__)
                 captured_queries.append({

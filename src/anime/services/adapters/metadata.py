@@ -14,6 +14,7 @@ pacing as real requests, and none at all when a request succeeded in the last
 """
 import sqlite3
 
+from src.anime.storage.migrations import MigrationError
 from src.anime.services.base import (
     AUTH_FAILED, DOWN, NOT_A_FAILURE, NOT_CONFIGURED, UNKNOWN, UP, ServiceAdapter,
 )
@@ -55,7 +56,7 @@ class _ProviderAdapter(ServiceAdapter):
             return self.result(NOT_CONFIGURED, problem, now_ms=now_ms)
         try:
             db = self._open(configuration)
-        except Exception:
+        except (OSError, sqlite3.Error, MigrationError):
             return self.result(UNKNOWN, 'the local provider cache could not be read', now_ms=now_ms)
         try:
             marks = ','.join('?' * len(self.providers))
@@ -143,7 +144,7 @@ class AnidbAdapter(_ProviderAdapter):
             return self.result(NOT_CONFIGURED, problem, now_ms=now_ms)
         try:
             next_allowed, failures, newest = self._record(configuration)
-        except Exception:
+        except (OSError, sqlite3.Error, MigrationError):
             return self.result(UNKNOWN, 'the local provider cache could not be read', now_ms=now_ms)
         # Only the anime lookups prove the client is accepted; the titles
         # download does not send the client name.

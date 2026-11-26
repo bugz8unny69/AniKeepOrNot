@@ -90,8 +90,7 @@ def make_catalog_factory(options, credentials=None, *, client_pool):
             actual = options(configuration) if callable(options) else options
             secret = None
             if callable(credentials):
-                try: secret = credentials()
-                except Exception: secret = None
+                secret = credentials()      # None when TVDB is not set up; other errors pass through.
             elif credentials is not None:
                 secret = credentials
             client = client_pool.get(configuration.value('storage.database_path'), actual)
