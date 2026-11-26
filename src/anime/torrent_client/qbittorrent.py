@@ -409,10 +409,8 @@ class Client:
 
     def free_space(self):
         """Free bytes on qBittorrent's download disk, as qBittorrent reports it."""
-        raw,_=self._request('sync/maindata',query={'rid':0},limit=33554432)
-        data=_json(raw)
-        free=(data.get('server_state') or {}).get('free_space_on_disk') if type(data) is dict else None
-        if type(free) is not int or free<0:raise ClientInvalid()
+        free=self.changes(0).free_space
+        if free is None:raise ClientInvalid()
         return free
 
     def _disk_full(self,snapshot,restart):
@@ -552,7 +550,8 @@ class Client:
         return tuple(result)
 
     _CHANGE_FIELDS={'state':str,'progress':float,'downloaded':int,'size':int,
-                    'save_path':str,'category':str,'tags':str}
+                    'save_path':str,'category':str,'tags':str,
+                    'dlspeed':int,'eta':int,'amount_left':int}
 
     def changes(self,rid=0):
         """One incremental update for all torrents (sync/maindata): what changed since rid.
@@ -586,4 +585,8 @@ class Client:
             torrents[digest]=TorrentChange(**seen)
         removed=data.get('torrents_removed') or []
         if type(removed) is not list or any(type(h) is not str for h in removed):raise ClientInvalid()
-        return Changes(data['rid'],full,torrents,tuple(h for h in removed if re.fullmatch('[0-9a-f]{40}',h)))
+        server=data.get('server_state') or {}
+        if type(server) is not dict:raise ClientInvalid()
+        free=server.get('free_space_on_disk')
+        if free is not None and (type(free) is not int or free<0):raise ClientInvalid()
+        return Changes(data['rid'],full,torrents,tuple(h for h in removed if re.fullmatch('[0-9a-f]{40}',h)),free)

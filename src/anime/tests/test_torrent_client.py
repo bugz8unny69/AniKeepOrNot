@@ -69,13 +69,16 @@ class UniformReportTests(unittest.TestCase):
 
     def test_changes_is_one_incremental_call_for_all_torrents(self):
         data = {'rid': 7, 'full_update': False,
-                'torrents': {HASH: {'progress': 0.25, 'downloaded': 100, 'state': 'downloading', 'ratio': 0},
+                'torrents': {HASH: {'progress': 0.25, 'downloaded': 100, 'state': 'downloading', 'ratio': 0,
+                                    'dlspeed': 2048, 'eta': 600, 'amount_left': 300},
                              'b' * 64: {'progress': 1}},
-                'torrents_removed': ['c' * 40]}
+                'torrents_removed': ['c' * 40], 'server_state': {'free_space_on_disk': 5000}}
         client = self.logged_in([Response(json.dumps(data).encode())])
         changes = client.changes(3)
-        self.assertEqual((changes.rid, changes.full, changes.removed), (7, False, ('c' * 40,)))
-        self.assertEqual(changes.torrents, {HASH: TorrentChange(state='downloading', progress=0.25, downloaded=100)})
+        self.assertEqual((changes.rid, changes.full, changes.removed, changes.free_space), (7, False, ('c' * 40,), 5000))
+        # The Running page's "downloading, 25%, 10 min left" (owner, 2026-11-26).
+        self.assertEqual(changes.torrents, {HASH: TorrentChange(state='downloading', progress=0.25, downloaded=100,
+                                                                dlspeed=2048, eta=600, amount_left=300)})
         request = self.requests[-1][0]
         self.assertEqual(urllib.parse.urlsplit(request.full_url).path, '/api/v2/sync/maindata')
         self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query), {'rid': ['3']})
@@ -83,7 +86,9 @@ class UniformReportTests(unittest.TestCase):
     def test_changes_rejects_malformed_updates(self):
         for data in ({'rid': -1}, {'rid': 1, 'full_update': 'yes'},
                      {'rid': 1, 'torrents': {HASH: {'progress': 2}}},
-                     {'rid': 1, 'torrents': {HASH: {'downloaded': -5}}}):
+                     {'rid': 1, 'torrents': {HASH: {'downloaded': -5}}},
+                     {'rid': 1, 'torrents': {HASH: {'eta': 'soon'}}},
+                     {'rid': 1, 'server_state': {'free_space_on_disk': -1}}):
             with self.subTest(data=data), self.assertRaises(ClientInvalid):
                 self.logged_in([Response(json.dumps(data).encode())]).changes()
 
