@@ -865,10 +865,10 @@ def _apply_079_if_needed(db: sqlite3.Connection) -> bool:
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version == 79:
         return False
-    if version != 78:
-        raise ValueError(f"Expected database schema v78 or v79, found v{version}")
-    sql_079 = (migrations.SQL_DIR / "079_series.sql").read_text()
-    db.executescript(sql_079)
+    if version not in (77, 78):
+        raise ValueError(f"Expected database schema v77, v78 or v79, found v{version}")
+    for script in migrations.SCRIPTS[version:79]:
+        db.executescript((migrations.SQL_DIR / script).read_text())
     return True
 
 
