@@ -214,7 +214,7 @@ def search_series_sync(db, anidb_id: int, context=None, now: int | None = None) 
 
 
 async def retry_series(db, anidb_id: int, context=None, now: int | None = None) -> dict:
-    """Reset dropped torrents to waiting / check_release and wake series."""
+    """Wake the series: a stopped torrent (program error) resumes at its step; a dropped one starts over."""
     if now is None:
         now = int(time.time() * 1000)
     series = get_series(db, anidb_id)
@@ -223,7 +223,11 @@ async def retry_series(db, anidb_id: int, context=None, now: int | None = None) 
 
     retried_count = 0
     for t in series.torrents:
-        if t.get("state") == "dropped":
+        if t.get("state") == "stopped":
+            t["state"] = "working"          # Its files are still there.
+            t["why"] = None
+            retried_count += 1
+        elif t.get("state") == "dropped":
             t["state"] = "waiting"
             t["step"] = "check_release"
             t["why"] = None

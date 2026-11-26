@@ -65,13 +65,10 @@ class TestSeriesLogging(unittest.TestCase):
         output_prog = "\n".join(logs_prog.output)
         self.assertIn(f"series {aid} {title} · S01E05 [Group] Cyberpunk - 05 · downloading, 53%", output_prog)
 
-        # Repeated wait with same progress (53%) at next wake (11000): logs NOTHING about downloading
-        with self.assertLogs("akon.series", level="INFO") as logs2:
+        # Repeated wait with same progress (53%) at next wake (11000): logs nothing at all
+        with self.assertNoLogs("akon.series", level="INFO"):
             worked2 = asyncio.run(run_series_attempt(self.db, context, now=11000))
             self.assertTrue(worked2)
-
-        output2 = "\n".join(logs2.output)
-        self.assertNotIn("downloading, 53%", output2)
 
         # Download finishes at next wake (16000)
         qb.progress = 1.0

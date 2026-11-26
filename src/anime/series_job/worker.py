@@ -12,8 +12,8 @@ from src.anime.series_job.steps.check_media import check_media
 from src.anime.series_job.steps.transcode import transcode
 from src.anime.series_job.steps.stage import stage
 from src.anime.series_job.steps.drop import drop_torrent
-from src.anime.series_job.steps.common import next_step_name
-from src.anime.series_job.store import claim, save, Claim, SeriesRow
+from src.anime.series_job.steps.common import STEP_SEQUENCE, next_step_name
+from src.anime.series_job.store import _atomic, claim, note, renew, save
 
 logger = logging.getLogger("akon.series")
 
@@ -27,8 +27,20 @@ STEP_HANDLERS = {
 }
 
 
+def _ready_first(torrents):
+    """Torrents further along go first, so a torrent waiting for an episode never takes
+    the slot of the torrent that holds it."""
+    order = {name: i for i, name in enumerate(STEP_SEQUENCE)}
+    return sorted(torrents, key=lambda t: -order.get(t.get("step") or "check_release", 0))
+
+
 async def run_series_attempt(db, context, now: int | None = None) -> bool:
-    """Take one claimed series, advance up to N torrents by one step, and save."""
+    """Take one due series, advance up to N torrents by one step, and save.
+
+    After the attempt the series is WORKING only when a torrent moved on;
+    when every torrent is waiting it sleeps until the soonest wake time, or
+    until something wakes it (the API, an action, another torrent finishing).
+    """
     if now is None:
         now = int(time.time() * 1000)
     context.now = now
@@ -38,95 +50,66 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         return False
 
     claim_obj, series = claimed
-
     active_torrents = [t for t in series.torrents if t.get("state") in ("waiting", "working")]
-    if not active_torrents:
-        series.state = "ASLEEP"
-        series.wake_at_ms = None
-        save(db, claim_obj, series, now=now)
-        return True
-
-    # Limit to N torrents at once
-    n = series.torrents_at_once or 1
-    to_run = active_torrents[:n]
+    to_run = _ready_first(active_torrents)[:series.torrents_at_once or 1]
     min_wake_ms: int | None = None
-
-    logger.info("series %s %s · work started", series.anidb_id, series.title)
+    moved = False
+    if any(t.get("state") == "waiting" for t in to_run):
+        # New work; a timed re-check of a download logs nothing (repeated waits are quiet).
+        logger.info("series %s %s · work started", series.anidb_id, series.title)
 
     for torrent in to_run:
         step_name = torrent.get("step") or "check_release"
-        handler = STEP_HANDLERS.get(step_name)
-        if handler is None:
-            await drop_torrent(series, torrent, f"UNKNOWN_STEP_{step_name}", context)
-            continue
-
         episodes = torrent.get("episodes", [])
         ep_label = ", ".join(episodes) if episodes else "release"
         release_name = torrent.get("release_name", "")
-        step_label = step_name.replace("_", " ")
 
-        if torrent.get("state") == "waiting" and step_name != "download":
+        if torrent.get("state") == "waiting":
             logger.info("series %s %s · %s %s · %s started",
-                        series.anidb_id, series.title, ep_label, release_name, step_label)
-
+                        series.anidb_id, series.title, ep_label, release_name, step_name.replace("_", " "))
         try:
-            result = await handler(series, torrent, context)
-            if result.action == "done":
-                next_step = result.next_step or next_step_name(step_name)
-                torrent["step"] = next_step
-                if next_step == "done":
-                    torrent["state"] = "done"
-                else:
-                    torrent["state"] = "working"
-            elif result.action == "wait":
-                torrent["state"] = "working"
-                if result.wake_at_ms is not None:
-                    if min_wake_ms is None or result.wake_at_ms < min_wake_ms:
-                        min_wake_ms = result.wake_at_ms
-            elif result.action == "drop":
-                await drop_torrent(series, torrent, result.why or "DROPPED", context)
+            result = await STEP_HANDLERS[step_name](series, torrent, context)
         except Exception as exc:
-            # Unexpected error boundary: log full trace, drop torrent, send JOB_FAILED notification
-            tb = exc.__traceback__
-            while tb and tb.tb_next:
-                tb = tb.tb_next
-            frame = tb.tb_frame if tb else None
-            filename = os.path.basename(frame.f_code.co_filename) if frame else "unknown"
-            lineno = tb.tb_lineno if tb else 0
-            error_loc = f"program error at {filename}:{lineno}"
-
-            logger.error(
-                "Series %s torrent %s failed with unexpected error:\n%s",
-                series.anidb_id, torrent.get("infohash"), traceback.format_exc()
-            )
-            await drop_torrent(series, torrent, error_loc, context)
-
-            try:
-                from src.anime.notifications import notify
+            # Boundary (plan, Errors): an unexpected error is a program bug. The torrent
+            # stops with "program error" and keeps its files; Retry resumes it at this step.
+            where = traceback.extract_tb(exc.__traceback__)[-1]
+            error_loc = f"program error at {os.path.basename(where.filename)}:{where.lineno} ({type(exc).__name__})"
+            logger.error("series %s %s · %s %s · %s stopped: %s", series.anidb_id, series.title, ep_label,
+                         release_name, step_name.replace("_", " "), error_loc, exc_info=exc)
+            torrent["state"], torrent["why"] = "stopped", error_loc
+            note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · "
+                         f"stopped: {error_loc}; Retry resumes it")
+            from src.anime.notifications import notify
+            with _atomic(db):
                 notify(db, {
                     "type": "JOB_FAILED",
                     "severity": "attention",
                     "title": f"Series error: {series.title}"[:120],
-                    "message": f"{torrent.get('release_name', 'Release')} stopped: {error_loc}"[:500],
+                    "message": f"{release_name or 'Release'} stopped: {error_loc}"[:500],
                     "anidb_id": series.anidb_id,
-                    "release_name": torrent.get("release_name", "")[:1024],
+                    "release_name": release_name[:1024],
                 }, now=now)
-            except Exception as notify_err:
-                logger.warning("Could not send JOB_FAILED notification: %s", notify_err)
+            continue
+        if result.action == "done":
+            moved = True
+            next_step = result.next_step or next_step_name(step_name)
+            torrent["step"] = next_step
+            torrent["state"] = "done" if next_step == "done" else "working"
+        elif result.action == "wait":
+            torrent["state"] = "working"
+            if result.wake_at_ms is not None and (min_wake_ms is None or result.wake_at_ms < min_wake_ms):
+                min_wake_ms = result.wake_at_ms
+        else:
+            moved = True
+            await drop_torrent(series, torrent, result.why or "DROPPED", context)
+        renew(db, claim_obj, now)
 
-    # Determine series state after running steps
     remaining_active = [t for t in series.torrents if t.get("state") in ("waiting", "working")]
-    if not remaining_active:
-        series.state = "ASLEEP"
-        series.wake_at_ms = None
-    elif min_wake_ms is not None:
-        series.state = "ASLEEP"
-        series.wake_at_ms = min_wake_ms
+    if remaining_active and moved:
+        series.state, series.wake_at_ms = "WORKING", None
     else:
-        series.state = "WORKING"
-        series.wake_at_ms = None
+        series.state, series.wake_at_ms = "ASLEEP", (min_wake_ms if remaining_active else None)
 
-    # Release lease on completion of attempt
     series.lease_token = None
     series.lease_expires_at_ms = None
     save(db, claim_obj, series, now=now)

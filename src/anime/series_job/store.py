@@ -9,7 +9,7 @@ torrent: {
     "release_name": str,            # release name / title
     "raw_body": str | None,         # autobrr JSON payload or magnet text
     "step": str,                    # check_release, reserve_episodes, download, check_media, transcode, stage, etc.
-    "state": str,                   # "waiting", "working", "done", "dropped"
+    "state": str,                   # "waiting", "working", "done", "dropped", "stopped" (program error)
     "why": str | None,              # reason when dropped or why waiting
     "episodes": list[str],          # episode codes, e.g. ["S01E01", "S01E02"]
     "files": list[dict],            # media files discovered or matched
@@ -130,6 +130,15 @@ def claim(db, now: int, lease_ms: int = DEFAULT_LEASE_MS) -> tuple[Claim, Series
         series.lease_expires_at_ms = expires_at_ms
         series.updated_at_ms = now
         return Claim(anidb_id, token, expires_at_ms), series
+
+
+def renew(db, claim: Claim, now: int, lease_ms: int = DEFAULT_LEASE_MS) -> None:
+    """Extend the lease between torrents, so a long attempt keeps its series."""
+    with _atomic(db):
+        cur = db.execute("UPDATE series SET lease_expires_at_ms=? WHERE anidb_id=? AND lease_token=?",
+                         (int(time.time() * 1000) + lease_ms, claim.anidb_id, claim.token))
+        if cur.rowcount == 0:
+            raise LeaseLost(f"Lease on series {claim.anidb_id} expired or lost")
 
 
 def save(db, claim: Claim, row: SeriesRow, now: int | None = None) -> None:

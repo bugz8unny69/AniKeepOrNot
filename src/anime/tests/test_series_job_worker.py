@@ -110,7 +110,7 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
         worked_after = asyncio.run(run_series_attempt(self.db, context, now=6600))
         self.assertFalse(worked_after)
 
-    def test_unexpected_error_drops_torrent_and_notifies_while_other_torrent_continues(self):
+    def test_unexpected_error_stops_the_torrent_keeps_its_files_and_notifies_while_the_other_continues(self):
         wake(self.db, 20000, "Multi-Torrent Show", now=1000)
         bad_torrent = {
             "infohash": "1" * 40,
@@ -150,9 +150,9 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
         self.assertTrue(any("unexpected division bug" in line for line in logs.output))
 
         series = get_series(self.db, 20000)
-        # Bad torrent was dropped with "program error at file:line"
+        # Bad torrent stopped (not dropped: its files stay) with "program error at file:line"
         bad = next(t for t in series.torrents if t["infohash"] == "1" * 40)
-        self.assertEqual(bad["state"], "dropped")
+        self.assertEqual((bad["state"], bad["step"]), ("stopped", "check_release"))
         self.assertTrue(bad["why"].startswith("program error at test_series_job_worker.py:"))
 
         # Good torrent was successfully advanced!
@@ -170,6 +170,33 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
         self.assertEqual(severity, "attention")
         self.assertIn("Multi-Torrent Show", title)
         self.assertIn("program error at", msg)
+
+
+    def test_a_series_whose_torrents_all_wait_sleeps_instead_of_running_again_at_once(self):
+        # Before, a wait with no wake time left the series WORKING: it re-ran ~20 times a second.
+        wake(self.db, 20001, "Waiting Show", now=1000)
+        add_torrent(self.db, 20001, {"infohash": "3" * 40, "release_name": "[A] Show - 01",
+                                     "episodes": ["S01E01"], "step": "reserve_episodes", "state": "working"}, now=1000)
+        series = get_series(self.db, 20001)
+        series.episodes["S01E01"] = {"state": "downloading", "torrent": "4" * 40, "file": None}
+        series.torrents.append({"infohash": "4" * 40, "release_name": "[B] Show - 01", "episodes": ["S01E01"],
+                                "step": "done", "state": "done"})
+        from src.anime.series_job.store import update_series
+        update_series(self.db, series, now=1000)
+        context = SimpleNamespace(db=self.db, configuration=None, cancelled=lambda: False, now=1000)
+        self.assertTrue(asyncio.run(run_series_attempt(self.db, context, now=2000)))
+        self.assertEqual(self.db.execute("SELECT state,wake_at_ms FROM series WHERE anidb_id=20001").fetchone(),
+                         ("ASLEEP", None))
+        self.assertFalse(asyncio.run(run_series_attempt(self.db, context, now=3000)))   # Nothing due.
+
+    def test_retry_resumes_a_stopped_torrent_at_its_step(self):
+        from src.anime.series_job.actions import retry_series_sync
+        wake(self.db, 20002, "Stopped Show", now=1000)
+        add_torrent(self.db, 20002, {"infohash": "5" * 40, "release_name": "[A] Show - 02", "step": "download",
+                                     "state": "stopped", "why": "program error at download.py:9"}, now=1000)
+        retry_series_sync(self.db, 20002, now=2000)
+        torrent = get_series(self.db, 20002).torrents[0]
+        self.assertEqual((torrent["step"], torrent["state"], torrent["why"]), ("download", "working", None))
 
 
 if __name__ == "__main__":
