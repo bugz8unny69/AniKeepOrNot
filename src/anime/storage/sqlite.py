@@ -769,6 +769,7 @@ CREATE TABLE IF NOT EXISTS prowlarr_search_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_job ON prowlarr_search_snapshots(job_id, attempt);
 CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_plan ON prowlarr_search_snapshots(plan_id, episode);
+CREATE INDEX IF NOT EXISTS idx_prowlarr_snapshots_search ON prowlarr_search_snapshots(tvdb_series_id,season,episode,search_mode);
 
 CREATE TABLE IF NOT EXISTS manual_release_submissions (
  event_id INTEGER PRIMARY KEY REFERENCES incoming_events(event_id),
