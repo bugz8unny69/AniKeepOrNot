@@ -65,7 +65,7 @@ class VersionAdapter:
                 'autoTMM': 'false', 'contentLayout': 'Original', 'useDownloadPath': 'false'}
 
     def label_fields(self, marker):
-        return {'tags': 'ad-' + marker}
+        return {'tags': 'akon-' + marker}
 
     def __repr__(self):
         return f'{type(self).__name__}({self.major}, {self.api_version})'

@@ -23,8 +23,10 @@ async def drop_torrent(series: SeriesRow, torrent: dict, why: str, context) -> N
     qb = torrent.get("qb") or {}
     if qb.get("added"):
         def remove():
-            return context.torrents.client(context.configuration, qb["marker"]).remove_series_torrent(
-                infohash, qb["marker"])
+            prefix = qb.get("prefix", "akon")
+            client = (context.torrents.client(context.configuration, qb["marker"], prefix=prefix)
+                      if prefix != "akon" else context.torrents.client(context.configuration, qb["marker"]))
+            return client.remove_series_torrent(infohash, qb["marker"])
         try:
             found = await blocking(remove)
         except ClientUnavailable:

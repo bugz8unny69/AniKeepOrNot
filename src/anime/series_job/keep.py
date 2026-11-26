@@ -288,8 +288,10 @@ def cleanup(series, keep, context):
     for torrent in series.torrents:
         qb = torrent.get("qb") or {}
         if qb.get("added") and not torrent.get("removed"):
-            context.torrents.client(context.configuration, qb["marker"]).remove_series_torrent(
-                torrent["infohash"], qb["marker"])
+            prefix = qb.get("prefix", "akon")
+            client = (context.torrents.client(context.configuration, qb["marker"], prefix=prefix)
+                      if prefix != "akon" else context.torrents.client(context.configuration, qb["marker"]))
+            client.remove_series_torrent(torrent["infohash"], qb["marker"])
             torrent["removed"] = True
     root = context.configuration.value("storage.user_evaluation_root")
     for code, record in keep["imports"].items():

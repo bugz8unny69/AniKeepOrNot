@@ -37,6 +37,10 @@ DEFAULTS={'root':'/opt/akon','state_dir':'/var/lib/akon',
     'source':'git@github.com:bugz8unny69/AniKeepOrNot.git','ref':'NextGen',
     'destination':'/usr/local/bin/akon-install','unit_dir':'/etc/systemd/system','python':'python3'}
 SERVICES=('akon-api.service','akon-worker.service')
+LEGACY_TARGET='anime-discovery.target'
+LEGACY_SERVICES=('anime-discovery-api.service','anime-discovery-worker.service')
+LEGACY_UNITS=(LEGACY_TARGET,*LEGACY_SERVICES)
+LEGACY_TO_NEW={'anime-discovery-api.service':'akon-api.service','anime-discovery-worker.service':'akon-worker.service'}
 # Set when an upgrade re-runs the installer it just fetched, so it runs once.
 REEXEC_ENV='AKON_INSTALLER_REEXEC'
 RELEASE_INFO='.akon-release.json'
@@ -134,8 +138,8 @@ def adm_launcher(root,config_dir):
     """Keep the local ADM command on the active branch's settings/database."""
     current=Path(root)/'current'
     return ('#!/bin/sh\n'
-            'ANIME_DISCOVERY_CONFIG_DIR='+shlex.quote(str(config_dir))+'\n'
-            'export ANIME_DISCOVERY_CONFIG_DIR\n'
+            'AKON_CONFIG_DIR='+shlex.quote(str(config_dir))+'\n'
+            'export AKON_CONFIG_DIR\n'
             'exec '+shlex.quote(str(current/'.venv/bin/python'))+' '
             +shlex.quote(str(current/'bin/adm'))+' "$@"\n')
 
@@ -455,11 +459,15 @@ def apply(options,args,execute=run):
         with_retries(execute,[str(release/'.venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(release/'requirements-nextgen-api.txt')])
         # Build first; stop only once the candidate is ready for local setup.
         active=[name for name in SERVICES if execute(['systemctl','is-active','--quiet',name],check=False).returncode==0]
+        active_legacy=[name for name in LEGACY_SERVICES if execute(['systemctl','is-active','--quiet',name],check=False).returncode==0]
+        active_to_restore=active or active_legacy
+        if not active and active_legacy:
+            active=[LEGACY_TO_NEW[name] for name in active_legacy]
         previous=os.readlink(root/'current') if (root/'current').is_symlink() else None
         had_config=(config/'settings.json').exists()
         atomic_file(metadata/'installation.pending.json',(json.dumps({'candidate':str(release),'previous_release':previous,'revision':revision},sort_keys=True)+'\n').encode(),0o600)
         print(f'Stopping {APP_NAME} services for local setup...',flush=True)
-        installed=[name for name in ('akon.target',*SERVICES)
+        installed=[name for name in ('akon.target',*SERVICES,*LEGACY_UNITS)
             if execute(['systemctl','show','--property=LoadState','--value',name],check=False).stdout.strip() not in ('','not-found')]
         setup_started=True
         if installed:execute(['systemctl','stop',*installed])
@@ -519,6 +527,16 @@ def apply(options,args,execute=run):
                     raise RuntimeError('Service did not return to active state after '
                         + ('upgrade' if args.upgrade else 'installation') + ': '+name
                         +' (systemctl is-active status '+str(status.returncode)+')')
+        legacy_removed=[]
+        legacy_present=[name for name in LEGACY_UNITS if (unit_dir/name).exists()]
+        if legacy_present:
+            execute(['systemctl','disable',*legacy_present],check=False)
+            for name in legacy_present:
+                old_unit=unit_dir/name
+                shutil.copyfile(old_unit,backup/name)
+                old_unit.unlink()
+                legacy_removed.append(name)
+            execute(['systemctl','daemon-reload'])
         if args.admin_password_file:
             if SERVICES[0] not in selected:raise ValueError('Password provisioning requires --start api or all.')
             # ADM is the sole password bootstrap path; never write the password store directly.
@@ -549,6 +567,7 @@ def apply(options,args,execute=run):
             'credentials_file':str(config/'secrets.json'),'command':str(destination),
             'branch':options['ref'],'database':options['database'],
             'branch_switch':options.get('switch'),
+            'removed_legacy_units':legacy_removed,
             'database_copied_from_version':(branch_result.get('copied_from_version') if new_branch else None)}
         atomic_file(metadata/'installation.json',(json.dumps(result,sort_keys=True)+'\n').encode(),0o600)
         (metadata/'installation.pending.json').unlink()
@@ -576,9 +595,9 @@ def apply(options,args,execute=run):
             # Nothing the running release depends on changed yet (release pointer,
             # unit files, database, settings): bring back what was running.
             (metadata/'installation.pending.json').unlink(missing_ok=True)
-            if active:
-                print('Setup failed before the database was changed; restarting '+', '.join(active)+' on the current release.',flush=True)
-                execute(['systemctl','start',*active],check=False)
+            if active_to_restore:
+                print('Setup failed before the database was changed; restarting '+', '.join(active_to_restore)+' on the current release.',flush=True)
+                execute(['systemctl','start',*active_to_restore],check=False)
         elif setup_started:
             # Schema may have advanced: never restart older source or restore a
             # database automatically. Retain pending metadata for the next run.
@@ -629,16 +648,25 @@ def rollback(options,args,execute=run):
         if active:execute(['systemctl','stop',*active])
         # The unit files saved when the current release was installed are the previous release's.
         backup=metadata/'unit-backups'/current.name
+        removed_legacy=recorded.get('removed_legacy_units') or []
+        unit_dir=Path(options['unit_dir'])
+        if removed_legacy:
+            execute(['systemctl','disable',*SERVICES],check=False)
+            for name in ('akon.target',*SERVICES):
+                if not (backup/name).is_file():(unit_dir/name).unlink(missing_ok=True)
         if backup.is_dir():
             for unit in sorted(backup.iterdir()):
-                atomic_file(Path(options['unit_dir'])/unit.name,unit.read_bytes(),0o644)
+                atomic_file(unit_dir/unit.name,unit.read_bytes(),0o644)
         pointer=root/('.current-'+previous.name);pointer.symlink_to(previous)
         os.replace(pointer,root/'current')
         write_adm_launcher(options['destination'],root,config_dir)
         execute(['systemctl','daemon-reload'])
-        if active:
-            execute(['systemctl','start',*active])
-            for name in active:
+        restart_units=[name for name in LEGACY_SERVICES if name in removed_legacy] if removed_legacy and active else active
+        if removed_legacy and restart_units:
+            execute(['systemctl','enable',*restart_units],check=False)
+        if restart_units:
+            execute(['systemctl','start',*restart_units])
+            for name in restart_units:
                 if execute(['systemctl','is-active','--quiet',name],check=False).returncode:
                     raise RuntimeError('Service did not return to active state after rollback: '+name)
         revision=private_json(info).get('revision') if info.is_file() else None

@@ -20,7 +20,8 @@ from src.anime.staging import (Publisher, StagingBusy, StagingConfiguration, Sta
 
 def plan_for(configuration, series, torrent, entry):
     root = configuration.value("storage.user_evaluation_root")
-    source_root = options_for(configuration, torrent["qb"]["marker"]).download_root
+    qb = torrent["qb"]
+    source_root = options_for(configuration, qb["marker"], prefix=qb.get("prefix", "akon")).download_root
     disjoint(root, (source_root, configuration.value("storage.download_root"),
                     configuration.value("storage.keep_root"), configuration.value("storage.database_path")))
     season, number = int(entry["episode"][1:3]), int(entry["episode"][4:])

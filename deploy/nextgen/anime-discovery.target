@@ -1,7 +1,0 @@
-[Unit]
-Description=AniKeepOrNot
-Wants=anime-discovery-api.service anime-discovery-worker.service
-After=network-online.target remote-fs.target
-
-[Install]
-WantedBy=multi-user.target

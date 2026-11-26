@@ -65,7 +65,11 @@ async def with_client(context, torrent, work):
     from src.anime.acquisition.metadata import MetadataInvalid
 
     def run():
-        return work(context.torrents.client(context.configuration, marker(torrent)))
+        m = marker(torrent)
+        prefix = torrent.get("qb", {}).get("prefix", "akon")
+        client = (context.torrents.client(context.configuration, m, prefix=prefix)
+                  if prefix != "akon" else context.torrents.client(context.configuration, m))
+        return work(client)
     try:
         return await blocking(run)
     except ClientUnavailable:

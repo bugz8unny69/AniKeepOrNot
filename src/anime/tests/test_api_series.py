@@ -153,3 +153,37 @@ class ApiSeriesTests(unittest.IsolatedAsyncioTestCase):
 
         status, _, _ = await self.request("POST", "/api/v1/series/99999/keep", token=ADMIN)
         self.assertEqual(status, 404)
+
+    async def test_akon_and_legacy_mount_routes(self):
+        for prefix in ("/akon", "/anime-discovery"):
+            # Dashboard HTML asset
+            scope = {
+                "type": "http", "http_version": "1.1", "method": "GET",
+                "path": prefix + "/", "raw_path": (prefix + "/").encode(),
+                "query_string": b"", "headers": [(b"host", b"anime.example")],
+                "client": ("127.0.0.1", 123),
+            }
+            out = []
+            async def recv():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(msg):
+                out.append(msg)
+            await self.app(scope, recv, send)
+            self.assertEqual(out[0]["status"], 200)
+            self.assertIn(b"intake-panel", out[1]["body"])
+
+            # /api/v1/check (returns 503 identifying or 200 when cached, not 404)
+            st_check, _, _ = await self.request(
+                "POST", f"{prefix}/api/v1/check",
+                {"release_name": "[G] Show - 01", "torrent_infohash": "a" * 40},
+                token=WEB,
+            )
+            self.assertNotEqual(st_check, 404)
+
+            # /api/v1/webhook (accepts release, not 404)
+            st_hook, _, _ = await self.request(
+                "POST", f"{prefix}/api/v1/webhook",
+                {"release_name": "[G] Show - 01", "torrent_infohash": "a" * 40},
+                token=WEB,
+            )
+            self.assertNotEqual(st_hook, 404)

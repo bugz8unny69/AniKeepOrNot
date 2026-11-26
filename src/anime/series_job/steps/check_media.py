@@ -14,7 +14,8 @@ from src.anime.series_job.torrents import options_for
 async def check_media(series: SeriesRow, torrent: dict, context) -> StepResult:
     label = (f"series {series.anidb_id} {series.title} · {', '.join(torrent['episodes'])} "
              f"{torrent.get('release_name', '')}")
-    root = options_for(context.configuration, torrent["qb"]["marker"]).download_root
+    qb = torrent["qb"]
+    root = options_for(context.configuration, qb["marker"], prefix=qb.get("prefix", "akon")).download_root
     audio = context.configuration.value("acquisition.audio_check")
     for entry in torrent["files"]:
         if "media" in entry:

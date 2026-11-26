@@ -38,7 +38,8 @@ def transcode_file(context, series, torrent, entry, client=None):
         entry["transcode_attempts"] = entry.get("transcode_attempts", 0) + 1
         write_torrent_key(database, context.claim, series.torrents, torrent, "files")
 
-    source_root = options_for(configuration, torrent["qb"]["marker"]).download_root
+    qb = torrent["qb"]
+    source_root = options_for(configuration, qb["marker"], prefix=qb.get("prefix", "akon")).download_root
     with directory(source_root) as root, parent(root, entry["path"]) as (folder, name):
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=folder)
         try:

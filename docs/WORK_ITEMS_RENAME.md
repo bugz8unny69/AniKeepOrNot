@@ -59,12 +59,10 @@ Check these again before you start; read-only commands only.
    and its folder is `<download root>/akon-<marker>` or, for one added before the rename,
    `<download root>/ad-<marker>`. RN-3 implements this.
 
-Still open (ask, don't decide):
-
-2. **The other branches' data.** Should `anime-discovery.sqlite` (NextGen) and
-   `anime-discovery-refactor.sqlite` be renamed too (`akon-nextgen.sqlite`, `akon-refactor.sqlite`), or
-   left alone since nothing runs them?
-3. **How long the old web address keeps working.** Until a date, or until Autobrr points at `/akon/`?
+2. **The other branches' data: answered (owner, 2026-11-26).** Leave `anime-discovery.sqlite` (NextGen) and
+   `anime-discovery-refactor.sqlite` alone; nothing runs them.
+3. **How long the old web address keeps working: answered (owner, 2026-11-26).** Keep `/anime-discovery/`
+   working until Autobrr points at `/akon/`, then retire it in a follow-up.
 
 ## Work items, in order
 

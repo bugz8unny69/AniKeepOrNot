@@ -20,16 +20,17 @@ from src.anime.torrent_client.qbittorrent import Client
 
 
 def marker(torrent):
-    """The torrent's marker, created once."""
+    """The torrent's marker and folder prefix ('akon' for new torrents), created once."""
     qb = torrent.setdefault("qb", {})
     if "marker" not in qb:
         qb["marker"] = uuid.uuid4().hex
+    qb.setdefault("prefix", "akon")
     return qb["marker"]
 
 
-def options_for(configuration, torrent_marker):
+def options_for(configuration, torrent_marker, prefix="akon"):
     base = download_options(configuration)
-    return DownloadOptions(base.base_url, str(PurePosixPath(base.download_root) / ("ad-" + torrent_marker)),
+    return DownloadOptions(base.base_url, str(PurePosixPath(base.download_root) / f"{prefix}-{torrent_marker}"),
                            base.category, base.timeout_seconds)
 
 
@@ -80,8 +81,8 @@ class Torrents:
     def __init__(self, secrets, *, client_factory=Client):
         self.secrets, self.client_factory = secrets, client_factory
 
-    def client(self, configuration, torrent_marker):
-        client = self.client_factory(options_for(configuration, torrent_marker),
+    def client(self, configuration, torrent_marker, prefix="akon"):
+        client = self.client_factory(options_for(configuration, torrent_marker, prefix=prefix),
                                      self.secrets.qbittorrent_credentials())
         client.login()
         return client

@@ -53,7 +53,7 @@ class Client:
         self._transport=transport or (lambda request,timeout:opener.open(request,timeout=timeout))
 
     def _request(self,path,*,query=None,form=None,body=None,content_type=None,limit=3145728):
-        if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export','sync/maindata'):raise ValueError('unsupported client operation')
+        if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export','torrents/addTags','torrents/removeTags','torrents/createCategory','torrents/setCategory','torrents/removeCategories','sync/maindata'):raise ValueError('unsupported client operation')
         url=self.options.base_url+'/api/v2/'+path
         if query:url+='?'+urllib.parse.urlencode(query)
         headers={'User-Agent':'akon/1','Referer':self.options.base_url+'/','Accept':'application/json'}
@@ -204,14 +204,16 @@ class Client:
     def delete_owned(self,info_hash,marker,save_path):
         """Cancel cleanup. Returns what it found:
         'absent'  - no such torrent;
-        'foreign' - no ad-<marker> tag: not ours, untouched;
+        'foreign' - no akon-<marker> tag (or extra prefix tags): not ours, untouched;
         'moved'   - ours, but stored outside its recorded folder: untouched;
         'deleted' - ours and where we put it: deleted with its files.
         """
         if self.protocol is None:raise ClientAuthenticationFailed()
         observed=self.inspect(info_hash,include_files=False)
         if observed is None:return 'absent'
-        if 'ad-'+marker not in observed.tags:return 'foreign'
+        expected='akon-'+marker
+        if expected not in observed.tags or any((t.startswith('akon-') or t.startswith('ad-')) and t!=expected for t in observed.tags):
+            return 'foreign'
         if observed.save_path.rstrip('/')!=save_path.rstrip('/'):return 'moved'
         self._request('torrents/delete',form={'hashes':observed.info_hash,'deleteFiles':'true'},limit=4096)
         return 'deleted'
@@ -227,15 +229,17 @@ class Client:
         self._request('torrents/add',body=b''.join(chunks),content_type='multipart/form-data; boundary='+boundary,limit=4096)
 
     # Series torrents (the series job). The client is built with the torrent's own
-    # options: download_root is <download root>/ad-<marker>, as for every AKON torrent.
-    # Each call reads the torrent back and acts only on one AKON owns (marker tag,
-    # category, folder); the version adapter picks the spelling (pause/stop, paused/stopped).
+    # options: download_root is <download root>/<prefix>-<marker> ('akon' for new,
+    # 'ad' for torrents added before the rename). Each call reads the torrent back
+    # and acts only on one AKON owns (akon-<marker> tag, category, folder).
 
     def _series_owned(self,info_hash,marker):
         from src.anime.acquisition.metadata import infohash
         if (not self._sid or self.protocol is None):raise ClientAuthenticationFailed()
         if (type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)
-                or not self.options.download_root.endswith('/ad-'+marker)):raise ClientInvalid()
+                or not (self.options.download_root.endswith('/akon-'+marker)
+                        or self.options.download_root.endswith('/ad-'+marker))):
+            raise ClientInvalid()
         observed=self.inspect(infohash(info_hash))
         if observed is not None and not verify_torrent_ownership(
                 observed,marker,self.options.download_root,self.options.category):
@@ -286,6 +290,47 @@ class Client:
         """Delete the owned torrent and its files. Returns delete_owned's answer."""
         if (type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)):raise ClientInvalid()
         return self.delete_owned(info_hash,marker,self.options.download_root)
+
+    def rename_legacy_torrents(self,base_download_root,*,old_category='anime-discovery',new_category='akon',dry_run=False):
+        """Retag and recategorize existing AKON torrents in place; never move files."""
+        if not self._sid or self.protocol is None:raise ClientAuthenticationFailed()
+        base=base_download_root.rstrip('/')
+        raw,_=self._request('torrents/info',query={'category':old_category})
+        rows=_json(raw)
+        if type(rows) is not list:raise ClientInvalid()
+        renamed=[];skipped=[];cat_created=False
+        for row in rows:
+            if type(row) is not dict:raise ClientInvalid()
+            h=_text(row.get('hash'),64)
+            tags=[t.strip() for t in (_text(row.get('tags'),8192).split(',') if row.get('tags') else []) if t.strip()]
+            ad_tags=[t for t in tags if t.startswith('ad-')]
+            akon_tags=[t for t in tags if t.startswith('akon-')]
+            save_path=_text(row.get('save_path'),4096).rstrip('/')
+            if row.get('auto_tmm') is not False or len(ad_tags)!=1 or akon_tags:
+                skipped.append({'hash':h,'reason':'tags_or_auto_tmm'})
+                continue
+            ad_tag=ad_tags[0]
+            marker=ad_tag[3:]
+            if not re.fullmatch('[a-f0-9]{32}',marker) or save_path!=base+'/'+ad_tag:
+                skipped.append({'hash':h,'reason':'save_path_or_marker'})
+                continue
+            if not dry_run:
+                self._request('torrents/addTags',form={'hashes':h,'tags':'akon-'+marker},limit=4096)
+                self._request('torrents/removeTags',form={'hashes':h,'tags':ad_tag},limit=4096)
+                if not cat_created:
+                    try:self._request('torrents/createCategory',form={'category':new_category,'savePath':''},limit=4096)
+                    except ClientInvalid:pass
+                    cat_created=True
+                self._request('torrents/setCategory',form={'hashes':h,'category':new_category},limit=4096)
+            renamed.append({'hash':h,'marker':marker,'name':row.get('name','')})
+        removed_old_category=False
+        if not dry_run and renamed:
+            rem_raw,_=self._request('torrents/info',query={'category':old_category})
+            rem=_json(rem_raw)
+            if type(rem) is list and len(rem)==0:
+                self._request('torrents/removeCategories',form={'categories':old_category},limit=4096)
+                removed_old_category=True
+        return {'renamed':renamed,'skipped':skipped,'removed_old_category':removed_old_category}
 
     def free_space(self):
         """Free bytes on qBittorrent's download disk, as qBittorrent reports it."""
