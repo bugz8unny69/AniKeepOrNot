@@ -142,7 +142,7 @@ class TestSeriesActions(unittest.IsolatedAsyncioTestCase):
         updated = get_series(self.db, aid)
         self.assertEqual(updated.state, "WORKING")
         self.assertEqual(updated.torrents[0]["state"], "waiting")
-        self.assertEqual(updated.torrents[0]["step"], "check_release")
+        self.assertEqual(updated.torrents[0]["step"], "get_metadata")
         self.assertIsNone(updated.torrents[0]["why"])
         self.assertTrue(any("retried" in line for line in updated.recent))
 

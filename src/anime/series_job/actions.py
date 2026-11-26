@@ -229,7 +229,7 @@ async def retry_series(db, anidb_id: int, context=None, now: int | None = None) 
             retried_count += 1
         elif t.get("state") == "dropped":
             t["state"] = "waiting"
-            t["step"] = "check_release"
+            t["step"] = "get_metadata"
             t["why"] = None
             retried_count += 1
 

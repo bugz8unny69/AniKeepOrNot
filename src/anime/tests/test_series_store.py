@@ -124,7 +124,7 @@ class SeriesStoreTests(unittest.TestCase):
         row = get_series(self.db, 501)
         self.assertEqual(len(row.torrents), 1)
         self.assertEqual(row.torrents[0]["infohash"], "aabbccddeeff00112233445566778899aabbccdd")
-        self.assertEqual(row.torrents[0]["step"], "check_release")
+        self.assertEqual(row.torrents[0]["step"], "get_metadata")
         self.assertEqual(row.torrents[0]["state"], "waiting")
 
         # Adding same infohash again is a no-op

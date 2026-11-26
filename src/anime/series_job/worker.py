@@ -5,6 +5,7 @@ import os
 import time
 import traceback
 
+from src.anime.series_job.steps.metadata import get_metadata
 from src.anime.series_job.steps.check_release import check_release
 from src.anime.series_job.steps.reserve_episodes import reserve_episodes
 from src.anime.series_job.steps.download import download
@@ -18,6 +19,7 @@ from src.anime.series_job.store import _atomic, claim, note, renew, save
 logger = logging.getLogger("akon.series")
 
 STEP_HANDLERS = {
+    "get_metadata": get_metadata,
     "check_release": check_release,
     "reserve_episodes": reserve_episodes,
     "download": download,
@@ -31,7 +33,7 @@ def _ready_first(torrents):
     """Torrents further along go first, so a torrent waiting for an episode never takes
     the slot of the torrent that holds it."""
     order = {name: i for i, name in enumerate(STEP_SEQUENCE)}
-    return sorted(torrents, key=lambda t: -order.get(t.get("step") or "check_release", 0))
+    return sorted(torrents, key=lambda t: -order.get(t.get("step") or "get_metadata", 0))
 
 
 async def run_series_attempt(db, context, now: int | None = None) -> bool:
@@ -50,6 +52,8 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         return False
 
     claim_obj, series = claimed
+    # A step records what it is about to send (a torrent add) before sending it.
+    context.checkpoint = lambda: save(db, claim_obj, series, now=now)
     active_torrents = [t for t in series.torrents if t.get("state") in ("waiting", "working")]
     to_run = _ready_first(active_torrents)[:series.torrents_at_once or 1]
     min_wake_ms: int | None = None
@@ -59,7 +63,7 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         logger.info("series %s %s · work started", series.anidb_id, series.title)
 
     for torrent in to_run:
-        step_name = torrent.get("step") or "check_release"
+        step_name = torrent.get("step") or "get_metadata"
         episodes = torrent.get("episodes", [])
         ep_label = ", ".join(episodes) if episodes else "release"
         release_name = torrent.get("release_name", "")

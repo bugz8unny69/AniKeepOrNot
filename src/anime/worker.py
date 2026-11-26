@@ -574,30 +574,28 @@ class Worker:
             await asyncio.sleep(1)
 
     async def _run_series_job(self):
+        """The series job loop: one due series at a time, with the real steps (series_job/context.py)."""
+        from src.anime.series_job.context import build
+        from src.anime.series_job.store import LeaseLost
         from src.anime.series_job.worker import run_series_attempt
-        from types import SimpleNamespace
+        from src.anime.storage.sqlite import connect
+        context = build(self._secrets, self._halt_claims)
         while not self._halt_claims.is_set():
-            worked = False
+            configuration = await self._io(self.config.operation, self.startup, component="worker")
+            context.configuration = configuration
+            db = connect(configuration.value("storage.database_path"))
             try:
-                configuration = await self._io(self.config.operation, self.startup, component="worker")
-                from src.anime.storage.sqlite import connect
-                db = connect(configuration.value("storage.database_path"))
-                try:
-                    context = SimpleNamespace(
-                        db=db,
-                        configuration=configuration,
-                        cancelled=lambda: self._halt_claims.is_set(),
-                        now=int(time.time() * 1000),
-                    )
-                    worked = await run_series_attempt(db, context)
-                finally:
-                    db.close()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self._log_error(exc)
+                context.db = db
+                worked = await run_series_attempt(db, context)
+            except LeaseLost as exc:
+                self.logger.warning("Series job: %s; its work this time is not saved, the next attempt redoes it", exc)
                 worked = False
-            await asyncio.sleep(0.5 if not worked else 0.05)
+            except sqlite3.OperationalError as exc:      # Busy or locked database: try again shortly.
+                self.logger.warning("Series job: the database was busy (%s); trying again", exc, exc_info=exc)
+                worked = False
+            finally:
+                db.close()
+            await asyncio.sleep(0.05 if worked else 0.5)
 
     async def run(self, *, on_ready=None):
         if self._running or self._closed:
@@ -622,7 +620,7 @@ class Worker:
                     if self._secrets is not None and (self._transcode_batch_task is None or self._transcode_batch_task.done()):
                         if self._transcode_batch_task is not None: self._transcode_batch_task.result()
                         self._transcode_batch_task = asyncio.create_task(self._run_transcode_batches())
-                    if self._series_job_task is None or self._series_job_task.done():
+                    if self._secrets is not None and (self._series_job_task is None or self._series_job_task.done()):
                         if self._series_job_task is not None: self._series_job_task.result()
                         self._series_job_task = asyncio.create_task(self._run_series_job())
                     while len(self._tasks) < self.concurrency and not self._stop.is_set():

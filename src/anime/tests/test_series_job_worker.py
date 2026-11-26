@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from src.anime.release_contracts import VerifiedRelease
 from src.anime.series_job.store import add_torrent, get_series, wake
+from src.anime.series_job.context import SeriesContext
 from src.anime.series_job.worker import run_series_attempt
 from src.anime.storage.sqlite import initialize
 
@@ -20,108 +21,49 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_release_runs_through_every_step_to_staged(self):
-        # 1. API creates / wakes series and adds torrent
+    def context(self, verify):
+        from src.anime.tests.test_series_steps import FakeQb, Configuration
+        import tempfile, threading
+        from pathlib import Path
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.qb = qb = FakeQb()
+        return SeriesContext(verify=verify, torrents=type("T", (), {"client": lambda s, c, m: qb})(),
+                             cancelled=threading.Event(), db=self.db,
+                             configuration=Configuration(str(Path(temp.name) / "akon.sqlite")))
+
+    def torrent(self, digest, name):
+        return {"infohash": digest, "release_name": name,
+                "raw_body": json.dumps({"release_name": name, "torrent_infohash": digest}),
+                "identity": {"anime": {"anidb_id": 16999, "tvdb_series_id": 393400}}}
+
+    def test_a_release_runs_from_metadata_to_a_finished_download(self):
+        from src.anime.tests.test_series_steps import HASH
         wake(self.db, 16999, "Cyberpunk: Edgerunners", now=1000)
-        torrent = {
-            "infohash": "a" * 40,
-            "release_name": "[SubsPlease] Cyberpunk - 05 (1080p).mkv",
-            "raw_body": b'{"torrent_infohash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
-        }
-        add_torrent(self.db, 16999, torrent, now=1000)
+        add_torrent(self.db, 16999, self.torrent(HASH, "[G] Cyberpunk Edgerunners - 05"), now=1000)
 
-        # Fake services
-        async def fake_verify(source, config, cancelled):
-            return VerifiedRelease(source, anidb_episode_number=5, anidb_episode_id=50,
-                                   tvdb_season=1, tvdb_episode=5, tvdb_episode_id=500)
-
-        class FakeQB:
-            def __init__(self):
-                self.submitted = False
-                self.progress = 0.0
-            async def add(self, t):
-                self.submitted = True
-            async def get_status(self, h):
-                return {"progress": self.progress, "files": [{"name": "Cyberpunk - 05.mkv", "size": 1024000}]}
-
-        qb = FakeQB()
-        context = SimpleNamespace(
-            db=self.db,
-            verify=fake_verify,
-            qb_client=qb,
-            configuration=None,
-            cancelled=lambda: False,
-            now=1000,
-        )
-
-        # Iteration 1: check_release -> reserve_episodes
-        worked = asyncio.run(run_series_attempt(self.db, context, now=1000))
-        self.assertTrue(worked)
-        s1 = get_series(self.db, 16999)
-        self.assertEqual(s1.torrents[0]["step"], "reserve_episodes")
-        self.assertEqual(s1.torrents[0]["episodes"], ["S01E05"])
-
-        # Iteration 2: reserve_episodes -> download
-        worked = asyncio.run(run_series_attempt(self.db, context, now=1100))
-        self.assertTrue(worked)
-        s2 = get_series(self.db, 16999)
-        self.assertEqual(s2.torrents[0]["step"], "download")
-        self.assertEqual(s2.episodes["S01E05"]["state"], "reserved")
-
-        # Iteration 3: download (initial submission) -> waiting
-        worked = asyncio.run(run_series_attempt(self.db, context, now=1200))
-        self.assertTrue(worked)
-        s3 = get_series(self.db, 16999)
-        self.assertEqual(s3.torrents[0]["step"], "download")
-        self.assertEqual(s3.torrents[0]["state"], "working")
-        self.assertEqual(s3.state, "ASLEEP")
-        self.assertEqual(s3.wake_at_ms, 6200)
-
-        # Iteration 4: download finishes (progress = 1.0) -> check_media
-        qb.progress = 1.0
-        worked = asyncio.run(run_series_attempt(self.db, context, now=6200))
-        self.assertTrue(worked)
-        s4 = get_series(self.db, 16999)
-        self.assertEqual(s4.torrents[0]["step"], "check_media")
-
-        # Iteration 5: check_media -> transcode
-        worked = asyncio.run(run_series_attempt(self.db, context, now=6300))
-        self.assertTrue(worked)
-        s5 = get_series(self.db, 16999)
-        self.assertEqual(s5.torrents[0]["step"], "transcode")
-
-        # Iteration 6: transcode (off by default) -> stage
-        worked = asyncio.run(run_series_attempt(self.db, context, now=6400))
-        self.assertTrue(worked)
-        s6 = get_series(self.db, 16999)
-        self.assertEqual(s6.torrents[0]["step"], "stage")
-
-        # Iteration 7: stage -> done!
-        worked = asyncio.run(run_series_attempt(self.db, context, now=6500))
-        self.assertTrue(worked)
-        s7 = get_series(self.db, 16999)
-        self.assertEqual(s7.torrents[0]["step"], "done")
-        self.assertEqual(s7.torrents[0]["state"], "done")
-        self.assertEqual(s7.episodes["S01E05"]["state"], "staged")
-        self.assertEqual(s7.state, "ASLEEP")
-        self.assertIsNone(s7.wake_at_ms)
-
-        # Nothing left to work: next claim returns False
-        worked_after = asyncio.run(run_series_attempt(self.db, context, now=6600))
-        self.assertFalse(worked_after)
+        async def verify(source, configuration, cancelled):
+            return VerifiedRelease(source, 5, 50, 1, 5, 500)
+        context = self.context(verify)
+        now = 1000
+        for _ in range(12):
+            now += 6000
+            asyncio.run(run_series_attempt(self.db, context, now=now))
+            if get_series(self.db, 16999).torrents[0]["step"] == "download" and self.qb.calls[-1] == ("start",):
+                break
+        series = get_series(self.db, 16999)
+        self.assertEqual(series.episodes["S01E05"]["torrent"], HASH)
+        self.assertEqual([c[0] for c in self.qb.calls], ["add", "start", "stop", "select", "start"])
+        self.qb.torrent["progress"][1] = 1
+        asyncio.run(run_series_attempt(self.db, context, now=now + 6000))
+        self.assertEqual(get_series(self.db, 16999).torrents[0]["step"], "check_media")
 
     def test_unexpected_error_stops_the_torrent_keeps_its_files_and_notifies_while_the_other_continues(self):
         wake(self.db, 20000, "Multi-Torrent Show", now=1000)
-        bad_torrent = {
-            "infohash": "1" * 40,
-            "release_name": "[Buggy] Show - 01.mkv",
-            "raw_body": b'{"release_name": "[Buggy] Show - 01.mkv"}',
-        }
-        good_torrent = {
-            "infohash": "2" * 40,
-            "release_name": "[Good] Show - 02.mkv",
-            "raw_body": b'{"release_name": "[Good] Show - 02.mkv"}',
-        }
+        from src.anime.tests.test_series_steps import HASH, RAW
+        from src.anime.series_job.torrents import save_metainfo
+        bad_torrent = dict(self.torrent("1" * 40, "[Buggy] Show - 01"), step="check_release")
+        good_torrent = dict(self.torrent(HASH, "[Good] Show - 02"), step="check_release")
         add_torrent(self.db, 20000, bad_torrent, now=1000)
         add_torrent(self.db, 20000, good_torrent, now=1000)
 
@@ -135,13 +77,9 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
             return VerifiedRelease(source, anidb_episode_number=2, anidb_episode_id=20,
                                    tvdb_season=1, tvdb_episode=2, tvdb_episode_id=200)
 
-        context = SimpleNamespace(
-            db=self.db,
-            verify=verify_selector,
-            configuration=None,
-            cancelled=lambda: False,
-            now=1000,
-        )
+        context = self.context(verify_selector)
+        for digest in ("1" * 40, HASH):
+            save_metainfo(context.configuration, digest, RAW)
 
         with self.assertLogs("akon.series", level="ERROR") as logs:
             worked = asyncio.run(run_series_attempt(self.db, context, now=1000))
@@ -156,7 +94,7 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
         self.assertTrue(bad["why"].startswith("program error at test_series_job_worker.py:"))
 
         # Good torrent was successfully advanced!
-        good = next(t for t in series.torrents if t["infohash"] == "2" * 40)
+        good = next(t for t in series.torrents if t["infohash"] == HASH)
         self.assertEqual(good["step"], "reserve_episodes")
         self.assertEqual(good["episodes"], ["S01E02"])
 
@@ -183,7 +121,7 @@ class SeriesWorkerEndToEndTests(unittest.TestCase):
                                 "step": "done", "state": "done"})
         from src.anime.series_job.store import update_series
         update_series(self.db, series, now=1000)
-        context = SimpleNamespace(db=self.db, configuration=None, cancelled=lambda: False, now=1000)
+        context = self.context(None)
         self.assertTrue(asyncio.run(run_series_attempt(self.db, context, now=2000)))
         self.assertEqual(self.db.execute("SELECT state,wake_at_ms FROM series WHERE anidb_id=20001").fetchone(),
                          ("ASLEEP", None))

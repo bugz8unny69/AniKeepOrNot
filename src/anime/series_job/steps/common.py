@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 
 STEP_SEQUENCE = (
+    "get_metadata",
     "check_release",
     "reserve_episodes",
     "download",
@@ -40,3 +41,39 @@ def next_step_name(current_step: str) -> str:
     except ValueError:
         pass
     return "done"
+
+
+SERVICE_WAIT_MS = 60_000           # qBittorrent down: try again in a minute.
+SETUP_WAIT_MS = 10 * 60_000        # Not set up (address, login, folder): the series sleeps; Retry wakes it.
+
+
+async def with_client(context, torrent, work):
+    """Run work(client) in a thread with a logged-in client for this torrent.
+
+    Returns work's StepResult. qBittorrent being down or not set up is a wait
+    (the series sleeps, the torrent keeps its place); an answer that doesn't fit
+    (ClientInvalid: not our torrent, a bad response) drops the torrent with why.
+    Anything else is a program error and passes through.
+    """
+    from src.anime.acquisition.settings import DownloadConfigurationError
+    from src.anime.acquisition.submission import (ClientAuthenticationFailed, ClientInvalid,
+                                                  ClientUnavailable, ClientUnsupported)
+    from src.anime.async_io import blocking
+    from src.anime.configuration_schema import ConfigurationError
+    from src.anime.series_job.torrents import marker
+    from src.anime.secrets import SecretStorageError
+    from src.anime.acquisition.metadata import MetadataInvalid
+
+    def run():
+        return work(context.torrents.client(context.configuration, marker(torrent)))
+    try:
+        return await blocking(run)
+    except ClientUnavailable:
+        return StepResult.wait(context.now + SERVICE_WAIT_MS, why="SERVICE_UNAVAILABLE")
+    except (ClientAuthenticationFailed, ClientUnsupported, DownloadConfigurationError, ConfigurationError,
+            SecretStorageError):
+        return StepResult.wait(context.now + SETUP_WAIT_MS, why="SERVICE_SETUP_INVALID")
+    except ClientInvalid as exc:
+        return StepResult.drop(f"SERVICE_RESPONSE_INVALID: {exc}"[:200])
+    except MetadataInvalid:
+        return StepResult.drop("ACQUISITION_METADATA_INVALID")

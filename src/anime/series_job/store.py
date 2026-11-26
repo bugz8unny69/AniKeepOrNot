@@ -256,7 +256,7 @@ def add_torrent(db, anidb_id: int, release: dict, now: int | None = None) -> boo
             "infohash": infohash,
             "release_name": release.get("release_name") or release.get("title") or "",
             "raw_body": raw_body,
-            "step": release.get("step", "check_release"),
+            "step": release.get("step", "get_metadata"),
             "state": release.get("state", "waiting"),
             "why": release.get("why"),
             "episodes": release.get("episodes", []),

@@ -12,7 +12,7 @@ import urllib.request
 import uuid
 
 from src.anime.acquisition.metadata import TorrentFile, parse_metainfo
-from src.anime.acquisition.metadata_service import STOPPED
+from src.anime.acquisition.metadata_service import STOPPED, verify_torrent_ownership
 from src.anime.acquisition.settings import DownloadOptions, DownloadCredentials
 from src.anime.torrent_client.contract import Changes, ClientFile, TorrentChange
 from src.anime.torrent_client.qbittorrent_versions import select_adapter
@@ -393,19 +393,83 @@ class Client:
             return
         manifest=parse_metainfo(raw,intent.plan.manifest.info_hash)
         if manifest!=intent.plan.manifest:raise ClientInvalid()
-        boundary='ad'+uuid.uuid4().hex
-        while boundary.encode() in raw:boundary='ad'+uuid.uuid4().hex
         fields={'savepath':self.options.download_root,'category':self.options.category,
                 **self.protocol.label_fields(intent.plan.marker),
                 **self.protocol.add_fields(True),'skip_checking':'false'}
+        # Consume before the single transport call. Never retry, even on HTTP error.
+        permit.take(intent)
+        self._add_file(fields,raw)
+
+    def _add_file(self,fields,raw):
+        boundary='ad'+uuid.uuid4().hex
+        while boundary.encode() in raw:boundary='ad'+uuid.uuid4().hex
         chunks=[]
         for key,value in fields.items():
             chunks.append(('--'+boundary+'\r\nContent-Disposition: form-data; name="'+key+'"\r\n\r\n'+value+'\r\n').encode())
         chunks.append(('--'+boundary+'\r\nContent-Disposition: form-data; name="torrents"; filename="source.torrent"\r\nContent-Type: application/x-bittorrent\r\n\r\n').encode()+raw+b'\r\n')
         chunks.append(('--'+boundary+'--\r\n').encode())
-        # Consume before the single transport call. Never retry, even on HTTP error.
-        permit.take(intent)
         self._request('torrents/add',body=b''.join(chunks),content_type='multipart/form-data; boundary='+boundary,limit=4096)
+
+    # Series torrents (the series job). The client is built with the torrent's own
+    # options: download_root is <download root>/ad-<marker>, as for every AKON torrent.
+    # Each call reads the torrent back and acts only on one AKON owns (marker tag,
+    # category, folder); the version adapter picks the spelling (pause/stop, paused/stopped).
+
+    def _series_owned(self,info_hash,marker):
+        from src.anime.acquisition.metadata import infohash
+        if (not self._sid or self.protocol is None):raise ClientAuthenticationFailed()
+        if (type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)
+                or not self.options.download_root.endswith('/ad-'+marker)):raise ClientInvalid()
+        observed=self.inspect(infohash(info_hash))
+        if observed is not None and not verify_torrent_ownership(
+                observed,marker,self.options.download_root,self.options.category):
+            raise ClientInvalid('The torrent in qBittorrent is not the one AKON added (tag, category or folder).')
+        return observed
+
+    def series_torrent(self,info_hash,marker):
+        """The owned torrent (Observation, with files once qBittorrent has the metadata), or None."""
+        return self._series_owned(info_hash,marker)
+
+    def add_series_torrent(self,info_hash,marker,*,magnet=None,raw=None):
+        """Add stopped, labelled with the marker. The caller records the add before calling,
+        so an add whose outcome is unknown is never sent again."""
+        from src.anime.acquisition.prowlarr_search import _magnet_hash
+        from src.anime.acquisition.metadata import infohash, parse_batch_metainfo
+        if self._series_owned(info_hash,marker) is not None:raise ClientInvalid('Already in qBittorrent.')
+        fields={'savepath':self.options.download_root,'category':self.options.category,
+                **self.protocol.label_fields(marker),**self.protocol.add_fields(True),'skip_checking':'false'}
+        if (magnet is None)==(raw is None):raise ClientInvalid()
+        if magnet is not None:
+            if _magnet_hash(magnet)!=infohash(info_hash):raise ClientInvalid()
+            self._request('torrents/add',form={'urls':magnet,**fields},limit=4096)
+        else:
+            parse_batch_metainfo(raw,infohash(info_hash))      # The bytes are this torrent.
+            self._add_file(fields,raw)
+
+    def start_series_torrent(self,info_hash,marker):
+        if self._series_owned(info_hash,marker) is None:raise ClientInvalid('Not in qBittorrent.')
+        self._request(self.protocol.start_endpoint,form={'hashes':info_hash},limit=4096)
+
+    def stop_series_torrent(self,info_hash,marker):
+        if self._series_owned(info_hash,marker) is None:raise ClientInvalid('Not in qBittorrent.')
+        self._request(self.protocol.stop_endpoint,form={'hashes':info_hash},limit=4096)
+
+    def select_series_files(self,info_hash,marker,wanted):
+        """Download only the wanted file indices; every other file is skipped."""
+        observed=self._series_owned(info_hash,marker)
+        if observed is None or not observed.files:raise ClientInvalid('No file list yet.')
+        indices={f.index for f in observed.files}
+        wanted=set(wanted)
+        if not wanted or not wanted<=indices:raise ClientInvalid()
+        for priority,chosen in ((0,sorted(indices-wanted)),(1,sorted(wanted))):
+            if chosen:
+                self._request('torrents/filePrio',form={'hash':info_hash,'id':'|'.join(map(str,chosen)),
+                                                        'priority':priority},limit=4096)
+
+    def remove_series_torrent(self,info_hash,marker):
+        """Delete the owned torrent and its files. Returns delete_owned's answer."""
+        if (type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)):raise ClientInvalid()
+        return self.delete_owned(info_hash,marker,self.options.download_root)
 
     def free_space(self):
         """Free bytes on qBittorrent's download disk, as qBittorrent reports it."""
