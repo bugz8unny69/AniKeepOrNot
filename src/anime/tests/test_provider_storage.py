@@ -63,6 +63,26 @@ class ProviderStorageTests(unittest.TestCase):
         for provider in ("tvdb", "token"):
             with self.assertRaises(ValueError): self.store.public_put(provider,"key",b'secret',1000,new)
 
+    def test_title_list_is_a_file_beside_the_database(self):
+        # Owner, 2026-11-26: the 8-64 MB title list held the write lock for ~10 s in the database.
+        token = self.store.reserve("anidb_titles",86400000,cache_key="titles")[1]
+        self.store.public_put("anidb_titles","titles",b"<animetitles/>",86400000,token)
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(len(db.execute("SELECT payload FROM provider_public_cache").fetchone()[0]),32)
+        path = self.path.with_name("queue-files")/"anidb_titles-titles"
+        self.assertEqual(path.read_bytes(),b"<animetitles/>")
+        self.assertEqual(self.store.public_get("anidb_titles","titles"),b"<animetitles/>")
+        self.assertEqual(self.store.reserve("anidb_titles",86400000,cache_key="titles"),(b"<animetitles/>",None))
+        path.write_bytes(b"changed")             # Not the file the row describes: a cache miss.
+        self.assertIsNone(self.store.public_get("anidb_titles","titles"))
+        path.unlink()
+        self.assertIsNone(self.store.public_get("anidb_titles","titles"))
+
+    def test_a_title_list_saved_in_the_database_before_the_move_is_still_read(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO provider_public_cache VALUES('anidb_titles','titles',0,5000,?)",(b"<animetitles/>",))
+        self.assertEqual(self.store.public_get("anidb_titles","titles"),b"<animetitles/>")
+
     def test_v8_upgrade_preserves_rows_and_matches_fresh_schema(self):
         db = sqlite3.connect(":memory:")
         fresh = sqlite3.connect(":memory:")

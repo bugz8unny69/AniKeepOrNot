@@ -5,6 +5,9 @@ TVDB credentials/tokens/response bodies are never accepted by public_put.
 """
 from contextlib import contextmanager
 from src.anime.storage.adapter import require_current
+import hashlib
+import os
+from pathlib import Path
 import re
 import sqlite3
 import time
@@ -18,6 +21,11 @@ from src.anime.storage.sqlite import transaction
 PROVIDERS = frozenset({"anidb", "anidb_titles", "anime_lists", "tvdb"})
 MAX_CACHE_BYTES = 128 * 1024 * 1024
 MAX_CACHE_ENTRIES = 130
+# Large payloads live in a file beside the database; the row keeps only their
+# SHA-256 (owner, 2026-11-26). Writing AniDB's daily title list (8 MB, up to
+# 64 MB) into the database held the write lock for ~10 s.
+FILE_PROVIDERS = frozenset({"anidb_titles"})
+DIGEST_BYTES = 32
 
 
 class ProviderStore:
@@ -38,6 +46,20 @@ class ProviderStore:
     def now(self):
         return integer(self.clock())
 
+    def _file(self, provider, key):
+        database = Path(self.database)
+        return database.with_name(database.stem + "-files") / f"{provider}-{key}"
+
+    def _payload(self, provider, key, stored):
+        """The cached bytes for a row: inline, or the file whose SHA-256 the row holds."""
+        if provider not in FILE_PROVIDERS or len(stored) != DIGEST_BYTES:
+            return stored       # Inline (also a title list saved before the move, until it expires).
+        try:
+            payload = self._file(provider, key).read_bytes()
+        except FileNotFoundError:
+            return None
+        return payload if hashlib.sha256(payload).digest() == stored else None
+
     def _key(self, provider, key):
         if (provider not in {"anidb", "anidb_titles", "anime_lists"}
                 or type(key) is not str or not re.fullmatch(r"[a-z0-9:_-]{1,64}",key)):
@@ -49,7 +71,7 @@ class ProviderStore:
             now = self.now()
             row = db.execute("SELECT payload FROM provider_public_cache WHERE provider=? AND cache_key=? "
                              "AND fetched_at_ms<=? AND expires_at_ms>?",(provider,key,now,now)).fetchone()
-            return None if row is None else row[0]
+        return None if row is None else self._payload(provider,key,row[0])
 
     def reserve(self, provider, gap_ms, *, cache_key=None):
         """Atomically recheck cache then reserve; return (cached, token)."""
@@ -61,7 +83,8 @@ class ProviderStore:
             if cache_key is not None:
                 row = db.execute("SELECT payload FROM provider_public_cache WHERE provider=? AND cache_key=? "
                                  "AND fetched_at_ms<=? AND expires_at_ms>?",(provider,cache_key,now,now)).fetchone()
-                if row is not None: return row[0],None
+                cached = None if row is None else self._payload(provider,cache_key,row[0])
+                if cached is not None: return cached,None
             row = db.execute("SELECT next_allowed_at_ms FROM provider_limits WHERE provider=?",(provider,)).fetchone()
             if row is not None and row[0]>now:
                 raise ProviderDeferred(min(86400000,row[0]-now))
@@ -95,14 +118,24 @@ class ProviderStore:
             raise ValueError("invalid public cache size")
         if type(ttl_ms) is not int or not 1000 <= ttl_ms <= 86400000:
             raise ValueError("invalid public cache expiry")
+        stored = payload
+        if provider in FILE_PROVIDERS:
+            path = self._file(provider,key)
+            path.parent.mkdir(mode=0o750,exist_ok=True)
+            temporary = path.with_name(path.name + ".partial")
+            temporary.write_bytes(payload)
+            stored = hashlib.sha256(payload).digest()
         with self.connection() as db,transaction(db):
             now = self.now()
             row = db.execute("SELECT reservation_token FROM provider_limits WHERE provider=?",(provider,)).fetchone()
-            if row is None or row[0]!=token: return  # A newer request owns publication.
+            if row is None or row[0]!=token:
+                if provider in FILE_PROVIDERS: temporary.unlink()
+                return  # A newer request owns publication.
+            if provider in FILE_PROVIDERS: os.replace(temporary,path)
             db.execute("DELETE FROM provider_public_cache WHERE expires_at_ms<=? OR fetched_at_ms>?",(now,now))
             db.execute("INSERT INTO provider_public_cache VALUES(?,?,?,?,?) ON CONFLICT(provider,cache_key) "
                        "DO UPDATE SET fetched_at_ms=excluded.fetched_at_ms,expires_at_ms=excluded.expires_at_ms,payload=excluded.payload",
-                       (provider,key,now,now+ttl_ms,payload))
+                       (provider,key,now,now+ttl_ms,stored))
             while True:
                 count,size = db.execute("SELECT count(*),COALESCE(sum(length(payload)),0) FROM provider_public_cache").fetchone()
                 if count<=MAX_CACHE_ENTRIES and size<=MAX_CACHE_BYTES: break
