@@ -70,6 +70,7 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             None,  # v75 rebuilds notifications to allow RELEASE_UNSUPPORTED
             None,  # v76 rebuilds notifications to allow JOB_FAILED
             'identity_requests',  # v77 adds the identity bridge's waiting releases
+            None,  # v78 keeps only the latest Prowlarr search result
             'series')  # v79 adds the series job table
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
