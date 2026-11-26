@@ -746,35 +746,33 @@ class Application:
                 if series_match[2] is None and method=='GET':
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
-                        if configuration.value('series.enabled'):
-                            from src.anime.series_job.store import get_series
-                            s = get_series(db, aid)
-                            if s is not None:
-                                return 200, {
-                                    'anidb_id': s.anidb_id,
-                                    'title': s.title,
-                                    'state': s.state,
-                                    'wake_at_ms': s.wake_at_ms,
-                                    'torrents_at_once': s.torrents_at_once,
-                                    'torrents': s.torrents,
-                                    'episodes': s.episodes,
-                                    'recent': s.recent,
-                                    'created_at_ms': s.created_at_ms,
-                                    'updated_at_ms': s.updated_at_ms,
-                                }, []
+                        from src.anime.series_job.store import get_series
+                        s = get_series(db, aid)
+                        if s is not None:
+                            return 200, {
+                                'anidb_id': s.anidb_id,
+                                'title': s.title,
+                                'state': s.state,
+                                'wake_at_ms': s.wake_at_ms,
+                                'torrents_at_once': s.torrents_at_once,
+                                'torrents': s.torrents,
+                                'episodes': s.episodes,
+                                'recent': s.recent,
+                                'created_at_ms': s.created_at_ms,
+                                'updated_at_ms': s.updated_at_ms,
+                            }, []
                         item=series_detail(db,aid,language=configuration.value('anime.title_language'))
                     if item is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
                     return 200,item,[]
                 if series_match[2]=='keep' and method=='POST':
-                    if configuration.value('series.enabled'):
-                        with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                        from src.anime.series_job.store import get_series
+                        if get_series(db, aid) is not None:
                             from src.anime.series_job.actions import keep_series_sync
                             try:
-                                res = keep_series_sync(db, aid)
-                                return 200, res, []
-                            except ValueError as exc:
-                                if 'not found' not in str(exc).lower():
-                                    raise ApiError(409, 'ANIME_REJECTED')
+                                return 200, keep_series_sync(db, aid), []
+                            except ValueError:
+                                raise ApiError(409, 'ANIME_REJECTED') from None
                     exact(body,('operation_ids',))
                     with JobQueue(configuration.value('storage.database_path')).connection() as db:
                         db.execute('BEGIN')
@@ -795,15 +793,14 @@ class Application:
                     return 202,{'submitted':submitted,'failed':failed,
                                 'message':f'Keep requested for {len(submitted)} staged acquisitions.'},[]
                 if series_match[2]=='reject' and method=='POST':
-                    if configuration.value('series.enabled'):
-                        with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                    with JobQueue(configuration.value('storage.database_path')).connection() as db:
+                        from src.anime.series_job.store import get_series
+                        if get_series(db, aid) is not None:
                             from src.anime.series_job.actions import reject_series_sync
                             try:
-                                res = reject_series_sync(db, aid, reason=body.get('reason', 'REJECTED_BY_USER'), note_text=body.get('note', ''))
-                                return 200, res, []
-                            except ValueError as exc:
-                                if 'not found' not in str(exc).lower():
-                                    raise ApiError(409, 'ANIME_REJECTED')
+                                return 200, reject_series_sync(db, aid, reason=body.get('reason', 'REJECTED_BY_USER'), note_text=body.get('note', '')), []
+                            except ValueError:
+                                raise ApiError(409, 'ANIME_REJECTED') from None
                     exact(body,('operation_ids','reason','note'))
                     result=reject_intake_series(
                         configuration.value('storage.database_path'),aid,

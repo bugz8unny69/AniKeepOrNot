@@ -123,9 +123,6 @@ class DashboardSeriesApiTests(unittest.IsolatedAsyncioTestCase):
         update_series(db, series)
         db.close()
 
-        # Update setting series.enabled = True
-        self.app.store.update({"series": {"enabled": True}}, expected_revision=1)
-
         status, result, _ = await self.request("GET", f"/api/v1/intake/series/{aid}", token=ADMIN)
         self.assertEqual(status, 200)
         data = result["data"]

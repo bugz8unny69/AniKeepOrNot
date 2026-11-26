@@ -41,29 +41,14 @@ class BridgeStoreTests(unittest.TestCase):
         try: return identity_bridge.queue_release(db, RAW, **kwargs)
         finally: db.close()
 
-    def test_identified_release_gets_one_worker_job_and_leaves_the_queue(self):
+    def test_an_identified_release_wakes_its_series_with_the_identity_and_no_job(self):
         request = self.queue()
         with self.assertLogs(LOG, 'INFO') as logs:
             done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'identified',
                                                                 'series': SERIES}, LOG)
         self.assertEqual(done, 'identified')
         self.assertIn('[Group] Cyberpunk Edgerunners - 05 (1080p): identified as AniDB 16999 Cyberpunk Edgerunners; '
-                      'gave the worker job 1', '\n'.join(logs.output))
-        self.assertEqual(self.rows('SELECT outcome,last_reason_code FROM identity_requests'), [('accepted', None)])
-        self.assertEqual(self.rows('SELECT state FROM incoming_events'), [('IDENTIFIED',)])
-        self.assertEqual(self.rows('SELECT anidb_id FROM identity_results'), [(16999,)])
-        self.assertEqual(self.rows('SELECT kind,payload_json,state FROM jobs'),
-                         [('VERIFY_RELEASE', '{"anidb_id": 16999}', 'PENDING')])
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='IDENTIFY_ANIME'"), [(0,)])
-
-    def test_series_enabled_hands_off_to_series_job_and_creates_no_jobs_row(self):
-        request = self.queue()
-        with self.assertLogs(LOG, 'INFO') as logs:
-            done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'identified',
-                                                                'series': SERIES}, LOG, series_enabled=True)
-        self.assertEqual(done, 'identified')
-        self.assertIn('gave series 16999 Cyberpunk Edgerunners torrent [Group] Cyberpunk Edgerunners - 05 (1080p)',
-                      '\n'.join(logs.output))
+                      'woke series 16999', '\n'.join(logs.output))
         # No jobs row created
         self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(0,)])
         # Series row created
@@ -77,6 +62,7 @@ class BridgeStoreTests(unittest.TestCase):
         self.assertEqual(len(torrents), 1)
         self.assertEqual(torrents[0]['infohash'], 'a' * 40)
         self.assertEqual(torrents[0]['release_name'], '[Group] Cyberpunk Edgerunners - 05 (1080p)')
+        self.assertEqual(torrents[0]['identity']['anime']['tvdb_series_id'], 393400)   # For the release check.
         self.assertEqual(self.rows('SELECT outcome,last_reason_code FROM identity_requests'), [('accepted', None)])
 
         # Second release for same series wakes it and adds torrent
@@ -86,18 +72,18 @@ class BridgeStoreTests(unittest.TestCase):
         req2 = identity_bridge.queue_release(db, raw2)
         db.close()
         done2 = identity_bridge.apply_result(self.database, {'request_id': req2, 'result': 'identified',
-                                                             'series': SERIES}, LOG, series_enabled=True)
+                                                             'series': SERIES}, LOG)
         self.assertEqual(done2, 'identified')
         torrents2 = json.loads(self.rows('SELECT torrents_json FROM series WHERE anidb_id=16999')[0][0])
         self.assertEqual(len(torrents2), 2)
         self.assertEqual(torrents2[1]['infohash'], 'b' * 40)
 
-    def test_series_enabled_preserves_decided_series_refusal(self):
+    def test_a_decided_series_is_refused_and_not_woken(self):
         with mock.patch('src.anime.storage.review_decisions.decision', return_value='REJECT'):
             request = self.queue()
             with self.assertLogs(LOG, 'INFO') as logs:
                 done = identity_bridge.apply_result(self.database, {'request_id': request, 'result': 'identified',
-                                                                    'series': SERIES}, LOG, series_enabled=True)
+                                                                    'series': SERIES}, LOG)
             self.assertEqual(done, 'decided')
             self.assertIn('already rejected; in API Reject', '\n'.join(logs.output))
             self.assertEqual(self.rows('SELECT count(*) FROM series'), [(0,)])
@@ -131,14 +117,14 @@ class BridgeStoreTests(unittest.TestCase):
             request = self.queue(process_anyway=True)
             self.assertEqual(identity_bridge.apply_result(
                 self.database, {'request_id': request, 'result': 'identified', 'series': SERIES}, LOG), 'identified')
-        self.assertEqual(self.rows('SELECT kind FROM jobs'), [('VERIFY_RELEASE',)])
+        self.assertEqual(self.rows('SELECT state,json_array_length(torrents_json) FROM series'), [('WORKING', 1)])
 
     def test_a_repeated_report_does_nothing(self):
         request = self.queue()
         result = {'request_id': request, 'result': 'identified', 'series': SERIES}
         identity_bridge.apply_result(self.database, result, LOG)
         self.assertEqual(identity_bridge.apply_result(self.database, result, LOG), 'gone')
-        self.assertEqual(self.rows('SELECT count(*) FROM jobs'), [(1,)])
+        self.assertEqual(self.rows('SELECT json_array_length(torrents_json) FROM series'), [(1,)])
 
     def test_one_row_per_torrent_and_a_decided_answer_is_kept_for_a_day(self):
         first = self.queue()

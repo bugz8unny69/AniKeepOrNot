@@ -15,6 +15,7 @@ torrent: {
     "files": list[dict],            # media files discovered or matched
     "progress": float,              # download or transcode progress (0.0 to 1.0)
     "submitted_at_ms": int | None,  # timestamp when submitted to download client
+    "identity": dict | None,        # the identity process's series: anime.anidb_id, tvdb_series_id, title
 }
 
 episode: {
@@ -163,8 +164,10 @@ def save(db, claim: Claim, row: SeriesRow, now: int | None = None) -> None:
         row.updated_at_ms = now
 
 
-def wake(db, anidb_id: int, title: str, now: int | None = None, torrents_at_once: int = 1) -> SeriesRow:
-    """Create the row if new; set WORKING."""
+def wake(db, anidb_id: int, title: str, now: int | None = None, torrents_at_once: int = 1,
+         *, reopen: bool = False) -> SeriesRow:
+    """Create the row if new; set WORKING. A decided series stays decided unless reopen
+    ("Process anyway" on a release of a series you decided)."""
     if now is None:
         now = int(time.time() * 1000)
     with _atomic(db):
@@ -201,7 +204,7 @@ def wake(db, anidb_id: int, title: str, now: int | None = None, torrents_at_once
 
         series = _row_from_tuple(row)
         series.title = title
-        if series.state not in ('KEPT', 'REJECTED'):
+        if reopen or series.state not in ('KEPT', 'REJECTED'):
             series.state = 'WORKING'
             series.wake_at_ms = None
         series.updated_at_ms = now
@@ -251,6 +254,7 @@ def add_torrent(db, anidb_id: int, release: dict, now: int | None = None) -> boo
             "files": release.get("files", []),
             "progress": release.get("progress", 0.0),
             "submitted_at_ms": release.get("submitted_at_ms"),
+            "identity": release.get("identity"),   # The identity process's series (TVDB ID, title).
         }
         torrents.append(torrent_entry)
 

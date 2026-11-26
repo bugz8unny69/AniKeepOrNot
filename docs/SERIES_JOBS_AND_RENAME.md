@@ -124,7 +124,7 @@ A script in `fixes/`, tested first on a copy of the production database (on prod
 ## Build order
 
 1. **API logging** (section 4). Small, and useful straight away.
-2. **The series job, the Running page and the `adm` commands,** behind a setting, tested on production with a copy of the database.
+2. **The series job, the Running page and the `adm` commands,** tested on production with a copy of the database. No on/off setting (owner, 2026-11-26): the branch merges when the series job does the real work, and the cutover replaces the old jobs.
 3. **The cutover script and the rename,** tested on a production copy, then run once.
 
 ## Answered by the owner (2026-11-23)

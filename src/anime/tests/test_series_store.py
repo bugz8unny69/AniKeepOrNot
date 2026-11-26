@@ -51,6 +51,8 @@ class SeriesStoreTests(unittest.TestCase):
         self.db.execute("UPDATE series SET state='REJECTED' WHERE anidb_id=100")
         woken_rejected = wake(self.db, 100, "Show A Rejected", now=4000)
         self.assertEqual(woken_rejected.state, "REJECTED")
+        # "Process anyway" on one of its releases reopens it.
+        self.assertEqual(wake(self.db, 100, "Show A", now=5000, reopen=True).state, "WORKING")
 
     def test_claim_working_and_due_asleep_series(self):
         wake(self.db, 101, "Working Show", now=1000)
