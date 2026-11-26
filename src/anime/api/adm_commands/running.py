@@ -15,7 +15,7 @@ def connect(config_dir):
     try:
         db_path = ConfigurationStore(config_dir).read().value('storage.database_path')
     except Exception:
-        db_path = '/var/lib/anime-discovery/anime-discovery-develop.sqlite'
+        db_path = '/var/lib/akon/akon.sqlite'
     conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
     conn.row_factory = sqlite3.Row
     return conn

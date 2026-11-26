@@ -32,14 +32,14 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-DEFAULTS={'root':'/opt/anime-discovery','state_dir':'/var/lib/anime-discovery',
-    'config_dir':'/etc/anime-discovery','user':'anime-discovery',
-    'source':'git@github.com:bugz8unny69/anime-discovery.git','ref':'NextGen',
+DEFAULTS={'root':'/opt/akon','state_dir':'/var/lib/akon',
+    'config_dir':'/etc/akon','user':'akon',
+    'source':'git@github.com:bugz8unny69/AniKeepOrNot.git','ref':'NextGen',
     'destination':'/usr/local/bin/akon-install','unit_dir':'/etc/systemd/system','python':'python3'}
-SERVICES=('anime-discovery-api.service','anime-discovery-worker.service')
+SERVICES=('akon-api.service','akon-worker.service')
 # Set when an upgrade re-runs the installer it just fetched, so it runs once.
-REEXEC_ENV='ANIME_DISCOVERY_INSTALLER_REEXEC'
-RELEASE_INFO='.anime-discovery-release.json'
+REEXEC_ENV='AKON_INSTALLER_REEXEC'
+RELEASE_INFO='.akon-release.json'
 # The installer's own name. Installations made before the rename have the
 # legacy name in /usr/local/bin and in installer.json; the next install or
 # upgrade renames the installed command (see migrate_destination).
@@ -264,7 +264,7 @@ def resolve(args):
     if interactive and args.origin is None:
         options['origin']=input('Public dashboard origin ['+(options.get('origin') or 'loopback HTTP')+']: ').strip() or options.get('origin')
     options.setdefault('origin',None)
-    options['database']=str(args.database or Path(options['state_dir'])/'anime-discovery.sqlite')
+    options['database']=str(args.database or Path(options['state_dir'])/'akon.sqlite')
     existing=Path(options['config_dir'])/'settings.json'
     if options['switch']=='new':
         # First use of a branch: its own folder and database, never an existing one.
@@ -295,7 +295,7 @@ def resolve_branch_state(options,args,saved,current_ref):
     Branches can carry different migrations and settings versions, so a branch
     never runs on another branch's database or settings. The first branch
     keeps the folders it was installed with; a branch used for the first time
-    gets <config>/branches/<branch>/ and <state>/anime-discovery-<branch>.sqlite.
+    gets <config>/branches/<branch>/ and <state>/akon-<branch>.sqlite.
     """
     branches={ref:dict(entry) for ref,entry in (saved.get('branches') or {}).items()}
     options['config_base']=saved.get('config_base') or options['config_dir']
@@ -314,7 +314,7 @@ def resolve_branch_state(options,args,saved,current_ref):
         else:
             label=branch_folder(args.branch)
             options['config_dir']=str(Path(options['config_base'])/'branches'/label)
-            options['new_database']=str(Path(options['state_dir'])/f'anime-discovery-{label}.sqlite')
+            options['new_database']=str(Path(options['state_dir'])/f'akon-{label}.sqlite')
             options['switch']='new'
     options['branches']=branches
 
@@ -459,7 +459,7 @@ def apply(options,args,execute=run):
         had_config=(config/'settings.json').exists()
         atomic_file(metadata/'installation.pending.json',(json.dumps({'candidate':str(release),'previous_release':previous,'revision':revision},sort_keys=True)+'\n').encode(),0o600)
         print(f'Stopping {APP_NAME} services for local setup...',flush=True)
-        installed=[name for name in ('anime-discovery.target',*SERVICES)
+        installed=[name for name in ('akon.target',*SERVICES)
             if execute(['systemctl','show','--property=LoadState','--value',name],check=False).stdout.strip() not in ('','not-found')]
         setup_started=True
         if installed:execute(['systemctl','stop',*installed])
@@ -582,7 +582,7 @@ def apply(options,args,execute=run):
         elif setup_started:
             # Schema may have advanced: never restart older source or restore a
             # database automatically. Retain pending metadata for the next run.
-            execute(['systemctl','stop','anime-discovery.target',*SERVICES],check=False)
+            execute(['systemctl','stop','akon.target',*SERVICES],check=False)
         raise
     finally:
         os.umask(previous_umask)
@@ -802,7 +802,7 @@ def _run(args,argv,options):
                 else:
                     print('No services were started.')
                 if SERVICES[0] not in started:
-                    print('Start the API: systemctl start anime-discovery-api.service')
+                    print('Start the API: systemctl start akon-api.service')
                 print('Set or reset the dashboard password:')
                 print('  '+shlex.join(['sudo',str(Path(options['root'])/'current/bin/adm'),'set-password']))
                 if options.get('origin'):print('Dashboard: '+options['origin'])

@@ -370,7 +370,7 @@ def main(argv=None, *, qb_client_factory=None):
     with queue.connection() as db, transaction(db):
         audit = audit_batch_backlog(db, observations=observations)
         result = apply_batch_consolidation(db, audit)
-    logger = logging.getLogger('anime-discovery.batch-audit')
+    logger = logging.getLogger('akon.batch-audit')
     for record in result.pop('receipts'):
         log_history(logger, record)
     if args.json:

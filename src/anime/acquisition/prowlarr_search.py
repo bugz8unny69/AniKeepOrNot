@@ -418,7 +418,7 @@ class Client:
         url = (self.options.base_url + '/api/v1/search?' + urllib.parse.urlencode(query_params))
         request = urllib.request.Request(url, method='GET', headers={
             'X-Api-Key': self._key, 'Accept': 'application/json',
-            'User-Agent': 'AnimeDiscoveryNextGen/1'})
+            'User-Agent': 'akon/1'})
         started = time.monotonic()
         if self.logger is not None:
             self.logger.info('Prowlarr search started: query=%r type=%s timeout_seconds=%s',

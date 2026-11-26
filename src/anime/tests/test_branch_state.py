@@ -142,14 +142,14 @@ class BranchResolveTests(base.InstallerSupportTests):
         options = self.resolve('--upgrade', '--branch', 'refactor')
         self.assertEqual(options['switch'], 'new')
         self.assertEqual(options['config_dir'], str(self.config / 'branches' / 'refactor'))
-        self.assertEqual(options['database'], str(self.root / 'state' / 'anime-discovery-refactor.sqlite'))
+        self.assertEqual(options['database'], str(self.root / 'state' / 'akon-refactor.sqlite'))
         self.assertEqual(options['switch_from'], {'ref': 'NextGen', 'config_dir': str(self.config)})
         self.assertEqual(options['branches']['NextGen'], {'config_dir': str(self.config)})   # Old branch kept.
 
     def test_branch_names_become_safe_folder_names(self):
         options = self.resolve('--upgrade', '--branch', 'feature/new-thing')
         self.assertTrue(options['config_dir'].endswith('/branches/feature-new-thing'))
-        self.assertTrue(options['database'].endswith('/anime-discovery-feature-new-thing.sqlite'))
+        self.assertTrue(options['database'].endswith('/akon-feature-new-thing.sqlite'))
 
     def test_switching_back_reuses_that_branchs_own_state(self):
         saved = self.saved(branches={'NextGen': {'config_dir': str(self.config)}}, config_base=str(self.config))

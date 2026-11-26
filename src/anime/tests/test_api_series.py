@@ -84,6 +84,11 @@ class ApiSeriesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["data"]["series"]), 1)
         self.assertEqual(result["data"]["series"][0]["anidb_id"], 16999)
 
+        for prefix in ("/akon", "/anime-discovery"):
+            st, res, _ = await self.request("GET", f"{prefix}/api/v1/running", token=ADMIN)
+            self.assertEqual(st, 200)
+            self.assertEqual(res["data"]["series"][0]["anidb_id"], 16999)
+
     async def test_series_get_and_actions(self):
         aid = 17001
         db = sqlite3.connect(self.database)

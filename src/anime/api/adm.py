@@ -57,7 +57,7 @@ def settings_mismatch(argv):
             f'{CONFIGURATION_VERSION}.\n'
             '  They probably belong to another branch or release: each branch keeps its own settings folder.\n'
             '  Use the installed launcher (adm, in /usr/local/bin), which selects the installed branch, or pass\n'
-            '  --config-dir for the right folder. If you are inside /opt/anime-discovery/current, cd there again:\n'
+            '  --config-dir for the right folder. If you are inside /opt/akon/current, cd there again:\n'
             '  after an upgrade an open shell stays in the previous release.')
 
 

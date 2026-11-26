@@ -219,7 +219,7 @@ class Application:
         self.sessions=sessions or Sessions()
         self.passwords=PasswordStore(directory)
         self.admin_server=None
-        self.admin_path=os.environ.get('ANIME_DISCOVERY_ADMIN_SOCKET')
+        self.admin_path=os.environ.get('AKON_ADMIN_SOCKET') or os.environ.get('ANIME_DISCOVERY_ADMIN_SOCKET')
         self.assets=load_assets()
         self.pool=ThreadPoolExecutor(max_workers=8,thread_name_prefix='nextgen-api')
         self.slots=asyncio.Semaphore(8)
@@ -315,8 +315,14 @@ class Application:
             body_limit=MAX_TORRENT_BODY if manual_upload else MAX_BODY
             length=headers.get('content-length')
             if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>body_limit):raise ApiError(413,'API_BODY_TOO_LARGE')
-            if len(raw_query)>2048 or len(path)>512 or '%' in path or not (path.startswith(PREFIX+'/') or path in self.assets):raise ApiError(404,'API_ROUTE_NOT_FOUND')
+            if len(raw_query)>2048 or len(path)>512 or '%' in path:raise ApiError(404,'API_ROUTE_NOT_FOUND')
             if scope.get('raw_path',path.encode('utf-8'))!=path.encode('utf-8'):raise ApiError(400,'API_REQUEST_INVALID')
+            for mount in ('/akon','/anime-discovery'):
+                if path==mount:
+                    path='/';break
+                if path.startswith(mount+'/'):
+                    path=path[len(mount):];break
+            if not (path.startswith(PREFIX+'/') or path in self.assets):raise ApiError(404,'API_ROUTE_NOT_FOUND')
             query=parse_qs(raw_query.decode('ascii'),keep_blank_values=True,max_num_fields=16,strict_parsing=True) if raw_query else {}
             raw=await asyncio.wait_for(self._body(receive,body_limit),timeout=15)
             if length is not None and len(raw)!=int(length):raise ApiError(400,'API_REQUEST_INVALID')

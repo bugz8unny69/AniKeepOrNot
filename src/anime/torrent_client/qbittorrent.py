@@ -56,7 +56,7 @@ class Client:
         if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export','sync/maindata'):raise ValueError('unsupported client operation')
         url=self.options.base_url+'/api/v2/'+path
         if query:url+='?'+urllib.parse.urlencode(query)
-        headers={'User-Agent':'AnimeDiscoveryNextGen/1','Referer':self.options.base_url+'/','Accept':'application/json'}
+        headers={'User-Agent':'akon/1','Referer':self.options.base_url+'/','Accept':'application/json'}
         if self._sid:headers['Cookie']='SID='+self._sid
         if form is not None:
             body=urllib.parse.urlencode(form).encode()

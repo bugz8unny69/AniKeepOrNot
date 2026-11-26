@@ -101,7 +101,7 @@ FIELDS = MappingProxyType({
     "sonarr.library_root": FieldDefinition("", "directory", "next_operation", label="Permanent folder as seen by Sonarr", help_text="Blank uses the local Keep folder. Local and Sonarr folders must refer to the same storage."),
     "qbittorrent.base_url": FieldDefinition("", "download_endpoint", "next_operation",
         label="qBittorrent address", help_text="HTTP or HTTPS server address without credentials, query or subpath. Required before download work."),
-    "qbittorrent.category": FieldDefinition("anime-discovery", "download_category", "next_operation",
+    "qbittorrent.category": FieldDefinition("akon", "download_category", "next_operation",
         label="Download category", help_text="Category label for newly submitted torrents. A label is not proof of ownership."),
     "qbittorrent.timeout_seconds": FieldDefinition(30, "integer", "next_operation", minimum=1, maximum=60,
         label="Download client timeout", help_text="Maximum seconds for a client request."),
@@ -141,7 +141,7 @@ FIELDS = MappingProxyType({
     "storage.keep_root": FieldDefinition("", "directory", "next_operation",
         label="Keep video folder", help_text="Absolute permanent destination for approved Keep videos. Must agree with the library import target when Sonarr is used."),
     "storage.database_path": FieldDefinition(
-        "/var/lib/anime-discovery/nextgen.sqlite", "path", "restart", tuple(sorted(COMPONENTS))),
+        "/var/lib/akon/akon.sqlite", "path", "restart", tuple(sorted(COMPONENTS))),
 })
 
 # Published v14 and earlier name the evaluation settings "trial" (refactor

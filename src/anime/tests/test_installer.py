@@ -69,23 +69,23 @@ class InstallerSupportTests(unittest.TestCase):
     def test_units_use_real_paths_loopback_port_and_media_mounts(self):
         from src.anime.configuration_schema import ConfigurationSnapshot
         snapshot=ConfigurationSnapshot(1,{'api':{'port':8877},'storage':{'download_root':'/mnt/downloads','user_evaluation_root':'/mnt/staging','keep_root':'/mnt/Anime Library'}})
-        rendered=units(snapshot,'/opt/anime-discovery',str(self.config),str(self.root),'anime-discovery',None)
-        self.assertIn('http://127.0.0.1:8877',rendered['anime-discovery-api.service'])
-        self.assertIn('/opt/anime-discovery/current/.venv/bin/python',rendered['anime-discovery-api.service'])
-        self.assertIn('RequiresMountsFor=',rendered['anime-discovery-worker.service'])
+        rendered=units(snapshot,'/opt/akon',str(self.config),str(self.root),'akon',None)
+        self.assertIn('http://127.0.0.1:8877',rendered['akon-api.service'])
+        self.assertIn('/opt/akon/current/.venv/bin/python',rendered['akon-api.service'])
+        self.assertIn('RequiresMountsFor=',rendered['akon-worker.service'])
         # The worker enables its normal Sonarr pipeline without a startup flag.
-        self.assertNotIn('--sonarr-acquire',rendered['anime-discovery-worker.service'])
-        self.assertIn('"/mnt/Anime Library"',rendered['anime-discovery-worker.service'])
-        self.assertNotIn('/mnt/Anime Library',rendered['anime-discovery-api.service'])
-        for name in ('anime-discovery-api.service','anime-discovery-worker.service'):
+        self.assertNotIn('--sonarr-acquire',rendered['akon-worker.service'])
+        self.assertIn('"/mnt/Anime Library"',rendered['akon-worker.service'])
+        self.assertNotIn('/mnt/Anime Library',rendered['akon-api.service'])
+        for name in ('akon-api.service','akon-worker.service'):
             self.assertIn('Type=notify',rendered[name])
             self.assertIn('WatchdogSec=60s',rendered[name])
-        self.assertIn('BindsTo=anime-discovery-api.service',rendered['anime-discovery-worker.service'])
+        self.assertIn('BindsTo=akon-api.service',rendered['akon-worker.service'])
         # A misconfigured required service exits 78; systemd must not loop.
-        self.assertIn('RestartPreventExitStatus=78\n',rendered['anime-discovery-worker.service'])
-        self.assertNotIn('RestartPreventExitStatus',rendered['anime-discovery-api.service'])
-        self.assertIn('RuntimeDirectoryMode=0700',rendered['anime-discovery-api.service'])
-        self.assertIn('ANIME_DISCOVERY_ADMIN_SOCKET=',rendered['anime-discovery-api.service'])
+        self.assertIn('RestartPreventExitStatus=78\n',rendered['akon-worker.service'])
+        self.assertNotIn('RestartPreventExitStatus',rendered['akon-api.service'])
+        self.assertIn('RuntimeDirectoryMode=0700',rendered['akon-api.service'])
+        self.assertIn('AKON_ADMIN_SOCKET=',rendered['akon-api.service'])
 
     def test_rendered_units_pass_systemd_parser(self):
         import shutil
@@ -122,7 +122,7 @@ class InstallerSupportTests(unittest.TestCase):
             else:
                 self.assertIn('installation completed successfully',output.getvalue())
                 self.assertIn('No services were started.',output.getvalue())
-                self.assertIn('systemctl start anime-discovery-api.service',output.getvalue())
+                self.assertIn('systemctl start akon-api.service',output.getvalue())
                 self.assertNotIn('"installed"',output.getvalue())
 
     def test_yes_never_prompts_and_interactive_mode_asks_before_changes(self):
@@ -366,8 +366,8 @@ class InstallerOrchestrationTests(unittest.TestCase):
     def test_upgrade_restarts_only_services_active_before_upgrade(self):
         self.args.upgrade=True
         self.args.start='preserve'
-        for initial in (['anime-discovery-api.service','anime-discovery-worker.service'],
-                        ['anime-discovery-api.service'],[]):
+        for initial in (['akon-api.service','akon-worker.service'],
+                        ['akon-api.service'],[]):
             with self.subTest(initial=initial):
                 self.events.clear()
                 def execute(args,**kwargs):
@@ -413,7 +413,7 @@ class InstallerOrchestrationTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args,3 if started else 0,'','')
             return self.execute(args,**kwargs)
         with self.patches(),self.assertRaisesRegex(RuntimeError,
-                'Service did not return to active state after upgrade: anime-discovery-api.service'):
+                'Service did not return to active state after upgrade: akon-api.service'):
             installer.apply(self.options,self.args,execute)
 
     def test_automated_password_is_sent_through_adm_stdin_only(self):
