@@ -826,4 +826,5 @@ UNREGISTERED = {}
 NEW.update({
     'TRANSCODE_WAITING': ('INFO', None, 'All allowed transcoders are busy, offline or out of temporary space.', 'Waiting for transcoder', 'Nothing to do. The worker tries again later.'),
     'TRANSCODE_FAILED': ('WARNING', False, 'Transcoding failed after three attempts across the configured agents.', 'Transcode failed on all agents.', 'Check agent errors, then Retry to start a fresh attempt budget.'),
+    'CUTOVER_CONVERTED': ('INFO', None, 'This job was converted to a series row during the one-time cutover.', 'Converted to series job.', 'Nothing to do.'),
 })

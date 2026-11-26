@@ -179,6 +179,7 @@ _ENTRIES = (
     Reason('JOB_STATE_INVALID',"The job's saved progress does not add up, so it was stopped.","This job's progress needs review.",'Check the job history, then press Retry.','ERROR',False),
     Reason('JOB_PAYLOAD_INVALID',"The job's saved input is not valid or is too large.","This job's input is not valid.",'Check the job in the report. It usually needs to be recreated rather than retried.','ERROR',False),
     Reason('WORKER_NOT_READY','The worker started without any job handlers installed.','The worker is not ready.','Reinstall or upgrade the application, then restart the worker.','ERROR',False),
+    Reason('CUTOVER_CONVERTED','This job was converted to a series row during the one-time cutover.','Converted to series job.','Nothing to do.','INFO',None),
 
 )
 REGISTRY = MappingProxyType({item.code: item for item in _ENTRIES})
