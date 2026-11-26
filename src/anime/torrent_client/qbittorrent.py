@@ -407,7 +407,34 @@ class Client:
         permit.take(intent)
         self._request('torrents/add',body=b''.join(chunks),content_type='multipart/form-data; boundary='+boundary,limit=4096)
 
-    def inspect_transfer(self,expected_hash):
+    def free_space(self):
+        """Free bytes on qBittorrent's download disk, as qBittorrent reports it."""
+        raw,_=self._request('sync/maindata',query={'rid':0},limit=33554432)
+        data=_json(raw)
+        free=(data.get('server_state') or {}).get('free_space_on_disk') if type(data) is dict else None
+        if type(free) is not int or free<0:raise ClientInvalid()
+        return free
+
+    def _disk_full(self,snapshot,restart):
+        """A torrent in qBittorrent's error state: wait while the disk has no room for the rest.
+
+        restart: the job was waiting for disk space; with room again, AKON restarts its
+        own torrent (qBittorrent does not retry it). Any other error goes to review.
+        """
+        from src.anime.acquisition.transfers import DiskSpaceWait, DISK_FULL_WAIT_MS, DISK_MARGIN_BYTES
+        observation=snapshot.observation
+        left=sum(int(item.size*(1-progress)) for item,priority,progress
+                 in zip(observation.files,snapshot.priorities,snapshot.progress) if priority)
+        free=self.free_space()
+        if free<left+DISK_MARGIN_BYTES:
+            raise DiskSpaceWait('TORRENT_DISK_FULL',DISK_FULL_WAIT_MS,free=free,needed=left)
+        if (restart and observation.category==self.options.category
+                and observation.save_path.rstrip('/')==self.options.download_root
+                and any(t.startswith('ad-') for t in observation.tags)):
+            self._request(self.protocol.start_endpoint,form={'hashes':observation.info_hash},limit=4096)
+            raise DiskSpaceWait('TORRENT_DOWNLOAD_IN_PROGRESS',30000,free=free,needed=left)
+
+    def inspect_transfer(self,expected_hash,*,restart_after_disk_full=False):
         from src.anime.acquisition.transfers import TransferSnapshot, SnapshotChanged
         before=self.inspect(expected_hash)
         if before is None:return None
@@ -430,8 +457,11 @@ class Client:
         if type(properties) is not dict:raise ClientInvalid()
         after=self.inspect(expected_hash)
         if before!=after:raise SnapshotChanged()
-        return TransferSnapshot(after,tuple(r[1] for r in rows),tuple(r[2] for r in rows),
-                                properties.get('piece_size'),tuple(r[3] for r in rows))
+        snapshot=TransferSnapshot(after,tuple(r[1] for r in rows),tuple(r[2] for r in rows),
+                                  properties.get('piece_size'),tuple(r[3] for r in rows))
+        if after.state=='error':
+            self._disk_full(snapshot,restart_after_disk_full)
+        return snapshot
 
     def apply_selection(self,intent,fingerprint,permit,action):
         if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()

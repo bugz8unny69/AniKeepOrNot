@@ -28,6 +28,33 @@ class PieceOverlap(ValueError):
         self.failed_path = failed_path
 
 
+class DiskSpaceWait(RuntimeError):
+    """qBittorrent stopped the torrent with an error and its disk has no room: wait, don't review.
+
+    Owner, 2026-11-26: a full disk sent every download to review (and then canceled).
+    TORRENT_DISK_FULL waits; once there is room AKON restarts the torrent and
+    waits for it like any download (TORRENT_DOWNLOAD_IN_PROGRESS).
+    """
+    def __init__(self, reason_code, delay_ms, *, free=None, needed=None):
+        super().__init__(reason_code)
+        self.reason_code, self.delay_ms, self.free, self.needed = reason_code, delay_ms, free, needed
+
+
+DISK_FULL_WAIT_MS = 10 * 60_000
+
+
+def waited_for_disk(database, job_id):
+    """True when the job's last wait was for disk space: the torrent may be restarted."""
+    from contextlib import closing
+    from src.anime.storage.sqlite import connect
+    with closing(connect(database)) as db:
+        row = db.execute('SELECT last_reason_code FROM jobs WHERE job_id=?', (job_id,)).fetchone()
+    return row is not None and row[0] == 'TORRENT_DISK_FULL'
+
+
+DISK_MARGIN_BYTES = 256 * 1024 * 1024
+
+
 class SnapshotChanged(ValueError):
     reason_code='TORRENT_SNAPSHOT_CHANGED'
     def __init__(self):super().__init__('The torrent changed while its status was being checked.')
