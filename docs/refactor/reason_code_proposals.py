@@ -480,9 +480,9 @@ REASONS = {
         'Processing was interrupted.',
         'Nothing to do; the job is tried again. If it keeps happening, check the worker log.'),
     'JOB_HANDLER_FAILED': ('JOB_HANDLER_FAILED',
-        'The job failed with an unexpected error.',
-        'An unexpected error occurred.',
-        'Check the failed check and the worker log, then press Retry.'),
+        'A program error no code expected stopped the step. It is not retried, because the same code gives the same error.',
+        'A program error stopped this step.',
+        'Report it with the worker log: the failed check names the file and line. Press Retry once a fixed version is installed.'),
     'JOB_RETRY_EXHAUSTED': ('JOB_RETRY_EXHAUSTED',
         'The job failed as many times as allowed, so automatic retries stopped.',
         'Automatic retries stopped.',
@@ -827,4 +827,9 @@ NEW.update({
     'TRANSCODE_WAITING': ('INFO', None, 'All allowed transcoders are busy, offline or out of temporary space.', 'Waiting for transcoder', 'Nothing to do. The worker tries again later.'),
     'TRANSCODE_FAILED': ('WARNING', False, 'Transcoding failed after three attempts across the configured agents.', 'Transcode failed on all agents.', 'Check agent errors, then Retry to start a fresh attempt budget.'),
     'CUTOVER_CONVERTED': ('INFO', None, 'This job was converted to a series row during the one-time cutover.', 'Converted to series job.', 'Nothing to do.'),
+})
+
+# Work item 2 (owner, 2026-11-27): an outage never fails a job; only a program error does.
+NEW.update({
+    'NETWORK_UNAVAILABLE': ('WARNING', True, 'A network connection failed or timed out where the code does not say which service it was. The details name the check. The job tries again by itself.', 'A network connection failed.', 'Nothing to do for a short outage. If it keeps happening, the failed check in the details shows where; check the network and the services this step uses.'),
 })

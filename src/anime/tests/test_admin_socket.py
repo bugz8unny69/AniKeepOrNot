@@ -1,6 +1,7 @@
 """Same-process admin socket integration tests (no HTTP listener)."""
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -86,6 +87,12 @@ class AdminSocketTests(unittest.IsolatedAsyncioTestCase):
             app.admin_path=str(path)
             app.passwords=object()
             app.admin_server=None
+            app.logger=logging.getLogger('test.admin')
+            class Bridge:                       # The identity bridge's process: nothing to run here.
+                async def run(self):pass
+                async def close(self):pass
+            app.bridge=Bridge()
+            app.bridge_task=None
             app.close=lambda:None
             messages=iter([{'type':'lifespan.startup'},{'type':'lifespan.shutdown'}])
             output=[]
