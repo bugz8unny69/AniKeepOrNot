@@ -13,11 +13,11 @@ import urllib.request
 import uuid
 
 from src.anime.acquisition.metadata import TorrentFile, parse_metainfo
-from src.anime.acquisition.metadata_service import STOPPED
+from src.anime.acquisition.metadata_service import STOPPED, verify_torrent_ownership
 from src.anime.acquisition.settings import DownloadOptions, DownloadCredentials
 from src.anime.torrent_client.contract import Changes, ClientFile, TorrentChange
 from src.anime.torrent_client.qbittorrent_versions import select_adapter
-from src.anime.acquisition.submission import (Observation, SendPermit, ClientUnavailable, ClientInvalid,
+from src.anime.acquisition.submission import (Observation, ClientUnavailable, ClientInvalid,
                                                ClientAuthenticationFailed, ClientUnsupported)
 
 
@@ -54,10 +54,10 @@ class Client:
         self._transport=transport or (lambda request,timeout:opener.open(request,timeout=timeout))
 
     def _request(self,path,*,query=None,form=None,body=None,content_type=None,limit=3145728):
-        if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export','sync/maindata'):raise ValueError('unsupported client operation')
+        if path not in ('auth/login','app/version','app/webapiVersion','torrents/info','torrents/files','torrents/add','torrents/properties','torrents/filePrio','torrents/start','torrents/resume','torrents/stop','torrents/pause','torrents/delete','torrents/fetchMetadata','torrents/saveMetadata','torrents/export','torrents/addTags','torrents/removeTags','torrents/createCategory','torrents/setCategory','torrents/removeCategories','sync/maindata'):raise ValueError('unsupported client operation')
         url=self.options.base_url+'/api/v2/'+path
         if query:url+='?'+urllib.parse.urlencode(query)
-        headers={'User-Agent':'AnimeDiscoveryNextGen/1','Referer':self.options.base_url+'/','Accept':'application/json'}
+        headers={'User-Agent':'akon/1','Referer':self.options.base_url+'/','Accept':'application/json'}
         if self._sid:headers['Cookie']='SID='+self._sid
         if form is not None:
             body=urllib.parse.urlencode(form).encode()
@@ -203,318 +203,142 @@ class Client:
         except ValueError:raise ClientInvalid() from None
         return Observation(expected_hash,state,save_path,category,tags,row['auto_tmm'],tuple(result))
 
-    def inspect_legacy_metadata(self,expected_hash,marker,download_root):
-        """Read-only pre-manifest observation for a journaled magnet intake.
-
-        Metadata is not a send permit. Empty file lists are pending; snapshots
-        are usable only after full ownership readback and a stopped state.
-        Never claim that qBittorrent's files alone prove BEP3 info bytes.
-        """
-        from src.anime.acquisition.metadata import infohash
-        expected_hash=infohash(expected_hash)
-        if (not self._sid or self.protocol is None
-                or type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)
-                or type(download_root) is not str
-                or download_root!=self.options.download_root
-                or not download_root.endswith('/ad-'+marker)):
-            raise ClientInvalid()
-        snapshot=self.inspect(expected_hash)
-        if snapshot is None:
-            return None
-        if (snapshot.save_path.rstrip('/')!=download_root
-                or snapshot.category!=self.options.category
-                or snapshot.auto_tmm is not False
-                or 'ad-'+marker not in snapshot.tags
-                or any(t.startswith('ad-') and t!='ad-'+marker for t in snapshot.tags)):
-            raise ClientInvalid()
-        if not snapshot.files:
-            return None
-        if snapshot.state not in STOPPED:
-            return None
-        # Read the exact same inventory again, rejecting concurrent changes.
-        confirmed=self.inspect(expected_hash)
-        if confirmed!=snapshot:
-            raise ClientInvalid()
-        return snapshot
-
-    def add_legacy_magnet(self,magnet,intent,permit):
-        """One bounded pre-manifest admission for the 4.5+ API.
-
-        A durable Sonarr magnet journal must issue the permit before this
-        call. Never invoke add again on an uncertain or recovered intent.
-        """
-        from src.anime.storage.magnet_intake import MagnetIntent, MagnetPermit
-        from src.anime.acquisition.prowlarr_search import _magnet_hash
-        if (not self._sid or self.protocol is None):
-            raise ClientAuthenticationFailed()
-        if (type(intent) is not MagnetIntent or type(permit) is not MagnetPermit
-                or intent.options!=self.options or intent.api_major!=self.major
-                or intent.state!='UNCERTAIN'
-                or self.metadata_strategy!='guarded_export'
-                or _magnet_hash(magnet)!=intent.info_hash
-                or not self.options.download_root.endswith('/ad-'+intent.marker)):
-            raise ClientInvalid()
-        fields={'urls':magnet,'savepath':self.options.download_root,
-                'category':self.options.category,
-                **self.protocol.label_fields(intent.marker),
-                **self.protocol.add_fields(True)}
-        permit.take(intent)
-        # The first add is PAUSED. No discovery window opens before marker
-        # readback and a separately bounded resume.
-        self._request('torrents/add',form=fields,limit=4096)
-
-    def poll_legacy_metadata(self,intent,cancelled,*,attempts=24,
-                             interval=5,sleep=None,trace=None):
-        """Bounded 4.5+ metadata discovery window with unconditional stop.
-
-        Never resumes when the file list already exists. A restart may run a
-        NEW bounded metadata window, but cannot re-submit the magnet.
-        """
-        import time
-        from src.anime.storage.magnet_intake import MagnetIntent
-        from src.anime.storage.batch_metadata_admission import EarlyBatchIntent
-        if (type(intent) not in (MagnetIntent,EarlyBatchIntent) or intent.state!='UNCERTAIN'
-                or intent.options!=self.options
-                or self.protocol is None
-                or type(attempts) is not int or not 1<=attempts<=24
-                or type(interval) not in (int,float) or not 0<=interval<=10):
-            raise ClientInvalid()
-        sleep=time.sleep if sleep is None else sleep
-        if not callable(sleep):raise ClientInvalid()
-        before=self.inspect(intent.info_hash)
-        if trace is not None:
-            trace.update(initial_state=getattr(before,'state',None),
-                         last_active_state=getattr(before,'state',None),
-                         stopped_state=None,polls=0,
-                         max_files=len(getattr(before,'files',())),
-                         resumed=False)
-        def matches(row):
-            return (row is not None and row.info_hash==intent.info_hash
-                    and row.category==intent.options.category
-                    and row.save_path.rstrip('/')==intent.options.download_root
-                    and row.auto_tmm is False
-                    and 'ad-'+intent.marker in row.tags
-                    and not any(t.startswith('ad-') and t!='ad-'+intent.marker
-                                for t in row.tags))
-        if not matches(before):
-            raise ClientInvalid()
-        if before.state not in STOPPED:
-            # A previous lease may have died during metadata discovery.
-            # Stop before considering another start.
-            stopped=self.stop_legacy_metadata(intent)
-            if trace is not None:
-                trace['phase']='recover_stop'
-                trace['stopped_state']=getattr(stopped,'state',None)
-                trace['max_files']=max(trace['max_files'],len(getattr(stopped,'files',())))
-            return stopped
-        if before.files:
-            return self.inspect_legacy_metadata(intent.info_hash,intent.marker,
-                                                intent.options.download_root)
-        if cancelled.is_set():return None
-        try:
-            self._request(self.protocol.start_endpoint,
-                          form={'hashes':intent.info_hash},limit=4096)
-            if trace is not None:
-                trace['resumed']=True
-            for index in range(attempts):
-                if cancelled.is_set():break
-                current=self.inspect(intent.info_hash,include_files=(index%3==0))
-                if trace is not None:
-                    trace['polls']=index+1
-                    trace['last_active_state']=getattr(current,'state',None)
-                    trace['max_files']=max(trace['max_files'],len(getattr(current,'files',())))
-                if not matches(current):raise ClientInvalid()
-                if current.files:break
-                if index+1<attempts:sleep(interval)
-        finally:
-            # Do not leave metadata discovery active on cancellation, timeouts
-            # or invalid responses. Network failure remains an uncertain state.
-            stopped=self.stop_legacy_metadata(intent)
-            if trace is not None:
-                trace['stopped_state']=getattr(stopped,'state',None)
-                trace['max_files']=max(trace['max_files'],len(getattr(stopped,'files',())))
-        return stopped
-
-    def stop_legacy_metadata(self,intent):
-        """Stop a journal-owned magnet before any file inventory is accepted."""
-        from src.anime.storage.magnet_intake import MagnetIntent
-        from src.anime.storage.batch_metadata_admission import EarlyBatchIntent
-        if (type(intent) not in (MagnetIntent,EarlyBatchIntent) or intent.options!=self.options
-                or intent.state not in ('UNCERTAIN','OWNED_STOPPED')
-                or self.protocol is None):
-            raise ClientInvalid()
-        before=self.inspect(intent.info_hash)
-        if (before is None or before.category!=intent.options.category
-                or before.save_path.rstrip('/')!=intent.options.download_root
-                or before.auto_tmm is not False or 'ad-'+intent.marker not in before.tags
-                or any(tag.startswith('ad-') and tag!='ad-'+intent.marker
-                       for tag in before.tags)):
-            raise ClientInvalid()
-        if before.state not in STOPPED:
-            self._request(self.protocol.stop_endpoint,
-                          form={'hashes':intent.info_hash},limit=4096)
-        after=self.inspect(intent.info_hash)
-        if after is None or after.state not in STOPPED:
-            return None
-        if not after.files:
-            return None
-        return self.inspect_legacy_metadata(intent.info_hash,intent.marker,
-                                            intent.options.download_root)
-
     def delete_owned(self,info_hash,marker,save_path):
         """Cancel cleanup. Returns what it found:
         'absent'  - no such torrent;
-        'foreign' - no ad-<marker> tag: not ours, untouched;
+        'foreign' - no akon-<marker> tag (or extra prefix tags): not ours, untouched;
         'moved'   - ours, but stored outside its recorded folder: untouched;
         'deleted' - ours and where we put it: deleted with its files.
         """
         if self.protocol is None:raise ClientAuthenticationFailed()
         observed=self.inspect(info_hash,include_files=False)
         if observed is None:return 'absent'
-        if 'ad-'+marker not in observed.tags:return 'foreign'
+        expected='akon-'+marker
+        if expected not in observed.tags or any((t.startswith('akon-') or t.startswith('ad-')) and t!=expected for t in observed.tags):
+            return 'foreign'
         if observed.save_path.rstrip('/')!=save_path.rstrip('/'):return 'moved'
         self._request('torrents/delete',form={'hashes':observed.info_hash,'deleteFiles':'true'},limit=4096)
         return 'deleted'
 
-    def add_stopped(self,raw,intent,permit):
-        """Single journaled submission for verified .torrent bytes or a magnet."""
-        if not self._sid or self.major is None:raise ClientAuthenticationFailed()
-        if type(permit) is not SendPermit or intent.options!=self.options or intent.api_major!=self.major:raise ClientInvalid()
-        from src.anime.acquisition.metadata import ObservedInventory
-        if type(intent.plan.manifest) is ObservedInventory:raise ClientInvalid()
-        if type(raw) is str:
-            # Exactly the same journal permit protects both source formats.
-            from src.anime.acquisition.prowlarr_search import _magnet_hash
-            if _magnet_hash(raw)!=intent.plan.manifest.info_hash:
-                raise ClientInvalid()
-            fields={'urls':raw,'savepath':self.options.download_root,
-                    'category':self.options.category,**self.protocol.label_fields(intent.plan.marker),
-                    **self.protocol.add_fields(True),'skip_checking':'false'}
-            permit.take(intent)
-            self._request('torrents/add',form=fields,limit=4096)
-            return
-        manifest=parse_metainfo(raw,intent.plan.manifest.info_hash)
-        if manifest!=intent.plan.manifest:raise ClientInvalid()
+    def _add_file(self,fields,raw):
         boundary='ad'+uuid.uuid4().hex
         while boundary.encode() in raw:boundary='ad'+uuid.uuid4().hex
-        fields={'savepath':self.options.download_root,'category':self.options.category,
-                **self.protocol.label_fields(intent.plan.marker),
-                **self.protocol.add_fields(True),'skip_checking':'false'}
         chunks=[]
         for key,value in fields.items():
             chunks.append(('--'+boundary+'\r\nContent-Disposition: form-data; name="'+key+'"\r\n\r\n'+value+'\r\n').encode())
         chunks.append(('--'+boundary+'\r\nContent-Disposition: form-data; name="torrents"; filename="source.torrent"\r\nContent-Type: application/x-bittorrent\r\n\r\n').encode()+raw+b'\r\n')
         chunks.append(('--'+boundary+'--\r\n').encode())
-        # Consume before the single transport call. Never retry, even on HTTP error.
-        permit.take(intent)
         self._request('torrents/add',body=b''.join(chunks),content_type='multipart/form-data; boundary='+boundary,limit=4096)
+
+    # Series torrents (the series job). The client is built with the torrent's own
+    # options: download_root is <download root>/<prefix>-<marker> ('akon' for new,
+    # 'ad' for torrents added before the rename). Each call reads the torrent back
+    # and acts only on one AKON owns (akon-<marker> tag, category, folder).
+
+    def _series_owned(self,info_hash,marker):
+        from src.anime.acquisition.metadata import infohash
+        if (not self._sid or self.protocol is None):raise ClientAuthenticationFailed()
+        if (type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)
+                or not (self.options.download_root.endswith('/akon-'+marker)
+                        or self.options.download_root.endswith('/ad-'+marker))):
+            raise ClientInvalid()
+        observed=self.inspect(infohash(info_hash))
+        if observed is not None and not verify_torrent_ownership(
+                observed,marker,self.options.download_root,self.options.category):
+            raise ClientInvalid('The torrent in qBittorrent is not the one AKON added (tag, category or folder).')
+        return observed
+
+    def series_torrent(self,info_hash,marker):
+        """The owned torrent (Observation, with files once qBittorrent has the metadata), or None."""
+        return self._series_owned(info_hash,marker)
+
+    def add_series_torrent(self,info_hash,marker,*,magnet=None,raw=None):
+        """Add stopped, labelled with the marker. The caller records the add before calling,
+        so an add whose outcome is unknown is never sent again."""
+        from src.anime.acquisition.prowlarr_search import _magnet_hash
+        from src.anime.acquisition.metadata import infohash, parse_batch_metainfo
+        if self._series_owned(info_hash,marker) is not None:raise ClientInvalid('Already in qBittorrent.')
+        fields={'savepath':self.options.download_root,'category':self.options.category,
+                **self.protocol.label_fields(marker),**self.protocol.add_fields(True),'skip_checking':'false'}
+        if (magnet is None)==(raw is None):raise ClientInvalid()
+        if magnet is not None:
+            if _magnet_hash(magnet)!=infohash(info_hash):raise ClientInvalid()
+            self._request('torrents/add',form={'urls':magnet,**fields},limit=4096)
+        else:
+            parse_batch_metainfo(raw,infohash(info_hash))      # The bytes are this torrent.
+            self._add_file(fields,raw)
+
+    def start_series_torrent(self,info_hash,marker):
+        if self._series_owned(info_hash,marker) is None:raise ClientInvalid('Not in qBittorrent.')
+        self._request(self.protocol.start_endpoint,form={'hashes':info_hash},limit=4096)
+
+    def stop_series_torrent(self,info_hash,marker):
+        if self._series_owned(info_hash,marker) is None:raise ClientInvalid('Not in qBittorrent.')
+        self._request(self.protocol.stop_endpoint,form={'hashes':info_hash},limit=4096)
+
+    def select_series_files(self,info_hash,marker,wanted):
+        """Download only the wanted file indices; every other file is skipped."""
+        observed=self._series_owned(info_hash,marker)
+        if observed is None or not observed.files:raise ClientInvalid('No file list yet.')
+        indices={f.index for f in observed.files}
+        wanted=set(wanted)
+        if not wanted or not wanted<=indices:raise ClientInvalid()
+        for priority,chosen in ((0,sorted(indices-wanted)),(1,sorted(wanted))):
+            if chosen:
+                self._request('torrents/filePrio',form={'hash':info_hash,'id':'|'.join(map(str,chosen)),
+                                                        'priority':priority},limit=4096)
+
+    def remove_series_torrent(self,info_hash,marker):
+        """Delete the owned torrent and its files. Returns delete_owned's answer."""
+        if (type(marker) is not str or not re.fullmatch('[a-f0-9]{32}',marker)):raise ClientInvalid()
+        return self.delete_owned(info_hash,marker,self.options.download_root)
+
+    def rename_legacy_torrents(self,base_download_root,*,old_category='anime-discovery',new_category='akon',dry_run=False):
+        """Retag and recategorize existing AKON torrents in place; never move files."""
+        if not self._sid or self.protocol is None:raise ClientAuthenticationFailed()
+        base=base_download_root.rstrip('/')
+        raw,_=self._request('torrents/info',query={'category':old_category})
+        rows=_json(raw)
+        if type(rows) is not list:raise ClientInvalid()
+        renamed=[];skipped=[];cat_created=False
+        for row in rows:
+            if type(row) is not dict:raise ClientInvalid()
+            h=_text(row.get('hash'),64)
+            tags=[t.strip() for t in (_text(row.get('tags'),8192).split(',') if row.get('tags') else []) if t.strip()]
+            ad_tags=[t for t in tags if t.startswith('ad-')]
+            akon_tags=[t for t in tags if t.startswith('akon-')]
+            save_path=_text(row.get('save_path'),4096).rstrip('/')
+            if row.get('auto_tmm') is not False or len(ad_tags)!=1 or akon_tags:
+                skipped.append({'hash':h,'reason':'tags_or_auto_tmm'})
+                continue
+            ad_tag=ad_tags[0]
+            marker=ad_tag[3:]
+            if not re.fullmatch('[a-f0-9]{32}',marker) or save_path!=base+'/'+ad_tag:
+                skipped.append({'hash':h,'reason':'save_path_or_marker'})
+                continue
+            if not dry_run:
+                self._request('torrents/addTags',form={'hashes':h,'tags':'akon-'+marker},limit=4096)
+                self._request('torrents/removeTags',form={'hashes':h,'tags':ad_tag},limit=4096)
+                if not cat_created:
+                    try:self._request('torrents/createCategory',form={'category':new_category,'savePath':''},limit=4096)
+                    except ClientInvalid:pass
+                    cat_created=True
+                self._request('torrents/setCategory',form={'hashes':h,'category':new_category},limit=4096)
+            renamed.append({'hash':h,'marker':marker,'name':row.get('name','')})
+        removed_old_category=False
+        if not dry_run and renamed:
+            rem_raw,_=self._request('torrents/info',query={'category':old_category})
+            rem=_json(rem_raw)
+            if type(rem) is list and len(rem)==0:
+                self._request('torrents/removeCategories',form={'categories':old_category},limit=4096)
+                removed_old_category=True
+        return {'renamed':renamed,'skipped':skipped,'removed_old_category':removed_old_category}
 
     def free_space(self):
         """Free bytes on qBittorrent's download disk, as qBittorrent reports it."""
         free=self.changes(0).free_space
         if free is None:raise ClientInvalid()
         return free
-
-    def _disk_full(self,snapshot,restart):
-        """A torrent in qBittorrent's error state: wait while the disk has no room for the rest.
-
-        restart: the job was waiting for disk space; with room again, AKON restarts its
-        own torrent (qBittorrent does not retry it). Any other error goes to review.
-        """
-        from src.anime.acquisition.transfers import DiskSpaceWait, DISK_FULL_WAIT_MS, DISK_MARGIN_BYTES
-        observation=snapshot.observation
-        left=sum(int(item.size*(1-progress)) for item,priority,progress
-                 in zip(observation.files,snapshot.priorities,snapshot.progress) if priority)
-        free=self.free_space()
-        if free<left+DISK_MARGIN_BYTES:
-            raise DiskSpaceWait('TORRENT_DISK_FULL',DISK_FULL_WAIT_MS,free=free,needed=left)
-        if (restart and observation.category==self.options.category
-                and observation.save_path.rstrip('/')==self.options.download_root
-                and any(t.startswith('ad-') for t in observation.tags)):
-            self._request(self.protocol.start_endpoint,form={'hashes':observation.info_hash},limit=4096)
-            raise DiskSpaceWait('TORRENT_DOWNLOAD_IN_PROGRESS',30000,free=free,needed=left)
-
-    def inspect_transfer(self,expected_hash,*,restart_after_disk_full=False):
-        from src.anime.acquisition.transfers import TransferSnapshot, SnapshotChanged
-        before=self.inspect(expected_hash)
-        if before is None:return None
-        raw,_=self._request('torrents/files',query={'hash':expected_hash})
-        files=_json(raw)
-        if type(files) is not list or len(files)!=len(before.files):raise ClientInvalid()
-        rows=[]
-        try:
-            for position,row in enumerate(files):
-                if type(row) is not dict:raise ClientInvalid()
-                item=TorrentFile(row.get('index'),row.get('name'),row.get('size'))
-                ranges=row.get('piece_range')
-                if type(ranges) is not list or len(ranges)!=2:raise ClientInvalid()
-                rows.append((item,row.get('priority'),row.get('progress'),tuple(ranges)))
-            rows.sort(key=lambda r:r[0].index)
-        except ValueError:raise ClientInvalid() from None
-        if tuple(r[0] for r in rows)!=before.files:raise SnapshotChanged()
-        raw,_=self._request('torrents/properties',query={'hash':expected_hash})
-        properties=_json(raw)
-        if type(properties) is not dict:raise ClientInvalid()
-        after=self.inspect(expected_hash)
-        if before!=after:raise SnapshotChanged()
-        snapshot=TransferSnapshot(after,tuple(r[1] for r in rows),tuple(r[2] for r in rows),
-                                  properties.get('piece_size'),tuple(r[3] for r in rows))
-        if after.state=='error':
-            self._disk_full(snapshot,restart_after_disk_full)
-        return snapshot
-
-    def apply_selection(self,intent,fingerprint,permit,action):
-        if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        from src.anime.acquisition.transfers import (TransferPermit, TransferConflict, verify_snapshot, selection_fingerprint)
-        if type(permit) is not TransferPermit or self.options!=intent.options:raise ClientInvalid()
-        snapshot=self.inspect_transfer(intent.plan.manifest.info_hash)
-        if snapshot is None:raise TransferConflict()
-        verify_snapshot(intent,snapshot)
-        if selection_fingerprint(intent,snapshot.piece_size)!=fingerprint:raise TransferConflict()
-        if snapshot.observation.state not in STOPPED:raise TransferConflict()
-        selected=intent.plan.manifest.selected_index
-        if action=='skip':indices=[i for i in range(len(snapshot.priorities)) if i!=selected];priority=0
-        elif action=='wanted':indices=[selected];priority=1
-        else:raise TransferConflict()
-        permit.take(fingerprint,action)
-        if indices:self._request('torrents/filePrio',form={'hash':intent.plan.manifest.info_hash,
-            'id':'|'.join(map(str,indices)),'priority':priority},limit=4096)
-
-    def start_selected(self,intent,fingerprint,permit):
-        if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        from src.anime.acquisition.transfers import (TransferPermit, TransferConflict, verify_snapshot, exact_selection, selection_fingerprint)
-        if type(permit) is not TransferPermit or self.options!=intent.options:raise ClientInvalid()
-        snapshot=self.inspect_transfer(intent.plan.manifest.info_hash)
-        if snapshot is None:raise TransferConflict()
-        verify_snapshot(intent,snapshot)
-        if selection_fingerprint(intent,snapshot.piece_size)!=fingerprint:raise TransferConflict()
-        if snapshot.observation.state not in STOPPED or not exact_selection(intent,snapshot):raise TransferConflict()
-        permit.take(fingerprint,'start')
-        self._request(self.protocol.start_endpoint,
-                      form={'hashes':intent.plan.manifest.info_hash},limit=4096)
-
-    def cleanup_control(self,intent,fingerprint,permit,action,*,delete_files=True):
-        from src.anime.acquisition.cleanup import CleanupPermit, owned
-        from src.anime.acquisition.transfers import STOPPED, MISSING_FILES
-        if not self._sid or self.major not in (4,5):raise ClientAuthenticationFailed()
-        if type(permit) is not CleanupPermit or self.options!=intent.options or fingerprint!=intent.fingerprint:raise ClientInvalid()
-        current=owned(intent,self.inspect(intent.plan.manifest.info_hash))
-        if action=='remove':
-            allowed_states = (STOPPED | {MISSING_FILES}) if not delete_files else STOPPED
-            if current.state not in allowed_states:raise ClientInvalid()
-        if action not in ('stop','remove'):raise ClientInvalid()
-        permit.take(fingerprint,action)
-        if action=='stop':
-            self._request(self.protocol.stop_endpoint,
-                          form={'hashes':intent.plan.manifest.info_hash},limit=4096)
-        else:
-            # Staging is already committed; qBittorrent deletes its original
-            # payload when delete_files is True. For legacy MOVE recovery (delete_files=False),
-            # qBittorrent only deletes the torrent record without touching disk.
-            self._request('torrents/delete',
-                          form={'hashes':intent.plan.manifest.info_hash,
-                                'deleteFiles':'true' if delete_files else 'false'},
-                          limit=4096)
 
     # Uniform reports (JD-1b). The same shape for every supported version, so
     # `resources` can track a torrent's files without knowing the client.

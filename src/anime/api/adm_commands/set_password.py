@@ -12,7 +12,7 @@ def main(argv, prog):
     from src.anime import APP_NAME
     parser = argparse.ArgumentParser(prog=prog, description=f'Set the {APP_NAME} administrator password. '
                                      'Every dashboard session is signed out.')
-    parser.add_argument("--socket", default="/run/anime-discovery/admin.sock", help="the API's admin socket")
+    parser.add_argument("--socket", default="/run/akon/admin.sock", help="the API's admin socket")
     parser.add_argument("--password-stdin", action="store_true", help="Read a password from standard input for automation")
     parser.add_argument("--if-unset", action="store_true", help="Initialize only; preserve an existing password")
     args = parser.parse_args(argv)

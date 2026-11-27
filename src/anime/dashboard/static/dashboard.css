@@ -25,7 +25,7 @@ td{overflow-wrap:anywhere}tbody tr:hover{background:var(--hover)}.jobs-table{min
 .status{display:inline-flex;align-items:baseline;gap:.5rem;font-size:12px;color:var(--dim);white-space:nowrap}
 .status::before{content:"[ HOLD ]";display:inline-block;min-width:8ch;white-space:pre;color:var(--dim)}
 .status.completed::before{content:"[  OK  ]";color:var(--ok)}.status.running::before{content:"[ RUN  ]";color:var(--accent)}
-.status.waiting::before{content:"[ WAIT ]";color:var(--warn)}.status.blocked::before{content:"[ FAIL ]";color:var(--bad)}.status.held::before{content:"[ HOLD ]";color:var(--dim)}
+.status.waiting::before{content:"[ WAIT ]";color:var(--warn)}.status.blocked::before{content:"[ FAIL ]";color:var(--bad)}
 .notice:empty{display:none}.notice{padding:.4rem 0;color:var(--ok);white-space:pre-wrap;border-bottom:1px solid var(--border)}.notice.error{color:var(--bad)}
 .notice:not(:empty)::before{content:"ok: "}.notice.error:not(:empty)::before{content:"error: "}
 [hidden],.hidden{display:none!important}

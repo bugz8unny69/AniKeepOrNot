@@ -21,7 +21,7 @@
   <div id="workspace" hidden>
     <div id="service-bar" class="service-bar" role="status" aria-label="Service status" hidden></div>
     <nav aria-label="Main navigation">
-      <a class="tab" href="/">[1] intake</a><a class="tab" href="/jobs">[2] jobs</a><a class="tab" href="/recognized">[3] names</a><a class="tab" href="/settings">[4] settings</a>
+      <a class="tab" href="/">[1] intake</a><a class="tab" href="/running">[2] running</a><a class="tab" href="/recognized">[3] names</a><a class="tab" href="/settings">[4] settings</a>
       <span class="bell-wrap"><button id="bell" type="button" class="secondary bell" aria-haspopup="true" aria-expanded="false" aria-controls="bell-panel" aria-label="Notifications" title="Open or close unread notifications.">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1z"/></svg>
         <span id="bell-badge" class="bell-badge" hidden></span></button>
@@ -46,18 +46,15 @@
       <div class="page-controls"><button id="intake-previous" type="button" title="Load the previous page.">previous</button><button id="intake-next" type="button" title="Load the next page.">next</button></div>
       </section>
     </section>
-    <section id="jobs-panel" hidden>
-      <h1>jobs</h1><p class="muted">Track jobs and their recorded history. Status updates every five seconds.</p>
-      <section class="panel"><div class="toolbar"><h2>job activity</h2><div class="inline">
-        <label>Search <input id="search" type="search" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Release, anime, activity or #id" aria-label="Search jobs"></label>
-        <label>Status <select id="status-filter"><option value="">Active</option><option value="ALL">All, including completed and canceled</option><option value="PENDING">Queued</option><option value="RUNNING">Running</option><option value="RETRY_WAIT">Waiting</option><option value="ON_HOLD">On hold</option><option value="NEEDS_REVIEW">Needs review</option><option value="BLOCKED">Blocked</option><option value="FAILED">Failed</option><option value="DONE">Completed</option><option value="CANCELED">Canceled</option></select></label>
-      </div></div>
-      <p id="page-note" class="muted"></p>
-      <div id="bulk-actions" class="inline" hidden><span id="selection-count" role="status">0 selected</span><button id="bulk-retry" type="button" title="Retry selected eligible jobs from the step that failed.">retry</button><button id="bulk-cancel" type="button" class="danger" title="Cancel selected acquisitions and permanently remove their owned download files.">cancel</button><button id="bulk-cleanup" type="button" class="danger" title="Resume permanent cleanup of selected canceled acquisitions.">cleanup</button><button id="bulk-clear" type="button" title="Clear the selected jobs without changing them.">clear selection</button></div>
-      <div id="transcode-batch" class="panel" hidden aria-live="polite"></div>
-      <div class="table-scroll"><table class="jobs-table"><thead><tr><th><input type="checkbox" id="select-page" aria-label="Select jobs on this page" title="Select jobs on this page."></th><th>Received</th><th>Release / Anime</th><th>Job</th><th>Status</th><th>Activity details</th><th>Actions</th></tr></thead><tbody id="job-rows"></tbody></table></div>
-      <p id="no-jobs" class="empty" hidden>No active jobs. New work appears here when an episode is submitted.</p>
-      <div class="page-controls"><button id="previous-page" type="button" title="Load the previous page.">previous</button><button id="next-page" type="button" title="Load the next page.">next</button></div>
+    <section id="running-panel" hidden>
+      <h1>running</h1><p class="muted">What is being worked on right now. Status updates every five seconds.</p>
+      <section class="panel"><div class="toolbar"><h2>series activity</h2></div>
+      <div class="table-scroll"><table class="jobs-table"><thead><tr><th>Series</th><th>Torrents / Episodes</th><th>Step</th><th>Progress</th><th>Actions</th></tr></thead><tbody id="running-series-rows"></tbody></table></div>
+      <p id="no-running-series" class="empty" hidden>No series currently working. Active work appears here.</p>
+      </section>
+      <section class="panel"><div class="toolbar"><h2>releases waiting on identity (AniDB)</h2></div>
+      <div class="table-scroll"><table class="jobs-table"><thead><tr><th>Request ID</th><th>Infohash</th><th>Received</th><th>Tries</th></tr></thead><tbody id="running-identity-rows"></tbody></table></div>
+      <p id="no-running-identity" class="empty" hidden>No releases waiting on identity.</p>
       </section>
     </section>
     <section id="recognized-panel" hidden>
@@ -90,6 +87,10 @@
     <section class="trace-section"><h3>Staged episodes</h3>
       <table><thead><tr><th>Episode</th><th>Status</th><th>Actions</th></tr></thead><tbody id="series-episodes"></tbody></table>
       <p id="series-episodes-empty" class="muted" hidden>No staged episodes. Downloaded and verified episodes appear here.</p>
+    </section>
+    <section class="trace-section" id="series-torrents-section"><h3>Torrents</h3>
+      <table><thead><tr><th>Release</th><th>Step</th><th>State</th><th>Progress</th></tr></thead><tbody id="series-torrents"></tbody></table>
+      <p id="series-torrents-empty" class="muted" hidden>No torrents recorded for this series.</p>
     </section>
     <section class="trace-section"><h3>Backfill and continue</h3>
       <table><thead><tr><th>Episode</th><th>Result</th><th>Action</th></tr></thead><tbody id="series-missing"></tbody></table>
@@ -136,6 +137,8 @@
     </section>
     <div class="inline">
       <button id="series-reject" type="button" class="danger" title="Reject this series and permanently remove its owned staging and download files.">reject</button>
+      <button id="series-search" type="button" class="secondary" title="Search missing releases on Prowlarr.">search</button>
+      <button id="series-retry" type="button" class="secondary" title="Retry dropped torrents.">retry</button>
       <span id="series-keep-tooltip" class="action-tooltip"><button id="series-keep" type="button" title="Import all staged acquisitions in this series into the permanent library.">keep</button></span>
       <button id="series-reject-history" type="button" class="secondary" hidden title="Open the history of this series rejection.">history</button>
     </div>

@@ -10,12 +10,8 @@ import urllib.error
 
 from src.anime.configuration_schema import ConfigurationSnapshot, CONVERSIONS, convert_document, ConfigurationError
 from src.anime.jellyfin import request_refresh, RefreshConfiguration, RefreshUnavailable, RefreshReview
-from src.anime.jobs.refresh_jellyfin_job import registration
 from src.anime.secrets import SecretStore
-from src.anime.tests.test_stage_media_job import StageMediaJobTests
-from src.anime.tests.test_acquisition_preparation import AcquisitionPreparationTests
-from src.anime.tests.test_verify_media_job import VerifyMediaJobTests
-from src.anime.tests.test_torrent_transfer import TorrentTransferTests
+from src.anime.tests.support import DatabaseSetup as AcquisitionPreparationTests
 
 
 class Response(io.BytesIO):
@@ -70,34 +66,7 @@ class RefreshTests(unittest.TestCase):
             self.assertFalse(store.status().jellyfin_configured)
 
 
-class RefreshJobTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp=AcquisitionPreparationTests.asyncSetUp
-    rows=AcquisitionPreparationTests.rows
-    source=AcquisitionPreparationTests.source
-    queued=TorrentTransferTests.queued
-    due=TorrentTransferTests.due
-    ready=VerifyMediaJobTests.ready
 
-    async def test_refresh_failure_does_not_undo_staging_and_retry_reuses_job(self):
-        refresh=Mock(side_effect=[RefreshUnavailable(),None])
-        worker=StageMediaJobTests.worker(self,additional=(registration(None,refresh=refresh),))
-        await StageMediaJobTests.staged_ready(self,worker)
-        current=self.store.read()
-        self.store.update({'jellyfin':{'base_url':'http://jellyfin.invalid'}},expected_revision=current.revision)
-        await worker.attempt()
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='STAGE_USER_EVALUATION_MEDIA'"),[('DONE',)])
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[('PENDING',)])
-        self.assertEqual(self.rows("SELECT count(*) FROM job_operations WHERE state='STAGED'"),[(1,)])
-        await worker.attempt()
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[('RETRY_WAIT',)])
-        from src.anime.storage.sqlite import connect,transaction
-        db=connect(self.database)
-        try:
-            with transaction(db):db.execute("UPDATE jobs SET available_at_ms=0 WHERE kind='REFRESH_JELLYFIN'")
-        finally:db.close()
-        await worker.attempt()
-        self.assertEqual(self.rows("SELECT state FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[('DONE',)])
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='REFRESH_JELLYFIN'"),[(1,)])
 
 
 class RefreshCredentialApiTests(unittest.IsolatedAsyncioTestCase):

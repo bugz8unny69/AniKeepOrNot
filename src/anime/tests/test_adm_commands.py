@@ -16,7 +16,7 @@ def adm(*args):
 
 def test_every_command_module_follows_the_contract():
     found = commands()
-    assert {'agent', 'transcode', 'report', 'recover', 'services', 'set-password'} <= set(found)
+    assert {'agent', 'report', 'running', 'keep', 'reject', 'services', 'set-password'} <= set(found)
     for name, module in found.items():
         assert module.NAME == name and module.SUMMARY.strip() and callable(module.main), name
 
@@ -41,7 +41,7 @@ def test_each_visible_command_has_its_own_help_under_its_name():
 def test_no_command_and_unknown_commands_show_the_list():
     empty, unknown = adm(), adm('nope')
     assert empty.returncode == unknown.returncode == 2
-    assert 'transcode' in empty.stdout and "unknown command 'nope'" in unknown.stderr
+    assert 'running' in empty.stdout and "unknown command 'nope'" in unknown.stderr
 
 
 def test_listing_commands_imports_no_implementation():

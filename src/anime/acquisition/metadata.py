@@ -368,6 +368,18 @@ def parse_metainfo(raw,expected_hash):
     return _parse_metainfo(raw,expected_hash,batch=False)
 
 
+def metainfo_hash(raw):
+    """The v1 info hash of .torrent bytes (a file added by hand), before full validation."""
+    if type(raw) is not bytes or not 1<=len(raw)<=MAX_METAINFO:raise MetadataInvalid()
+    try:
+        decoder=_Decoder(raw)
+        root=decoder.value()
+        if type(root) is not dict or decoder.pos!=len(raw) or decoder.info_span is None:raise MetadataInvalid()
+        start,end=decoder.info_span
+        return hashlib.sha1(raw[start:end]).hexdigest()
+    except (TypeError,ValueError,KeyError,IndexError,RecursionError):raise MetadataInvalid() from None
+
+
 def parse_batch_metainfo(raw,expected_hash):
     """Read-only, hash-verified multi-video inventory; selects no files."""
     return _parse_metainfo(raw,expected_hash,batch=True)

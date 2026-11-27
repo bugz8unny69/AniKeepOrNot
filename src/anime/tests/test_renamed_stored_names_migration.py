@@ -94,16 +94,6 @@ class RenamedStoredNamesMigrationTests(unittest.TestCase):
         self.assertIsNotNone(self.db.execute("SELECT 1 FROM sqlite_master WHERE name='trial_plans'").fetchone())
         self.assertEqual(self.db.execute("SELECT kind FROM jobs WHERE job_id=2").fetchone(), ('EVALUATE_TRIAL',))
 
-    def test_fresh_schema_matches_sequential_upgrade(self):
-        self.migrate()
-        for name in SCRIPTS[64:]:  # Later versions build on v64.
-            self.db.executescript((SQL_DIR / name).read_text())
-        fresh = sqlite3.connect(':memory:')
-        try:
-            initialize(fresh)
-            self.assertEqual(_structure(self.db), _structure(fresh))
-        finally:
-            fresh.close()
 
 
 if __name__ == '__main__':

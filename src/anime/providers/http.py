@@ -155,7 +155,7 @@ class Clients:
         self.open = opener or urllib.request.build_opener(NoRedirect()).open
 
     def _fetch(self, provider, token, url, *, body=None, bearer=None, limit=4194304):
-        headers = {"User-Agent":"AnimeDiscoveryNextGen/1.0","Accept-Encoding":"gzip, deflate"}
+        headers = {"User-Agent":"akon/1.0","Accept-Encoding":"gzip, deflate"}
         if body is not None: headers["Content-Type"]="application/json"
         if bearer is not None: headers["Authorization"]="Bearer "+bearer
         request = urllib.request.Request(url,data=body,headers=headers)

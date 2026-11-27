@@ -693,7 +693,6 @@ EVENTS = {
     'SONARR_BACKFILL_OBSERVED': ('EPISODE_DISCOVERY_RECORDED', 'Episode search results saved.'),
     'DONE': ('DONE', 'Job finished.'),
     'FAILED': ('FAILED', 'Job failed.'),
-    'ON_HOLD': ('ON_HOLD', 'Job on hold.'),
     'BLOCKED': ('BLOCKED', 'Job blocked.'),
     'DECISION_DOWNLOAD_CONTROL_RECORDED': ('DECISION_DOWNLOAD_CONTROL_RECORDED', 'Download cleanup step saved.'),
     'CANCELLATION_CONTROL_RECORDED': ('CANCELLATION_CONTROL_RECORDED', 'Cancellation cleanup step saved.'),
@@ -826,6 +825,7 @@ UNREGISTERED = {}
 NEW.update({
     'TRANSCODE_WAITING': ('INFO', None, 'All allowed transcoders are busy, offline or out of temporary space.', 'Waiting for transcoder', 'Nothing to do. The worker tries again later.'),
     'TRANSCODE_FAILED': ('WARNING', False, 'Transcoding failed after three attempts across the configured agents.', 'Transcode failed on all agents.', 'Check agent errors, then Retry to start a fresh attempt budget.'),
+    'CUTOVER_CONVERTED': ('INFO', None, 'This job was converted to a series row during the one-time cutover.', 'Converted to series job.', 'Nothing to do.'),
 })
 
 # Work item 2 (owner, 2026-11-27): an outage never fails a job; only a program error does.

@@ -65,7 +65,7 @@ def verify_torrent_ownership(observation: Any, marker: str, download_root: str, 
     """
     if observation is None:
         return False
-    expected_tag = 'ad-' + marker
+    expected_tag = 'akon-' + marker
     tags = getattr(observation, 'tags', ()) or ()
     save_path = getattr(observation, 'save_path', '') or ''
     cat = getattr(observation, 'category', '') or ''
@@ -75,7 +75,7 @@ def verify_torrent_ownership(observation: Any, marker: str, download_root: str, 
             or cat != category
             or auto_tmm is not False
             or expected_tag not in tags
-            or any(t.startswith('ad-') and t != expected_tag for t in tags)):
+            or any((t.startswith('akon-') or t.startswith('ad-')) and t != expected_tag for t in tags)):
         return False
     return True
 

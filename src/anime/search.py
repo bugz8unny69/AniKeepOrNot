@@ -42,46 +42,19 @@ def reason_texts():
             for code in REGISTRY}
 
 
-@lru_cache(maxsize=None)
-def handler_texts():
-    """Job column: each job kind's label, e.g. 'Reserve episode for acquisition'."""
-    from src.anime.dashboard.presentation import HANDLERS
-    return {key.split('.')[1]: text for key, text in HANDLERS.messages().items()
-            if key.startswith('handler.') and key.endswith('.label')}
-
-
-TEXTS = {'reason': reason_texts, 'handler': handler_texts}
+TEXTS = {'reason': reason_texts}
 
 
 SCOPES = {
-    'jobs': Scope(
-        fields=(
-            "(SELECT CASE WHEN json_valid(CAST(e.raw_body AS TEXT)) "
-            "THEN json_extract(CAST(e.raw_body AS TEXT),'$.release_name') END "
-            "FROM incoming_events e WHERE e.event_id=jobs.event_id) {like}",
-            "EXISTS (SELECT 1 FROM identity_results r JOIN identified_anime a USING(anidb_id) "
-            "WHERE r.event_id=jobs.event_id AND a.title {like})",
-            "EXISTS (SELECT 1 FROM identity_results r JOIN anime_title_metadata t USING(anidb_id) "
-            "WHERE r.event_id=jobs.event_id AND (t.english_title {like} OR t.romaji_title {like}))",
-            # "Stopped at <check> · file: <path>" shown for jobs stopped for review.
-            "(jobs.state IN ('NEEDS_REVIEW','BLOCKED') AND EXISTS (SELECT 1 FROM job_history h "
-            "WHERE h.job_id=jobs.job_id AND (json_extract(h.details_json,'$.failed_check') {like} "
-            "OR json_extract(h.details_json,'$.failed_path') {like})))",
-        ),
-        ids=('jobs.job_id',),
-        codes=(('jobs.last_reason_code', 'reason'), ('jobs.kind', 'handler'))),
+    # Intake: one row per series (the series job).
     'intake': Scope(
         fields=(
-            "identified_anime.title {like}",
-            "EXISTS (SELECT 1 FROM recognized_aliases x "
-            "WHERE x.anidb_id=identified_anime.anidb_id AND x.alias_key {like})",
-            "EXISTS (SELECT 1 FROM identity_results r WHERE r.anidb_id=identified_anime.anidb_id "
-            "AND (json_extract(r.series_json,'$.anime.english_title') {like} "
-            "OR json_extract(r.series_json,'$.anime.original_title') {like}))",
-            "EXISTS (SELECT 1 FROM anime_title_metadata t WHERE t.anidb_id=identified_anime.anidb_id "
+            "series.title {like}",
+            "EXISTS (SELECT 1 FROM recognized_aliases x WHERE x.anidb_id=series.anidb_id AND x.alias_key {like})",
+            "EXISTS (SELECT 1 FROM anime_title_metadata t WHERE t.anidb_id=series.anidb_id "
             "AND (t.english_title {like} OR t.romaji_title {like}))",
         ),
-        ids=('identified_anime.anidb_id',)),
+        ids=('series.anidb_id',)),
     'recognized': Scope(
         fields=(
             "s.display_title {like}",

@@ -75,9 +75,9 @@ class ServiceSetupTests(unittest.TestCase):
 
     def test_worker_dispatches_composed_worker_without_starting_api(self):
         run=AsyncMock()
-        with patch('src.anime.__main__.check_local') as check,patch('src.anime.providers.configuration.run_identity_worker',run):
+        with patch('src.anime.__main__.check_local') as check,patch('src.anime.worker.run_worker',run):
             self.assertEqual(main(['worker','--config-dir',str(self.root)]),0)
-        check.assert_called_once_with(str(self.root),worker=True);run.assert_awaited_once_with(str(self.root),backfill=True,backfill_select=True,backfill_acquire=True)
+        check.assert_called_once_with(str(self.root),worker=True);run.assert_awaited_once_with(str(self.root))
 
     def test_check_command_does_not_start_worker(self):
         with patch('src.anime.__main__.check_local',return_value={'local_ready':True}) as check,redirect_stdout(io.StringIO()):

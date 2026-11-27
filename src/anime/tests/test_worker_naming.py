@@ -11,7 +11,7 @@ from src.anime.configuration_schema import (
 )
 from src.anime.history import component_name
 from src.anime.settings import parse_settings
-from src.anime.storage.sqlite import initialize, transaction, enqueue_job
+from src.anime.storage.sqlite import initialize, transaction
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "storage" / "sql"
 
@@ -112,7 +112,9 @@ class WorkerSqlMigrationTests(unittest.TestCase):
         self.db.executescript((SQL_DIR / "022_keep_imports.sql").read_text())
         self.db.executescript((SQL_DIR / "023_reservation_release.sql").read_text())
         from src.anime.storage.migrations import SCRIPTS as current_scripts
-        for name in current_scripts[23:]:self.db.executescript((SQL_DIR/name).read_text())
+        for name in current_scripts[23:79]:self.db.executescript((SQL_DIR/name).read_text())
+        self.db.execute("UPDATE jobs SET state='DONE'");self.db.commit()   # The cutover closes old work before v80.
+        self.db.executescript((SQL_DIR/current_scripts[79]).read_text())
         initialize(self.db)  # Latest version accepted without implicit upgrade.
 
     def test_failure_before_version_bump_rolls_back_rows_and_vocabulary(self):

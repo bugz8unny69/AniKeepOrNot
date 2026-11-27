@@ -60,7 +60,7 @@ class SafeFormatter(logging.Formatter):
         # Another handler may have cached an unsafe full traceback on record.
         safe_record = copy.copy(record)
         if safe_record.name == "anime" or safe_record.name.startswith("anime."):
-            safe_record.name = "anime-discovery" + safe_record.name[len("anime"): ]
+            safe_record.name = "akon" + safe_record.name[len("anime"): ]
         safe_record.exc_text = None
         return redact(super().format(safe_record))
 

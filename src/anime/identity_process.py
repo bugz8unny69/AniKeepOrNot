@@ -13,6 +13,7 @@ release that must wait (AniDB pacing, a provider down, credentials not set
 up) stays queued with its next time. The process exits when nothing is due
 within a minute; the API starts it again when something is.
 """
+from dataclasses import dataclass, field
 import argparse
 import asyncio
 from functools import partial
@@ -33,8 +34,8 @@ SETUP_WAIT_MS = 300_000
 
 def _next(database, now):
     """The earliest waiting release, and how long until it is due (0 when due now)."""
-    from src.anime.storage.job_queue import JobQueue
-    with JobQueue(database).connection() as db:
+    from src.anime.storage.connection import database as connection
+    with connection(database) as db:
         row = db.execute('SELECT request_id,raw_body,process_anyway,next_try_at_ms,tries FROM identity_requests '
                          'WHERE outcome IS NULL ORDER BY next_try_at_ms,request_id LIMIT 1').fetchone()
     if row is None:
@@ -43,16 +44,15 @@ def _next(database, now):
 
 
 def _schedule(database, request_id, at_ms, reason_code=None, *, spend=False):
-    from src.anime.storage.job_queue import JobQueue
+    from src.anime.storage.connection import database as connection
     from src.anime.storage.sqlite import transaction
-    with JobQueue(database).connection() as db, transaction(db):
+    with connection(database) as db, transaction(db):
         db.execute('UPDATE identity_requests SET next_try_at_ms=?,last_reason_code=?,tries=tries+? '
                    'WHERE request_id=? AND outcome IS NULL', (at_ms, reason_code, 1 if spend else 0, request_id))
 
 
 async def identify(resolve, configuration, row, logger):
     """('report', line) for a finished release, or ('wait', at_ms, reason, spend) to try it later."""
-    from src.anime.jobs.identify_anime_job import IdentityRequest, _movie_request
     from src.anime.matching import MatchingTrace
     from src.anime.providers.errors import (ProviderAuthenticationFailed, ProviderConfigurationError,
                                             ProviderDeferred, ProviderInvalidResponse, ProviderUnavailable)
@@ -138,3 +138,22 @@ def main(argv=None):
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+@dataclass(frozen=True)
+class IdentityRequest:
+    """What the resolver reads of a queued release (it was the IDENTIFY_ANIME job's input)."""
+    event_id: int
+    source: str
+    raw_body: bytes = field(repr=False)
+
+
+def _movie_request(request):
+    """A release whose identity was not found, and whose title says it is a movie."""
+    import json
+    from src.anime.batch.recognition import movie_title
+    try:
+        title = json.loads(getattr(request, "raw_body", b"") or b"{}").get("release_name")
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return movie_title(title)

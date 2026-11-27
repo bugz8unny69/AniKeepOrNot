@@ -11,6 +11,7 @@ import copy
 import ipaddress
 import json
 import re
+import urllib.parse
 
 from src.anime.settings import COMPONENTS, Settings, parse_settings
 
@@ -18,6 +19,26 @@ CONFIGURATION_VERSION = 17
 MAX_REVISION = (1 << 63) - 1
 MAX_BYTES = 65536
 
+
+
+def _source_url(value):
+    """Historical v7-v11 URL validation; never used to fetch current metadata."""
+    try:
+        if type(value) is not str or not value or len(value)>2048:raise ValueError()
+        parsed=urllib.parse.urlsplit(value)
+        from src.anime.acquisition.settings import endpoint
+        authority=endpoint(urllib.parse.urlunsplit((parsed.scheme,parsed.netloc,'','','')))
+        if (parsed.query or parsed.fragment or '?' in value or '#' in value or '%' in value
+                or '\\' in value or not value.isascii() or any(ord(c)<=32 or ord(c)==127 for c in value)):
+            raise ValueError()
+        path=parsed.path.rstrip('/')
+        if path and (not path.startswith('/')
+                     or any(not re.fullmatch('[A-Za-z0-9_-]+',p)
+                            for p in path[1:].split('/'))):
+            raise ValueError()
+        return authority+path
+    except (ValueError, TypeError, AttributeError):
+        raise MetadataSourceConfigurationError() from None
 
 class ConfigurationError(ValueError):
     reason_code = "CONFIGURATION_INVALID"
@@ -101,7 +122,7 @@ FIELDS = MappingProxyType({
     "sonarr.library_root": FieldDefinition("", "directory", "next_operation", label="Permanent folder as seen by Sonarr", help_text="Blank uses the local Keep folder. Local and Sonarr folders must refer to the same storage."),
     "qbittorrent.base_url": FieldDefinition("", "download_endpoint", "next_operation",
         label="qBittorrent address", help_text="HTTP or HTTPS server address without credentials, query or subpath. Required before download work."),
-    "qbittorrent.category": FieldDefinition("anime-discovery", "download_category", "next_operation",
+    "qbittorrent.category": FieldDefinition("akon", "download_category", "next_operation",
         label="Download category", help_text="Category label for newly submitted torrents. A label is not proof of ownership."),
     "qbittorrent.timeout_seconds": FieldDefinition(30, "integer", "next_operation", minimum=1, maximum=60,
         label="Download client timeout", help_text="Maximum seconds for a client request."),
@@ -132,12 +153,14 @@ FIELDS = MappingProxyType({
     "api.host": FieldDefinition("127.0.0.1", "host", "restart", ("api",)),
     "api.port": FieldDefinition(8765, "integer", "restart", ("api",), 1, 65535),
     "worker.concurrency": FieldDefinition(4, "integer", "restart", ("worker",), 1, 32),
+    "series.torrents_at_once": FieldDefinition(1, "integer", "next_operation", minimum=1, maximum=8,
+        label="Torrents worked on at once per series", help_text="Default number of torrents a series works on at once (1–8)."),
     "storage.user_evaluation_root": FieldDefinition("", "directory", "next_operation",
         label="Staging folder", help_text="Absolute destination for verified videos staged for viewing before Keep or Reject. Leave blank until configured. Existing files are not moved."),
     "storage.keep_root": FieldDefinition("", "directory", "next_operation",
         label="Keep video folder", help_text="Absolute permanent destination for approved Keep videos. Must agree with the library import target when Sonarr is used."),
     "storage.database_path": FieldDefinition(
-        "/var/lib/anime-discovery/nextgen.sqlite", "path", "restart", tuple(sorted(COMPONENTS))),
+        "/var/lib/akon/akon.sqlite", "path", "restart", tuple(sorted(COMPONENTS))),
 })
 
 # Published v14 and earlier name the evaluation settings "trial" (refactor
@@ -147,7 +170,7 @@ _V14_NAMES = {"user_evaluation.backfill_count": "trial.backfill_count",
               "storage.user_evaluation_root": "storage.trial_root"}
 # v16 added the long-running series settings for Keep's Sonarr add.
 _V16_ADDED = ("sonarr.long_running_threshold", "sonarr.backfill_long_running")
-V16_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if not key.startswith("transcode.")})
+V16_FIELDS = MappingProxyType({key: spec for key, spec in FIELDS.items() if not key.startswith("transcode.") and not key.startswith("series.")})
 V15_FIELDS = MappingProxyType({key: spec for key, spec in V16_FIELDS.items() if key not in _V16_ADDED})
 V14_FIELDS = MappingProxyType({_V14_NAMES.get(key, key): spec for key, spec in V15_FIELDS.items()})
 # The obsolete HTTP metadata-source fields exist only to validate published
@@ -262,8 +285,7 @@ def validate_values(value, *, fields=FIELDS):
             elif spec.kind == "metadata_source":
                 if type(item) is not str:raise ConfigurationError()
                 if item:
-                    from src.anime.acquisition.metainfo_source import source_url
-                    try:source_url(item)
+                    try:_source_url(item)
                     except ValueError:raise ConfigurationError() from None
             elif spec.kind == "download_endpoint":
                 if type(item) is not str:raise ConfigurationError()

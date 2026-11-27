@@ -33,7 +33,6 @@ import traceback
 
 from src.anime.diagnostics import redact
 
-RELEASE_KIND = 'VERIFY_RELEASE'
 TICK_S = 30                 # How often the API looks for due releases.
 REPORT_GRACE_MS = 600_000   # A reported release is not tried again unless the API never applied it.
 STOP_WAIT_S = 10
@@ -123,7 +122,7 @@ def known_series(database, raw_body):
     from src.anime.release_names import release_title
     from src.anime.storage.manual_identity import for_release
     from src.anime.storage.recognition import recognized_for_release
-    from src.anime.storage.job_queue import JobQueue
+    from src.anime.storage.connection import database as connection
     title = release_name(raw_body)
     if title is None:
         return None
@@ -136,7 +135,7 @@ def known_series(database, raw_body):
         return manual
     if season is None:
         return None
-    with JobQueue(database).connection() as db:
+    with connection(database) as db:
         known = recognized_for_release(db, title, season=season)
     if known is None or known['tvdb_series_id'] is None:
         return None
@@ -150,8 +149,8 @@ def take_release(database, raw_body, logger, *, process_anyway=False):
     outcome None means the identity process must get the real data from AniDB first;
     new is True the first time this torrent is seen.
     """
-    from src.anime.storage.job_queue import JobQueue
-    with JobQueue(database).connection() as db:
+    from src.anime.storage.connection import database as connection
+    with connection(database) as db:
         infohash = _infohash(raw_body)
         new = infohash is None or db.execute('SELECT 1 FROM identity_requests WHERE infohash=?',
                                              (infohash,)).fetchone() is None
@@ -161,7 +160,7 @@ def take_release(database, raw_body, logger, *, process_anyway=False):
         series = known_series(database, raw_body)
         if series is not None:
             apply_result(database, {'request_id': request_id, 'result': 'identified', 'series': series}, logger)
-            with JobQueue(database).connection() as db:
+            with connection(database) as db:
                 outcome = status(db, request_id)
     return (request_id, *outcome, new)
 
@@ -186,24 +185,26 @@ def notify_not_processed(db, raw_body, reason_code, now=None):
 def apply_result(database, result, logger):
     """Apply one identity-process result in one transaction, then log it in plain words.
 
-    Returns what was done: 'identified', 'rejected', 'decided', or 'gone' (already applied).
+    An identified release wakes its series job with the torrent and the identity
+    (no on/off switch; owner, 2026-11-26). Returns what was done: 'identified',
+    'rejected', 'decided', or 'gone' (already applied).
     """
     from src.anime.decided_series import REASONS, WORDS, notify_refused, release_name
     from src.anime.diagnostics import log_history
     from src.anime.schema.anime_series import AnimeSeries
-    from src.anime.storage.job_queue import JobQueue
+    from src.anime.storage.connection import database as connection
     from src.anime.storage.review_decisions import decision
-    from src.anime.storage.sqlite import (IdentityConflict, IdentityNotReady, append_event_history,
-                                          enqueue_job_with_receipt, persist_identity, transaction)
+    from src.anime.series_job.store import add_torrent, wake
+    from src.anime.storage.sqlite import transaction
     request_id = result['request_id']
     now = now_ms()
     records = []
-    with JobQueue(database).connection() as db, transaction(db):
-        row = db.execute('SELECT raw_body,process_anyway,received_at_ms,outcome FROM identity_requests '
+    with connection(database) as db, transaction(db):
+        row = db.execute('SELECT raw_body,process_anyway,received_at_ms,outcome,infohash FROM identity_requests '
                          'WHERE request_id=?', (request_id,)).fetchone()
         if row is None or row[3] is not None:
             return 'gone'                      # Already applied (a repeated report).
-        raw, anyway, received = bytes(row[0]), bool(row[1]), row[2]
+        raw, anyway, received, infohash = bytes(row[0]), bool(row[1]), row[2], row[4]
         name = release_name(raw) or f'Release {request_id}'
 
         def decide(outcome, reason_code):
@@ -225,25 +226,26 @@ def apply_result(database, result, logger):
                 notify_refused(db, aid, found, raw, now=now)
                 decide('rejected', REASONS[found])
                 return 'decided', f'{name}: AniDB {aid} {title} is already {WORDS[found]}; in API Reject'
-            db.execute('SAVEPOINT identity')   # A conflict undoes only the delivery, not the refusal.
-            event_id = db.execute('INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES(?,?,?)',
-                                  ('autobrr', raw, received)).lastrowid
-            records.append(append_event_history(db, event_id=event_id, event_code='ACCEPTED', component='api',
-                                                occurred_at_ms=now))
+
+            if infohash is None:
+                return rejected('API_WEBHOOK_INVALID')     # The webhook always stores the hash.
+            # What the identity process verified: the series' titles and recognized names
+            # (so /check answers it at once next time), then the series is woken.
+            from src.anime.storage.recognition import RecognitionConflict, remember_identified
+            from src.anime.storage.sqlite import upsert_anime_titles
             try:
-                _, audit = persist_identity(db, event_id, series, now)
-            except (IdentityConflict, IdentityNotReady) as exc:
-                db.execute('ROLLBACK TO identity'); db.execute('RELEASE identity')
-                records.clear()
-                return rejected(exc.reason_code)
-            if audit is not None:
-                records.append(audit)
-            job_id, created = enqueue_job_with_receipt(db, kind=RELEASE_KIND, payload={'anidb_id': aid},
-                                                       component='api', event_id=event_id, available_at_ms=now)
-            records.append(created)
-            db.execute('RELEASE identity')
+                upsert_anime_titles(db, aid, series['anime'].get('english_title'),
+                                    series.get('attributes', {}).get('romaji_title'))
+                remember_identified(db, anidb_id=aid, title=title[:512].strip(),
+                                    tvdb_series_id=series['anime']['tvdb_series_id'],
+                                    anime_type=series['anime'].get('type'), raw_body=raw, when=now)
+            except RecognitionConflict as exc:
+                return rejected("IDENTITY_CONFLICT")     # It contradicts a recognized series.
+            wake(db, aid, title, now=now, reopen=anyway)
+            add_torrent(db, aid, {'infohash': infohash, 'release_name': name, 'raw_body': raw,
+                                  'identity': series}, now=now)
             decide('accepted', None)
-            return 'identified', f'{name}: identified as AniDB {aid} {title}; gave the worker job {job_id}'
+            return 'identified', f'{name}: identified as AniDB {aid} {title}; woke series {aid}'
         done, line = apply()
     for record in records:
         log_history(logger, record)
@@ -274,8 +276,8 @@ class IdentityBridge:
         return await asyncio.get_running_loop().run_in_executor(self.executor, function, *args)
 
     def _due(self):
-        from src.anime.storage.job_queue import JobQueue
-        with JobQueue(self.database).connection() as db:
+        from src.anime.storage.connection import database as connection
+        with connection(self.database) as db:
             prune(db)
             return due(db)
 

@@ -1,14 +1,14 @@
 {
   "storage": {
-    "download_root": "/srv/anime-discovery/downloads",
-    "trial_root": "/srv/anime-discovery/staging",
-    "keep_root": "/srv/anime-discovery/library"
+    "download_root": "/srv/akon/downloads",
+    "trial_root": "/srv/akon/staging",
+    "keep_root": "/srv/akon/library"
   },
   "api": {"host": "127.0.0.1", "port": 8765},
   "worker": {"concurrency": 1},
   "anidb": {"client_name": "", "client_version": 1},
   "torrent_metadata": {"base_url": ""},
-  "qbittorrent": {"base_url": "", "category": "anime-discovery"},
+  "qbittorrent": {"base_url": "", "category": "akon"},
   "prowlarr": {"base_url": ""},
   "sonarr": {"base_url": "", "quality_profile_id": 0},
   "jellyfin": {"base_url": ""},

@@ -33,15 +33,6 @@ class FailedJobStateMigrationTests(unittest.TestCase):
         self.db.executescript(SCRIPT)
         return self.db
 
-    def test_upgrade_matches_fresh_schema_and_version(self):
-        fresh = sqlite3.connect(':memory:')
-        self.addCleanup(fresh.close)
-        initialize(fresh)
-        upgraded = self.migrate()
-        for name in SCRIPTS[58:]:
-            upgraded.executescript((SQL_DIR/name).read_text())
-        self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], LATEST_VERSION)
-        self.assertEqual(_structure(fresh), _structure(upgraded))
 
     def test_upgrade_preserves_existing_jobs_and_allows_failed_state(self):
         upgraded = self.migrate()

@@ -16,7 +16,41 @@ Nothing here is built yet.
 - **History is abandoned:** the old job history is wiped at the cutover, not converted.
 - **qBittorrent's category and folders are renamed to `akon` too.**
 
-## 1. The series job
+## 0. One series, one row (owner, 2026-11-23)
+
+The database must grow with the number of series, not with the work done.
+Today 138 series take 11,680 jobs and 515,766 history rows; history and its
+indexes are 86 MB of the 140 MB database, spread over 56 tables that point at
+step job numbers.
+
+The series job is **one table, one row per AniDB ID**:
+
+```sql
+CREATE TABLE series (
+ anidb_id INTEGER PRIMARY KEY,          -- the series; also its ID everywhere (adm, dashboard)
+ title TEXT NOT NULL,
+ state TEXT NOT NULL,                   -- WORKING, ASLEEP, KEPT, REJECTED
+ wake_at_ms INTEGER,                    -- asleep until then (a download check); NULL = until woken
+ torrents_at_once INTEGER NOT NULL DEFAULT 1,
+ torrents_json TEXT NOT NULL,           -- each torrent: hash, name, step, state, why, episodes
+ episodes_json TEXT NOT NULL,           -- each episode: state, which torrent, file
+ recent_json TEXT NOT NULL,             -- the last 50 history lines, for the dashboard
+ lease_token TEXT, lease_expires_at_ms INTEGER,
+ created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+);
+```
+
+- **No step rows.** A step updates its torrent inside the series row.
+- **History is bounded:** the row keeps only the last 50 lines; the full story is in the log.
+- **8,000 series means 8,000 rows,** a few KB each.
+- **Kept:** the provider cache, the identity queue (pruned daily) and notifications. They don't grow with steps.
+- **Removed at the cutover:** jobs, job history, job operations, and the per-step tables.
+
+## Branches (owner, 2026-11-23)
+
+- **`develop`** stays what runs on production, for short fixes.
+- **`feat/series-job`** holds this rework, the cutover and the rename, until it is ready.
+
 
 - **One per AniDB ID.** A separately listed OVA, movie or special on AniDB is its own entry, with its own ID. A TVDB season 00 release goes to the AniDB entry the anime-lists map gives for it. Specials that AniDB lists inside a series (S1, S2, …) are episodes of that series.
 - **States:**
@@ -90,7 +124,7 @@ A script in `fixes/`, tested first on a copy of the production database (on prod
 ## Build order
 
 1. **API logging** (section 4). Small, and useful straight away.
-2. **The series job, the Running page and the `adm` commands,** behind a setting, tested on production with a copy of the database.
+2. **The series job, the Running page and the `adm` commands,** tested on production with a copy of the database. No on/off setting (owner, 2026-11-26): the branch merges when the series job does the real work, and the cutover replaces the old jobs.
 3. **The cutover script and the rename,** tested on a production copy, then run once.
 
 ## Answered by the owner (2026-11-23)

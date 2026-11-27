@@ -128,10 +128,8 @@ def main(argv=None):
         elif args.command=='check':output=check_local(args.config_dir,worker=args.worker)
         else:
             check_local(args.config_dir,worker=True)
-            from src.anime.providers.configuration import run_identity_worker
-            asyncio.run(run_identity_worker(
-                args.config_dir,backfill=True,
-                backfill_select=True,backfill_acquire=True))
+            from src.anime.worker import run_worker
+            asyncio.run(run_worker(args.config_dir))
             return 0
         print(json.dumps(output,sort_keys=True))
         return 0

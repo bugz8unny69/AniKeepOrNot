@@ -28,6 +28,21 @@ RETRY_DELAYS_SECONDS = (15, 60)
 MAX_RETRY_AFTER_SECONDS = 120
 
 
+
+# Diagnostic text from indexers: no ANSI escapes or control characters, bounded.
+ANSI_ESCAPE = re.compile(r'\x1B(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])')
+MAX_TITLE_LEN = 2048
+MAX_STORED_ROWS = 1000
+
+
+def sanitize_text(value, max_len=MAX_TITLE_LEN):
+    """Strip ANSI sequences and non-printable characters; bound length."""
+    if not isinstance(value, str):
+        return ''
+    cleaned = ANSI_ESCAPE.sub('', value)
+    cleaned = ''.join(ch for ch in cleaned if ord(ch) >= 32 and ord(ch) != 127)
+    return cleaned.strip()[:max_len]
+
 class SearchReview(ValueError):
     reason_code = 'SERVICE_RESPONSE_INVALID'
     service = 'prowlarr'
@@ -418,7 +433,7 @@ class Client:
         url = (self.options.base_url + '/api/v1/search?' + urllib.parse.urlencode(query_params))
         request = urllib.request.Request(url, method='GET', headers={
             'X-Api-Key': self._key, 'Accept': 'application/json',
-            'User-Agent': 'AnimeDiscoveryNextGen/1'})
+            'User-Agent': 'akon/1'})
         started = time.monotonic()
         if self.logger is not None:
             self.logger.info('Prowlarr search started: query=%r type=%s timeout_seconds=%s',
@@ -457,7 +472,6 @@ class Client:
         """All matching releases for one searchable episode, ranked by policy."""
         from src.anime.acquisition.release_titles import AnimeTitles, search_queries, matches
         from src.anime.release_names import read_release
-        from src.anime.storage.prowlarr_snapshots import sanitize_text
         prepared = AnimeTitles.build(catalog.titles, season)
         english_title = getattr(catalog, 'english_title', None)
         queries = search_queries(catalog.titles, prepared, target, season=season,
@@ -895,7 +909,6 @@ class Client:
         from src.anime.acquisition.release_titles import batch_search_queries, AnimeTitles
         from src.anime.batch.recognition import release_scope_hint
         from src.anime.acquisition.audio import is_audio_incompatible, dual_audio_tagged
-        from src.anime.storage.prowlarr_snapshots import sanitize_text
 
         titles_tuple = tuple(anime_titles) if isinstance(anime_titles, (list, tuple, set)) else (str(anime_titles),)
         english_title = getattr(self.catalog, 'english_title', None) if self.catalog else None

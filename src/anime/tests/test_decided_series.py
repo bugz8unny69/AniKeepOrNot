@@ -11,7 +11,6 @@ from src.anime.providers.http import Clients, Options
 from src.anime.storage.recognition import _alias
 from src.anime.storage.sqlite import connect, initialize, transaction
 from src.anime.tests.test_api_v1 import ApiV1Tests, ADMIN, WEB
-from src.anime.tests.test_keep_sonarr import KeepSonarrTests
 
 NAME = 'Sousou no Frieren - 05 [1080p]'
 
@@ -64,19 +63,18 @@ class WebhookRefusalTests(unittest.IsolatedAsyncioTestCase):
         with connect(self.database) as db:
             db.execute('PRAGMA foreign_keys=OFF')
             with transaction(db):
-                db.execute("INSERT INTO identified_anime VALUES(1001,2001,'Sousou no Frieren')")
-                db.execute("INSERT INTO jobs(job_id,kind,payload_json,available_at_ms,created_at_ms,updated_at_ms) "
-                           "VALUES(900,'REJECT_SERIES','{}',0,1,1)")
-                db.execute("INSERT INTO anime_review_decisions(anidb_id,operation_id,job_id,decision,cleanup_state,decided_at_ms) "
-                           "VALUES(1001,1,900,?,'COMPLETE',1)", (decision,))
+                # Kept or rejected: the series row is the decision (the series job).
+                db.execute("INSERT INTO series(anidb_id,title,state,torrents_json,episodes_json,recent_json,"
+                           "created_at_ms,updated_at_ms) VALUES(1001,'Sousou no Frieren',?,'[]','{}','[]',1,1)",
+                           ({'ACCEPT': 'KEPT', 'REJECT': 'REJECTED'}[decision],))
                 # Found through Recognized names (P2), from local data only.
                 db.execute("INSERT INTO recognized_series VALUES(1001,'Sousou no Frieren',2001,NULL,1)")
                 db.execute("INSERT INTO recognized_aliases VALUES(?,1001)", (_alias('Sousou no Frieren'),))
 
     def counts(self):
         with connect(self.database) as db:
-            return tuple(db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
-                         for table in ('incoming_events', 'jobs', 'notifications'))
+            return (db.execute("SELECT coalesce(sum(json_array_length(torrents_json)),0) FROM series").fetchone()[0],
+                    0, db.execute('SELECT count(*) FROM notifications').fetchone()[0])
 
     async def test_decided_series_are_refused_with_200_no_work_and_one_bell_item(self):
         for decision, code in (('ACCEPT', 'ANIME_ACCEPTED'), ('REJECT', 'ANIME_REJECTED')):
@@ -103,7 +101,7 @@ class WebhookRefusalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 202)
         with connect(self.database) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM identity_requests').fetchone()[0], 2)
-            self.assertEqual(db.execute('SELECT count(*) FROM jobs WHERE job_id<>900').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) FROM series').fetchone()[0], 1)   # Only the seeded one.
 
     async def test_process_anyway_identifies_again_and_skips_the_decision(self):
         self.identity = {'schema_version': 2, 'anime': {'anidb_id': 1001, 'tvdb_series_id': 2001,
@@ -115,110 +113,17 @@ class WebhookRefusalTests(unittest.IsolatedAsyncioTestCase):
         status, data, _ = await self.request('POST', f'/api/v1/notifications/{number}/actions/process_anyway', {}, token=ADMIN)
         self.assertEqual(status, 202)
         with connect(self.database) as db:
-            kind, payload = db.execute("SELECT kind,payload_json FROM jobs WHERE job_id=?", (data['data']['job_id'],)).fetchone()
-            self.assertEqual((kind, json.loads(payload)), ('VERIFY_RELEASE', {'anidb_id': 1001}))
+            # The rejected series is reopened with the release (Process anyway).
+            state, torrents = db.execute("SELECT state,torrents_json FROM series WHERE anidb_id=1001").fetchone()
+            self.assertEqual((state, [t['release_name'] for t in json.loads(torrents)]), ('WORKING', [NAME]))
             self.assertEqual(db.execute('SELECT count(*) FROM notifications').fetchone()[0], 0)
-            self.assertEqual(json.loads(db.execute('SELECT raw_body FROM incoming_events WHERE event_id=?',
-                                                   (data['data']['event_id'],)).fetchone()[0])['release_name'], NAME)
 
 
-class IdentifyRefusalTests(unittest.IsolatedAsyncioTestCase):
-    from src.anime.tests.test_identify_anime_job import IdentifyAnimeJobTests as _Base
-    asyncSetUp = _Base.asyncSetUp
-    enqueue = _Base.enqueue
-    rows = _Base.rows
-    worker = _Base.worker
-
-    async def identify(self, payload=None):
-        from src.anime.jobs.identify_anime_job import registration
-        from src.anime.handlers import HandlerDefinition
-        from src.anime.job_contracts import Outcome, Registration
-        async def resolver(request, configuration, cancelled):
-            return {'schema_version': 2, 'anime': {'anidb_id': 1001, 'tvdb_series_id': 2001, 'title': 'Sousou no Frieren'},
-                    'episodes': [], 'attributes': {}}
-        async def verify(context):
-            return Outcome()
-        successor = Registration('VERIFY_RELEASE', HandlerDefinition('VERIFY_RELEASE', 'Verify release episode'), verify)
-        _, job = self.enqueue(payload, raw_body=json.dumps({'release_name': NAME}).encode())
-        worker = self.worker(registration(resolver, release_kind='VERIFY_RELEASE'), successor)
-        self.assertTrue(await worker.attempt())
-        return job
-
-    def decide(self, decision):
-        db = connect(self.database)
-        try:
-            with transaction(db):
-                db.execute('PRAGMA defer_foreign_keys=ON')
-                db.execute("INSERT OR IGNORE INTO identified_anime VALUES(1001,2001,'Sousou no Frieren')")
-                db.execute("INSERT INTO jobs(job_id,kind,payload_json,available_at_ms,created_at_ms,updated_at_ms) "
-                           "VALUES(900,'REJECT_SERIES','{}',9000000000000,1,1)")
-                operation = db.execute("INSERT INTO job_operations(state,cleanup_state,created_at_ms,updated_at_ms) "
-                                       "VALUES('ACTIVE','NONE',1,1)").lastrowid
-                db.execute("INSERT INTO anime_review_decisions(anidb_id,operation_id,job_id,decision,cleanup_state,decided_at_ms) "
-                           "VALUES(1001,?,900,?,'COMPLETE',1)", (operation, decision))
-        finally:
-            db.close()
-
-    async def test_a_queued_delivery_for_a_decided_series_is_done_with_no_successor(self):
-        self.decide('ACCEPT')
-        job = await self.identify()
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?', (job,)), [('DONE',)])
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='VERIFY_RELEASE'"), [(0,)])
-        self.assertEqual(self.rows("SELECT reason_code FROM job_history WHERE job_id=? AND event_code='DELIVERY_REFUSED'", (job,)),
-                         [('ANIME_ACCEPTED',)])
-        self.assertEqual(self.rows('SELECT type,job_id FROM notifications'), [('API_REJECTION', job)])
-        self.assertEqual(self.rows('SELECT count(*) FROM recognized_aliases WHERE anidb_id=1001'), [(1,)])  # alias recorded
-
-    async def test_process_anyway_is_not_refused_again(self):
-        self.decide('REJECT')
-        job = await self.identify({'process_anyway': True})
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='VERIFY_RELEASE' AND created_by_job_id=?", (job,)), [(1,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM notifications'), [(0,)])
 
 
-class KeepAcceptsTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = KeepSonarrTests.asyncSetUp
-    rows = KeepSonarrTests.rows
-    source = KeepSonarrTests.source
-    queued = KeepSonarrTests.queued
-    due = KeepSonarrTests.due
-    ready = KeepSonarrTests.ready
-    staged_ready = KeepSonarrTests.staged_ready
-    prepared = KeepSonarrTests.prepared
-
-    async def test_keep_records_accept_the_status_is_accepted_and_keep_still_runs(self):
-        from src.anime.storage.series_intake import detail, _summary, reject_series, IntakeUnavailable
-        worker, fake, actions, target, job = await self.prepared()
-        aid = fake.selection.anidb_id
-        self.assertEqual(self.rows('SELECT decision,job_id FROM anime_review_decisions WHERE anidb_id=?', (aid,)),
-                         [('ACCEPT', job)])
-        self.assertEqual(self.rows("SELECT event_code,reason_code FROM job_history WHERE job_id=? AND event_code='SERIES_ACCEPTED'", (job,)),
-                         [('SERIES_ACCEPTED', 'ANIME_ACCEPTED')])
-        await worker.attempt()
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=?', (job,)), [('DONE',)])   # passes require_allowed
-        db = connect(self.database)
-        try:
-            self.assertEqual(_summary(db, aid, 'english')['status'], 'ACCEPTED')
-            self.assertEqual(detail(db, aid)['reject_operations'], [])
-        finally:
-            db.close()
-        with self.assertRaises(IntakeUnavailable):
-            reject_series(self.database, aid, [], 'Other', '')
 
 
-class AcceptKeptSeriesFixTests(unittest.TestCase):
-    def test_dry_run_changes_nothing(self):
-        import tempfile
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        database = Path(temporary.name) / 'anime.sqlite'
-        db = sqlite3.connect(database); initialize(db); db.close()
-        before = database.read_bytes()
-        result = subprocess.run([sys.executable, 'fixes/accept_kept_series.py', '--database', str(database)],
-                                capture_output=True, text=True, cwd=Path(__file__).resolve().parents[3])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout.split('\nPreview')[0])['series'], [])
-        self.assertEqual(database.read_bytes(), before)
+
 
 
 if __name__ == '__main__':

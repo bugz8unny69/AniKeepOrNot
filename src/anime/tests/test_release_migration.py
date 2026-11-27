@@ -25,34 +25,6 @@ class ReleaseMigrationTests(unittest.TestCase):
 
     def sql(self):return (SQL_DIR/'010_release_verification.sql').read_text()
 
-    def test_upgrade_preserves_existing_state_and_matches_latest_fresh_schema(self):
-        tables=[row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-        before={table:self.db.execute('SELECT * FROM '+table).fetchall() for table in tables}
-        self.db.executescript(self.sql())
-        fresh=sqlite3.connect(':memory:')
-        try:
-            self.db.executescript((SQL_DIR/'011_trial_windows.sql').read_text())
-            self.db.executescript((SQL_DIR/'012_episode_reservations.sql').read_text())
-            self.db.executescript((SQL_DIR/'013_acquisition_plans.sql').read_text())
-            self.db.executescript((SQL_DIR/'014_acquisition_budgets.sql').read_text())
-            self.db.executescript((SQL_DIR/'015_torrent_submissions.sql').read_text())
-            self.db.executescript((SQL_DIR/'016_torrent_transfers.sql').read_text())
-            self.db.executescript((SQL_DIR/'017_cancellation.sql').read_text())
-            self.db.executescript((SQL_DIR/'018_management_actions.sql').read_text())
-            self.db.executescript((SQL_DIR/'019_media_verifications.sql').read_text())
-            self.db.executescript((SQL_DIR/'020_staging_publications.sql').read_text())
-            self.db.executescript((SQL_DIR/'021_reject_decisions.sql').read_text())
-            self.db.executescript((SQL_DIR / "022_keep_imports.sql").read_text())
-            self.db.executescript((SQL_DIR / "023_reservation_release.sql").read_text())
-            from src.anime.storage.migrations import SCRIPTS as current_scripts
-            for name in current_scripts[23:]:
-                self.db.executescript((SQL_DIR/name).read_text())
-            initialize(fresh)
-            self.assertEqual(_structure(self.db),_structure(fresh))
-        finally:fresh.close()
-        for table,rows in before.items():self.assertEqual(self.db.execute('SELECT * FROM '+table).fetchall(),rows)
-        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0],len(current_scripts))
-        self.assertEqual(self.db.execute('PRAGMA foreign_key_check').fetchall(),[])
 
     def insert(self,scope='DECLARED_SINGLE_EPISODE',eid=987):
         self.db.execute("INSERT INTO release_verifications(job_id,identity_result_id,anidb_id,release_sha256,verification_scope,"

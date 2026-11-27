@@ -26,15 +26,12 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from src.anime.history import append_job_history
-from src.anime.job_contracts import Outcome
 from src.anime.matching import MatchingTrace, validated
 from src.anime.providers.http import Credentials, Options
 from src.anime.providers.identity import make_resolver
 from src.anime.release_names import norm, release_title
 from src.anime.providers.scoring import calculate_title_similarity, generate_season_derived_aliases, generate_title_variants, rank_and_select_candidates, score_anidb_candidate, TitleVariant, CandidateMatch
 from src.anime.release_names import clean_metadata, detect_explicit_sequel_marker
-from src.anime.storage.candidate_evidence import load_candidate_evidence, save_candidate_evidence
 from src.anime.storage.migrations import LATEST_VERSION
 from src.anime.storage.sqlite import connect, initialize, transaction, IdentityConflict, IdentityNotReady
 

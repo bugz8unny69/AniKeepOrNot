@@ -28,7 +28,7 @@ def make_branch(folder, database):
     db = connect(database)
     try:
         initialize(db)
-        db.execute("INSERT INTO incoming_events(source,raw_body,received_at_ms) VALUES('manual-release',X'7b7d',1)")
+        db.execute("INSERT INTO recognized_series VALUES(1001,'manual-release',NULL,NULL,1)")
         db.commit()
     finally:
         db.close()
@@ -93,7 +93,7 @@ class BranchSetupTests(unittest.TestCase):
         self.assertEqual(result['copied_from_version'], LATEST_VERSION)
         db = sqlite3.connect(self.target_db)
         try:
-            self.assertEqual(db.execute('SELECT source FROM incoming_events').fetchall(), [('manual-release',)])
+            self.assertEqual(db.execute('SELECT display_title FROM recognized_series').fetchall(), [('manual-release',)])
             self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], LATEST_VERSION)
         finally:
             db.close()
@@ -142,14 +142,14 @@ class BranchResolveTests(base.InstallerSupportTests):
         options = self.resolve('--upgrade', '--branch', 'refactor')
         self.assertEqual(options['switch'], 'new')
         self.assertEqual(options['config_dir'], str(self.config / 'branches' / 'refactor'))
-        self.assertEqual(options['database'], str(self.root / 'state' / 'anime-discovery-refactor.sqlite'))
+        self.assertEqual(options['database'], str(self.root / 'state' / 'akon-refactor.sqlite'))
         self.assertEqual(options['switch_from'], {'ref': 'NextGen', 'config_dir': str(self.config)})
         self.assertEqual(options['branches']['NextGen'], {'config_dir': str(self.config)})   # Old branch kept.
 
     def test_branch_names_become_safe_folder_names(self):
         options = self.resolve('--upgrade', '--branch', 'feature/new-thing')
         self.assertTrue(options['config_dir'].endswith('/branches/feature-new-thing'))
-        self.assertTrue(options['database'].endswith('/anime-discovery-feature-new-thing.sqlite'))
+        self.assertTrue(options['database'].endswith('/akon-feature-new-thing.sqlite'))
 
     def test_switching_back_reuses_that_branchs_own_state(self):
         saved = self.saved(branches={'NextGen': {'config_dir': str(self.config)}}, config_base=str(self.config))

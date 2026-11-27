@@ -110,5 +110,69 @@ class OnlyTheClientTalksToQbittorrentTests(unittest.TestCase):
         self.assertEqual(found, [])
 
 
+class RenameAndOwnershipTests(UniformReportTests):
+
+    def test_rename_legacy_torrents_retags_and_recategorizes_in_place(self):
+        marker = 'a' * 32
+        other = 'b' * 40
+        foreign = 'c' * 40
+        rows = [
+            {'hash': HASH, 'name': 'Old AKON', 'tags': f'ad-{marker}', 'save_path': f'/srv/downloads/ad-{marker}',
+             'category': 'anime-discovery', 'auto_tmm': False},
+            {'hash': other, 'name': 'No Tag', 'tags': 'other', 'save_path': f'/srv/downloads/ad-{marker}',
+             'category': 'anime-discovery', 'auto_tmm': False},
+            {'hash': foreign, 'name': 'Wrong Path', 'tags': f'ad-{marker}', 'save_path': '/srv/downloads/elsewhere',
+             'category': 'anime-discovery', 'auto_tmm': False},
+        ]
+        # Responses: torrents/info, addTags, removeTags, createCategory, setCategory, torrents/info (empty), removeCategories
+        client = self.logged_in([
+            Response(json.dumps(rows).encode()),
+            Response(b''), Response(b''), Response(b''), Response(b''),
+            Response(b'[]'), Response(b''),
+        ])
+        res = client.rename_legacy_torrents('/srv/downloads')
+        self.assertEqual(res['renamed'], [{'hash': HASH, 'marker': marker, 'name': 'Old AKON'}])
+        self.assertEqual(len(res['skipped']), 2)
+        self.assertTrue(res['removed_old_category'])
+        paths = [urllib.parse.urlsplit(r[0].full_url).path for r in self.requests]
+        self.assertNotIn('/api/v2/torrents/setLocation', paths)
+        self.assertIn('/api/v2/torrents/addTags', paths)
+        self.assertIn('/api/v2/torrents/removeTags', paths)
+        self.assertIn('/api/v2/torrents/setCategory', paths)
+        self.assertIn('/api/v2/torrents/removeCategories', paths)
+
+    def test_retagged_old_torrent_with_ad_prefix_is_still_owned_and_new_uses_akon(self):
+        from src.anime.series_job.torrents import marker as make_marker, options_for
+        from src.anime.tests.test_series_steps import Configuration
+        cfg = Configuration('/tmp/akon.sqlite')
+        cfg.values.update({'qbittorrent.base_url': 'http://qb.test', 'qbittorrent.category': 'akon',
+                           'qbittorrent.timeout_seconds': 5, 'storage.download_root': '/srv/downloads'})
+        t_new = {}
+        m_new = make_marker(t_new)
+        self.assertEqual(t_new['qb']['prefix'], 'akon')
+        self.assertEqual(options_for(cfg, m_new, prefix=t_new['qb']['prefix']).download_root,
+                         f'/srv/downloads/akon-{m_new}')
+
+        # Retagged old torrent with qb.prefix = 'ad'
+        m_old = 'd' * 32
+        opts_old = options_for(cfg, m_old, prefix='ad')
+        self.assertEqual(opts_old.download_root, f'/srv/downloads/ad-{m_old}')
+        from src.anime.torrent_client.qbittorrent import Client
+        from src.anime.acquisition.settings import DownloadCredentials
+        responses = self.login_responses(b'v5.0.0') + [
+            Response(json.dumps([{'hash': HASH, 'state': 'uploading', 'save_path': f'/srv/downloads/ad-{m_old}',
+                                  'category': 'akon', 'tags': f'akon-{m_old}', 'auto_tmm': False}]).encode()),
+            Response(json.dumps([{'index': 0, 'name': 'ep.mkv', 'size': 100}]).encode()),
+            Response(json.dumps([{'hash': HASH, 'state': 'uploading', 'save_path': f'/srv/downloads/ad-{m_old}',
+                                  'category': 'akon', 'tags': f'akon-{m_old}', 'auto_tmm': False}]).encode()),
+            Response(json.dumps([{'index': 0, 'name': 'ep.mkv', 'size': 100}]).encode()),
+            Response(b''),
+        ]
+        c = Client(opts_old, DownloadCredentials('u', 'p'), transport=lambda *a, **kw: responses.pop(0))
+        c.login()
+        self.assertIsNotNone(c.series_torrent(HASH, m_old))
+        self.assertEqual(c.remove_series_torrent(HASH, m_old), 'deleted')
+
+
 if __name__ == '__main__':
     unittest.main()

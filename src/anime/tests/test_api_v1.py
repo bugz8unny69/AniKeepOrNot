@@ -4,7 +4,7 @@ import unittest
 from src.anime.api.app import Application, MAX_BODY
 from src.anime.api.auth import COOKIE
 from src.anime.secrets import SecretStore
-from src.anime.tests import test_acquisition_preparation as fixture
+from src.anime.tests import support as fixture
 
 WEB='w'*43
 ADMIN='m'*43
@@ -33,19 +33,16 @@ class InstantBridge:
             if series is None:continue   # Left queued: still being identified.
             apply_result(self.test.database,{'request_id':request_id,'result':'identified',
                                              'series':series},logging.getLogger('test.bridge'))
-            db=sqlite3.connect(self.test.database)
-            try:self.created[request_id]=db.execute(
-                'SELECT event_id,job_id FROM jobs WHERE event_id=(SELECT max(event_id) FROM incoming_events)').fetchone()
-            finally:db.close()
+            self.created[request_id]=series['anime']['anidb_id']     # The series it woke.
     async def run(self):pass
     async def close(self):pass
 
 
 class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
     identity=IDENTITY
-    rows=fixture.AcquisitionPreparationTests.rows
+    rows=fixture.DatabaseSetup.rows
     async def asyncSetUp(self):
-        await fixture.AcquisitionPreparationTests.asyncSetUp(self)
+        await fixture.DatabaseSetup.asyncSetUp(self)
         self.secrets=SecretStore(self.root)
         self.secrets.initialize(webhook_token=WEB)
         self.calls=[]
@@ -76,11 +73,10 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         async def send(message):output.append(message)
         await self.app(scope,receive,send)
         result=json.loads(output[1]['body'])
-        # Tests: the delivery and the worker job the (instant) identity bridge created for it.
+        # Tests: the series the (instant) identity bridge woke for the delivery.
         created=getattr(self.app.bridge,'created',{})
         if type(result.get('data')) is dict and result['data'].get('request_id') in created:
-            event_id,job_id=created[result['data']['request_id']]
-            result['data'].update(event_id=event_id,job_id=job_id)
+            result['data'].update(anidb_id=created[result['data']['request_id']])
         return output[0]['status'],result,dict(output[0]['headers'])
 
     def release(self,**extra):return {'release_name':'Test Anime - 10','torrent_infohash':'a'*40,**extra}
@@ -90,7 +86,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         host=b'anime.proxy.example'
         headers=[(b'host',host),(b'origin',b'https://anime.proxy.example'),(b'content-length',b'0')]
         scope={'headers':headers}
-        status,_,_=await self.request('GET','/api/v1/jobs',token=ADMIN,scope_changes={'headers':[(b'host',host),(b'cookie',self.admin_cookie.encode()),(b'content-length',b'0')]})
+        status,_,_=await self.request('GET','/api/v1/intake',token=ADMIN,scope_changes={'headers':[(b'host',host),(b'cookie',self.admin_cookie.encode()),(b'content-length',b'0')]})
         self.assertEqual(status,200)
         status,_,_=await self.request('POST','/api/v1/auth/session',{'password':ADMIN},
             scope_changes={'headers':[(b'host',host),(b'origin',b'https://anime.proxy.example'),
@@ -111,13 +107,11 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
             status,result,headers=await self.request('POST',path,body,token=token)
             self.assertEqual(status,202)
             self.assertTrue(result['data']['request_id'])
-        for (raw,) in self.rows('SELECT raw_body FROM incoming_events'):
+        for (raw,) in self.rows('SELECT raw_body FROM identity_requests'):
             self.assertEqual(set(json.loads(raw)),{'release_name','torrent_infohash'})
             self.assertNotIn(WEB.encode(),raw)
-        self.assertEqual(self.rows('SELECT source FROM incoming_events'),[('autobrr',)]*3)
-        # The API identified each release; the worker got its first job, never an identification job.
-        self.assertEqual(self.rows('SELECT kind,state FROM jobs'),[('VERIFY_RELEASE','PENDING')]*3)
-        self.assertEqual(self.rows("SELECT component FROM job_history WHERE event_code='CREATED'"),[('api',)]*3)
+        # The API identified each release and gave it to its series (one row), never a job.
+        self.assertEqual(self.rows("SELECT json_array_length(torrents_json) FROM series"),[(3,)])
         # Each release keeps only its answer, for Autobrr's retries and its later action.
         self.assertEqual(self.rows('SELECT outcome FROM identity_requests'),[('accepted',)]*3)
 
@@ -125,14 +119,14 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.identity=None    # Not known locally: the identity process must ask AniDB first.
         status,result,headers=await self.request('POST','/api/v1/check',self.release(token=WEB))
         self.assertEqual((status,result['data']['reason_code'],headers[b'retry-after']),(503,'IDENTITY_PENDING',b'15'))
-        self.assertEqual(self.rows('SELECT count(*) FROM jobs'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM series'),[(0,)])
         self.identity=IDENTITY  # AniDB answered.
         await self.request('POST','/api/v1/check',self.release(token=WEB))
         status,result,_=await self.request('POST','/api/v1/check',self.release(token=WEB))
         self.assertEqual((status,result['data']['accepted']),(200,True))
         status,result,_=await self.request('POST','/api/v1/webhook',self.release(token=WEB))
         self.assertEqual((status,result['data']['accepted']),(200,True))
-        self.assertEqual(self.rows('SELECT kind FROM jobs'),[('VERIFY_RELEASE',)])
+        self.assertEqual(self.rows("SELECT json_array_length(torrents_json) FROM series"),[(1,)])
         self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(1,)])
 
     async def test_check_rejects_with_why_once_identification_refuses_it(self):
@@ -155,7 +149,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.identity=None    # The identity process is never needed.
         status,result,_=await self.request('POST','/api/v1/check',{**release,'token':WEB})
         self.assertEqual((status,result['data']['accepted']),(200,True))
-        self.assertEqual(self.rows('SELECT kind FROM jobs'),[('VERIFY_RELEASE',)])
+        self.assertEqual(self.rows("SELECT anidb_id,json_array_length(torrents_json) FROM series"),[(1001,1)])
 
     async def test_a_program_error_answers_500_with_where_and_logs_the_full_trace(self):
         from unittest import mock
@@ -202,8 +196,8 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
              ('/api/v1/webhook',self.release(token=WEB),'n'*43),('/api/v1/webhook?token='+WEB+'&token='+WEB,self.release(),None)]:
             status,_,_=await self.request('POST',path,body,token=token)
             self.assertEqual(status,401)
-        self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'),[(0,)])
-        self.assertEqual(self.rows('SELECT count(*) FROM jobs'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM series'),[(0,)])
 
     async def test_webhook_key_has_no_management_authority(self):
         for method,path,body in [('GET','/api/v1/settings',None),('GET','/api/v1/jobs',None),
@@ -221,14 +215,14 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         csrf=result['data']['csrf_token']
         for extra in ({'cookie':cookie},{'cookie':cookie,'origin':ORIGIN},
                       {'cookie':cookie,'origin':'https://evil.example','x-csrf-token':csrf}):
-            status,_,_=await self.request('POST','/api/v1/jobs/1/cancel',{},headers=extra)
+            status,_,_=await self.request('POST','/api/v1/series/1001/cancel',{},headers=extra)
             self.assertEqual(status,403)
-        status,_,_=await self.request('POST','/api/v1/jobs/1/cancel',{},headers={'cookie':cookie,'origin':ORIGIN,'x-csrf-token':csrf})
-        self.assertEqual(status,200);self.assertEqual(self.calls,[])
-        self.assertEqual(self.rows('SELECT state FROM jobs WHERE job_id=1'),[('CANCELED',)])
+        status,_,_=await self.request('POST','/api/v1/series/1001/cancel',{},headers={'cookie':cookie,'origin':ORIGIN,'x-csrf-token':csrf})
+        self.assertEqual(status,200)        # Past the session checks: the cancel is recorded.
+        self.assertEqual(self.rows("SELECT json_type(work_json,'$.cancel') FROM series WHERE anidb_id=1001"),[('integer',)])
         status,_,_=await self.request('DELETE','/api/v1/auth/session',{},headers={'cookie':cookie,'origin':ORIGIN,'x-csrf-token':csrf})
         self.assertEqual(status,200)
-        status,_,_=await self.request('GET','/api/v1/jobs',headers={'cookie':cookie})
+        status,_,_=await self.request('GET','/api/v1/intake',headers={'cookie':cookie})
         self.assertEqual(status,401)
 
     async def test_webhook_rotation_does_not_revoke_independent_password_sessions(self):
@@ -237,9 +231,9 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.secrets.update_webhook_token('x'*43,expected_revision=1)
         status,_,_=await self.request('POST','/api/v1/webhook',self.release(token=WEB))
         self.assertEqual(status,401)
-        status,_,_=await self.request('GET','/api/v1/jobs',token=ADMIN)
+        status,_,_=await self.request('GET','/api/v1/intake',token=ADMIN)
         self.assertEqual(status,200)
-        status,_,_=await self.request('GET','/api/v1/jobs',headers={'cookie':cookie})
+        status,_,_=await self.request('GET','/api/v1/intake',headers={'cookie':cookie})
         self.assertEqual(status,200)
         status,_,_=await self.request('POST','/api/v1/webhook',self.release(token='x'*43))
         self.assertEqual(status,202)
@@ -259,24 +253,6 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,200);self.assertFalse(result['data']['management_configured'])
         self.assertNotIn(ADMIN,json.dumps(result));self.assertNotIn(WEB,json.dumps(result))
 
-    async def test_jobs_history_are_readable_bounded_and_do_not_expose_payload_or_lease(self):
-        await self.request('POST','/api/v1/webhook',self.release(token=WEB))
-        status,result,_=await self.request('GET','/api/v1/jobs?limit=1',token=ADMIN)
-        self.assertEqual(status,200)
-        job=result['data']['items'][0]
-        self.assertNotIn('payload_json',job);self.assertNotIn('lease_token',job)
-        self.assertTrue(job['cancellation']['can_cancel'])
-        self.assertIn('reason',job['cancellation'])
-        self.assertIsNone(job['cancellation']['reason'])
-        status,result,_=await self.request('GET',f"/api/v1/jobs/{job['job_id']}/history",token=ADMIN)
-        self.assertEqual(status,200)
-        self.assertEqual(result['data']['items'][0]['event']['message'],'Job created.')
-        self.assertEqual(result['data']['job']['kind'],job['kind'])
-        self.assertEqual(result['data']['job']['module'],job['kind'].lower()+'_job')
-        self.assertEqual(result['data']['job']['poll_check_count'],0)
-        self.assertEqual(result['data']['job']['work_attempt_count'],0)
-        self.assertEqual(result['data']['job']['scheduler_claim_count'],0)
-        self.assertNotIn(WEB,json.dumps(result))
 
     async def test_malformed_json_duplicate_headers_and_oversized_input_never_commit(self):
         for raw in (b'{"token":"x","token":"y"}',b'[]',b'{"x":NaN}',b'not-json'):
@@ -289,7 +265,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,400)
         status,_,_=await self.request('POST','/api/v1/webhook',self.release(token=WEB),scope_changes={'raw_path':b'/api%2fv1/webhook'})
         self.assertEqual(status,400)
-        self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])
 
     async def test_invalid_origin_and_unreadable_auth_storage_have_no_fallback(self):
         status,_,_=await self.request('GET','/api/v1/jobs',token=ADMIN,headers={'origin':'https://evil.example'})
@@ -298,7 +274,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         status,result,_=await self.request('POST','/api/v1/webhook',self.release(token=WEB))
         self.assertEqual(status,503)
         self.assertEqual(result['error']['code'],'SECRET_STORAGE_UNAVAILABLE')
-        self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])
 
     async def test_legacy_field_aliases_are_only_release_hints(self):
         body={'token':WEB,'torrentName':'Test Anime - 10','torrentHash':'A'*40,'anidb_id':123,
@@ -309,7 +285,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         raw=self.rows('SELECT raw_body FROM identity_requests')[0][0]
         self.assertEqual(json.loads(raw),{'release_name':'Test Anime - 10','torrent_infohash':'a'*40})
         self.assertNotIn(b'private_secret',raw)
-        self.assertEqual(self.rows('SELECT count(*) FROM identity_results'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM series'),[(0,)])
 
     async def test_declared_credentials_inside_title_and_ambiguous_framing_are_rejected(self):
         status,_,_=await self.request('POST','/api/v1/webhook',self.release(token=WEB,release_name='Title '+WEB))
@@ -318,7 +294,7 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,400)  # Helper also supplies Content-Length.
         status,_,_=await self.request('GET','/api/v1/jobs',token=ADMIN,headers={'cookie':COOKIE+'='+'x'*43,'origin':'null'})
         self.assertEqual(status,403)
-        self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])
 
     async def test_management_session_never_authenticates_webhook_and_logs_hide_keys(self):
         _,_,headers=await self.request('POST','/api/v1/auth/session',{'password':ADMIN},headers={'origin':ORIGIN})
@@ -330,4 +306,4 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status,401)
         logged='\n'.join(captured.output)
         self.assertNotIn(WEB,logged);self.assertNotIn(ADMIN,logged);self.assertNotIn('token=',logged)
-        self.assertEqual(self.rows('SELECT count(*) FROM incoming_events'),[(0,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM identity_requests'),[(0,)])

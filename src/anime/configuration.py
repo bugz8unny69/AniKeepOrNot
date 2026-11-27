@@ -30,16 +30,21 @@ LOCK_NAME = ".settings.lock"
 def cli_config_dir():
     """The installed ADM launcher selects its branch; a release run directly uses the
     settings folder the installer recorded for it; otherwise the native default."""
-    chosen = os.environ.get("ANIME_DISCOVERY_CONFIG_DIR")
+    chosen = os.environ.get("AKON_CONFIG_DIR") or os.environ.get("ANIME_DISCOVERY_CONFIG_DIR")
     if chosen:
         return chosen
-    release = Path(__file__).resolve().parents[2] / ".anime-discovery-release.json"
-    try:
-        import json
-        recorded = json.loads(release.read_text()).get("config_dir")
-    except (OSError, ValueError, AttributeError):
-        recorded = None
-    return recorded if isinstance(recorded, str) and recorded.startswith("/") else "/etc/anime-discovery"
+    root = Path(__file__).resolve().parents[2]
+    recorded = None
+    for name in (".akon-release.json", ".anime-discovery-release.json"):
+        release = root / name
+        try:
+            import json
+            recorded = json.loads(release.read_text()).get("config_dir")
+            if isinstance(recorded, str) and recorded.startswith("/"):
+                return recorded
+        except (OSError, ValueError, AttributeError):
+            pass
+    return "/etc/akon"
 
 
 @dataclass(frozen=True)

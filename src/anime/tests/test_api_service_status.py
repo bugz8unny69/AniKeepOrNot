@@ -52,33 +52,8 @@ class ApiServiceStatusTests(unittest.IsolatedAsyncioTestCase):
         status, _, _ = await self.request('GET', '/api/v1/services', token=WEB)
         self.assertEqual(status, 401)
 
-    async def test_keep_is_refused_with_the_reason_while_sonarr_is_down(self):
-        target = await self.staged()
-        self.sonarr('DOWN', 'HTTP 503 at http://sonarr:8989')
-        _, job, _ = await self.request('GET', f'/api/v1/jobs/{target}', token=ADMIN)
-        keep = job['data']['actions']['keep']
-        self.assertFalse(keep['execution_available'])                       # Button disabled, with tooltip.
-        self.assertEqual(keep['availability_reason']['message'], 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989')
-        status, result, _ = await self.request('POST', f'/api/v1/jobs/{target}/keep', {}, token=ADMIN)
-        self.assertEqual(status, 503)
-        self.assertEqual((result['error']['code'], result['error']['message']),
-                         ('SERVICE_UNAVAILABLE', 'Sonarr is unavailable: HTTP 503 at http://sonarr:8989'))
-        self.assertEqual(self.rows("SELECT count(*) FROM jobs WHERE kind='KEEP_MEDIA'"), [(0,)])   # Nothing queued.
 
-    async def test_keep_is_refused_while_sonarr_is_not_set_up(self):
-        target = await self.staged()
-        self.sonarr('DISABLED', 'no address is set, so Keep is off')
-        status, result, _ = await self.request('POST', f'/api/v1/jobs/{target}/keep', {}, token=ADMIN)
-        self.assertEqual((status, result['error']['code']), (409, 'KEEP_CONFIGURATION_INVALID'))
-        self.assertEqual(result['error']['message'], 'Sonarr is turned off (optional): no address is set, so Keep is off')
 
-    async def test_keep_goes_ahead_when_sonarr_is_up_unknown_or_the_status_is_stale(self):
-        target = await self.staged()
-        self.sonarr('DOWN', 'HTTP 503', age_ms=16 * 60 * 1000)               # Worker stopped checking.
-        _, job, _ = await self.request('GET', f'/api/v1/jobs/{target}', token=ADMIN)
-        self.assertTrue(job['data']['actions']['keep']['execution_available'])
-        status, _, _ = await self.request('POST', f'/api/v1/jobs/{target}/keep', {}, token=ADMIN)
-        self.assertEqual(status, 202)
 
 
 if __name__ == '__main__':

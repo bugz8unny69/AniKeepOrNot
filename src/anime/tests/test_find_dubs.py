@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 from src.anime.acquisition.prowlarr_search import DiscoveryPolicy, EpisodeTarget, Release
-from src.anime.jobs import find_dubs_job
 from src.anime.sonarr import Client, Options
 
 
@@ -42,54 +41,8 @@ def catalog(aid, tid):
     return SimpleNamespace(episodes={n: EpisodeTarget(n, 'SEARCHABLE', n, 900 + n, n, 1) for n in range(1, 13)})
 
 
-class FindDubsTests(unittest.TestCase):
-    def test_pushes_a_dub_for_each_missing_episode_and_tries_the_next_when_sonarr_rejects(self):
-        sonarr = FakeSonarr({(1, 7), (1, 8)}, rejects={'Show - 07 [DUAL-VARYG]'})
-        prowlarr = FakeProwlarr({7: (release('Show - 07 [DUAL-VARYG]', 'a' * 40),
-                                     release('Show - 07 [Dual Audio English]', 'b' * 40)),
-                                 8: ()})
-        grabbed, not_found = find_dubs_job.find_and_push(sonarr, prowlarr, catalog, 18162, 438420)
-        self.assertEqual(prowlarr.asked, [(7, 8)])          # Only what Sonarr is missing is searched.
-        self.assertEqual(sonarr.pushed, ['Show - 07 [DUAL-VARYG]', 'Show - 07 [Dual Audio English]'])
-        self.assertEqual((grabbed, not_found), (['Dungeon People S01E07'], ['S01E08']))
-
-    def test_a_season_pack_is_pushed_once_for_all_its_episodes(self):
-        pack = release('Show S01 [Dual Audio English]', 'c' * 40)
-        sonarr = FakeSonarr({(1, 7), (1, 8)})
-        grabbed, _ = find_dubs_job.find_and_push(sonarr, FakeProwlarr({7: (pack,), 8: (pack,)}), catalog, 1, 2)
-        self.assertEqual((sonarr.pushed, len(grabbed)), ([pack.title], 2))
-
-    def test_episodes_without_a_tvdb_placement_use_the_anime_lists_map(self):
-        def unplaced(aid, tid):
-            return SimpleNamespace(episodes={n: EpisodeTarget(None, 'SEARCHABLE', n) for n in range(1, 13)})
-        sonarr = FakeSonarr({(1, 7)})
-        prowlarr = FakeProwlarr({7: (release('Show - 07 [Dual Audio English]', 'd' * 40),)})
-        grabbed, _ = find_dubs_job.find_and_push(sonarr, prowlarr, unplaced, 1, 2, {n: (1, n) for n in range(1, 13)})
-        self.assertEqual((prowlarr.asked, grabbed), ([(7,)], ['Dungeon People S01E07']))
-
-    def test_nothing_missing_searches_nothing(self):
-        prowlarr = FakeProwlarr({})
-        self.assertEqual(find_dubs_job.find_and_push(FakeSonarr(set()), prowlarr, catalog, 1, 2), ([], []))
-        self.assertEqual(prowlarr.asked, [])
 
 
-class AudioCheckTests(unittest.IsolatedAsyncioTestCase):
-    async def run_with(self, audio):
-        asked = []
-        configuration = mock.Mock(value=lambda key: {'acquisition.audio_check': audio}[key])
-        context = mock.Mock(configuration=configuration, data=lambda: {'anidb_id': 1, 'tvdb_series_id': 2})
-        job = find_dubs_job.registration(mock.Mock(), catalog_factory=lambda c: asked.append('catalog'),
-                                         sonarr_factory=lambda *a: asked.append('sonarr'),
-                                         prowlarr_factory=lambda *a, **k: mock.Mock(),
-                                         mapping_factory=lambda *a: {})
-        with mock.patch.object(find_dubs_job, 'find_and_push', return_value=([], [])):
-            outcome = await job.execute(context)
-        return outcome.kind, asked
-
-    async def test_nothing_is_done_unless_the_audio_check_wants_english(self):
-        for audio in ('off', 'japanese'):
-            self.assertEqual(await self.run_with(audio), ('complete', []))
-        self.assertEqual((await self.run_with('japanese_english'))[1], ['catalog', 'sonarr'])
 
 
 class SonarrCallsTests(unittest.TestCase):

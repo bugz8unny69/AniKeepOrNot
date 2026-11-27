@@ -35,18 +35,21 @@ def build_info():
             revision = 'unknown'
     else:
         root = Path(__file__).resolve().parents[2]
-        release = root / '.anime-discovery-release.json'
-        try:
-            revision = str(json.loads(release.read_text())['revision'])
-        except (OSError, ValueError, KeyError, TypeError):
-            if (root / '.git').exists():
-                try:
-                    found = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True,
-                                           text=True, timeout=5, stdin=subprocess.DEVNULL)
-                    if found.returncode == 0 and found.stdout.strip():
-                        revision = found.stdout.strip()
-                except (OSError, subprocess.TimeoutExpired):
-                    pass
+        for name in ('.akon-release.json', '.anime-discovery-release.json'):  # legacy fallback for one release
+            release = root / name
+            try:
+                revision = str(json.loads(release.read_text())['revision'])
+                break
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        if revision == 'unknown' and (root / '.git').exists():
+            try:
+                found = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True,
+                                       text=True, timeout=5, stdin=subprocess.DEVNULL)
+                if found.returncode == 0 and found.stdout.strip():
+                    revision = found.stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                pass
     _build = {'agent_version': AGENT_VERSION, 'revision': revision}
     return _build
 
