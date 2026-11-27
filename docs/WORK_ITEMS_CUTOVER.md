@@ -111,8 +111,13 @@ For each unfinished old job, choose the series torrent's step:
 | Keep under way (KEEP_MEDIA, KEEP_BATCH) | `work.keep` at the matching step (see CO-4) |
 | Cleanups (CLEANUP_*) and housekeeping (REFRESH_JELLYFIN, LINK_SHOKO, FIND_DUBS_FOR_SONARR) | closed, with a log line; the next Keep or Reject redoes cleanup |
 
-A job in NEEDS_REVIEW or ON_HOLD gives a torrent with `state: "stopped"` and `why` set to its last
+A job in NEEDS_REVIEW (or BLOCKED) gives a torrent with `state: "stopped"` and `why` set to its last
 reason code, so Retry resumes it and you can see why it stopped.
+
+A job ON_HOLD is not stopped: the series job has no hold (owner, 2026-11-27). One job per series
+knows what it is working on, so held work converts as waiting work; a held job of a kept or
+rejected series closes with no torrent. A job FAILED by a program error (JOB_HANDLER_FAILED)
+converts stopped, so Retry recovers it.
 
 For downloads, read qBittorrent's view **only if the owner allows it during the run**. Otherwise
 trust the journal phases, and let the download step's own checks sort it out (it reads the torrent

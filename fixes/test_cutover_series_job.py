@@ -345,7 +345,7 @@ class CutoverSeriesJobTests(unittest.TestCase):
         db = _create_v78(self.db_path)
         db.execute("PRAGMA foreign_keys = OFF")
         db.execute("INSERT INTO identified_anime VALUES(404, 504, 'Show Four')")
-        # ON_HOLD: waiting for an episode another torrent holds. The old code released it by itself.
+        # ON_HOLD: the series job has no hold; the series knows what it works on, so this is waiting work.
         self._job(db, 40, "RESERVE_EPISODE", "ON_HOLD", "EPISODE_RESERVED", {"anidb_id": 404}, "4" * 40)
         # FAILED by a program error: not finished, so it converts, stopped.
         self._job(db, 41, "DOWNLOAD_TORRENT", "FAILED", "JOB_HANDLER_FAILED", {"anidb_id": 404}, "5" * 40)

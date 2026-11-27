@@ -693,7 +693,6 @@ EVENTS = {
     'SONARR_BACKFILL_OBSERVED': ('EPISODE_DISCOVERY_RECORDED', 'Episode search results saved.'),
     'DONE': ('DONE', 'Job finished.'),
     'FAILED': ('FAILED', 'Job failed.'),
-    'ON_HOLD': ('ON_HOLD', 'Job on hold.'),
     'BLOCKED': ('BLOCKED', 'Job blocked.'),
     'DECISION_DOWNLOAD_CONTROL_RECORDED': ('DECISION_DOWNLOAD_CONTROL_RECORDED', 'Download cleanup step saved.'),
     'CANCELLATION_CONTROL_RECORDED': ('CANCELLATION_CONTROL_RECORDED', 'Cancellation cleanup step saved.'),

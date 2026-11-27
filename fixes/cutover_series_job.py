@@ -80,9 +80,9 @@ HOUSEKEEPING_KINDS = frozenset({
     "BULK_MANAGE_JOBS",
 })
 
-# Stopped for the owner: the converted work stays stopped until Retry. ON_HOLD is not here: the
-# old code put a job on hold to wait (an episode another torrent held, a dub, a decision) and
-# released it by itself, so held work resumes as waiting.
+# Stopped for the owner: the converted work stays stopped until Retry. A held job (ON_HOLD) is
+# just unfinished work: the series job has no hold (owner, 2026-11-27); one job per series knows
+# what it is working on, so it picks the work up as waiting.
 STOPPED_JOB_STATES = frozenset({"NEEDS_REVIEW", "BLOCKED"})
 # A program error fails its job at once (develop, 2026-11-27) instead of retrying it; that work
 # is not finished, so it converts too, stopped with its reason, and Retry resumes it.

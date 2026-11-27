@@ -159,7 +159,7 @@ function displayError(error) {
 }
 function date(value) { return value ? new Date(value).toLocaleString() : '—'; }
 function statusBadge(job) {
-  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', ON_HOLD: 'held', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked', FAILED: 'blocked'};
+  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked', FAILED: 'blocked'};
   return node('span', job.status?.message || 'Unknown status', 'status ' + (classes[job.state] || ''));
 }
 function actionButton(job, action, label) {
@@ -386,7 +386,7 @@ function renderJobs() {
       button.addEventListener('click', () => retryFollowup(job, followup, shoko));
       actions.appendChild(button);
     }
-    if (['NEEDS_REVIEW', 'FAILED', 'BLOCKED', 'ON_HOLD'].includes(job.state) && job.actions?.retry?.enabled) {
+    if (['NEEDS_REVIEW', 'FAILED', 'BLOCKED'].includes(job.state) && job.actions?.retry?.enabled) {
       actions.appendChild(actionButton(job, 'retry', job.kind === 'ENRICH_SHOKO_METADATA' ? 'retry shoko' : job.kind?.startsWith('CLEANUP_') ? 'retry cleanup' : 'retry'));
     }
     if (job.event_id && !job.is_management_action) {
