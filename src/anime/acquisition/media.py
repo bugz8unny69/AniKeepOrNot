@@ -1,6 +1,6 @@
 """Read-only verification of one pinned selected file; never copies or deletes."""
 import asyncio
-from dataclasses import dataclass, field
+import errno
 import hashlib
 import json
 import math
@@ -11,7 +11,7 @@ import stat
 import subprocess
 import time
 
-from src.anime.acquisition.cleanup import directory, parent, FileCleanup
+from src.anime.acquisition.cleanup import directory, parent
 from src.anime.cancellation import CancellationError
 from src.anime.acquisition.audio import JAPANESE_ENGLISH, required_languages
 
@@ -174,81 +174,8 @@ def parse_probe(raw,suffix,audio=JAPANESE_ENGLISH):
         raise MediaInvalid() from None
 
 
-@dataclass(frozen=True,repr=False)
-class VerifiedMedia:
-    preparation_job_id: int
-    download_job_id: int
-    plan_id: int
-    submission_fingerprint: str
-    transfer_fingerprint: str
-    relative_path: str
-    root_signature: tuple
-    file_signature: tuple
-    sha256: str
-    duration_ms: int
-    languages: tuple
-    probe_info: dict | None = field(default=None, repr=False, compare=False)
-
-    def __post_init__(self):
-        from src.anime.history import integer
-        from src.anime.acquisition.metadata import safe_path
-        for value in (self.preparation_job_id,self.download_job_id,self.plan_id,self.duration_ms):integer(value,positive=True)
-        import re
-        for value in (self.submission_fingerprint,self.transfer_fingerprint,self.sha256):
-            if type(value) is not str or not re.fullmatch('[a-f0-9]{64}',value):raise MediaInvalid()
-        safe_path(self.relative_path)
-        if (type(self.root_signature) is not tuple or len(self.root_signature)!=2
-                or type(self.file_signature) is not tuple or len(self.file_signature)!=5
-                or any(type(x) is not int or x<0 for x in self.root_signature+self.file_signature)
-                or self.file_signature[2]<=0 or self.languages not in LANGUAGE_SETS):raise MediaInvalid()
-
-    def json(self):
-        return json.dumps({'path':self.relative_path,'root':self.root_signature,'file':self.file_signature,
-            'sha256':self.sha256,'duration_ms':self.duration_ms,'languages':self.languages},sort_keys=True,separators=(',',':'))
-
-
-def verify_file(intent,record,download_job_id,flag,*,read_probe=probe,protected_roots=(),audio=JAPANESE_ENGLISH):
-    """Authoritative lightweight media verification for single acquisitions.
-
-    Trusts the completed download transfer, verifies expected file size and container
-    integrity via a single ffprobe inspection of audio streams, and computes a lightweight
-    media fingerprint (container header + attributes) without sequential full-payload streaming.
-    """
-    selected=intent.plan.manifest.files[intent.plan.manifest.selected_index]
-    # Same exact owned download root and unknown-file rejection as scoped cleanup.
-    try:
-        cleanup=FileCleanup(intent,protected_roots)
-        cancelled(flag)
-        inventory=cleanup.capture()
-        with directory(intent.options.download_root) as root:
-            root_sig=(os.fstat(root).st_dev,os.fstat(root).st_ino)
-            if list(root_sig)!=inventory['root']:raise MediaInvalid()
-            with parent(root,selected.path) as (folder,name):
-                fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder)
-                try:
-                    before=signature(os.fstat(fd))
-                    if before[2]!=selected.size:raise MediaInvalid()
-                    media_hash=media_fingerprint(fd,selected.size,before)
-                    cancelled(flag)
-                    raw_probe=read_probe(fd,flag)
-                    duration,languages=parse_probe(raw_probe,PurePosixPath(selected.path).suffix.lower(),audio)
-                    cancelled(flag)
-                    if signature(os.fstat(fd))!=before:raise MediaInvalid()
-                    # Rewalk the absolute path: renamed roots/parents cannot pass
-                    # solely because the original fd still addresses the old inode.
-                    with directory(intent.options.download_root) as current:
-                        if (os.fstat(current).st_dev,os.fstat(current).st_ino)!=root_sig:raise MediaInvalid()
-                        with parent(current,selected.path) as (latest,leaf):
-                            if signature(os.stat(leaf,dir_fd=latest,follow_symlinks=False))!=before:raise MediaInvalid()
-                    return VerifiedMedia(intent.plan.preparation_job_id,download_job_id,intent.plan.plan_id,
-                        intent.fingerprint,record.fingerprint,selected.path,root_sig,before,media_hash,duration,languages,probe_info=json.loads(raw_probe))
-                finally:os.close(fd)
-    except CancellationError:raise MediaInvalid() from None
-    except OSError:raise MediaUnavailable() from None
-
-
 def verify_path(download_root, relative_path, size, flag, *, read_probe=probe, audio=JAPANESE_ENGLISH):
-    """The same file checks as verify_file, for the series job (no job intent).
+    """Check one downloaded video for the series job.
 
     The file is opened without following links, under the torrent's own folder;
     its size must be the torrent's; ffprobe reads its container and audio
@@ -277,4 +204,8 @@ def verify_path(download_root, relative_path, size, flag, *, read_probe=probe, a
         # The worker stopping: check again later. Otherwise the path left the folder.
         if flag.is_set():raise MediaUnavailable() from None
         raise MediaInvalid() from None
-    except OSError:raise MediaUnavailable() from None
+    except OSError as exc:
+        # A link where the video or a folder should be is what was downloaded, not an
+        # outage: waiting would never fix it. Anything else (the share away) is checked again.
+        if exc.errno in (errno.ELOOP,errno.ENOTDIR):raise MediaInvalid() from None
+        raise MediaUnavailable() from None

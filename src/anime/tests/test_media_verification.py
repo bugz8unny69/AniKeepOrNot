@@ -1,4 +1,4 @@
-"""Offline read-only media verification and hostile filesystem cases; unrun."""
+"""Read-only media verification (verify_path, the series job's media check) and hostile filesystem cases."""
 import asyncio
 from dataclasses import replace
 import hashlib
@@ -10,12 +10,8 @@ import threading
 from types import SimpleNamespace
 import unittest
 
-from src.anime.acquisition.media import (parse_probe, verify_file, AudioMissing,
+from src.anime.acquisition.media import (parse_probe, verify_path, AudioMissing,
     MediaInvalid, MediaUnavailable, MAX_PROBE_BYTES)
-from src.anime.acquisition.settings import DownloadOptions
-from src.anime.acquisition.submission import SubmissionPlan, Intent
-from src.anime.acquisition.metadata import parse_metainfo
-from src.anime.tests.test_acquisition_metadata import metadata
 
 
 def probe_bytes(*,languages=('jpn','eng'),duration='1440',container='matroska,webm'):
@@ -28,29 +24,23 @@ def probe_bytes(*,languages=('jpn','eng'),duration='1440',container='matroska,we
 class MediaVerificationTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name)/('ad-'+'a'*32);self.root.mkdir()
-        raw,digest=metadata()
-        manifest=parse_metainfo(raw,digest)
-        plan=SubmissionPlan(1,2,3,4,'a'*32,manifest)
-        self.intent=Intent(plan,DownloadOptions('https://qb.example',str(self.root),'anime',30),'OWNED_STOPPED','b'*64,5)
-        self.record=SimpleNamespace(fingerprint='c'*64)
-        self.selected=self.root/manifest.files[0].path
+        self.root=Path(self.temp.name)/('akon-'+'a'*32);self.root.mkdir()
+        self.selected=self.root/'Show'/'Show - 01.mkv';self.selected.parent.mkdir()
         self.selected.write_bytes(b'x'*100)
         self.flag=threading.Event()
 
-    def check(self,reader=None,**kwargs):
-        return verify_file(self.intent,self.record,5,self.flag,read_probe=reader or (lambda *_:probe_bytes()),**kwargs)
+    def check(self,reader=None):
+        return verify_path(str(self.root),'Show/Show - 01.mkv',100,self.flag,
+                           read_probe=reader or (lambda *_:probe_bytes()))
 
     def test_checksum_and_audio_bind_actual_selected_bytes_without_writes(self):
         before=self.selected.stat();value=self.check()
-        self.assertEqual(value.sha256,hashlib.sha256(b'x'*100).hexdigest())
-        self.assertEqual(value.file_signature[2],100)
-        self.assertEqual(value.languages,('eng','jpn'))
-        self.assertEqual(value.duration_ms,1440000)
-        self.assertEqual(value.download_job_id,5)
-        self.assertEqual(self.selected.stat().st_mtime_ns,before.st_mtime_ns)
-        self.assertEqual(list(self.root.iterdir()),[self.selected])
-        self.assertNotIn(str(self.root),repr(value))
+        self.assertEqual(value['sha256'],hashlib.sha256(b'x'*100).hexdigest())
+        self.assertEqual(value['file'][2],100)
+        self.assertEqual(value['languages'],['eng','jpn'])
+        self.assertEqual(value['duration_ms'],1440000)
+        self.assertEqual(self.selected.stat().st_mtime_ns,before.st_mtime_ns)    # Read only.
+        self.assertEqual(list(self.selected.parent.iterdir()),[self.selected])
 
     def test_language_aliases_and_mp4_container_are_supported(self):
         self.assertEqual(parse_probe(probe_bytes(languages=('JA','EN')),'.mkv')[1],('eng','jpn'))
@@ -72,13 +62,10 @@ class MediaVerificationTests(unittest.TestCase):
         with self.assertRaises(MediaInvalid):parse_probe(json.dumps(doc).encode(),'.mkv')
         with self.assertRaises(MediaInvalid):parse_probe(b'{"format":{},"format":{},"streams":[]}', '.mkv')
 
-    def test_truncation_symlink_hardlink_fifo_and_extra_files_preserve_everything(self):
+    def test_truncation_symlink_hardlink_and_fifo_fail_and_change_nothing(self):
         self.selected.write_bytes(b'x'*99)
         with self.assertRaises(MediaInvalid):self.check()
         self.selected.write_bytes(b'x'*100)
-        extra=self.root/'unknown.txt';extra.write_text('keep')
-        with self.assertRaises(MediaInvalid):self.check()
-        self.assertEqual(extra.read_text(),'keep');extra.unlink()
         linked=self.root.parent/'linked.mkv';os.link(self.selected,linked)
         with self.assertRaises(MediaInvalid):self.check()
         linked.unlink();self.selected.unlink();self.selected.symlink_to('/etc/passwd')
@@ -92,13 +79,12 @@ class MediaVerificationTests(unittest.TestCase):
             return probe_bytes()
         with self.assertRaises(MediaInvalid):self.check(change)
         def replace_path(fd,flag):
-            self.selected.rename(self.root/'original.mkv')
+            self.selected.rename(self.selected.parent/'original.mkv')
             self.selected.write_bytes(b'y'*100)
             return probe_bytes()
         with self.assertRaises(MediaInvalid):self.check(replace_path)
 
-    def test_symlinked_root_and_protected_overlap_fail(self):
-        with self.assertRaises(MediaInvalid):self.check(protected_roots=(str(self.root.parent),))
+    def test_symlinked_root_fails(self):
         moved=self.root.with_name('moved');self.root.rename(moved);self.root.symlink_to(moved,target_is_directory=True)
         with self.assertRaises((MediaInvalid,MediaUnavailable)):self.check()
 

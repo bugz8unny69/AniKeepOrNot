@@ -3,8 +3,8 @@
 Proves that:
 1. media_fingerprint produces identical SHA-256 for small files (<=64KB) preserving backward compatibility.
 2. media_fingerprint reads only up to 64KB container header plus attributes for large files (>64KB).
-3. verify_file, verify_batch_probe_file, and verify_batch_episode_file avoid sequential multi-gigabyte streaming.
-4. Serialized VerifiedMedia evidence remains 100% schema-compatible with downstream consumers.
+3. verify_path (the series job's media check) avoids sequential multi-gigabyte streaming.
+4. Its evidence has the keys staging and Keep read.
 """
 import hashlib
 import json
@@ -16,12 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from src.anime.acquisition.media import (
-    media_fingerprint, verify_file, signature, VerifiedMedia, MediaInvalid,
-)
-from src.anime.acquisition.metadata import TorrentFile, Manifest, BatchInventory
-from src.anime.acquisition.settings import DownloadOptions
-from src.anime.acquisition.submission import SubmissionPlan, Intent
+from src.anime.acquisition.media import media_fingerprint, verify_path, signature, MediaInvalid
 
 
 def probe_bytes(*, languages=('jpn', 'eng'), duration='1440', container='matroska,webm'):
@@ -117,21 +112,13 @@ class VideoVerificationHashRedesignTests(unittest.TestCase):
             with self.assertRaises(MediaInvalid):
                 media_fingerprint(fd, 100, stat_info)
 
-    def test_verify_file_does_not_stream_large_video_payload(self):
-        """verify_file avoids sequential multi-gigabyte disk streaming."""
-        large_size = 15 * 1024 * 1024  # 15 MB
+    def test_verify_path_does_not_stream_large_video_payload(self):
+        """The media check reads the header sample, never the whole 15 MB payload."""
+        large_size = 15 * 1024 * 1024
         video_file = self.root / 'Episode.S01E01.mkv'
-        header = b'\x1a\x45\xdf\xa3' + b'\x00' * 65532
         with open(video_file, 'wb') as f:
-            f.write(header)
+            f.write(b'\x1a\x45\xdf\xa3' + b'\x00' * 65532)
             f.truncate(large_size)
-
-        manifest = Manifest('a' * 40, 'b' * 64, (TorrentFile(0, 'Episode.S01E01.mkv', large_size),), 0)
-        plan = SubmissionPlan(1, 2, 3, 4, 'a' * 32, manifest)
-        intent = Intent(plan, DownloadOptions('https://qb.example', str(self.root), 'anime', 30),
-                        'OWNED_STOPPED', 'b' * 64, 5)
-        record = SimpleNamespace(fingerprint='c' * 64)
-
         read_bytes = 0
         real_read = os.read
 
@@ -142,49 +129,22 @@ class VideoVerificationHashRedesignTests(unittest.TestCase):
             return chunk
 
         with patch('os.read', side_effect=tracked_read):
-            verified = verify_file(intent, record, 5, self.flag,
+            verified = verify_path(str(self.root), 'Episode.S01E01.mkv', large_size, self.flag,
                                    read_probe=lambda *_: probe_bytes())
-
-        self.assertIsNotNone(verified)
-        self.assertEqual(verified.file_signature[2], large_size)
-        self.assertEqual(verified.languages, ('eng', 'jpn'))
-        # Total bytes read for fingerprinting should not exceed 64KB (never reading the 15MB payload)
+        self.assertEqual(verified['file'][2], large_size)
+        self.assertEqual(verified['languages'], ['eng', 'jpn'])
         self.assertLessEqual(read_bytes, 65536)
 
-
-
-    def test_verified_media_evidence_json_and_storage_roundtrip(self):
-        """VerifiedMedia serialization matches exact keys and formats expected by storage and staging."""
+    def test_evidence_has_the_keys_staging_and_keep_read(self):
         large_size = 5 * 1024 * 1024
-        video_file = self.root / 'ep.mkv'
-        header = b'H' * 65536
-        with open(video_file, 'wb') as f:
-            f.write(header)
+        with open(self.root / 'ep.mkv', 'wb') as f:
+            f.write(b'H' * 65536)
             f.truncate(large_size)
-
-        manifest = Manifest('a' * 40, 'b' * 64, (TorrentFile(0, 'ep.mkv', large_size),), 0)
-        plan = SubmissionPlan(1, 2, 3, 4, 'a' * 32, manifest)
-        intent = Intent(plan, DownloadOptions('https://qb.example', str(self.root), 'anime', 30),
-                        'OWNED_STOPPED', 'b' * 64, 5)
-        record = SimpleNamespace(fingerprint='c' * 64)
-
-        verified = verify_file(intent, record, 5, self.flag, read_probe=lambda *_: probe_bytes())
-        serialized = verified.json()
-        parsed = json.loads(serialized)
-
-        self.assertEqual(set(parsed.keys()), {'path', 'root', 'file', 'sha256', 'duration_ms', 'languages'})
-        self.assertEqual(parsed['path'], 'ep.mkv')
-        self.assertEqual(parsed['file'][2], large_size)
-        self.assertEqual(len(parsed['sha256']), 64)
-
-        # Roundtrip into a fresh VerifiedMedia instance
-        reconstructed = VerifiedMedia(
-            verified.preparation_job_id, verified.download_job_id, verified.plan_id,
-            verified.submission_fingerprint, verified.transfer_fingerprint,
-            parsed['path'], tuple(parsed['root']), tuple(parsed['file']),
-            parsed['sha256'], parsed['duration_ms'], tuple(parsed['languages'])
-        )
-        self.assertEqual(reconstructed.json(), serialized)
+        verified = verify_path(str(self.root), 'ep.mkv', large_size, self.flag, read_probe=lambda *_: probe_bytes())
+        self.assertEqual(set(verified), {'root', 'file', 'sha256', 'duration_ms', 'languages'})
+        self.assertEqual(verified['file'][2], large_size)
+        self.assertEqual(len(verified['sha256']), 64)
+        json.dumps(verified)                            # Stored in the series row as JSON.
 
 
 if __name__ == '__main__':
