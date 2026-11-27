@@ -25,6 +25,7 @@ from dataclasses import asdict
 from pathlib import PurePosixPath
 import re
 
+from src.anime.storage_mounts import LIBRARY, STAGING, uses_storage
 from src.anime.series_job.steps.common import SERVICE_WAIT_MS, SETUP_WAIT_MS, StepResult
 from src.anime.series_job.store import note
 
@@ -310,6 +311,7 @@ HANDLERS = {"sonarr_series": sonarr_series, "sonarr_import": sonarr_import, "sea
             "dubs": dubs, "jellyfin": jellyfin, "cleanup": cleanup}
 
 
+@uses_storage(STAGING, LIBRARY)
 async def run_keep(series, context):
     """One Keep step. Returns a StepResult for the worker (done: the series is KEPT)."""
     from src.anime.async_io import blocking

@@ -14,6 +14,7 @@ from src.anime.series_job.staging import SeriesStagingJournal
 from src.anime.series_job.steps.common import SERVICE_WAIT_MS, SETUP_WAIT_MS, StepResult
 from src.anime.series_job.store import SeriesRow, note
 from src.anime.series_job.torrents import options_for
+from src.anime.storage_mounts import DOWNLOADS, STAGING, uses_storage
 from src.anime.staging import (Publisher, StagingBusy, StagingConfiguration, StagingReview, StagingUnavailable,
                                disjoint, root_identity, specification)
 
@@ -39,6 +40,8 @@ def plan_for(configuration, series, torrent, entry):
     return plan
 
 
+# Owner, 2026-11-27: never stage into a missing mount; the files would vanish under it.
+@uses_storage(STAGING, DOWNLOADS)
 async def stage(series: SeriesRow, torrent: dict, context) -> StepResult:
     configuration = context.configuration
     label = (f"series {series.anidb_id} {series.title} · {', '.join(torrent['episodes'])} "

@@ -66,6 +66,9 @@ def outage(exc):
     what reaches the worker raw: a connection reset or timeout, a disk that is full or gone,
     a busy database. The series waits and tries again; nothing is stopped.
     """
+    from src.anime.storage_mounts import StorageNotMounted
+    if isinstance(exc, StorageNotMounted):
+        return "STORAGE_UNAVAILABLE"              # A storage folder's mount is missing: wait for it.
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return "NETWORK_UNAVAILABLE"
     if isinstance(exc, OSError) and exc.errno in _OUTAGE_ERRNOS:

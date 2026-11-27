@@ -9,6 +9,7 @@ import os
 from src.anime.acquisition.cleanup import directory, parent
 from src.anime.acquisition.submission import ClientUnavailable
 from src.anime.async_io import blocking
+from src.anime.storage_mounts import DOWNLOADS, STAGING, uses_storage
 from src.anime.series_job.steps.common import SERVICE_WAIT_MS, StepResult
 from src.anime.series_job.store import note
 from src.anime.series_job.torrents import forget_metainfo
@@ -26,6 +27,7 @@ def remove_staged(configuration, torrent):
                     pass
 
 
+@uses_storage(STAGING, DOWNLOADS)     # A missing mount would look like files already gone.
 async def run_reject(series, context):
     for torrent in series.torrents:
         qb = torrent.get("qb") or {}

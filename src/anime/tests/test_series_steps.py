@@ -91,7 +91,10 @@ class FakeQb:
 class Configuration:
     def __init__(self, database):
         self.values = {'storage.database_path': database, 'user_evaluation.backfill_count': 6,
-                       'user_evaluation.following_count': 1}
+                       'user_evaluation.following_count': 1,
+                       # Unset unless a test sets them; the storage mount guard skips unset folders.
+                       'storage.download_root': None, 'storage.user_evaluation_root': None,
+                       'storage.keep_root': None}
 
     def value(self, key):
         return self.values[key]

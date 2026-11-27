@@ -12,6 +12,7 @@ from pathlib import Path
 from src.anime.acquisition.cleanup import directory, parent
 from src.anime.acquisition.media import media_fingerprint, signature
 from src.anime.async_io import blocking
+from src.anime.storage_mounts import DOWNLOADS, STAGING, uses_storage
 from src.anime.series_job.staging import write_torrent_key
 from src.anime.series_job.steps.common import SETUP_WAIT_MS, StepResult
 from src.anime.series_job.store import SeriesRow, note
@@ -62,6 +63,7 @@ def transcode_file(context, series, torrent, entry, client=None):
     return {"path": ".transcode/" + output.name, "file": list(stat), "sha256": fingerprint, "root": root_sig}
 
 
+@uses_storage(STAGING, DOWNLOADS)       # Writes <staging>/.transcode from the download.
 async def transcode(series: SeriesRow, torrent: dict, context) -> StepResult:
     if context.configuration.value("transcode.mode") == "off":
         return StepResult.done(next_step="stage")

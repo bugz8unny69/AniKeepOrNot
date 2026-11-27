@@ -9,8 +9,10 @@ from src.anime.async_io import blocking
 from src.anime.series_job.steps.common import SERVICE_WAIT_MS, SETUP_WAIT_MS, StepResult
 from src.anime.series_job.store import SeriesRow, note
 from src.anime.series_job.torrents import options_for
+from src.anime.storage_mounts import DOWNLOADS, uses_storage
 
 
+@uses_storage(DOWNLOADS)       # A missing mount would read as missing files.
 async def check_media(series: SeriesRow, torrent: dict, context) -> StepResult:
     label = (f"series {series.anidb_id} {series.title} · {', '.join(torrent['episodes'])} "
              f"{torrent.get('release_name', '')}")

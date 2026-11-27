@@ -95,6 +95,26 @@ class Worker:
                       service_status=state.status, service_detail=state.message())
             raise StartupRefused(refused)
 
+    async def _check_storage(self, configuration):
+        """Learn which storage folders are mounts, and say so; a missing one is waited for, not refused."""
+        from src.anime.storage_mounts import ROOTS, StorageNotMounted, check
+        database = configuration.value("storage.database_path")
+        for key in ROOTS:
+            root = configuration.value(key)
+            if not root:
+                continue
+            try:
+                state = await self._io(check, database, root)
+            except StorageNotMounted as exc:
+                self.logger.warning("Storage: %s; work that uses it waits until it is mounted", exc)
+                continue
+            except FileNotFoundError:
+                self.logger.warning("Storage: %s (%s) does not exist", root, key)
+                continue
+            if state != "local":
+                self.logger.info("Storage: %s is a mount (%s); work waits whenever it is not mounted",
+                                 root, "just learned" if state == "learned" else "mounted")
+
     async def attempt(self):
         """One series attempt under the maintenance gate. True when a series was worked on."""
         from contextlib import closing
@@ -134,6 +154,7 @@ class Worker:
             configuration = await self._io(self.config.operation, self.startup, component="worker")
             if self._service_health is not None and self._secrets is not None:
                 await self._check_services_at_startup(configuration)
+            await self._check_storage(configuration)
             if on_ready is not None:
                 on_ready()
             while not self._stop.is_set():
