@@ -80,7 +80,13 @@ HOUSEKEEPING_KINDS = frozenset({
     "BULK_MANAGE_JOBS",
 })
 
-STOPPED_JOB_STATES = frozenset({"NEEDS_REVIEW", "ON_HOLD", "BLOCKED"})
+# Stopped for the owner: the converted work stays stopped until Retry. ON_HOLD is not here: the
+# old code put a job on hold to wait (an episode another torrent held, a dub, a decision) and
+# released it by itself, so held work resumes as waiting.
+STOPPED_JOB_STATES = frozenset({"NEEDS_REVIEW", "BLOCKED"})
+# A program error fails its job at once (develop, 2026-11-27) instead of retrying it; that work
+# is not finished, so it converts too, stopped with its reason, and Retry resumes it.
+PROGRAM_ERROR = "JOB_HANDLER_FAILED"
 
 
 def services_stopped() -> list[str]:
@@ -637,7 +643,8 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
     # 4. Unfinished jobs (CO-1, CO-3, CO-4)
     unfinished = db.execute(
         "SELECT job_id, event_id, kind, state, payload_json, last_reason_code, created_at_ms, updated_at_ms "
-        "FROM jobs WHERE state NOT IN ('DONE', 'CANCELED', 'FAILED') ORDER BY job_id"
+        "FROM jobs WHERE state NOT IN ('DONE', 'CANCELED', 'FAILED') "
+        "OR (state = 'FAILED' AND last_reason_code = ?) ORDER BY job_id", (PROGRAM_ERROR,)
     ).fetchall()
 
     converted_job_ids: list[int] = []
@@ -647,7 +654,7 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
 
     for job_id, event_id, kind, job_state, payload_json, reason_code, created_ms, updated_ms in unfinished:
         payload = json.loads(payload_json)
-        is_stopped = job_state in STOPPED_JOB_STATES
+        is_stopped = job_state in STOPPED_JOB_STATES or job_state == "FAILED"
         t_state = "stopped" if is_stopped else "waiting"
         why = reason_code if is_stopped else None
 
@@ -662,7 +669,12 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
                 refused_jobs.append({"job_id": job_id, "kind": kind, "state": job_state, "reason": err})
                 continue
             entry = ensure_series(aid)
-            entry["state"] = "WORKING"
+            if is_stopped:
+                # Stopped for the owner (Sonarr refused, a program error): it waits for Retry,
+                # as the series job's own Keep does.
+                keep_work["stopped"] = reason_code or job_state
+            else:
+                entry["state"] = "WORKING"
             entry["work"]["keep"] = keep_work
             converted_job_ids.append(job_id)
             step_counts["keep"] = step_counts.get("keep", 0) + 1
@@ -729,15 +741,21 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
                 "job_id": job_id, "kind": kind, "state": job_state, "reason": "cannot resolve anidb_id"
             })
             continue
+        entry = ensure_series(aid)
+        if entry["state"] in ("KEPT", "REJECTED"):
+            # Decided: the old code held this job until it was canceled. The series job runs no
+            # torrents for a decided series, so the job closes with no torrent.
+            converted_job_ids.append(job_id)
+            job_outcomes.append({"job_id": job_id, "kind": kind, "anidb_id": aid, "infohash": infohash,
+                                 "outcome": f"closed: series {entry['state'].lower()}"})
+            continue
         if not infohash:
             refused_jobs.append({
                 "job_id": job_id, "kind": kind, "state": job_state, "reason": "cannot resolve torrent infohash"
             })
             continue
 
-        entry = ensure_series(aid)
-        if entry["state"] not in ("KEPT", "REJECTED"):
-            entry["state"] = "WORKING"
+        entry["state"] = "WORKING"
 
         identity = _identity_from_event(db, event_id, aid)
         qb = None

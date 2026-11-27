@@ -330,6 +330,63 @@ class CutoverSeriesJobTests(unittest.TestCase):
         self.assertEqual(preview["refused_jobs"][0]["job_id"], 77)
         self.assertIn("anidb_id", preview["refused_jobs"][0]["reason"])
 
+    def _job(self, db, job_id, kind, state, reason, payload, event_hash=None):
+        if event_hash is not None:
+            db.execute("INSERT INTO incoming_events(event_id, source, raw_body, received_at_ms, state) "
+                       "VALUES(?, 'test', ?, 1000, 'IDENTIFIED')",
+                       (job_id, json.dumps({"release_name": f"[G] Show - {job_id}",
+                                            "torrent_infohash": event_hash}).encode()))
+        db.execute("INSERT INTO jobs(job_id, event_id, kind, payload_json, state, last_reason_code, available_at_ms, "
+                   "created_at_ms, updated_at_ms) VALUES(?, ?, ?, ?, ?, ?, 0, 1000, 1000)",
+                   (job_id, job_id if event_hash else None, kind, json.dumps(payload), state, reason))
+
+    def test_held_failed_stopped_and_decided_work_converts_by_what_it_was_waiting_for(self):
+        """Owner, 2026-11-27: the old states mean different things; each converts to what resumes it."""
+        db = _create_v78(self.db_path)
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("INSERT INTO identified_anime VALUES(404, 504, 'Show Four')")
+        # ON_HOLD: waiting for an episode another torrent holds. The old code released it by itself.
+        self._job(db, 40, "RESERVE_EPISODE", "ON_HOLD", "EPISODE_RESERVED", {"anidb_id": 404}, "4" * 40)
+        # FAILED by a program error: not finished, so it converts, stopped.
+        self._job(db, 41, "DOWNLOAD_TORRENT", "FAILED", "JOB_HANDLER_FAILED", {"anidb_id": 404}, "5" * 40)
+        # FAILED for any other reason: finished (and 080 accepts it); not converted.
+        self._job(db, 42, "PREPARE_ACQUISITION", "FAILED", "TORRENT_METADATA_TIMEOUT", {"anidb_id": 404}, "6" * 40)
+        # A rejected series: its held job closes with no torrent.
+        db.execute("INSERT INTO identified_anime VALUES(505, 505, 'Show Five')")
+        db.execute("INSERT INTO anime_review_decisions(anidb_id, operation_id, job_id, decision, cleanup_state, "
+                   "decided_at_ms) VALUES(505, 1, 99, 'REJECT', 'COMPLETE', 1000)")
+        self._job(db, 50, "SELECT_USER_EVALUATION", "ON_HOLD", "ANIME_REJECTED", {"anidb_id": 505})
+        # A Keep Sonarr refused (Needs review): stays stopped until Retry, never runs at the cutover.
+        db.execute("INSERT INTO identified_anime VALUES(606, 506, 'Show Six')")
+        self._job(db, 60, "KEEP_MEDIA", "NEEDS_REVIEW", "KEEP_IMPORT_REVIEW", {})
+        db.execute("INSERT INTO keep_imports(job_id, phase, data_json, updated_at_ms) VALUES(60, 'IMPORT_UNCERTAIN', ?, 1000)",
+                   (json.dumps({"selection": {"anidb_id": 606, "tvdb_series_id": 506, "tvdb_season": 1,
+                                              "tvdb_episode": 1}, "series": {"id": 7, "path": "/keep/Six"}}),))
+        db.commit()
+        db.close()
+
+        with mock.patch.object(cutover, "services_stopped", return_value=[]):
+            applied = cutover.execute_cutover(self.db_path, apply=True)
+        self.assertEqual(applied["refused_jobs"], [])
+        outcomes = {o["job_id"]: o["outcome"] for o in applied["job_outcomes"]}
+        self.assertEqual(sorted(outcomes), [40, 41, 50, 60])
+        self.assertEqual(outcomes[50], "closed: series rejected")
+
+        db = sqlite3.connect(self.db_path)
+        torrents = {t["infohash"]: t for t in get_series(db, 404).torrents}
+        self.assertEqual(sorted(torrents), ["4" * 40, "5" * 40])
+        self.assertEqual(torrents["4" * 40]["state"], "waiting")
+        self.assertEqual((torrents["5" * 40]["state"], torrents["5" * 40]["why"]), ("stopped", "JOB_HANDLER_FAILED"))
+        self.assertEqual(get_series(db, 505).torrents, [])
+        six = get_series(db, 606)
+        self.assertEqual(six.work["keep"]["stopped"], "KEEP_IMPORT_REVIEW")
+        self.assertEqual((six.state, six.wake_at_ms), ("ASLEEP", None))      # Not taken until Retry.
+        self.assertEqual(db.execute("SELECT state FROM jobs WHERE job_id=42").fetchone(), ("FAILED",))
+        # 080 accepts what is left.
+        db.executescript((migrations.SQL_DIR / "080_series_only.sql").read_text())
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 80)
+        db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
