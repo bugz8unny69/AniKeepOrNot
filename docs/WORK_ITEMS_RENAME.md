@@ -1,6 +1,6 @@
 # Work items: the rename to `akon` (item 3)
 
-Status: open. Written 2026-11-26. Branch: `feat/series-job` (PR 349; do not merge it).
+Status: merged into `develop` 2026-11-27 (owner); the rename runs with the cutover runbook below.
 
 ## What this is
 

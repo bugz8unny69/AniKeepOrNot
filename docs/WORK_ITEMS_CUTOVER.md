@@ -1,6 +1,6 @@
 # Work items: the one-time cutover to the series job (item 2)
 
-Status: open. Written 2026-11-26. Branch: `feat/series-job` (PR 349; do not merge it).
+Status: done; merged into `develop` 2026-11-27 (owner). CO-6 rehearsed on a production copy 2026-11-27: 81 unfinished jobs converted, none refused, 65 series, decisions unchanged, migration 080 clean.
 
 ## What this is
 
