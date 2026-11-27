@@ -131,9 +131,8 @@ class CancellationService:
                 cause=getattr(exc,'reason_code','STORAGE_UNAVAILABLE' if isinstance(exc,OSError) else 'CANCELLATION_REVIEW')
                 check,path=failure_location(exc)
                 if self.logger is not None:
-                    try:self.logger.warning('Cancellation cleanup for job %s stopped at %s%s',job_id,
-                                            check or 'an unknown check',' path='+repr(path) if path else '')
-                    except Exception:pass  # A broken log sink never changes cleanup state.
+                    self.logger.warning('Cancellation cleanup for job %s stopped at %s%s',job_id,
+                                        check or 'an unknown check',' path='+repr(path) if path else '')
                 self._state(job_id,'REVIEW','CANCELLATION_REVIEW',cause=cause if get_reason(cause) is not None else 'CANCELLATION_REVIEW',
                             check=check,path=path)
                 return {**self.store.status(job_id),'failed_check':check,'failed_path':path}

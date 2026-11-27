@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.anime.configuration import cli_config_dir
+from src.anime.configuration_schema import ConfigurationError
 from src.anime.messages import EVENTS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -435,7 +436,7 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
             payload = {}
             if payload_raw:
                 try: payload = json.loads(payload_raw)
-                except Exception: pass
+                except ValueError: pass   # Not JSON: shown as no payload.
 
             hist_row = db.execute(
                 "SELECT reason_code, details_json FROM job_history WHERE job_id=? AND details_json IS NOT NULL ORDER BY history_id DESC LIMIT 1",
@@ -444,7 +445,7 @@ def report_prowlarr_matching(db, job_id, attempt=None, out=print, is_short=False
             details = {}
             if hist_row and hist_row[1]:
                 try: details = json.loads(hist_row[1])
-                except Exception: pass
+                except ValueError: pass   # Not JSON: shown as no details.
 
             failed_check = details.get('failed_check')
             failed_path = details.get('failed_path')
@@ -733,7 +734,7 @@ def prowlarr_matching_json(db, job_id, attempt=None):
             payload = {}
             if payload_raw:
                 try: payload = json.loads(payload_raw)
-                except Exception: pass
+                except ValueError: pass   # Not JSON: shown as no payload.
 
             hist_row = db.execute(
                 "SELECT reason_code, details_json FROM job_history WHERE job_id=? AND details_json IS NOT NULL ORDER BY history_id DESC LIMIT 1",
@@ -742,7 +743,7 @@ def prowlarr_matching_json(db, job_id, attempt=None):
             details = {}
             if hist_row and hist_row[1]:
                 try: details = json.loads(hist_row[1])
-                except Exception: pass
+                except ValueError: pass   # Not JSON: shown as no details.
 
             failed_check = details.get('failed_check')
             failed_path = details.get('failed_path')
@@ -1277,7 +1278,7 @@ def main(argv):
 
     try:
         db = connect(config_dir)
-    except Exception as exc:  # Explain plainly; the usual cause is permissions.
+    except (ConfigurationError, sqlite3.Error, OSError) as exc:  # Explain plainly; the usual cause is permissions.
         parser.exit(2, f'Cannot open the database read-only ({exc.__class__.__name__}: {exc}). '
                        'Run with sudo, or as the anime-discovery service account.\n')
     lines = []

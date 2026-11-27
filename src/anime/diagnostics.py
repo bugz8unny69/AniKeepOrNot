@@ -47,6 +47,11 @@ def full_traceback(exc_info):
     return re.sub(r'File "[^"]*/(src/[^"]+)"', r'File "\1"', text).rstrip("\n")
 
 
+def trace_text(exc):
+    """The redacted full traceback of an exception, for a command's stderr."""
+    return redact(full_traceback((type(exc), exc, exc.__traceback__)))
+
+
 class SafeFormatter(logging.Formatter):
     def formatException(self, exc_info):
         return full_traceback(exc_info)
@@ -228,8 +233,11 @@ def _emit(logger, level, text):
             return False
         logger.log(level, text)
         return True
-    except Exception:
-        # A broken log sink cannot cause replay of already committed work.
+    except Exception as exc:
+        # Boundary (work item 3c): a broken log sink cannot turn committed work
+        # into a failure. Its trace goes to stderr, as logging's handleError does.
+        import sys
+        print("Logging failed:\n" + trace_text(exc), file=sys.stderr)
         return False
 
 

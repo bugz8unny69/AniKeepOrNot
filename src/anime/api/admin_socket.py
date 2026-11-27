@@ -12,7 +12,7 @@ from src.anime.api.password_store import PasswordConflict, PasswordStorageError
 MAX_LINE = 2048
 
 
-async def serve_admin(reader, writer, password_store):
+async def serve_admin(reader, writer, password_store, logger=None):
     try:
         sock = writer.get_extra_info("socket")
         if not hasattr(socket, "SO_PEERCRED") or sock is None:
@@ -39,6 +39,9 @@ async def serve_admin(reader, writer, password_store):
     except (ValueError, TypeError, json.JSONDecodeError, PasswordConflict, PasswordStorageError, asyncio.TimeoutError):
         response = {"ok": False}
     except Exception:
+        # Boundary (work item 3c): the caller gets "not ok"; the trace goes to the API log.
+        if logger is not None:
+            logger.error("Admin socket request failed with a program error", exc_info=True)
         response = {"ok": False}
     try:
         writer.write(json.dumps(response).encode() + bytes([10]))
@@ -48,7 +51,7 @@ async def serve_admin(reader, writer, password_store):
         await writer.wait_closed()
 
 
-async def start_admin(path, password_store):
+async def start_admin(path, password_store, logger=None):
     path = Path(path)
     parent = path.parent
     info = parent.stat()
@@ -56,6 +59,6 @@ async def start_admin(path, password_store):
         raise RuntimeError("Admin socket directory must not be writable by group/others")
     if path.exists() or path.is_symlink():
         raise RuntimeError("Admin socket path already exists")
-    server = await asyncio.start_unix_server(lambda r, w: serve_admin(r, w, password_store), path=str(path))
+    server = await asyncio.start_unix_server(lambda r, w: serve_admin(r, w, password_store, logger), path=str(path))
     os.chmod(path, 0o600)
     return server

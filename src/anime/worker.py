@@ -206,7 +206,7 @@ class Worker:
         try:
             await self._io(status_store.save, self.startup.value("storage.database_path"),
                            health.snapshot(), now_ms=now)
-        except Exception as exc:
+        except (*DATABASE_ERRORS, OSError) as exc:
             exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
                       reason_code="DATABASE_ERROR", component="worker")
         self._services_dirty = False
@@ -231,10 +231,11 @@ class Worker:
 
     def _settings_key(self, configuration):
         """Settings and credentials revisions; a change makes every service due for a recheck."""
+        from src.anime.secrets import SecretStorageError
         try:
             credentials = self._secrets.status().revision
-        except Exception:
-            credentials = None
+        except SecretStorageError:
+            credentials = None   # Unreadable now; checked again on the next attempt.
         return getattr(configuration, 'desired_revision', None), credentials
 
     def _waiting_kinds(self):
@@ -330,10 +331,8 @@ class Worker:
         reason = getattr(exc, "reason_code", "DATABASE_ERROR" if isinstance(exc, sqlite3.Error) else "JOB_HANDLER_FAILED")
         if get_reason(reason) is None:
             reason = "JOB_HANDLER_FAILED"
-        try:database=self.startup.value("storage.database_path")
-        except Exception:database=None
         exception(self.logger, "OPERATION_FAILED", exc, reason_code=reason, component="worker",
-                  database=database,
+                  database=self.startup.value("storage.database_path"),
                   job_id=None if claim is None else claim.job_id,
                   event_id=None if claim is None else claim.event_id,
                   attempt=None if claim is None else claim.attempt)
@@ -344,7 +343,7 @@ class Worker:
         for record in records:
             try:
                 log_history(logger, record)
-            except Exception as exc:
+            except Exception as exc:   # Boundary (work item 3c): the row is saved; the next lines still print.
                 exception(self.logger, "OPERATION_FAILED", exc, reason_code="JOB_HANDLER_FAILED",
                           component="worker", job_id=claim.job_id)
 
@@ -391,7 +390,7 @@ class Worker:
                 raise
             except (CancellationRequested, LeaseLost):
                 raise   # Handled by the attempt: acknowledged, or logged; not a bug.
-            except Exception as exc:
+            except Exception as exc:   # Boundary (work item 2): one job's bug never stops the worker.
                 waiting = self._exception_wait(spec, exc)
                 if waiting is not None:
                     return waiting
@@ -539,7 +538,7 @@ class Worker:
         except LeaseLost as exc:
             self._log_error(exc,claim)
             return True
-        except Exception as exc:
+        except Exception as exc:   # Re-raised after its trace is logged with the job.
             self._log_error(exc,claim)
             raise
         finally:
@@ -582,6 +581,8 @@ class Worker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                # Boundary (work item 3c): a failed batch is logged with its trace
+                # and the loop tries again; jobs keep running meanwhile.
                 self._log_error(exc)
                 worked = False
             await asyncio.sleep(1)
@@ -629,7 +630,7 @@ class Worker:
                         pass
         except StartupRefused:
             raise                     # Already logged, one line per service.
-        except Exception as exc:
+        except Exception as exc:   # Re-raised after its trace is logged: the worker stops.
             self._log_error(exc)
             self.stop()
             raise

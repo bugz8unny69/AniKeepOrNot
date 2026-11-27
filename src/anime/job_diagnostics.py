@@ -17,6 +17,7 @@ Documented resume paths this module reasons about:
 Nothing releases a reservation on time, restart or owner completion.
 """
 import json
+import sqlite3
 import time
 
 NOT_RECORDED = 'Not recorded'
@@ -185,12 +186,13 @@ def _wake_checks(db, job, own_op):
     """Conditions wake_waiters applies before it resumes a held job."""
     checks = [('Own operation is ACTIVE', bool(own_op) and own_op['state'] == 'ACTIVE',
                f'operation state {own_op["state"] if own_op else "none"}')]
+    from src.anime.episode_reservations import ReservationConflict
     try:
         from src.anime.storage.episode_reservations import _facts
         facts = _facts(db, _payload(job).get('evaluation_job_id'), job['event_id'])
         checks.append(('Verified episode facts re-check', True, 'consistent'))
         checks.append(('Evaluation selected the episode', facts.selected, 'selected' if facts.selected else 'outside window'))
-    except Exception as exc:  # ReservationConflict or missing tables: the wake would skip this job.
+    except (ReservationConflict, sqlite3.Error) as exc:  # The wake would skip this job.
         checks.append(('Verified episode facts re-check', False, exc.__class__.__name__))
     return [{'check': c, 'ok': ok, 'detail': d} for c, ok, d in checks]
 
@@ -303,7 +305,7 @@ def recovery(db, job, op, now):
     try:
         from src.anime.storage.review_retry import capability
         retry = 'Available' if capability(db, job['job_id'])['enabled'] else 'Not available'
-    except Exception as exc:
+    except sqlite3.Error as exc:   # An older database without the tables Retry reads.
         retry = f'{UNKNOWN} ({exc.__class__.__name__})'
     return {'lease': lease,
             'interrupted_attempts': [{'started': when(h['occurred_at_ms'])} for h in open_runs],

@@ -30,11 +30,8 @@ class Service:
             journal.fence(claim)
         resolver=self.resolver
         if resolver is None:
-            try:
-                from src.anime.keep_resolution import make_keep_resolver
-                resolver=make_keep_resolver(self.configuration,self.secrets)
-            except Exception:
-                resolver=None
+            from src.anime.keep_resolution import make_keep_resolver
+            resolver=make_keep_resolver(self.configuration,self.secrets)
         phase,data=journal.load(claim,target,self.configuration,resolver=resolver)
         self.completed=None
         if phase=='COMPLETE':

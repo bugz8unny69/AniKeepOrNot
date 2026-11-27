@@ -29,12 +29,10 @@ def main(argv=None):
         print(usage(found), file=sys.stderr)
         print(f'\nadm: unknown command {argv[0]!r}', file=sys.stderr)
         sys.exit(2)
+    from src.anime.configuration_schema import ConfigurationMigrationRequired
     try:
         code = command.main(argv[1:], prog=f'adm {argv[0]}')
-    except Exception as exc:
-        from src.anime.configuration_schema import ConfigurationMigrationRequired
-        if not isinstance(exc, ConfigurationMigrationRequired):
-            raise
+    except ConfigurationMigrationRequired:
         print(settings_mismatch(argv[1:]), file=sys.stderr)
         sys.exit(1)
     sys.exit(code)
