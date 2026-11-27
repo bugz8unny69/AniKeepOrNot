@@ -186,8 +186,11 @@ def main(argv=None):
         elif args.command=='render':result=units(ConfigurationStore(args.config_dir).read(),document['root'],args.config_dir,document['state_dir'],document['user'],document['origin'])
         else:result=check_local(args.config_dir,worker=True)
         print(json.dumps(result,sort_keys=True));return 0
-    except Exception:
-        print('INSTALL_SETUP_FAILED: Native configuration, database or local readiness needs review; services remain stopped.',file=sys.stderr);return 1
+    except Exception as exc:
+        # Boundary (work item 3c): the installer reads this stderr; the full trace, redacted.
+        from src.anime.diagnostics import trace_text
+        print('INSTALL_SETUP_FAILED: Native configuration, database or local readiness needs review; services remain stopped.',file=sys.stderr)
+        print(trace_text(exc),file=sys.stderr);return 1
 
 
 if __name__=='__main__':raise SystemExit(main())

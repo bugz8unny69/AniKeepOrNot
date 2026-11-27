@@ -73,7 +73,7 @@ class Worker:
         from src.anime.services import status_store
         try:
             await self._io(status_store.save, self.startup.value("storage.database_path"), health.snapshot(), now_ms=now)
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, OSError) as exc:
             exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING, reason_code="DATABASE_ERROR",
                       component="worker")
         self._services_dirty = False

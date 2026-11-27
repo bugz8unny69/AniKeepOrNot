@@ -248,7 +248,7 @@ class Application:
                 if message['type']=='lifespan.startup':
                     try:
                         if self.admin_path:
-                            self.admin_server=await start_admin(self.admin_path,self.passwords)
+                            self.admin_server=await start_admin(self.admin_path,self.passwords,self.logger)
                     except Exception:  # Boundary: startup must report failure; full trace in the log.
                         self.logger.error('The admin socket could not be started',exc_info=True)
                         await send({'type':'lifespan.startup.failed','message':'Admin socket could not be started'})
@@ -341,7 +341,7 @@ class Application:
             status=400;result={'api_version':'v1','request_id':request_id,'error':CATALOG.reason('API_REQUEST_INVALID')}
             self.logger.warning('%s %s: refused as invalid at %s',method,path,where(exc))
         except Exception as exc:
-            # The API's one boundary: anything else is a program bug. The full stack
+            # Boundary (work item 3c), the API's one: anything else is a program bug. The full stack
             # trace goes to the log; the caller is told where, so the code can be read.
             at=where(exc)
             self.logger.error('%s %s failed with a program error at %s',method,path,at,exc_info=True)

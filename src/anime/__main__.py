@@ -141,12 +141,13 @@ def main(argv=None):
         for line in exc.lines():print(line,file=sys.stderr)
         return STARTUP_EXIT_CODE
     except Exception as exc:
-        # Do not print raw settings, URLs, transport responses or credentials.
+        # Boundary (work item 3c): the command's one exit; the full trace, redacted.
         code=getattr(exc,'reason_code','SERVICE_SETUP_FAILED')
         if not isinstance(code,str) or not code.isupper() or not all(c.isalpha() or c=='_' for c in code):code='SERVICE_SETUP_FAILED'
-        from src.anime.diagnostics import exact_error
+        from src.anime.diagnostics import exact_error, trace_text
         print(code+': Local setup/service operation stopped. Review configuration, local files and maintenance state. A failed initialization may have created some files; existing files are never replaced.',file=sys.stderr)
         print('Cause: '+exact_error(exc),file=sys.stderr)
+        print(trace_text(exc),file=sys.stderr)
         return 1
 
 

@@ -17,11 +17,11 @@ async def blocking(callable_, *args, executor=None, **kwargs):
                 # no outstanding thread to drain; never spin on its result.
                 try:
                     task.result()
-                except BaseException:
+                except BaseException:  # Re-raised: the CancelledError below, not this result.
                     pass
                 raise
             cancelled = True
-        except Exception:
+        except Exception:  # Re-raised: as CancelledError when the caller was cancelled.
             if cancelled:
                 raise asyncio.CancelledError() from None
             raise

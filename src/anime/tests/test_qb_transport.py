@@ -33,6 +33,16 @@ class QBTransportTests(unittest.TestCase):
     def login_responses(self,version=b'v5.0.0'):
         return [Response(b'Ok.',cookie=True),Response(version),Response(b'2.8.19' if version.startswith(b'v4.') else b'2.11.0')]
 
+    def test_truncated_or_garbled_reply_is_an_outage_not_a_program_error(self):
+        import http.client
+        for error in (http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("garbage"),
+                      http.client.RemoteDisconnected("closed"), TimeoutError()):
+            with self.subTest(error=type(error).__name__):
+                def transport(request,timeout,error=error):raise error
+                client=Client(DownloadOptions('https://qb.example','/srv/downloads/ad-marker','anime-discovery',10),
+                              DownloadCredentials('private-user','private-pass'),transport=transport)
+                with self.assertRaises(ClientUnavailable):client.login()
+
     def test_base64_session_cookie_is_preserved_on_authenticated_requests(self):
         for version in (b'v4.5.2',b'v5.0.0'):
             for sid in ('abcd+efg/hijklmnopqrstuvwxy0123456', 'abcd+efg/hijklmnopqrstuvwxy01234=='):

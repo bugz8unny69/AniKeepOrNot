@@ -1,6 +1,6 @@
 # Work items: errors show a stack trace, no catch-alls
 
-Status: open. Written 2026-11-22.
+Status: items 1–4 done; item 5 stage 2 open. Written 2026-11-22.
 
 ## The rule
 
@@ -44,6 +44,8 @@ Status: open. Written 2026-11-22.
 
 ## 2. An unexpected error in a job is a bug: logged, recorded, failed
 
+**Done 2026-11-27** (branch `fix/job-errors-are-bugs`): the boundary logs at ERROR with the trace and returns `fail JOB_HANDLER_FAILED`; History has `failed_check` (`file:line function RAISED_<TYPE>`); the bell says "Program error in <step>: <release>". Cancellation and a lost lease pass through to the attempt, which handles them as before. Test: `test_worker_errors_and_log.py`.
+
 **Today:** the worker's boundary ([worker.py:374](../src/anime/worker.py#L374)) handles an unexpected error like this:
 
 1. It logs at WARNING with two frames.
@@ -67,6 +69,15 @@ Expected errors keep their own handling: the service waits in `_exception_wait`,
 **Done when:** a test handler that raises `KeyError` ends FAILED after one attempt, with the traceback in the log, the file:line in history, and a notification.
 
 ## 3. Remove the catch-alls
+
+**Done 2026-11-27** (branch `fix/job-errors-are-bugs`). What is left:
+
+- **Re-raise:** the eight sites below, plus `async_io.py:24`, `worker.py` `_attempt` and `run` (they log the trace with the job, then raise).
+- **Boundaries (c)**, each marked `Boundary` with its reason: the worker's handler boundary (item 2), its history lines after commit, the transcode batch loop; `diagnostics._emit` (a broken log sink; trace to stderr); `api/app.py` (per request, startup); `api/admin_socket.py` (trace to the API log); `identity_process.py`, `identity_bridge.py`; `services/health.py` ×2; the command exits of `__main__.py`, `install_support.py` and `job_recovery.py`, which now print the redacted trace (`diagnostics.trace_text`).
+- **Narrowed (a):** worker service-status save (database and file errors), credentials revision (`SecretStorageError`); job report JSON (`ValueError`) and database open; job diagnostics (`ReservationConflict`, `sqlite3.Error`); backlog audit (the four client errors and settings errors); `adm` (`ConfigurationMigrationRequired`).
+- **Removed (b):** keep resolver creation (it only builds a closure), the cancellation log `pass`, the worker's database-path lookup.
+
+`test_no_catch_alls.py` fails on any new `except Exception` that neither re-raises nor is marked `Boundary`.
 
 There are 53 `except Exception` / `except BaseException` sites in `src/anime`, not counting tests.
 
@@ -108,6 +119,8 @@ Nothing may `pass`, return a default, or turn the error into a reason code witho
 **Done when:** `grep -rn "except Exception\|except BaseException" src/anime` (outside tests) lists only the eight re-raise sites and the boundaries marked (c), each with a comment saying why it is a boundary.
 
 ## 4. Started and finished stay in the log; repeated waits print nothing
+
+**Done 2026-11-27** (branch `fix/job-errors-are-bugs`): "Job started", "Step started" and "Step finished" log at DEBUG. The worker holds the claim and start lines until `finish` returns; a repeated wait drops them, and an error writes them before its trace. Test: `test_worker_errors_and_log.py`.
 
 **Today, on branch `fix/quiet-polls`, not deployed:** "Job started", "Step started" and "Step finished" were moved to TRACE, so they no longer show at DEBUG. That goes against the rule above, which needs them visible.
 
