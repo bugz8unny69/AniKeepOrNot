@@ -1,9 +1,7 @@
 """SJ-4: Worker loop for series jobs."""
 import asyncio
 import logging
-import os
 import time
-import traceback
 
 from src.anime.series_job.steps.metadata import get_metadata
 from src.anime.series_job.steps.check_release import check_release
@@ -13,7 +11,7 @@ from src.anime.series_job.steps.check_media import check_media
 from src.anime.series_job.steps.transcode import transcode
 from src.anime.series_job.steps.stage import stage
 from src.anime.series_job.steps.drop import drop_torrent
-from src.anime.series_job.steps.common import STEP_SEQUENCE, next_step_name
+from src.anime.series_job.steps.common import SERVICE_WAIT_MS, STEP_SEQUENCE, next_step_name, outage, where
 from src.anime.series_job.store import LeaseLost, _atomic, claim, note, renew, save
 
 logger = logging.getLogger("akon.series")
@@ -67,6 +65,42 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         return False
 
     claim_obj, series = claimed
+    try:
+        return await _attempt(db, context, claim_obj, series, now)
+    except LeaseLost:
+        raise                                      # An action took the series; the attempt is redone.
+    except Exception as exc:
+        # Boundary (owner, 2026-11-27): Search, Keep, Reject or Cancel raised. An outage
+        # makes the series wait; a program error stops this series (not the worker) until Retry.
+        return _series_error(db, claim_obj, series, exc, now)
+
+
+def _series_error(db, claim_obj, series, exc, now):
+    label = f"series {series.anidb_id} {series.title}"
+    reason = outage(exc)
+    if reason is not None:
+        logger.warning("%s · waiting: %s at %s (%s); trying again in a minute", label, reason, where(exc), exc)
+        note(series, f"{label} · waiting: {reason} at {where(exc)}; trying again in a minute")
+        series.state, series.wake_at_ms = "ASLEEP", now + SERVICE_WAIT_MS
+    else:
+        error_loc = f"program error at {where(exc)}"
+        logger.error("%s · stopped: %s", label, error_loc, exc_info=exc)
+        series.work["stopped"] = error_loc
+        note(series, f"{label} · stopped: {error_loc}; Retry resumes it")
+        from src.anime.notifications import notify
+        with _atomic(db):
+            notify(db, {"type": "JOB_FAILED", "severity": "attention",
+                        "title": f"Series error: {series.title}"[:120],
+                        "message": f"The series stopped: {error_loc}. This is a program bug to report, "
+                                   "with the worker log. Retry resumes it."[:500],
+                        "anidb_id": series.anidb_id}, now=now)
+        series.state, series.wake_at_ms = "ASLEEP", None   # Only Retry (or new work) wakes it.
+    series.lease_token = series.lease_expires_at_ms = None
+    save(db, claim_obj, series, now=now)
+    return True
+
+
+async def _attempt(db, context, claim_obj, series, now):
     if "keep" in series.work or "reject" in series.work:
         return await _decided(db, context, claim_obj, series, now)
     # A step records what it is about to send (a torrent add, a Sonarr import) before sending it.
@@ -111,10 +145,18 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         except LeaseLost:
             raise                                  # An action took the series; the attempt is redone.
         except Exception as exc:
-            # Boundary (plan, Errors): an unexpected error is a program bug. The torrent
-            # stops with "program error" and keeps its files; Retry resumes it at this step.
-            where = traceback.extract_tb(exc.__traceback__)[-1]
-            error_loc = f"program error at {os.path.basename(where.filename)}:{where.lineno} ({type(exc).__name__})"
+            # Boundary (plan, Errors): an outage no step typed makes the torrent wait (owner,
+            # 2026-11-27); anything else is a program bug. The torrent stops with "program
+            # error" and keeps its files; Retry resumes it at this step.
+            reason = outage(exc)
+            if reason is not None:
+                logger.warning("series %s %s · %s %s · %s waiting: %s at %s (%s)", series.anidb_id, series.title,
+                               ep_label, release_name, step_name.replace("_", " "), reason, where(exc), exc)
+                torrent["state"] = "working"
+                wake = now + SERVICE_WAIT_MS
+                min_wake_ms = wake if min_wake_ms is None else min(min_wake_ms, wake)
+                continue
+            error_loc = f"program error at {where(exc)}"
             logger.error("series %s %s · %s %s · %s stopped: %s", series.anidb_id, series.title, ep_label,
                          release_name, step_name.replace("_", " "), error_loc, exc_info=exc)
             torrent["state"], torrent["why"] = "stopped", error_loc

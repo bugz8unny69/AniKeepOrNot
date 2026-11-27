@@ -21,6 +21,7 @@ from src.anime.services.startup import StartupRefused
 from src.anime.systemd_notify import notify, watchdog_interval
 
 IDLE_S = 0.5          # Nothing due: look again in half a second.
+PROGRAM_ERROR_WAIT_S = 60  # A program error outside any series: not again at once.
 
 
 class Worker:
@@ -114,8 +115,18 @@ class Worker:
         except LeaseLost as exc:
             self.logger.warning("Series job: %s; this attempt is not saved, the next one redoes it", exc)
             return False
-        except sqlite3.OperationalError as exc:      # Busy or locked database: try again shortly.
-            self.logger.warning("Series job: the database was busy (%s); trying again", exc, exc_info=exc)
+        except (sqlite3.OperationalError, OSError) as exc:   # Busy, locked or unreachable database.
+            self.logger.warning("Series job: the database could not be used (%s); trying again", exc, exc_info=exc)
+            return False
+        except Exception as exc:
+            # Boundary (owner, 2026-11-27): a program error stops one series, never the worker.
+            # Taking or saving a series failed; its lease runs out and another attempt redoes it.
+            self.logger.error("Series job: the attempt failed with a program error; trying again in a minute",
+                              exc_info=exc)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=PROGRAM_ERROR_WAIT_S)
+            except asyncio.TimeoutError:
+                pass
             return False
 
     async def run(self, *, on_ready=None):

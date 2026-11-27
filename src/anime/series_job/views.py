@@ -38,7 +38,7 @@ def series_view(db, aid, language="english"):
     return {"anidb_id": s.anidb_id, "title": _title(db, s.anidb_id, s.title, language), "state": s.state,
             "wake_at_ms": s.wake_at_ms, "torrents_at_once": s.torrents_at_once,
             "torrents": [_torrent(t) for t in s.torrents], "episodes": s.episodes, "recent": s.recent,
-            "keep": _keep(s.work), "rejecting": "reject" in s.work,
+            "keep": _keep(s.work), "rejecting": "reject" in s.work, "stopped": s.work.get("stopped"),
             "search": {"wanted": search.get("wanted", []), "due_ms": search.get("due_ms")},
             "created_at_ms": s.created_at_ms, "updated_at_ms": s.updated_at_ms}
 
@@ -68,7 +68,7 @@ def series_list(db, language="english", *, limit=30, before=(1 << 63) - 1, state
                       "wake_at_ms": wake, "updated_at_ms": updated, "episodes": counts,
                       "torrents_active": sum(t.get("state") in ACTIVE for t in torrents),
                       "torrents_stopped": sum(t.get("state") == "stopped" for t in torrents),
-                      "keep": _keep(work)})
+                      "keep": _keep(work), "stopped": work.get("stopped")})
     return {"items": items, "next_before_id": rows[limit - 1][0] if len(rows) > limit else None}
 
 

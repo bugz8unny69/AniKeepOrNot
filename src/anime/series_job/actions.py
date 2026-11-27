@@ -123,6 +123,8 @@ async def retry_series(db, anidb_id: int, context=None, now: int | None = None) 
         raise SeriesNotFound(f"Series {anidb_id} not found")
 
     retried_count = 0
+    if series.work.pop("stopped", None):
+        retried_count += 1                  # A series-level program error: the attempt runs again.
     if series.work.get("keep", {}).pop("stopped", None):
         retried_count += 1                  # Keep resumes at the step it stopped at.
     for t in series.torrents:
