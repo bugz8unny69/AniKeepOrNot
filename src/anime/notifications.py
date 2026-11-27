@@ -211,10 +211,18 @@ def job_failed(db, claim, reason, now=None):
     why = known.description if known is not None else 'The step stopped without a known reason.'
     where = f' It stopped at {check[0]}.' if check and check[0] else ''
     step = claim.kind.replace('_', ' ').lower()
+    if reason == 'JOB_HANDLER_FAILED':
+        # An error no code expected: failed at once, never retried (work item 2).
+        heading = f'Program error in {step}'
+        message = (f'{why}{where} The step stopped as failed and was not retried, because the same code '
+                   'gives the same error. This is a program bug to report, with the worker log.')
+    else:
+        heading = f'Could not finish {step}'
+        message = (f'{why}{where} It was retried and still failed, so it stopped as failed: '
+                   'this is a program bug to report, not something to fix by hand.')
     notify(db, {'type': 'JOB_FAILED',
-                'title': (f'Could not finish {step}: {release}' if release else f'Could not finish {step}')[:120],
-                'message': (f'{why}{where} It was retried and still failed, so it stopped as failed: '
-                            'this is a program bug to report, not something to fix by hand.')[:1024],
+                'title': (f'{heading}: {release}' if release else heading)[:120],
+                'message': message[:1024],
                 'anidb_id': None, 'job_id': claim.job_id,
                 'release_name': release[:1024] if release else None}, now=now)
 

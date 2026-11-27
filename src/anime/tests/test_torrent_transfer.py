@@ -1,6 +1,7 @@
 """Offline durable selection/start recovery and worker handoff; unexecuted."""
 import asyncio
 from dataclasses import replace
+import sqlite3
 import unittest
 
 from src.anime.acquisition.submission import Observation, ClientUnavailable
@@ -184,7 +185,8 @@ class TorrentTransferTests(unittest.IsolatedAsyncioTestCase):
         class LoseSelection(TransferJournal):
             def select(self,*args):
                 result=super().select(*args)
-                if result[1] is not None:raise RuntimeError('simulated crash after commit')
+                # An expected, retried error after the commit (a program error is never retried).
+                if result[1] is not None:raise sqlite3.OperationalError('disk I/O error after commit')
                 return result
         worker=self.worker(journal_factory=LoseSelection);await self.queued(worker);await worker.attempt()
         self.due();await worker.attempt()

@@ -285,6 +285,10 @@ def _qbittorrent(config_dir, configuration, digests, *, client_factory=None):
     Logs in and reads torrent info and file lists only; nothing is sent that
     changes a torrent.
     """
+    from src.anime.acquisition.submission import (
+        ClientAuthenticationFailed, ClientInvalid, ClientUnavailable, ClientUnsupported)
+    from src.anime.acquisition.settings import DownloadConfigurationError
+    from src.anime.configuration_schema import ConfigurationError
     try:
         from src.anime.torrent_client.qbittorrent import Client
         from src.anime.acquisition.settings import download_options
@@ -293,7 +297,8 @@ def _qbittorrent(config_dir, configuration, digests, *, client_factory=None):
                                             SecretStore(config_dir).qbittorrent_credentials())
         client.login()
         return observe_torrents(client, digests), None
-    except Exception as exc:          # Reported to the operator, never hidden.
+    except (ClientAuthenticationFailed, ClientInvalid, ClientUnavailable, ClientUnsupported,
+            DownloadConfigurationError, ConfigurationError) as exc:   # Reported to the operator.
         return None, f'{type(exc).__name__}: {exc}'
 
 

@@ -3,6 +3,7 @@
 Version differences live in qbittorrent_versions.py (picked at login). This
 module never touches files; files() and changes() report them uniformly.
 """
+import http.client
 from http.cookies import CookieError, SimpleCookie
 import json
 import re
@@ -87,7 +88,8 @@ class Client:
                 # Metadata is still resolving; the caller retries later.
                 return b'',{}
             raise ClientUnavailable() from None
-        except (OSError,TimeoutError,urllib.error.URLError):raise ClientUnavailable() from None
+        # A dropped or truncated reply (IncompleteRead, BadStatusLine) is an outage, not a bug.
+        except (OSError,TimeoutError,urllib.error.URLError,http.client.HTTPException):raise ClientUnavailable() from None
 
     def login(self):
         self._sid=None

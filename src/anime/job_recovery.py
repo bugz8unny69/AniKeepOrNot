@@ -570,10 +570,13 @@ def main(argv=None):
             return 1
 
     except Exception as exc:
+        # Boundary (work item 3c): the command's one exit; the full trace on stderr.
+        from src.anime.diagnostics import trace_text
         if is_json:
             print(json.dumps({'error': str(exc), 'type': exc.__class__.__name__}))
         else:
             print(f'Error: {exc.__class__.__name__}: {exc}', file=sys.stderr)
+        print(trace_text(exc), file=sys.stderr)
         return 1
 
 

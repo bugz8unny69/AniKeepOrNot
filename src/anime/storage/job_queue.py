@@ -322,7 +322,7 @@ class JobQueue:
                 return ()
             records = []
             if spec is not None:
-                failed = outcome.kind in ("retry", "blocked")
+                failed = outcome.kind in ("retry", "blocked", "fail")
                 records.append(append_job_history(db,job_id=claim.job_id,
                     event_code="HANDLER_FAILED" if failed else "HANDLER_COMPLETED",component="worker",
                     reason_code=outcome.reason_code if failed else None,occurred_at_ms=now,
@@ -379,8 +379,9 @@ class JobQueue:
             # policy) exactly like a skipped one: notify, then clean up what it owns.
             if ended[0]=='CANCELED' and (ended[1] in SKIPPED_REASONS or outcome.kind!='cancel'):
                 records.extend(close_skipped_release(db,claim,now,ended[1]))
-            if ended[0]=='FAILED' and outcome.kind!='fail':
-                # Housekeeping that ran out of retries (review policy): show it as a bug.
+            if ended[0]=='FAILED' and (outcome.kind!='fail' or ended[1]=='JOB_HANDLER_FAILED'):
+                # A program error, or housekeeping that ran out of retries
+                # (review policy): show it as a bug.
                 from src.anime.notifications import job_failed
                 job_failed(db,claim,ended[1],now)
             # Failed Sonarr candidates use the existing cancellation worker,
