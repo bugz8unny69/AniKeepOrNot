@@ -552,6 +552,9 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
         "JOIN episode_reservations er ON er.reservation_id = ap.reservation_id "
         "JOIN release_verifications rv ON rv.verification_id = er.verification_id "
         "WHERE sp.state = 'PUBLISHED' "
+        # A canceled acquisition's staged files were removed; its rows still say PUBLISHED.
+        "AND NOT EXISTS (SELECT 1 FROM job_operation_members m JOIN job_operations o ON o.operation_id = m.operation_id "
+        "WHERE m.job_id = sp.job_id AND o.state = 'CANCELED') "
         "ORDER BY sp.plan_id"
     ).fetchall()
 
@@ -598,6 +601,9 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
         "JOIN batch_verified_files bvf ON bvf.batch_id = bv.batch_id AND bvf.file_index = bsp.file_index "
         "JOIN jobs j ON j.job_id = bv.job_id "
         "WHERE bsp.state = 'PUBLISHED' "
+        # A canceled acquisition's staged files were removed; its rows still say PUBLISHED.
+        "AND NOT EXISTS (SELECT 1 FROM job_operation_members m JOIN job_operations o ON o.operation_id = m.operation_id "
+        "WHERE m.job_id = bsp.job_id AND o.state = 'CANCELED') "
         "ORDER BY bsp.plan_id, bsp.file_index"
     ).fetchall()
 

@@ -387,6 +387,24 @@ class CutoverSeriesJobTests(unittest.TestCase):
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 80)
         db.close()
 
+    def test_a_canceled_acquisitions_publications_are_not_staged(self):
+        """Production, 2026-11-27: Cleanup on a stuck acquisition removed its staged files, but the
+        old rows still say PUBLISHED. They must not come back as staged episodes."""
+        db = _create_v78(self.db_path)
+        _seed_staged_batch(db, self.staging)
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("INSERT INTO job_operations(operation_id, state, cleanup_state, reason_code, created_at_ms, updated_at_ms) "
+                   "VALUES(9, 'CANCELED', 'COMPLETE', 'CANCELLATION_COMPLETE', 1000, 2000)")
+        db.execute("INSERT INTO job_operation_members(operation_id, job_id) VALUES(9, 11)")   # The stage job.
+        db.commit()
+        db.close()
+        with mock.patch.object(cutover, "services_stopped", return_value=[]):
+            cutover.execute_cutover(self.db_path, apply=True)
+        db = sqlite3.connect(self.db_path)
+        series = get_series(db, 101)
+        self.assertTrue(series is None or "S01E02" not in series.episodes)
+        db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
