@@ -40,6 +40,7 @@ not a port of a complete legacy catalog. No runtime dependency on legacy exists.
 | `IDENTITY_CONFLICT` | Conflicting anime information needs review. | Review needed |
 | `JOB_LEASE_EXPIRED` | Processing was interrupted. | Potentially transient |
 | `JOB_HANDLER_FAILED` | A program error stopped this step. | Context required |
+| `NETWORK_UNAVAILABLE` | A network connection failed. | Potentially transient |
 | `JOB_RETRY_EXHAUSTED` | Automatic retries stopped. | Review needed |
 | `SERVICE_UNAVAILABLE` | Waiting for a service to come back. | Potentially transient |
 | `SERVICE_SETUP_INVALID` | A service is not set up correctly. | Changed input/evidence needed |

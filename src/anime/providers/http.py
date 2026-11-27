@@ -6,6 +6,7 @@ import datetime
 import email.utils
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import re
@@ -173,7 +174,8 @@ class Clients:
                 if bearer is None or exc.code==403: raise ProviderAuthenticationFailed() from None
                 raise ProviderUnavailable() from None
             raise ProviderUnavailable() from None
-        except (OSError,TimeoutError):
+        except (OSError,TimeoutError,http.client.HTTPException):
+            # A dropped or truncated reply (IncompleteRead, BadStatusLine) is an outage, not a bug.
             self.store.failure(provider,minimum_ms=600000 if provider=="anidb" else 10000)
             raise ProviderUnavailable() from None
         except ProviderInvalidResponse:

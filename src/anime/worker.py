@@ -4,6 +4,7 @@ No provider/acquisition/Keep handlers are bundled. Installed application code
 passes registrations to Worker; an empty registry fails readiness before claims.
 """
 import asyncio
+import errno
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -90,6 +91,28 @@ def storage_outcome(exc):
         path = os.fsdecode(filename)
         if path.startswith("/") and "failed_path" not in facts:
             facts["failed_path"] = path
+        return Outcome("retry", "STORAGE_UNAVAILABLE", facts=facts)
+    return None
+
+
+# Errors of the machine, not the code: a full or failing disk, memory.
+_ENVIRONMENT_ERRNOS = frozenset(getattr(errno, name) for name in
+                                ("ENOSPC", "EDQUOT", "EIO", "EROFS", "ENOMEM", "EAGAIN") if hasattr(errno, name))
+
+
+def environment_outcome(exc):
+    """An OS-level error that names no file: the network or the machine, not a bug.
+
+    Retried, so a short outage never fails a job. A connection error or a
+    timeout the code did not attribute to a service is NETWORK_UNAVAILABLE; a
+    full or failing disk without a path is STORAGE_UNAVAILABLE. Any other
+    OSError (EBADF, EINVAL, ...) is a program error. None when neither.
+    """
+    facts = dict(failure_facts(exc) or {})
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return Outcome("retry", "NETWORK_UNAVAILABLE", facts=facts or None)
+    if isinstance(exc, OSError) and exc.errno in _ENVIRONMENT_ERRNOS:
+        facts["storage_error"] = errno.errorcode[exc.errno]
         return Outcome("retry", "STORAGE_UNAVAILABLE", facts=facts)
     return None
 
@@ -396,7 +419,7 @@ class Worker:
                     return waiting
                 if held is not None:
                     self._write_held(held, claim)
-                stored = storage_outcome(exc)
+                stored = storage_outcome(exc) or environment_outcome(exc)
                 if stored is not None:
                     # Recorded on the job (activity and history), not only in the log.
                     self._log_error(exc, claim)

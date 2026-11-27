@@ -114,3 +114,33 @@ class WorkerErrorsAndLogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Step started", first)
         await asyncio.sleep(0.01)
         self.assertEqual(await self.attempt(worker), "")
+
+
+    async def retried(self, error, reason):
+        """Resilience (owner, 2026-11-27): an outage never fails a job; only a bug does."""
+        async def handler(context):
+            raise error
+        await self.attempt(self.worker(handler))
+        self.assertEqual(self.query("SELECT state,last_reason_code FROM jobs"), [("RETRY_WAIT", reason)])
+        self.assertEqual(self.query("SELECT count(*) FROM notifications"), [(0,)])
+
+    async def test_connection_reset_is_retried(self):
+        await self.retried(ConnectionResetError("reset by peer"), "NETWORK_UNAVAILABLE")
+
+    async def test_timeout_is_retried(self):
+        await self.retried(TimeoutError(), "NETWORK_UNAVAILABLE")
+
+    async def test_disk_full_without_a_path_is_retried(self):
+        import errno
+        await self.retried(OSError(errno.ENOSPC, "No space left on device"), "STORAGE_UNAVAILABLE")
+
+    async def test_io_error_without_a_path_is_retried(self):
+        import errno
+        await self.retried(OSError(errno.EIO, "Input/output error"), "STORAGE_UNAVAILABLE")
+
+    async def test_other_os_error_is_a_program_error(self):
+        import errno
+        async def handler(context):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        await self.attempt(self.worker(handler))
+        self.assertEqual(self.query("SELECT state,last_reason_code FROM jobs"), [("FAILED", "JOB_HANDLER_FAILED")])

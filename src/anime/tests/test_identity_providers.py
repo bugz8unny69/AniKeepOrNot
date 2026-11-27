@@ -103,6 +103,15 @@ class IdentityProviderTests(unittest.TestCase):
             self.client.series(456,Credentials("private-key"))
         self.assertNotIn("private",str(failure.exception))
 
+    def test_truncated_or_garbled_reply_is_an_outage_not_a_program_error(self):
+        import http.client
+        for error in (http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("garbage"),
+                      http.client.RemoteDisconnected("closed")):
+            with self.subTest(error=type(error).__name__):
+                self.now += 86400000    # Past the shared backoff of the previous failure.
+                self.responses.append(error)
+                with self.assertRaises(ProviderUnavailable): self.client.anime(123)
+
     def test_retry_after_honored_for_rate_limit(self):
         self.responses.append(urllib.error.HTTPError("http://api.anidb.net:9001/httpapi",429,"",{"Retry-After":"1200"},None))
         with self.assertRaises(ProviderUnavailable): self.client.anime(123)
