@@ -69,6 +69,7 @@ async def stage(series: SeriesRow, torrent: dict, context) -> StepResult:
     except (StagingUnavailable, StagingBusy) as exc:
         return StepResult.wait(context.now + SERVICE_WAIT_MS, why=exc.reason_code)
     except StagingReview as exc:
-        note(series, f"{label} · dropped: staging found a file it did not expect ({exc})")
-        return StepResult.drop(exc.reason_code)
+        # A file staging checks did not match (the copy, or the download it came from). The
+        # download is not proven bad, so it is kept: stop, tell you, and let Retry resume.
+        return StepResult.stop(f"{exc.reason_code}: staging found a file it did not expect ({exc})"[:300])
     return StepResult.done(next_step="done")

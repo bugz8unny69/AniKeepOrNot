@@ -235,7 +235,7 @@ class Steps(unittest.TestCase):
         self.assertEqual(self.series.episodes['S01E05']['state'], 'verified')
 
 
-    def staged(self, *, transcode=False):
+    def staged(self, *, transcode=False, transcoder=None, stop_after_transcode=False):
         import sqlite3
         from src.anime.series_job import store
         from src.anime.series_job.steps.stage import stage
@@ -274,9 +274,18 @@ class Steps(unittest.TestCase):
             started()
             Path(output).write_bytes(b't' * 40)
             return True
-        self.context.transcoder = fake_transcoder
+        self.context.transcoder = transcoder or fake_transcoder
         from src.anime.series_job.steps.transcode import transcode as transcode_step
+        if transcoder is not None:
+            result = self.run_step(transcode_step)
+            entry = json.loads(db.execute('SELECT torrents_json FROM series').fetchone()[0])[0]['files'][0]
+            db.close()
+            return result, entry
         self.assertEqual(self.run_step(transcode_step).next_step, 'stage')
+        if stop_after_transcode:
+            result = self.run_step(stage)
+            db.close()
+            return result
         self.assertEqual(self.run_step(stage).next_step, 'done')
         staged = row.episodes['S01E05']['file']
         self.assertEqual(staged, 'Dungeon People [tvdbid-438420] [anidbid-18162]/Season 01/Dungeon People - S01E05.mkv')
@@ -297,7 +306,7 @@ class Steps(unittest.TestCase):
     def test_a_transcoded_file_is_moved_into_staging_and_the_torrents_copy_stays(self):
         self.staged(transcode=True)
 
-    def test_a_transcode_that_fails_on_every_agent_drops_the_torrent(self):
+    def test_a_transcode_that_fails_on_every_agent_stops_the_torrent_and_keeps_it(self):
         from src.anime.services.transcode import TranscodeFailed
         from src.anime.series_job.steps.transcode import transcode
         self.configuration.values.update({'transcode.mode': 'remote', 'storage.user_evaluation_root': '/unused'})
@@ -307,7 +316,40 @@ class Steps(unittest.TestCase):
         from src.anime.series_job.steps import transcode as step
         with mock.patch.object(step, 'transcode_file', side_effect=TranscodeFailed('all agents failed')):
             result = self.run_step(transcode)
-        self.assertEqual((result.action, result.why), ('drop', 'TRANSCODE_FAILED'))
+        # Owner, 2026-11-27: every transcoder failing may be the transcoders; the release is kept.
+        self.assertEqual(result.action, 'stop')
+        self.assertTrue(result.why.startswith('TRANSCODE_FAILED'))
+
+    def test_our_share_failing_during_a_transcode_waits_and_gives_the_attempt_back(self):
+        from src.anime.services.transcode import TranscodeStorageUnavailable
+        def failing(source, output, configuration, secrets, flag, *, started, attempts):
+            started()                                     # The attempt was spent before the work...
+            raise TranscodeStorageUnavailable('ESTALE on the staging share')   # ...then our share failed.
+        result, entry = self.staged(transcode=True, transcoder=failing)
+        self.assertEqual(result.action, 'wait')
+        self.assertTrue(result.why.startswith('STORAGE_UNAVAILABLE'))
+        self.assertEqual(entry.get('transcode_attempts'), 0)                  # Given back, and saved.
+
+    def test_a_staging_file_that_does_not_match_stops_the_torrent_and_keeps_it(self):
+        from unittest import mock
+        from src.anime.staging import Publisher, StagingReview
+        with mock.patch.object(Publisher, 'publish', side_effect=StagingReview('a file staging did not write')):
+            result = self.staged(stop_after_transcode=True)
+        self.assertEqual(result.action, 'stop')
+        self.assertIn('STAGING_REVIEW', result.why)
+
+    def test_storage_trouble_is_told_apart_from_the_transcoders(self):
+        import errno, socket
+        from src.anime.services.transcode import storage_trouble
+        agent = object()
+        self.assertTrue(storage_trouble(OSError(errno.ESTALE, 'stale'), agent))          # Our share.
+        self.assertTrue(storage_trouble(FileNotFoundError(2, 'gone'), agent))
+        self.assertTrue(storage_trouble(OSError(errno.EIO, 'io'), None))                 # Local: always ours.
+        self.assertFalse(storage_trouble(ConnectionRefusedError(), agent))               # The agent's.
+        self.assertFalse(storage_trouble(TimeoutError(), agent))
+        self.assertFalse(storage_trouble(socket.gaierror(), agent))
+        self.assertFalse(storage_trouble(OSError(errno.EHOSTUNREACH, 'no route'), agent))
+        self.assertFalse(storage_trouble(ValueError('bad reply'), agent))
 
 
     def test_a_single_episode_wants_its_trial_window_and_the_search_adds_the_rest(self):

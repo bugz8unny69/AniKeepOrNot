@@ -1,5 +1,6 @@
 """Shared Local/Remote client. One encoder and one slot per destination."""
 from contextlib import contextmanager
+import errno
 import hashlib
 import http.client
 import json
@@ -35,6 +36,32 @@ class TranscodeFailed(RuntimeError):
     def __init__(self, message, *, status=None):
         super().__init__(message)
         self.status = status          # The agent's HTTP status, when it answered with one.
+
+
+class TranscodeStorageUnavailable(RuntimeError):
+    """Our own share failed (the download read, the result written), not the transcoder:
+    the caller waits; no attempt is spent (owner, 2026-11-27)."""
+    reason_code = 'STORAGE_UNAVAILABLE'
+
+
+# The network to an agent; anything else an OSError says is about our own files.
+_NETWORK_ERRNOS = frozenset(getattr(errno, name) for name in (
+    'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'EHOSTUNREACH', 'EHOSTDOWN',
+    'ENETUNREACH', 'ENETDOWN') if hasattr(errno, name))
+
+
+def storage_trouble(exc, remote):
+    """True when exc is our storage failing rather than the transcoder.
+
+    Locally every OSError is ours (the encoder's own failures are EncodeError). With an
+    agent, a connection error, a timeout, a name lookup or a network errno is the agent's.
+    """
+    import socket
+    if not isinstance(exc, OSError):
+        return False
+    if remote is None:
+        return True
+    return not (isinstance(exc, (ConnectionError, TimeoutError, socket.gaierror)) or exc.errno in _NETWORK_ERRNOS)
 
 
 def _mb(size):
@@ -350,6 +377,8 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                         skip(address, f'refused the upload ({exc})')
                         break
                     except (OSError, ValueError, KeyError, http.client.HTTPException, encode.EncodeError, TranscodeFailed) as exc:
+                        if storage_trouble(exc, remote):
+                            raise TranscodeStorageUnavailable(f'{type(exc).__name__}: {exc}'[:300]) from exc
                         last_error = str(exc)[-400:]
                         log.warning('%s: failed on %s: %s', source.name,
                                     'this machine' if remote is None else agent_name(address), last_error)

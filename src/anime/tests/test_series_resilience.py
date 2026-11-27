@@ -104,6 +104,31 @@ class SeriesResilienceTests(unittest.TestCase):
         self.assertIsNone(outage(sqlite3.IntegrityError("UNIQUE constraint failed")))
         self.assertIsNone(outage(KeyError("missing")))
 
+    def test_a_stopped_step_keeps_the_torrent_and_its_files_and_retry_resumes_it(self):
+        """Owner, 2026-11-27: a good release is never thrown away for a problem that is not its own."""
+        from src.anime.series_job.actions import retry_series_sync
+        from src.anime.series_job.steps.common import StepResult
+        from src.anime.series_job import worker as series_worker
+        add_torrent(self.db, AID, {"infohash": "9" * 40, "release_name": "[G] Show - 01", "step": "stage",
+                                   "state": "working", "qb": {"marker": "b" * 32, "added": "sent"}}, now=1000)
+
+        async def stopping(series, torrent, context):
+            return StepResult.stop("STAGING_REVIEW: a file staging did not write")
+        context = self.context()
+        with patch.dict(series_worker.STEP_HANDLERS, {"stage": stopping}), \
+                patch.object(series_worker, "drop_torrent") as dropped, \
+                self.assertLogs("akon.series", level="WARNING"):
+            asyncio.run(run_series_attempt(self.db, context, now=5000))
+        dropped.assert_not_called()                                    # Nothing removed.
+        torrent = get_series(self.db, AID).torrents[0]
+        self.assertEqual((torrent["state"], torrent["step"]), ("stopped", "stage"))
+        self.assertIn("STAGING_REVIEW", torrent["why"])
+        [(kind, title, message)] = self.notifications()
+        self.assertTrue(title.startswith("Stopped: [G] Show - 01"))
+        self.assertIn("Nothing was removed", message)
+        retry_series_sync(self.db, AID, now=6000)
+        self.assertEqual(get_series(self.db, AID).torrents[0]["state"], "working")   # Resumes at stage.
+
     # The series: Search, Keep, Reject and Cancel run outside the steps.
 
     def search_raising(self, error):

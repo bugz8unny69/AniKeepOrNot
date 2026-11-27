@@ -14,10 +14,11 @@ from src.anime.acquisition.media import media_fingerprint, signature
 from src.anime.async_io import blocking
 from src.anime.storage_mounts import DOWNLOADS, STAGING, uses_storage
 from src.anime.series_job.staging import write_torrent_key
-from src.anime.series_job.steps.common import SETUP_WAIT_MS, StepResult
+from src.anime.series_job.steps.common import SERVICE_WAIT_MS, SETUP_WAIT_MS, StepResult
 from src.anime.series_job.store import SeriesRow, note
 from src.anime.series_job.torrents import options_for
-from src.anime.services.transcode import TranscodeFailed, TranscodeWaiting, transcode as run_transcode
+from src.anime.services.transcode import (TranscodeFailed, TranscodeStorageUnavailable, TranscodeWaiting,
+                                         transcode as run_transcode)
 from src.anime.staging import StagingReview
 from src.transcode_agent.encode import EncodeError
 
@@ -48,9 +49,17 @@ def transcode_file(context, series, torrent, entry, client=None):
             if before[2:4] != tuple(entry["media"]["file"][2:4]):
                 raise StagingReview("The downloaded file changed after its media check")
             source = Path(f"/proc/{os.getpid()}/fd/{fd}")     # The transcoder reads the pinned file.
-            if not (client or context.transcoder or run_transcode)(source, output, configuration, context.secrets, context.cancelled,
-                          started=started, attempts=entry.get("transcode_attempts", 0)):
-                return None
+            spent = entry.get("transcode_attempts", 0)
+            try:
+                if not (client or context.transcoder or run_transcode)(source, output, configuration, context.secrets,
+                                                                       context.cancelled, started=started,
+                                                                       attempts=spent):
+                    return None
+            except TranscodeStorageUnavailable:
+                if entry.get("transcode_attempts", 0) != spent:   # Our share failed: the attempt is given back.
+                    entry["transcode_attempts"] = spent
+                    write_torrent_key(database, context.claim, series.torrents, torrent, "files")
+                raise
             if signature(os.fstat(fd)) != before:
                 raise StagingReview("Source changed during transcode")
         finally:
@@ -78,12 +87,14 @@ async def transcode(series: SeriesRow, torrent: dict, context) -> StepResult:
             entry["transcoded"] = await blocking(transcode_file, context, series, torrent, entry)
         except TranscodeWaiting:
             return StepResult.wait(context.now + WAIT_MS, why="TRANSCODE_WAITING")
+        except TranscodeStorageUnavailable as exc:
+            # Our own share failed, not the transcoder: wait for it; no attempt is spent.
+            return StepResult.wait(context.now + SERVICE_WAIT_MS, why=f"STORAGE_UNAVAILABLE: {exc}"[:200])
         except (TranscodeFailed, EncodeError) as exc:
-            note(series, f"{label} · dropped: {entry['episode']} could not be transcoded ({exc})")
-            return StepResult.drop("TRANSCODE_FAILED")
+            # Every transcoder failed: that may be the transcoders, not the video. Keep it; stop.
+            return StepResult.stop(f"TRANSCODE_FAILED: {entry['episode']} could not be transcoded ({exc})"[:300])
         except StagingReview as exc:
-            note(series, f"{label} · dropped: {exc}")
-            return StepResult.drop("STAGING_REVIEW")
+            return StepResult.stop(f"STAGING_REVIEW: {exc}"[:300])
         note(series, f"{label} · {entry['episode']} "
                      + ("transcoded" if entry["transcoded"] else "kept as it is (already small enough)"))
     return StepResult.done(next_step="stage")

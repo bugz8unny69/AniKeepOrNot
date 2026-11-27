@@ -16,7 +16,7 @@ STEP_SEQUENCE = (
 
 @dataclass(frozen=True)
 class StepResult:
-    action: str  # "done", "wait", "drop"
+    action: str  # "done", "wait", "drop", "stop"
     next_step: str | None = None
     wake_at_ms: int | None = None
     why: str | None = None
@@ -31,7 +31,15 @@ class StepResult:
 
     @classmethod
     def drop(cls, why: str):
+        """The torrent itself can't be used (wrong audio, a movie, no file list): it is removed."""
         return cls(action="drop", why=why)
+
+    @classmethod
+    def stop(cls, why: str):
+        """Something needs you, and it may not be the torrent's fault (a staged file that changed,
+        every transcoder failing): the torrent keeps its files and stops; Retry resumes it here.
+        Owner, 2026-11-27: never throw away a good release for a problem that is not its own."""
+        return cls(action="stop", why=why)
 
 
 def next_step_name(current_step: str) -> str:

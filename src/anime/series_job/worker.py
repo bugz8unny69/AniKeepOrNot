@@ -182,6 +182,20 @@ async def _attempt(db, context, claim_obj, series, now):
             torrent["state"] = "working"
             if result.wake_at_ms is not None and (min_wake_ms is None or result.wake_at_ms < min_wake_ms):
                 min_wake_ms = result.wake_at_ms
+        elif result.action == "stop":
+            torrent["state"], torrent["why"] = "stopped", result.why
+            logger.warning("series %s %s · %s %s · %s stopped: %s; its files are kept, Retry resumes it",
+                           series.anidb_id, series.title, ep_label, release_name, step_name.replace("_", " "),
+                           result.why)
+            note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · "
+                         f"stopped at {step_name.replace('_', ' ')}: {result.why}; its files are kept, Retry resumes it")
+            from src.anime.notifications import notify
+            with _atomic(db):
+                notify(db, {"type": "JOB_FAILED", "severity": "attention",
+                            "title": f"Stopped: {release_name or series.title}"[:120],
+                            "message": f"{step_name.replace('_', ' ').capitalize()} stopped: {result.why}. "
+                                       "Nothing was removed; Retry resumes it once fixed."[:500],
+                            "anidb_id": series.anidb_id, "release_name": release_name[:1024]}, now=now)
         else:
             moved = True
             await drop_torrent(series, torrent, result.why or "DROPPED", context)
