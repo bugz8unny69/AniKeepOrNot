@@ -44,6 +44,8 @@ Status: open. Written 2026-11-22.
 
 ## 2. An unexpected error in a job is a bug: logged, recorded, failed
 
+**Done 2026-11-27** (branch `fix/job-errors-are-bugs`): the boundary logs at ERROR with the trace and returns `fail JOB_HANDLER_FAILED`; History has `failed_check` (`file:line function RAISED_<TYPE>`); the bell says "Program error in <step>: <release>". Cancellation and a lost lease pass through to the attempt, which handles them as before. Test: `test_worker_errors_and_log.py`.
+
 **Today:** the worker's boundary ([worker.py:374](../src/anime/worker.py#L374)) handles an unexpected error like this:
 
 1. It logs at WARNING with two frames.
@@ -108,6 +110,8 @@ Nothing may `pass`, return a default, or turn the error into a reason code witho
 **Done when:** `grep -rn "except Exception\|except BaseException" src/anime` (outside tests) lists only the eight re-raise sites and the boundaries marked (c), each with a comment saying why it is a boundary.
 
 ## 4. Started and finished stay in the log; repeated waits print nothing
+
+**Done 2026-11-27** (branch `fix/job-errors-are-bugs`): "Job started", "Step started" and "Step finished" log at DEBUG. The worker holds the claim and start lines until `finish` returns; a repeated wait drops them, and an error writes them before its trace. Test: `test_worker_errors_and_log.py`.
 
 **Today, on branch `fix/quiet-polls`, not deployed:** "Job started", "Step started" and "Step finished" were moved to TRACE, so they no longer show at DEBUG. That goes against the rule above, which needs them visible.
 

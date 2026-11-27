@@ -67,7 +67,8 @@ class QuietPollTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertEqual(self.events(job).count('DEFERRED'), 2)
 
-    async def test_no_step_lines_at_debug(self):
+    async def test_step_lines_at_debug(self):
+        """Started and finished show at DEBUG (work item 4); the worker drops them for a repeated wait."""
         from src.anime.diagnostics import log_history
         import logging
         job = await self.run_polls([Outcome('defer', 'TORRENT_DOWNLOAD_WAITING', delay_ms=1000,
@@ -80,10 +81,11 @@ class QuietPollTests(unittest.IsolatedAsyncioTestCase):
                           "('CLAIMED','HANDLER_STARTED','HANDLER_COMPLETED')", (job,)).fetchall()
         db.close()
         self.assertEqual(len(rows), 3)
-        with self.assertNoLogs(logger, logging.DEBUG):
+        with self.assertLogs(logger, logging.DEBUG) as logs:
             for r in rows:
                 log_history(logger, HistoryRecord(r[0], 'job', r[1], r[2], r[3], r[4], None, r[5], None, r[6],
                                                   handler_code=r[7], handler_label=r[8], invocation_id=r[9]))
+        self.assertEqual([record.levelno for record in logs.records], [logging.DEBUG] * 3)
 
 
 if __name__ == '__main__':

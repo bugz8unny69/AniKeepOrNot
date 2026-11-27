@@ -338,6 +338,22 @@ class Worker:
                   event_id=None if claim is None else claim.event_id,
                   attempt=None if claim is None else claim.attempt)
 
+    def _write_history(self, logger, records, claim):
+        """Log committed history. Boundary: the rows are already saved, so a
+        line that cannot be written is logged with its trace and the rest go on."""
+        for record in records:
+            try:
+                log_history(logger, record)
+            except Exception as exc:
+                exception(self.logger, "OPERATION_FAILED", exc, reason_code="JOB_HANDLER_FAILED",
+                          component="worker", job_id=claim.job_id)
+
+    def _write_held(self, held, claim):
+        """Write the held "started" lines once, then forget them."""
+        lines, held[:] = list(held), []
+        for logger, record in lines:
+            self._write_history(logger, (record,), claim)
+
     async def _heartbeat(self, claim, finished):
         while True:
             try:
@@ -346,7 +362,9 @@ class Worker:
             except asyncio.TimeoutError:
                 await self._io(self.queue.renew,claim)
 
-    async def _invoke(self, claim, spec, context):
+    async def _invoke(self, claim, spec, context, held=None):
+        """Run the handler. ``held``: this attempt's "started" lines, written
+        before an error's trace so the log reads started, trace, failed."""
         finished = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat(claim,finished))
         call = asyncio.create_task(spec.execute(context) if spec.mode == "async"
@@ -371,21 +389,28 @@ class Worker:
                 # Configuration, or a database at another schema version (an upgrade
                 # is half done): nothing safe can be written about this job.
                 raise
+            except (CancellationRequested, LeaseLost):
+                raise   # Handled by the attempt: acknowledged, or logged; not a bug.
             except Exception as exc:
                 waiting = self._exception_wait(spec, exc)
                 if waiting is not None:
                     return waiting
+                if held is not None:
+                    self._write_held(held, claim)
                 stored = storage_outcome(exc)
                 if stored is not None:
                     # Recorded on the job (activity and history), not only in the log.
                     self._log_error(exc, claim)
                     return stored
-                # Catch-boundary diagnostic with exact redacted error
-                exception(self.logger, "OPERATION_FAILED", exc, level=logging.WARNING,
+                # Boundary: one job's bug never stops the worker, but it is shown
+                # as a bug. Retrying the same code gives the same error, so the
+                # job fails now, with the trace in the log, where it was raised
+                # in History, and a "Program error" notification.
+                exception(context.logger, "OPERATION_FAILED", exc, level=logging.ERROR,
                           reason_code="JOB_HANDLER_FAILED", component="worker",
                           job_id=claim.job_id, event_id=claim.event_id, attempt=claim.attempt)
                 facts = failure_facts(exc) or {"failed_check": here("HANDLER_EXCEPTION")}
-                return Outcome("retry", "JOB_HANDLER_FAILED", facts=facts)
+                return Outcome("fail", "JOB_HANDLER_FAILED", facts=facts)
         finally:
             context.cancelled.set()
             finished.set()
@@ -453,11 +478,10 @@ class Worker:
             if known is not None:
                 # Every line of this attempt names what the job is doing (JD-1d).
                 logger.nextgen_context = {"activity": known.definition.label, "job_id": claim.job_id}
-            for audit in audits:
-                try:
-                    log_history(logger, audit)
-                except Exception as log_exc:
-                    self.logger.warning("Audit logging failed for job %s: %s", claim.job_id, log_exc)
+            # "Job started" and "Step started" are held until the attempt's result
+            # is known: a check that only repeats the same wait prints nothing,
+            # and a "started" with no "finished" after it would read as a crash.
+            held = [(logger, audit) for audit in audits]
             spec = self.registry.entries.get(claim.kind)
             invocation = uuid.uuid4().hex
             if spec is None:
@@ -470,12 +494,9 @@ class Worker:
                     outcome = Outcome("review", "JOB_PAYLOAD_INVALID")
                 else:
                     started = await self._io(self.queue.start,claim,spec,invocation,self.registry)
-                    try:
-                        log_history(logger, started)
-                    except Exception as log_exc:
-                        self.logger.warning("Audit logging failed for job %s: %s", claim.job_id, log_exc)
+                    held.append((logger, started))
                     context = Context(claim,configuration,logger,threading.Event())
-                    outcome = await self._invoke(claim,spec,context)
+                    outcome = await self._invoke(claim,spec,context,held)
             self._observe_services(spec, outcome)
             outcome = self._service_wait(spec, outcome)
             await self._save_services()
@@ -503,12 +524,9 @@ class Worker:
                 records = await self._io(self.queue.finish,claim,rej_outcome,spec=spec,
                                          invocation=invocation,registry=self.registry)
             if records:   # A repeated wait records nothing and logs nothing.
+                self._write_held(held, claim)
                 self._log_unfinished(logger, claim, outcome)
-            for record in records:
-                try:
-                    log_history(logger, record)
-                except Exception as log_exc:
-                    self.logger.warning("Audit logging failed after commit for job %s: %s", claim.job_id, log_exc)
+                self._write_history(logger, records, claim)
             return True
         except asyncio.CancelledError:
             # No invented completion. The recorded lease/start is recoverable.
@@ -516,11 +534,7 @@ class Worker:
         except CancellationRequested:
             if claim is not None:
                 records=await self._io(CancellationStore(self.queue.database).acknowledge,claim)
-                for record in records:
-                    try:
-                        log_history(self.logger, record)
-                    except Exception as log_exc:
-                        self.logger.warning("Audit logging failed for canceled job %s: %s", claim.job_id, log_exc)
+                self._write_history(self.logger, records, claim)
             return True
         except LeaseLost as exc:
             self._log_error(exc,claim)

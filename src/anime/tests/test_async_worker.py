@@ -231,7 +231,7 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.attempt()
         db = sqlite3.connect(self.database)
         try:
-            row = db.execute("SELECT details_json FROM job_history WHERE event_code='RETRY_SCHEDULED'").fetchone()
+            row = db.execute("SELECT details_json FROM job_history WHERE event_code='FAILED'").fetchone()
             self.assertIsNotNone(row)
             details = json.loads(row[0])
             self.assertIn("failed_check", details)
@@ -353,7 +353,8 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         from src.anime.reasons import _CHECK
         self.policy = Policy(lease_ms=30000, poll_ms=10, max_retries=1, backoff_ms=1)
         async def handler(context):
-            raise ValueError("simulated handler crash")
+            # An expected, retried error (a program error is never retried).
+            raise sqlite3.OperationalError("database is locked")
         self.enqueue()
         worker = self.worker(handler)
         # Attempt 1: fails, schedules retry
@@ -369,11 +370,11 @@ class AsyncWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await worker.attempt())
         # Review policy: canceled, and the step's own reason replaces the retry counter.
         self.assertEqual(self.rows()[0][0], "CANCELED")
-        self.assertEqual(self.rows()[0][2], "JOB_HANDLER_FAILED")
+        self.assertEqual(self.rows()[0][2], "DATABASE_ERROR")
         db = sqlite3.connect(self.database)
         try:
             row = db.execute(
-                "SELECT details_json FROM job_history WHERE event_code='CANCELED' AND reason_code='JOB_HANDLER_FAILED'"
+                "SELECT details_json FROM job_history WHERE event_code='CANCELED' AND reason_code='DATABASE_ERROR'"
             ).fetchone()
             self.assertIsNotNone(row)
             details = json.loads(row[0])
