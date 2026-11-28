@@ -929,137 +929,6 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
     }
 
 
-def plan_folder_merges(series: list[dict]) -> dict:
-    """One staging folder per TVDB series (owner, 2026-11-27: Jellyfin showed a series once per
-    AniDB entry, each in its own folder). Read-only: what would move, and what cannot.
-
-    For each TVDB series staged in several folders, the folder with Season 01 (else the first)
-    is kept; the others' Season folders move into it. A season whose files would collide, or
-    a folder holding anything AKON did not plan, is reported and left where it is.
-    """
-    import os
-    folders: dict[tuple[str, int], set[str]] = {}         # (staging root, tvdb) -> folders
-    planned: dict[tuple[str, str], set[str]] = {}         # (root, folder) -> paths AKON planned there
-    for item in series:
-        for t in item["torrents"]:
-            tvdb = ((t.get("identity") or {}).get("anime") or {}).get("tvdb_series_id")
-            for plan in ((t.get("staging") or {}).get("plans") or {}).values():
-                root = plan.get("root")
-                if not root or not tvdb:
-                    continue
-                for e in plan["entries"]:
-                    folder = e["path"].split("/", 1)[0]
-                    folders.setdefault((root, int(tvdb)), set()).add(folder)
-                    planned.setdefault((root, folder), set()).add(e["path"])
-    moves, skipped = [], []
-    for (root, tvdb), names in sorted(folders.items()):
-        present = sorted(n for n in names if os.path.isdir(os.path.join(root, n)))
-        if len(present) < 2:
-            continue
-        target = next((n for n in present if os.path.isdir(os.path.join(root, n, "Season 01"))), present[0])
-        for other in present:
-            if other == target:
-                continue
-            mine = planned.get((root, other), set())
-            found = {os.path.relpath(os.path.join(d, f), root) for d, _, fs in os.walk(os.path.join(root, other))
-                     for f in fs}
-            if not found <= mine:
-                skipped.append({"tvdb": tvdb, "folder": other, "why": "it holds files AKON did not stage: "
-                                + ", ".join(sorted(found - mine))[:300]})
-                continue
-            seasons = [d for d in sorted(os.listdir(os.path.join(root, other)))
-                       if os.path.isdir(os.path.join(root, other, d))]
-            clash = [d for d in seasons for f in os.listdir(os.path.join(root, other, d))
-                     if os.path.exists(os.path.join(root, target, d, f))]
-            if clash:
-                skipped.append({"tvdb": tvdb, "folder": other, "why": "files would collide in " + ", ".join(clash)})
-                continue
-            moves.append({"root": root, "tvdb": tvdb, "from": other, "to": target, "seasons": seasons})
-    return {"moves": moves, "skipped": skipped}
-
-
-def apply_folder_merges(merges: dict) -> list:
-    """Move the planned Season folders; returns the undo list (applied in reverse on failure)."""
-    import os
-    done = []
-    try:
-        for m in merges["moves"]:
-            root = m["root"]
-            for season in m["seasons"]:
-                source, target = os.path.join(root, m["from"], season), os.path.join(root, m["to"], season)
-                if os.path.isdir(target):                 # The season exists there: its files move in.
-                    for f in sorted(os.listdir(source)):
-                        os.rename(os.path.join(source, f), os.path.join(target, f))
-                        done.append((os.path.join(target, f), os.path.join(source, f)))
-                    os.rmdir(source)
-                    done.append(("mkdir", source))
-                else:
-                    os.rename(source, target)
-                    done.append((target, source))
-            show = os.path.join(root, m["from"], "tvshow.nfo")
-            if os.path.exists(show):                      # The kept folder has its own.
-                held = show + ".cutover-merged"
-                os.rename(show, held)
-                done.append((held, show))
-    except BaseException:
-        undo_folder_merges(done)
-        raise
-    return done
-
-
-def undo_folder_merges(done: list) -> None:
-    import os
-    for step in reversed(done):
-        if step[0] == "mkdir":
-            os.makedirs(step[1], exist_ok=True)
-        else:
-            os.rename(step[0], step[1])
-
-
-def finish_folder_merges(merges: dict) -> None:
-    """After the conversion committed: drop the merged folders' old tvshow.nfo and empty folders."""
-    import os
-    for m in merges["moves"]:
-        folder = os.path.join(m["root"], m["from"])
-        held = os.path.join(folder, "tvshow.nfo.cutover-merged")
-        if os.path.exists(held):
-            os.unlink(held)
-        try:
-            os.rmdir(folder)
-        except OSError:
-            pass
-
-
-def rewrite_merged_paths(series: list[dict], merges: dict) -> None:
-    """Point the converted rows at the merged folders: plan entries and staged episode files."""
-    by = {(m["root"], m["from"]): m["to"] for m in merges["moves"]}
-    folders = {m["from"]: m["to"] for m in merges["moves"]}
-    for item in series:
-        for t in item["torrents"]:
-            for plan in ((t.get("staging") or {}).get("plans") or {}).values():
-                to = by.get((plan.get("root"), plan["entries"][0]["path"].split("/", 1)[0]))
-                if to is None:
-                    continue
-                kept = []
-                for e in plan["entries"]:
-                    head, _, rest = e["path"].partition("/")
-                    if e["role"] == "series":
-                        import os
-                        e["path"] = to + "/tvshow.nfo"   # The kept folder's own: Reject compares its size.
-                        try:
-                            e["size"] = os.stat(os.path.join(plan["root"], e["path"])).st_size
-                        except FileNotFoundError:
-                            pass
-                    else:
-                        e["path"] = to + "/" + rest
-                    kept.append(e)
-                plan["entries"] = kept
-        for ep in item["episodes"].values():
-            head, _, rest = (ep.get("file") or "").partition("/")
-            if head in folders:
-                ep["file"] = folders[head] + "/" + rest
-
-
 def _apply_079_if_needed(db: sqlite3.Connection) -> bool:
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version == 79:
@@ -1071,8 +940,13 @@ def _apply_079_if_needed(db: sqlite3.Connection) -> bool:
     return True
 
 
-def execute_cutover(path: Path, *, apply: bool = False) -> dict:
-    """Preview or apply the one-time cutover on the SQLite database."""
+def execute_cutover(path: Path, *, apply: bool = False, language: str = "english") -> dict:
+    """Preview or apply the one-time cutover on the SQLite database.
+
+    Staged series are retitled too (series_job/retitle.py, owner 2026-11-27): one folder per
+    TVDB series, files and NFOs in the chosen language; the split ones come together.
+    """
+    from src.anime.series_job import retitle
     path = Path(path)
     with closing(open_database(path, readonly=not apply)) as db:
         plan = inspect_cutover(db)
@@ -1083,13 +957,17 @@ def execute_cutover(path: Path, *, apply: bool = False) -> dict:
             "refused_jobs": plan["refused_jobs"],
             "step_counts": plan["step_counts"],
             "job_outcomes": plan["job_outcomes"],
-            "folder_merges": None,
+            "retitle": None,
             "migrated_to_v79": False,
             "backup": None,
             "applied": False,
         }
-        merges = plan_folder_merges(plan["series_to_convert"]) if not plan["already_cut_over"] else None
-        report["folder_merges"] = merges
+        renames = retitle.plan(db, plan["series_to_convert"], language) if not plan["already_cut_over"] else None
+        if renames is not None:
+            report["retitle"] = {
+                "series": [{"tvdb": g["tvdb"], "folder": g["folder"], "episodes": len(g["moves"])}
+                           for g in renames["groups"]],
+                "skipped": renames["skipped"]}
         if not apply or plan["already_cut_over"]:
             return report
 
@@ -1101,9 +979,9 @@ def execute_cutover(path: Path, *, apply: bool = False) -> dict:
         report["migrated_to_v79"] = _apply_079_if_needed(db)
 
         now = time.time_ns() // 1_000_000
-        # The folders move first (renames on the staging share); if the conversion fails they move back.
-        undo = apply_folder_merges(merges)
-        rewrite_merged_paths(plan["series_to_convert"], merges)
+        # The staged files are renamed first (on the staging share); if the conversion fails they go back.
+        undo = retitle.apply(renames)
+        retitle.rewrite(plan["series_to_convert"], renames)
         db.execute("BEGIN IMMEDIATE")
         try:
             for item in plan["series_to_convert"]:
@@ -1143,9 +1021,9 @@ def execute_cutover(path: Path, *, apply: bool = False) -> dict:
             db.commit()
         except BaseException:
             db.rollback()
-            undo_folder_merges(undo)
+            retitle.undo(undo)
             raise
-        finish_folder_merges(merges)
+        retitle.finish(renames)
 
         report["applied"] = True
         return report
@@ -1156,10 +1034,12 @@ def main(argv=None) -> int:
     parser.add_argument("--config-dir", type=Path, default=Path("/etc/anime-discovery"))
     parser.add_argument("--database", type=Path, help="Override database path")
     parser.add_argument("--apply", action="store_true", help="Back up DB, apply 079 if needed, convert & close jobs")
+    parser.add_argument("--language", choices=("english", "japanese"), default="english",
+                        help="Title language for the staged folders, files and NFOs (default english)")
     args = parser.parse_args(argv)
 
     db_path = args.database or configured_database(args.config_dir)
-    report = execute_cutover(db_path, apply=args.apply)
+    report = execute_cutover(db_path, apply=args.apply, language=args.language)
     print(json.dumps(report, indent=2))
     if not args.apply and not report["already_cut_over"]:
         print("Preview only: rerun with --apply after stopping services.")

@@ -109,7 +109,8 @@ def series_title(db, tvdb_series_id, aid, canonical, language):
     """The name of a whole TVDB series: its season-1 AniDB entry's title, else this entry's."""
     first = first_entry(db, tvdb_series_id)
     if first is not None and first != aid:
-        row = db.execute('SELECT title FROM series WHERE anidb_id=?', (first,)).fetchone()
+        has_series = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='series'").fetchone()
+        row = db.execute('SELECT title FROM series WHERE anidb_id=?', (first,)).fetchone() if has_series else None
         english, romaji = names(db, first)
         base = row[0] if row else romaji
         named = preferred_title(base, english, romaji, language)

@@ -81,6 +81,7 @@ def _seed_staged_single(db: sqlite3.Connection, staging_root: Path, *, aid: int 
                "evidence_json, verified_at_ms) VALUES(1, 2, 1, ?, ?, ?, 1000)",
                ("c" * 64, "d" * 64, ev_json))
     sp_manifest = {
+        "root": str(staging_root),                     # As production's manifests record it.
         "entries": [
             {"role": "media", "path": rel_path, "size": 100, "sha256": "e" * 64},
             {"role": "episode", "path": nfo_rel, "size": len("<episodedetails/>")},
@@ -133,7 +134,8 @@ def _seed_staged_batch(db: sqlite3.Connection, staging_root: Path, *, aid: int =
     db.execute("INSERT INTO batch_episode_media(plan_id, file_index, verification_job_id, unlock_job_id, submission_fingerprint, "
                "transfer_fingerprint, evidence_json, verified_at_ms) VALUES(10, 0, 10, 10, ?, ?, ?, 1000)",
                ("8" * 64, "6" * 64, ev_json))
-    bsp_manifest = {"entries": [{"role": "media", "path": rel_path, "size": 200, "sha256": "7" * 64}]}
+    bsp_manifest = {"root": str(staging_root),
+                    "entries": [{"role": "media", "path": rel_path, "size": 200, "sha256": "7" * 64}]}
     bsp_receipts = [{"role": "media", "path": rel_path, "file": sig, "sha256": "7" * 64}]
     db.execute("INSERT INTO batch_staging_publications(plan_id, file_index, job_id, verification_job_id, manifest_json, state, "
                "receipts_json, created_at_ms, published_at_ms) VALUES(10, 0, 11, 10, ?, 'PUBLISHED', ?, 1000, 1000)",
@@ -409,45 +411,26 @@ class CutoverSeriesJobTests(unittest.TestCase):
         self.assertTrue(series is None or "S01E02" not in series.episodes)
         db.close()
 
-    def test_a_tvdb_series_staged_in_two_folders_is_merged_into_one(self):
-        """Owner, 2026-11-27: Jellyfin showed a series once per folder; each AniDB entry had its own."""
-        staged_root = self.staging
-        series = [{"anidb_id": 1, "torrents": [], "episodes": {}}, {"anidb_id": 2, "torrents": [], "episodes": {}}]
-        layout = {1: ("Show [tvdbid-9] [anidbid-1]", "Season 01"), 2: ("Show II [tvdbid-9] [anidbid-2]", "Season 02")}
-        for item in series:
-            folder, season = layout[item["anidb_id"]]
-            (staged_root / folder / season).mkdir(parents=True)
-            video = f"{folder}/{season}/Show - {season[-2:]}E01.mkv"
-            (staged_root / video).write_bytes(b"v")
-            (staged_root / folder / "tvshow.nfo").write_text("<tvshow/>" * item["anidb_id"])
-            item["torrents"].append({"identity": {"anime": {"tvdb_series_id": 9}}, "staging": {"plans": {"E": {
-                "root": str(staged_root), "entries": [{"role": "media", "path": video, "size": 1},
-                                                      {"role": "series", "path": folder + "/tvshow.nfo", "size": 9}]}}}})
-            item["episodes"]["E"] = {"state": "staged", "file": video}
-        merges = cutover.plan_folder_merges(series)
-        self.assertEqual([(m["from"], m["to"]) for m in merges["moves"]],
-                         [("Show II [tvdbid-9] [anidbid-2]", "Show [tvdbid-9] [anidbid-1]")])
-        undo = cutover.apply_folder_merges(merges)
-        cutover.rewrite_merged_paths(series, merges)
-        cutover.finish_folder_merges(merges)
-        self.assertEqual(sorted(p.name for p in staged_root.iterdir()), ["Show [tvdbid-9] [anidbid-1]"])
-        moved = series[1]["episodes"]["E"]["file"]
-        self.assertEqual(moved, "Show [tvdbid-9] [anidbid-1]/Season 02/Show - 02E01.mkv")
-        self.assertTrue((staged_root / moved).exists())
-        entry = series[1]["torrents"][0]["staging"]["plans"]["E"]["entries"][1]
-        self.assertEqual((entry["path"], entry["size"]), ("Show [tvdbid-9] [anidbid-1]/tvshow.nfo", 9))
-        self.assertTrue(undo)
-
-    def test_a_folder_with_files_akon_did_not_stage_is_not_merged(self):
-        for folder, season in (("A [tvdbid-9] [anidbid-1]", "Season 01"), ("B [tvdbid-9] [anidbid-2]", "Season 02")):
-            (self.staging / folder / season).mkdir(parents=True)
-        (self.staging / "B [tvdbid-9] [anidbid-2]" / "mine.txt").write_text("x")
-        series = [{"torrents": [{"identity": {"anime": {"tvdb_series_id": 9}}, "staging": {"plans": {
-            "E": {"root": str(self.staging), "entries": [{"role": "media", "path": f + "/S/x.mkv"}]}}}}],
-            "episodes": {}} for f in ("A [tvdbid-9] [anidbid-1]", "B [tvdbid-9] [anidbid-2]")]
-        merges = cutover.plan_folder_merges(series)
-        self.assertEqual(merges["moves"], [])
-        self.assertIn("did not stage", merges["skipped"][0]["why"])
+    def test_the_cutover_retitles_staged_series_in_english(self):
+        """Owner, 2026-11-27: staged folders, files and NFOs in English, one folder per TVDB series."""
+        db = _create_v78(self.db_path)
+        _seed_staged_single(db, self.staging)
+        db.commit()
+        db.close()
+        with mock.patch.object(cutover, "services_stopped", return_value=[]), \
+                mock.patch("src.anime.anime_titles.series_title", return_value="Show One in English"):
+            preview = cutover.execute_cutover(self.db_path, apply=False)
+            self.assertEqual(preview["retitle"]["series"],
+                             [{"tvdb": 501, "folder": "Show One in English [tvdbid-501]", "episodes": 1}])
+            applied = cutover.execute_cutover(self.db_path, apply=True)
+        self.assertTrue(applied["applied"])
+        self.assertEqual(sorted(p.name for p in self.staging.iterdir()), ["Show One in English [tvdbid-501]"])
+        db = sqlite3.connect(self.db_path)
+        staged = get_series(db, 101).episodes["S01E01"]["file"]
+        db.close()
+        self.assertEqual(staged, "Show One in English [tvdbid-501]/Season 01/Show One in English - S01E01.mkv")
+        self.assertTrue((self.staging / staged).is_file())
+        self.assertIn("Show One in English", (self.staging / "Show One in English [tvdbid-501]/tvshow.nfo").read_text())
 
 
 if __name__ == "__main__":

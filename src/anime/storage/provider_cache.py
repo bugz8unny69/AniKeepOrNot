@@ -66,11 +66,17 @@ class ProviderStore:
             raise ValueError("invalid public provider cache key")
 
     def public_get_stale(self, provider, key):
-        """The cached payload even when it has expired: display names, not identification."""
+        """The cached payload even when it has expired: display names, not identification.
+        Read-only, at any schema version (the cutover reads it before migrating)."""
+        import sqlite3
+        from contextlib import closing
         self._key(provider,key)
-        with self.connection() as db:
-            row = db.execute("SELECT payload FROM provider_public_cache WHERE provider=? AND cache_key=?",
-                             (provider,key)).fetchone()
+        with closing(sqlite3.connect(f"file:{self.database}?mode=ro", uri=True, timeout=5)) as db:
+            try:
+                row = db.execute("SELECT payload FROM provider_public_cache WHERE provider=? AND cache_key=?",
+                                 (provider,key)).fetchone()
+            except sqlite3.OperationalError:
+                return None                                    # No cache table (yet).
         return None if row is None else self._payload(provider,key,row[0])
 
     def public_get(self, provider, key):
