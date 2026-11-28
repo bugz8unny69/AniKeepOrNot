@@ -4,15 +4,14 @@ Read-only views of the series rows; no job numbers anywhere (owner, 2026-11-22).
 """
 import json
 
-from src.anime.anime_titles import preferred_title
+from src.anime.anime_titles import title_for
 from src.anime.series_job.store import get_series
 
 ACTIVE = ("waiting", "working")
 
 
 def _title(db, aid, title, language):
-    row = db.execute("SELECT english_title,romaji_title FROM anime_title_metadata WHERE anidb_id=?", (aid,)).fetchone()
-    return preferred_title(title, row[0] if row else None, row[1] if row else None, language)
+    return title_for(db, aid, title, language)     # The metadata, then AniDB's cached title list.
 
 
 def _torrent(t):
@@ -72,7 +71,7 @@ def series_list(db, language="english", *, limit=30, before=(1 << 63) - 1, state
     return {"items": items, "next_before_id": rows[limit - 1][0] if len(rows) > limit else None}
 
 
-def running(db):
+def running(db, language="english"):
     """Running: every series with work in hand (a torrent on a step, Keep or Reject), and the
     releases the API is still identifying. A series waiting on a download is asleep between
     checks, so this is not only state WORKING."""
@@ -84,7 +83,7 @@ def running(db):
         active = [_torrent(t) for t in torrents if t.get("state") in ACTIVE]
         if not active and "keep" not in work and "reject" not in work:
             continue
-        series.append({"anidb_id": aid, "title": title, "state": state, "wake_at_ms": wake, "torrents": active,
+        series.append({"anidb_id": aid, "title": _title(db, aid, title, language), "state": state, "wake_at_ms": wake, "torrents": active,
                        "keep": _keep(work), "rejecting": "reject" in work})
     waiting = db.execute("SELECT request_id,infohash,received_at_ms,tries FROM identity_requests "
                          "WHERE outcome IS NULL ORDER BY received_at_ms LIMIT 50").fetchall()

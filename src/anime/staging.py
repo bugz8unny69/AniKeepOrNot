@@ -76,7 +76,20 @@ def nfo(root,values,ids):
     return ET.tostring(document,encoding='utf-8',xml_declaration=True)
 
 
-def specification(intent,evidence,identity,root,revision,*,display_title=None):
+def series_folder(root,tvdb_series_id):
+    """The folder already holding this TVDB series in staging, or None: every season goes in one
+    folder, so Jellyfin shows one series (owner, 2026-11-27). Season 01's folder first."""
+    mark=f'[tvdbid-{tvdb_series_id}]'
+    try:
+        found=sorted(name for name in os.listdir(root) if mark in name and os.path.isdir(os.path.join(root,name)))
+    except FileNotFoundError:
+        return None
+    if not found:return None
+    with_first=[name for name in found if os.path.isdir(os.path.join(root,name,'Season 01'))]
+    return (with_first or found)[0]
+
+
+def specification(intent,evidence,identity,root,revision,*,display_title=None,series_name=None,folder=None):
     """Pure deterministic layout from verified placement, never release paths."""
     anime,episode,series,season,number,tvdb_episode,title=identity
     from src.anime.history import integer
@@ -85,12 +98,14 @@ def specification(intent,evidence,identity,root,revision,*,display_title=None):
     if tvdb_episode is not None:
         integer(tvdb_episode,positive=True)
     integer(effective_season)
-    folder=f'{slug(title)} [tvdbid-{series}] [anidbid-{anime}]'
+    # One folder per TVDB series (all its AniDB entries are its seasons), named after the series.
+    name=series_name or title
+    folder=folder or f'{slug(name)} [tvdbid-{series}]'
     season_folder=folder+f'/Season {effective_season:02d}'
-    basename=f'{slug(title)} - S{effective_season:02d}E{number:02d}'
+    basename=f'{slug(name)} - S{effective_season:02d}E{number:02d}'
     media=season_folder+'/'+basename+PurePosixPath(evidence['path']).suffix.lower()
     # Display metadata can differ from the canonical filesystem naming.
-    shown = display_title or title
+    shown = display_title or name
     show=nfo('tvshow',[('title',shown)],[('tvdb',series),('anidb',anime)])
     ids = []
     if tvdb_episode is not None:

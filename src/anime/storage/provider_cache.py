@@ -65,6 +65,14 @@ class ProviderStore:
                 or type(key) is not str or not re.fullmatch(r"[a-z0-9:_-]{1,64}",key)):
             raise ValueError("invalid public provider cache key")
 
+    def public_get_stale(self, provider, key):
+        """The cached payload even when it has expired: display names, not identification."""
+        self._key(provider,key)
+        with self.connection() as db:
+            row = db.execute("SELECT payload FROM provider_public_cache WHERE provider=? AND cache_key=?",
+                             (provider,key)).fetchone()
+        return None if row is None else self._payload(provider,key,row[0])
+
     def public_get(self, provider, key):
         self._key(provider,key)
         with self.connection() as db:

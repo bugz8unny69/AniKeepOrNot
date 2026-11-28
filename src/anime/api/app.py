@@ -30,7 +30,7 @@ from src.anime.storage.adapter import DatabaseVersionMismatch
 from src.anime.storage import notifications as inbox
 from src.anime.decided_series import (webhook_decision, notify_refused, release_name, REASONS as DECISION_REASONS,WORDS as DECISION_WORDS)
 from src.anime.storage.migrations import LATEST_VERSION
-from src.anime.anime_titles import preferred_title
+from src.anime.anime_titles import names, preferred_title, title_for
 from src.anime.storage.connection import database
 from src.anime.storage.connection import database as connection
 from src.anime.series_job.views import running, series_list, series_view
@@ -468,7 +468,7 @@ class Application:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 with database(db_path) as db:
-                    return 200,running(db),[]
+                    return 200,running(db,language),[]
             if path==PREFIX+'/services':
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
@@ -496,12 +496,7 @@ class Application:
                     parent=db.execute("SELECT display_title,tvdb_series_id FROM recognized_series WHERE anidb_id=?",
                                       (aid,)).fetchone()
                     if parent is None:raise ApiError(404,'API_ROUTE_NOT_FOUND')
-                    translated=db.execute(
-                        "SELECT english_title,romaji_title FROM anime_title_metadata WHERE anidb_id=?",
-                        (aid,)).fetchone()
-                    recognized_title=preferred_title(parent[0],
-                        translated[0] if translated else None,
-                        translated[1] if translated else None,language)
+                    recognized_title=title_for(db,aid,parent[0],language)
                     records=db.execute(
                         "SELECT anidb_episode_number,anidb_episode_id,tvdb_season,tvdb_episode,tvdb_episode_id "
                         "FROM recognized_episodes WHERE anidb_id=? ORDER BY anidb_episode_number LIMIT 501",
@@ -690,7 +685,7 @@ class Application:
             "WHERE ("+where+") ORDER BY s.display_title,s.anidb_id LIMIT 501",params).fetchall()
         if len(rows)>500:raise ApiError(503,'API_UNAVAILABLE')
         return {'items':[{'anidb_id':aid,'tvdb_series_id':tid,
-            'title':preferred_title(title,english,romaji,language),'anime_type':kind,
+            'title':preferred_title(title,english or names(db,aid)[0],romaji or names(db,aid)[1],language),'anime_type':kind,
             'seasons':[int(x) for x in seasons.split(',')] if seasons else [],
             'alias_count':alias_count,'verified_episode_count':ep_count,'placed_episode_count':placed}
             for aid,tid,title,kind,english,romaji,alias_count,ep_count,placed,seasons in rows]}

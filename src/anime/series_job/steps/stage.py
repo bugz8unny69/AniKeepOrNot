@@ -16,10 +16,10 @@ from src.anime.series_job.store import SeriesRow, note
 from src.anime.series_job.torrents import options_for
 from src.anime.storage_mounts import DOWNLOADS, STAGING, uses_storage
 from src.anime.staging import (Publisher, StagingBusy, StagingConfiguration, StagingReview, StagingUnavailable,
-                               disjoint, root_identity, specification)
+                               disjoint, root_identity, series_folder, specification)
 
 
-def plan_for(configuration, series, torrent, entry):
+def plan_for(configuration, series, torrent, entry, db=None):
     root = configuration.value("storage.user_evaluation_root")
     qb = torrent["qb"]
     source_root = options_for(configuration, qb["marker"], prefix=qb.get("prefix", "akon")).download_root
@@ -33,8 +33,15 @@ def plan_for(configuration, series, torrent, entry):
     if entry.get("transcoded"):
         # The transcode output in <staging>/.transcode is moved into place; the torrent's copy stays.
         source_root, evidence = root, entry["transcoded"]
+    # Owner, 2026-11-27: one folder per TVDB series, named in the chosen language after its season-1
+    # entry; a folder that already holds the series is used, so it never splits in Jellyfin.
+    tvdb = torrent["identity"]["anime"]["tvdb_series_id"]
+    name = None
+    if db is not None:
+        from src.anime.anime_titles import series_title
+        name = series_title(db, tvdb, series.anidb_id, series.title, configuration.value("anime.title_language"))
     plan = specification(SimpleNamespace(options=SimpleNamespace(download_root=source_root)), evidence, identity,
-                         root, configuration.desired_revision)
+                         root, configuration.desired_revision, series_name=name, folder=series_folder(root, tvdb))
     plan["source_root"] = source_root
     plan["transfer"] = "MOVE" if source_root == root else "COPY"
     plan["root_identity"] = root_identity(root)
@@ -51,7 +58,7 @@ async def stage(series: SeriesRow, torrent: dict, context) -> StepResult:
     try:
         if any(entry["episode"] not in plans for entry in torrent["files"]):
             for entry in torrent["files"]:
-                plans.setdefault(entry["episode"], plan_for(configuration, series, torrent, entry))
+                plans.setdefault(entry["episode"], plan_for(configuration, series, torrent, entry, context.db))
             context.checkpoint()                  # Temporary names are saved before any file exists.
         journal = SeriesStagingJournal(configuration.value("storage.database_path"), context.claim,
                                        series.torrents, torrent)

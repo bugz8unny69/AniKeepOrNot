@@ -94,7 +94,7 @@ class Configuration:
                        'user_evaluation.following_count': 1,
                        # Unset unless a test sets them; the storage mount guard skips unset folders.
                        'storage.download_root': None, 'storage.user_evaluation_root': None,
-                       'storage.keep_root': None}
+                       'storage.keep_root': None, 'anime.title_language': 'english'}
 
     def value(self, key):
         return self.values[key]
@@ -318,9 +318,9 @@ class Steps(unittest.TestCase):
             return result
         self.assertEqual(self.run_step(stage).next_step, 'done')
         staged = row.episodes['S01E05']['file']
-        self.assertEqual(staged, 'Dungeon People [tvdbid-438420] [anidbid-18162]/Season 01/Dungeon People - S01E05.mkv')
+        self.assertEqual(staged, 'Dungeon People [tvdbid-438420]/Season 01/Dungeon People - S01E05.mkv')
         self.assertEqual((base / 'staging' / staged).read_bytes(), b't' * 40 if transcode else b'v' * 100)
-        self.assertTrue((base / 'staging' / 'Dungeon People [tvdbid-438420] [anidbid-18162]/tvshow.nfo').exists())
+        self.assertTrue((base / 'staging' / 'Dungeon People [tvdbid-438420]/tvshow.nfo').exists())
         self.assertTrue((source / 'Show - 05.mkv').exists())                  # COPY: qBittorrent keeps seeding.
         saved = json.loads(db.execute('SELECT torrents_json FROM series').fetchone()[0])[0]['staging']['artifacts']
         self.assertEqual({a['phase'] for a in saved}, {'PUBLISHED'})          # Its records are in the row.

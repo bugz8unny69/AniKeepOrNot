@@ -409,6 +409,46 @@ class CutoverSeriesJobTests(unittest.TestCase):
         self.assertTrue(series is None or "S01E02" not in series.episodes)
         db.close()
 
+    def test_a_tvdb_series_staged_in_two_folders_is_merged_into_one(self):
+        """Owner, 2026-11-27: Jellyfin showed a series once per folder; each AniDB entry had its own."""
+        staged_root = self.staging
+        series = [{"anidb_id": 1, "torrents": [], "episodes": {}}, {"anidb_id": 2, "torrents": [], "episodes": {}}]
+        layout = {1: ("Show [tvdbid-9] [anidbid-1]", "Season 01"), 2: ("Show II [tvdbid-9] [anidbid-2]", "Season 02")}
+        for item in series:
+            folder, season = layout[item["anidb_id"]]
+            (staged_root / folder / season).mkdir(parents=True)
+            video = f"{folder}/{season}/Show - {season[-2:]}E01.mkv"
+            (staged_root / video).write_bytes(b"v")
+            (staged_root / folder / "tvshow.nfo").write_text("<tvshow/>" * item["anidb_id"])
+            item["torrents"].append({"identity": {"anime": {"tvdb_series_id": 9}}, "staging": {"plans": {"E": {
+                "root": str(staged_root), "entries": [{"role": "media", "path": video, "size": 1},
+                                                      {"role": "series", "path": folder + "/tvshow.nfo", "size": 9}]}}}})
+            item["episodes"]["E"] = {"state": "staged", "file": video}
+        merges = cutover.plan_folder_merges(series)
+        self.assertEqual([(m["from"], m["to"]) for m in merges["moves"]],
+                         [("Show II [tvdbid-9] [anidbid-2]", "Show [tvdbid-9] [anidbid-1]")])
+        undo = cutover.apply_folder_merges(merges)
+        cutover.rewrite_merged_paths(series, merges)
+        cutover.finish_folder_merges(merges)
+        self.assertEqual(sorted(p.name for p in staged_root.iterdir()), ["Show [tvdbid-9] [anidbid-1]"])
+        moved = series[1]["episodes"]["E"]["file"]
+        self.assertEqual(moved, "Show [tvdbid-9] [anidbid-1]/Season 02/Show - 02E01.mkv")
+        self.assertTrue((staged_root / moved).exists())
+        entry = series[1]["torrents"][0]["staging"]["plans"]["E"]["entries"][1]
+        self.assertEqual((entry["path"], entry["size"]), ("Show [tvdbid-9] [anidbid-1]/tvshow.nfo", 9))
+        self.assertTrue(undo)
+
+    def test_a_folder_with_files_akon_did_not_stage_is_not_merged(self):
+        for folder, season in (("A [tvdbid-9] [anidbid-1]", "Season 01"), ("B [tvdbid-9] [anidbid-2]", "Season 02")):
+            (self.staging / folder / season).mkdir(parents=True)
+        (self.staging / "B [tvdbid-9] [anidbid-2]" / "mine.txt").write_text("x")
+        series = [{"torrents": [{"identity": {"anime": {"tvdb_series_id": 9}}, "staging": {"plans": {
+            "E": {"root": str(self.staging), "entries": [{"role": "media", "path": f + "/S/x.mkv"}]}}}}],
+            "episodes": {}} for f in ("A [tvdbid-9] [anidbid-1]", "B [tvdbid-9] [anidbid-2]")]
+        merges = cutover.plan_folder_merges(series)
+        self.assertEqual(merges["moves"], [])
+        self.assertIn("did not stage", merges["skipped"][0]["why"])
+
 
 if __name__ == "__main__":
     unittest.main()
