@@ -76,17 +76,18 @@ def test_http_contract_and_scoped_wipe(tmp_path):
         code, body = response.status, response.read()
         conn.close()
         return code, json.loads(body) if body else None
-    headers = {'X-Sha256': hashlib.sha256(b'video').hexdigest(), 'X-Video-Kbps': '100'}
+    headers = {'X-Video-Kbps': '100'}
     try:
         assert request('GET', '/health', auth=False)[0] == 401
         assert request('GET', '/jobs/'+'0'*32)[0] == 404
-        assert request('POST', '/jobs', b'wrong', headers)[0] == 422
+        assert request('POST', '/jobs', b'video', {})[0] == 400          # No X-Video-Kbps.
         assert not agent.jobs
         # No request body is sent: rejection must happen before trying to read it.
         with patch.object(agent, 'free_bytes', return_value=1):
             assert request('POST', '/jobs', None, {**headers, 'Content-Length': '100'})[0] == 507
         code, job = request('POST', '/jobs', b'video', headers)
         assert code == 201
+        assert job['sha256'] == hashlib.sha256(b'video').hexdigest()   # What it received.
         assert request('POST', '/jobs', b'video', headers)[0] == 409
         release.set()
         for _ in range(100):

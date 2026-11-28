@@ -4,10 +4,11 @@ Standard library only; nothing here imports src.anime. See TRANSCODE_AGENT.md.
 
 Routes (every request needs `Authorization: Bearer <TRANSCODE_TOKEN>`):
   GET    /health             {encoders, busy, free_bytes, agent_version, build_revision}
-  POST   /jobs               body: the video. Headers X-Sha256, X-Video-Kbps.
+  POST   /jobs               body: the video. Header X-Video-Kbps.
                              507 when free space < 1.5 x Content-Length (before
-                             reading the body), 409 while busy, 422 on a hash
-                             mismatch (the upload is deleted). Returns {job_id}.
+                             reading the body), 409 while busy. Returns {job_id,
+                             sha256} (sha256 of the body received); the worker
+                             deletes the job when it does not match what it sent.
   GET    /jobs/{id}          {state: running|done|failed, progress, encoder, error}
   GET    /jobs/{id}/result   the output MKV, with X-Sha256 of it
   DELETE /jobs/{id}          deletes the job's files
@@ -34,7 +35,6 @@ SPACE_FACTOR = 1.5
 UNCOLLECTED_TTL_S = 3600
 CHUNK = 1024 * 1024
 _JOB = re.compile(r'/jobs/([a-f0-9]{32})(/result)?')
-_HEX64 = re.compile(r'[a-f0-9]{64}')
 
 
 def say(text):
@@ -323,11 +323,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get('Content-Length', ''))
             video_kbps = int(self.headers.get('X-Video-Kbps', ''))
-            expected = self.headers.get('X-Sha256', '').lower()
-            if length <= 0 or video_kbps <= 0 or not _HEX64.fullmatch(expected):
+            if length <= 0 or video_kbps <= 0:
                 raise ValueError()
         except ValueError:
-            return self._refuse(400, 'Content-Length, X-Sha256 and X-Video-Kbps are required')
+            return self._refuse(400, 'Content-Length and X-Video-Kbps are required')
         if not self.agent.enough_space(length):
             return self._refuse(507, 'not enough free space for this file')
         job_id = self.agent.reserve()
@@ -348,11 +347,8 @@ class Handler(BaseHTTPRequestHandler):
             self.agent.abandon(job_id)
             self.close_connection = True
             return
-        if digest.hexdigest() != expected:
-            self.agent.abandon(job_id)
-            return self._json(422, {'error': 'sha256 mismatch'})
         self.agent.start(job_id, video_kbps)
-        return self._json(201, {'job_id': job_id})
+        return self._json(201, {'job_id': job_id, 'sha256': digest.hexdigest()})
 
 
 def make_server(agent, host='0.0.0.0', port=8787):

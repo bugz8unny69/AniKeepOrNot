@@ -11,7 +11,10 @@ from pathlib import Path
 import pkgutil
 import subprocess
 
-AGENT_VERSION = 1
+# 2: POST /jobs takes no X-Sha256; the agent returns the SHA-256 of what it received and the
+#    worker compares it with the one it computed while sending (owner, 2026-11-28: no read of
+#    the whole source before the upload).
+AGENT_VERSION = 2
 
 # Written into the .pyz by `adm agent pack`; absent in a source checkout.
 BUILD_RESOURCE = 'build.json'

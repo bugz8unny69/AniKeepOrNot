@@ -137,15 +137,6 @@ def video_kbps(info, mb=500):
     return rate
 
 
-def digest(path, flag):
-    result = hashlib.sha256()
-    with open(path, 'rb') as stream:
-        while chunk := stream.read(CHUNK):
-            cancelled(flag)
-            result.update(chunk)
-    return result.hexdigest()
-
-
 @contextmanager
 def pipeline_priority(batch=False):
     global _PIPELINE_WAITERS
@@ -201,19 +192,17 @@ class Remote:
         return self.request('GET', '/health')
 
     def run(self, source, output, rate, audio, flag, report, started, progress=lambda fraction: None):
-        # SHA-256 must be known before the headers are sent. Verify it again during upload.
+        # The SHA-256 is computed while sending; the agent returns the one of what it received
+        # (agent version 2: the source is read once, not hashed first).
         name, size = agent_name(self.address), source.stat().st_size
-        began = time.monotonic()
-        expected = digest(source, flag)
-        log.info('%s: hashed %s for %s', source.name, _rate(size, time.monotonic() - began), name)
         conn = self.connection(120)
         job = None
         try:
             report('Sending to ' + self.address)
             began = time.monotonic()
             conn.putrequest('POST', '/jobs')
-            for key, value in {'Authorization': 'Bearer '+self.token, 'Content-Length': str(source.stat().st_size),
-                               'X-Sha256': expected, 'X-Video-Kbps': str(rate), 'X-Max-Audio': str(audio)}.items():
+            for key, value in {'Authorization': 'Bearer '+self.token, 'Content-Length': str(size),
+                               'X-Video-Kbps': str(rate), 'X-Max-Audio': str(audio)}.items():
                 conn.putheader(key, value)
             conn.putheader('Expect', '100-continue')
             conn.endheaders()
@@ -231,12 +220,13 @@ class Remote:
                     cancelled(flag)
                     check.update(chunk)
                     conn.send(chunk)
-            if check.hexdigest() != expected: raise TranscodeFailed('Source changed during upload')
             response = conn.getresponse()
             body = response.read(65537)
             if response.status in (409, 507): raise TranscodeWaiting('Agent busy or out of space')
             if response.status != 201: raise TranscodeFailed(f'Upload returned HTTP {response.status}')
-            job = json.loads(body)['job_id']
+            created = json.loads(body)
+            job = created['job_id']                       # Set first: the finally deletes the job.
+            if created.get('sha256') != check.hexdigest(): raise TranscodeFailed('Upload SHA-256 mismatch')
             log.info('%s: uploaded to %s: %s', source.name, name, _rate(size, time.monotonic() - began))
             began = time.monotonic()
             last_progress, changed = None, time.monotonic()

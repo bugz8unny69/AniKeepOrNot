@@ -78,7 +78,7 @@ A test video, run on the agent (`TOKEN` from `agent token`):
 ```sh
 ffmpeg -v error -y -f lavfi -i testsrc2=size=1280x720:rate=24 -f lavfi -i sine -t 5 -c:v libx264 -c:a flac sample.mkv
 A="Authorization: Bearer $TOKEN"; U=http://localhost:8787
-ID=$(curl -s -H "$A" -H "X-Sha256: $(sha256sum sample.mkv | cut -d' ' -f1)" -H "X-Video-Kbps: 1000" \
+ID=$(curl -s -H "$A" -H "X-Video-Kbps: 1000" \
   --data-binary @sample.mkv $U/jobs | python3 -c 'import sys,json;print(json.load(sys.stdin)["job_id"])')
 until curl -s -H "$A" $U/jobs/$ID | grep -qE '"state": "(done|failed)"'; do sleep 1; done
 curl -s -H "$A" $U/jobs/$ID; curl -s -X DELETE -H "$A" $U/jobs/$ID
@@ -188,11 +188,12 @@ The service bar also names each agent's problem: no token set, token rejected
 
 Every request uses `Authorization: Bearer TOKEN`.
 `GET /health` returns `encoders`, `busy`, `free_bytes`, `agent_version` and `build_revision`.
-`POST /jobs` accepts the file body with `Content-Length`, `X-Sha256`, and
+`POST /jobs` accepts the file body with `Content-Length` and
 `X-Video-Kbps`. `X-Max-Audio` describes the worker's computed audio budget;
-audio encoding itself follows the stream rules below. A hash mismatch returns
-422, a busy agent 409, and insufficient disk space 507. Success returns 201
-with `job_id`. Poll `GET /jobs/{id}` for state, progress (0–100), encoder and
+audio encoding itself follows the stream rules below. A busy agent returns
+409 and insufficient disk space 507. Success returns 201 with `job_id` and
+`sha256`, the SHA-256 of the body received: the worker compares it with the one
+it computed while sending and deletes the job when they differ. Poll `GET /jobs/{id}` for state, progress (0–100), encoder and
 error. `GET /jobs/{id}/result` streams MKV and its `X-Sha256`.
 `DELETE /jobs/{id}` cancels/drains encoding and deletes the job. Unknown IDs
 return 404, including after an agent restart.

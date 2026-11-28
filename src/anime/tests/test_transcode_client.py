@@ -212,6 +212,30 @@ def test_remote_rejects_bad_hash_and_frozen_progress(tmp_path, failure):
         server.shutdown(); server.server_close(); thread.join()
 
 
+def test_an_upload_the_agent_received_differently_is_deleted_and_fails(tmp_path):
+    """Agent version 2: the agent's SHA-256 of the body must match the one computed while sending."""
+    from src.transcode_agent import server as agent_server
+    def encode(source, output, **kwargs):
+        Path(output).write_bytes(b'result')
+        return {'encoder': 'cpu'}
+    agent = Agent(tmp=tmp_path/'agent', token='test-token', encoders='cpu', transcode=encode)
+    server = make_server(agent, '127.0.0.1', 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    source, output = tmp_path/'source', tmp_path/'output.tmp'
+    source.write_bytes(b'video')
+    remote = client.Remote(f'127.0.0.1:{server.server_port}', 'test-token')
+    reply = agent_server.Handler._json
+    def corrupted(handler, code, body):                    # What the agent received differs.
+        return reply(handler, code, {**body, 'sha256': '0' * 64} if 'sha256' in body else body)
+    try:
+        with patch.object(agent_server.Handler, '_json', corrupted):
+            with pytest.raises(client.TranscodeFailed, match='Upload SHA-256 mismatch'):
+                remote.run(source, output, 100, 128, threading.Event(), lambda _: None, lambda: None)
+        assert not agent.jobs                              # The job was deleted on the agent.
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
 # --- Agent versions (work item 1a) -------------------------------------------------------
 
 @pytest.mark.parametrize('health,expected', [
