@@ -157,3 +157,20 @@ class TestAdmSeries(unittest.TestCase):
             code = adm_series.main(["--id", "99999", "--config-dir", str(self.config_dir)], prog="adm series")
         self.assertEqual(code, 1)
         self.assertIn("has no series", out.getvalue())
+
+    def test_a_keep_leaves_running_once_sonarr_has_every_episode(self):
+        # Owner, 2026-11-28: after the import only follow-ups are left (Shoko, dubs, Jellyfin,
+        # cleanup) and webhooks for the series are refused: nothing there to watch.
+        from src.anime.series_job.views import running
+        db = sqlite3.connect(self.db_path)
+        wake(db, 19881, "The Laid-Off Cheat-Granting Mage")
+        series = get_series(db, 19881)
+        listed = []
+        for step, stopped in (("sonarr_import", None), ("shoko", None), ("dubs", None),
+                              ("shoko", "KEEP_IMPORT_REVIEW: stopped"), ("cleanup", None)):
+            series.work["keep"] = {"step": step, "requested_at_ms": 1, **({"stopped": stopped} if stopped else {})}
+            update_series(db, series)
+            listed.append(bool(running(db)["series"]))
+        db.close()
+        self.assertEqual(listed, [True, False, False, True, False])     # A stopped Keep still shows.
+

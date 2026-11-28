@@ -87,8 +87,20 @@ def series_list(db, language="english", *, limit=30, before=(1 << 63) - 1, state
     return {"items": items, "next_before_id": rows[limit - 1][0] if len(rows) > limit else None}
 
 
+# Keep's steps up to Sonarr having every episode. After them only follow-ups are left (Shoko
+# linking, the dub search, Jellyfin's rescan, cleanup): nothing to watch or do, and new
+# webhooks for the series are refused, so it leaves Running (owner, 2026-11-28).
+KEEP_IN_HAND = ("cancel", "sonarr_series", "sonarr_import")
+
+
+def keep_in_hand(work):
+    """A Keep Running shows: Sonarr does not have every episode yet, or it stopped and waits for you."""
+    keep = work.get("keep")
+    return keep is not None and (keep.get("step") in KEEP_IN_HAND or bool(keep.get("stopped")))
+
+
 def running(db, language="english"):
-    """Running: every series with work in hand (a torrent on a step, Keep or Reject), and the
+    """Running: every series with work in hand (a torrent on a step, Keep until Sonarr has it, Reject), and the
     releases the API is still identifying. A series waiting on a download is asleep between
     checks, so this is not only state WORKING."""
     rows = db.execute("SELECT anidb_id,title,state,wake_at_ms,torrents_json,work_json,promoted_at_ms FROM series "
@@ -98,7 +110,7 @@ def running(db, language="english"):
     for aid, title, state, wake, torrents, work, promoted in rows:
         torrents, work = json.loads(torrents), json.loads(work)
         active = [_torrent(t) for t in torrents if t.get("state") in ACTIVE]
-        if not active and "keep" not in work and "reject" not in work:
+        if not active and not keep_in_hand(work) and "reject" not in work:
             continue
         series.append({"anidb_id": aid, "title": _title(db, aid, title, language), "state": state, "wake_at_ms": wake,
                        "promoted_at_ms": promoted, "torrents": active,
