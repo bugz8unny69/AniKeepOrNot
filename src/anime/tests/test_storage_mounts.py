@@ -82,17 +82,12 @@ class StorageMountTests(unittest.TestCase):
         self.assertEqual(self.check(above + share), "learned")   # Its own device: a share.
         self.assertEqual(learned(self.database)[self.root]["mount_point"], self.root)
 
-    def test_a_fact_learned_from_a_bind_before_binds_were_told_apart_is_learned_again(self):
+    def test_a_fact_learned_before_binds_were_passed_over_still_guards(self):
+        # A share learned earlier keeps its gate: AKON never drops a fact by itself.
         (self.base / FACTS).write_text(json.dumps({self.root: {
             "mount_point": self.root, "source": "nas:/store/media/Anime Trial", "fstype": "nfs4", "learned_at_ms": 1}}))
-        above = line(str(self.media), "nas:/store/media")
-        self.assertEqual(self.check(above), "learned")            # Not 'not mounted': it looked again.
-        self.assertEqual(learned(self.database)[self.root]["mount_point"], str(self.media))
-        self.assertTrue(learned(self.database)[self.root]["binds_ignored"])
-        (self.base / FACTS).write_text(json.dumps({self.root: {
-            "mount_point": self.root, "source": "nas:/x", "fstype": "nfs4", "learned_at_ms": 1}}))
-        self.assertEqual(self.check(""), "local")                 # Local now: the old fact is dropped.
-        self.assertEqual(learned(self.database), {})
+        with self.assertRaises(StorageNotMounted):
+            self.check(line(str(self.media), "nas:/store/media"))
 
     def test_mountinfo_escapes_are_read(self):
         self.assertIn(("/mnt/Anime Trial", "nas:/x", "nfs4"), mounts(line("/mnt/Anime Trial", "nas:/x")))
