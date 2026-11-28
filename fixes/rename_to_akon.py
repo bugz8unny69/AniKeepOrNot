@@ -124,7 +124,7 @@ def rename_to_akon(
     plan = {
         "apply": apply,
         "steps": [
-            "usermod -l akon anime-discovery && groupmod -n akon anime-discovery",
+            "usermod -l akon anime-discovery && groupmod -n akon anime-discovery && usermod -d /var/lib/akon akon",
             f"move {etc_old} -> {etc_new} and update storage.database_path -> {new_db_logical}",
             f"checkpoint & move {var_old} -> {var_new}, rename {old_db_name} -> {new_db_name}",
             "retag & recategorize qBittorrent torrents in place (ad-<m> -> akon-<m>, category -> akon), set qb.prefix='ad', update qbittorrent.category='akon'",
@@ -146,7 +146,11 @@ def rename_to_akon(
         undo.append("usermod -l anime-discovery akon")
         execute(["groupmod", "-n", "akon", "anime-discovery"])
         undo.append("groupmod -n anime-discovery akon")
-        out("1. Renamed user and group anime-discovery -> akon")
+        # Same UID and GID: every file the service owns, local or on the NFS share, is akon's
+        # with no chown. Its home is the data folder, which step 3 moves to /var/lib/akon.
+        execute(["usermod", "-d", "/var/lib/akon", "akon"])
+        undo.append("usermod -d /var/lib/anime-discovery akon")
+        out("1. Renamed user and group anime-discovery -> akon (same IDs; home /var/lib/akon)")
 
         # 2. Settings
         shutil.move(str(etc_old), str(etc_new))

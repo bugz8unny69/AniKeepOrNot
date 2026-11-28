@@ -125,6 +125,7 @@ class RenameToAkonTests(unittest.TestCase):
 
             self.assertEqual(["usermod", "-l", "akon", "anime-discovery"], cmds[4])
             self.assertEqual(["groupmod", "-n", "akon", "anime-discovery"], cmds[5])
+            self.assertEqual(["usermod", "-d", "/var/lib/akon", "akon"], cmds[6])    # Its home moves with the data.
             self.assertFalse((root / "etc/anime-discovery").exists())
             self.assertTrue((root / "etc/akon").exists())
             self.assertFalse((root / "var/lib/anime-discovery").exists())
