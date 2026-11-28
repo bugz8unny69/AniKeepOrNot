@@ -19,7 +19,7 @@ class ConfigurationSchemaTests(unittest.TestCase):
         snapshot = ConfigurationSnapshot(1, {})
         self.assertEqual(snapshot.schema_version, CONFIGURATION_VERSION)
         self.assertEqual(snapshot.logging_settings().logging.level, "INFO")
-        self.assertEqual(snapshot.value("worker.concurrency"), 4)
+        self.assertEqual(snapshot.value("worker.concurrency"), 2)        # 2 series at a time (owner, 2026-11-28).
         self.assertEqual(snapshot.value("series.torrents_at_once"), 1)
         self.assertEqual(snapshot.value("qbittorrent.metadata_poll_seconds"), 5)
         self.assertEqual(snapshot.value("qbittorrent.metadata_poll_attempts"), 24)
@@ -61,7 +61,7 @@ class ConfigurationSchemaTests(unittest.TestCase):
         self.assertEqual(old_operation.value("logging.level"), "INFO")
         self.assertEqual(operation.value("logging.level"), "DEBUG")
         self.assertEqual(operation.value("api.port"), 8765)
-        self.assertEqual(operation.value("worker.concurrency"), 4)
+        self.assertEqual(operation.value("worker.concurrency"), 2)
         self.assertEqual(operation.pending_restart_fields, ("api.port",))
         self.assertEqual((operation.desired_revision, operation.startup_revision), (2, 1))
         restarted = for_operation(newer, newer, component="api")

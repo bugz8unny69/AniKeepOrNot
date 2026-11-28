@@ -124,7 +124,9 @@ async def _attempt(db, context, claim_obj, series, now):
     from src.anime.series_job.search import run_search
     search_wake = await run_search(series, context)        # May add torrents for the trial episodes.
     active_torrents = [t for t in series.torrents if t.get("state") in ("waiting", "working")]
-    to_run = _ready_first(active_torrents)[:series.torrents_at_once or 1]
+    # Settings: "Torrents worked on at once per series" (series.torrents_at_once, default 1).
+    at_once = context.configuration.value("series.torrents_at_once") if context.configuration else None
+    to_run = _ready_first(active_torrents)[:at_once or series.torrents_at_once or 1]
     min_wake_ms: int | None = None
     moved = False
     if any(t.get("state") == "waiting" for t in to_run):

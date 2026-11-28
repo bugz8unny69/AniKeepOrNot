@@ -94,7 +94,8 @@ class Configuration:
                        'user_evaluation.following_count': 1,
                        # Unset unless a test sets them; the storage mount guard skips unset folders.
                        'storage.download_root': None, 'storage.user_evaluation_root': None,
-                       'storage.keep_root': None, 'anime.title_language': 'english'}
+                       'storage.keep_root': None, 'anime.title_language': 'english',
+                       'series.torrents_at_once': None}     # Unset: the series row's own count.
 
     def value(self, key):
         return self.values[key]

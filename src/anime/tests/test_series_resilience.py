@@ -202,3 +202,41 @@ class WorkerBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertLogs(worker.logger, level="ERROR") as logs:
             self.assertFalse(await worker.attempt())
         self.assertTrue(any("program error" in line and "KeyError" in line for line in logs.output))
+
+
+class WorkerLanesTests(unittest.IsolatedAsyncioTestCase):
+    """Owner, 2026-11-28: worker.concurrency series at a time, each attempt with its own context."""
+
+    async def test_two_lanes_work_on_two_series_at_the_same_time(self):
+        from types import SimpleNamespace
+        from src.anime.configuration import ConfigurationStore
+        from src.anime.worker import Worker
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        store = ConfigurationStore(root)
+        startup = store.initialize({"storage": {"database_path": str(root / "q.sqlite")},
+                                    "worker": {"concurrency": 2}}).snapshot
+        with sqlite3.connect(root / "q.sqlite") as db:
+            initialize(db)
+        worker = Worker(store, startup, context_factory=lambda secrets, cancelled: SimpleNamespace(cancelled=cancelled))
+        active, most, contexts = [0], [0], []
+
+        async def attempt(db, context):
+            contexts.append(context)
+            active[0] += 1
+            most[0] = max(most[0], active[0])
+            await asyncio.sleep(0.05)               # Long enough for the other lane to start.
+            active[0] -= 1
+            if len(contexts) >= 4:
+                worker.stop()
+            return True
+        with patch("src.anime.series_job.worker.run_series_attempt", side_effect=attempt):
+            await asyncio.wait_for(worker.run(), timeout=10)
+        self.assertEqual(most[0], 2)                                   # Two series at once.
+        self.assertEqual(len({id(c) for c in contexts}), len(contexts))   # Each attempt its own context.
+        self.assertTrue(all(c.db is not None for c in contexts))
+
+    def test_the_default_is_two_series_and_one_torrent_each(self):
+        from src.anime.configuration_schema import FIELDS
+        self.assertEqual((FIELDS["worker.concurrency"].default, FIELDS["series.torrents_at_once"].default), (2, 1))

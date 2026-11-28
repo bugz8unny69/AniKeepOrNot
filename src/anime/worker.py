@@ -35,6 +35,7 @@ class Worker:
         self._halt = threading.Event()        # The steps' cancel event: the worker is stopping.
         self._services_dirty = True
         self._services_saved_ms = None
+        self._probing = asyncio.Lock()
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="akon-control")
         if context_factory is None:
             from src.anime.series_job.context import build as context_factory
@@ -121,15 +122,20 @@ class Worker:
         from src.anime.series_job.store import LeaseLost
         from src.anime.series_job.worker import run_series_attempt
         from src.anime.storage.sqlite import connect
+        import copy
         configuration = await self._io(self.config.operation, self.startup, component="worker")
         if self._service_health is not None:
-            self._log_service_changes(await self._io(self._service_health.probe_due, configuration, self._secrets))
-            await self._save_services()
-        self._context.configuration = configuration
+            async with self._probing:                  # One lane checks the services at a time.
+                self._log_service_changes(await self._io(self._service_health.probe_due, configuration, self._secrets))
+                await self._save_services()
+        # Each attempt has its own context: lanes run at the same time, and an attempt keeps
+        # its database, lease, time and checkpoint on it.
+        context = copy.copy(self._context)
+        context.configuration = configuration
         try:
             with self.gate.operation(), closing(connect(configuration.value("storage.database_path"))) as db:
-                self._context.db = db
-                return await run_series_attempt(db, self._context)
+                context.db = db
+                return await run_series_attempt(db, context)
         except (MaintenanceBusy, MaintenancePending):
             return False                      # A migration or backup has the database.
         except LeaseLost as exc:
@@ -149,6 +155,14 @@ class Worker:
                 pass
             return False
 
+    async def _lane(self):
+        while not self._stop.is_set():
+            if not await self.attempt():
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=IDLE_S)
+                except asyncio.TimeoutError:
+                    pass
+
     async def run(self, *, on_ready=None):
         try:
             configuration = await self._io(self.config.operation, self.startup, component="worker")
@@ -157,12 +171,11 @@ class Worker:
             await self._check_storage(configuration)
             if on_ready is not None:
                 on_ready()
-            while not self._stop.is_set():
-                if not await self.attempt():
-                    try:
-                        await asyncio.wait_for(self._stop.wait(), timeout=IDLE_S)
-                    except asyncio.TimeoutError:
-                        pass
+            # Owner, 2026-11-28: worker.concurrency series at a time (default 2), each in its own
+            # lane; a series takes series.torrents_at_once torrents per attempt (default 1).
+            lanes = max(1, int(configuration.value("worker.concurrency")))
+            self.logger.info("Series job: working on up to %d series at a time", lanes)
+            await asyncio.gather(*(self._lane() for _ in range(lanes)))
         finally:
             self.stop()
             await blocking(self._pool.shutdown, wait=True)
