@@ -223,21 +223,27 @@ class Client:
         _,eid=selection.match_sonarr_episode(series,rows)
         return next(row for row in rows if row.get('id')==eid)
 
-    def import_payload(self,selection,series,episode):
+    def import_payload(self,selection,series,episode,release_name=None):
+        """The ManualImport for one staged file. With release_name, its quality and group come from
+        the release (release_quality.py), not from AKON's renamed file."""
+        from src.anime import release_quality
         source=remote_source(self.options,selection)
         rows=self.request('manualimport',query={'folder':str(PurePosixPath(source).parent),'filterExistingFiles':'false'})
         candidates=[r for r in rows if r.get('path')==source]
         if len(candidates)!=1:raise KeepReview()
         preview=candidates[0]
         # Reprocess this exact file with explicit verified IDs rather than title matching.
+        guessed=(preview.get('quality') or {}).get('quality') or {}
+        ours=release_quality.quality(release_name,guessed.get('resolution')) if release_name else None
+        group=release_quality.group(release_name) if release_name else None
         values={'path':source,'seriesId':series['id'],'seasonNumber':selection.tvdb_season,'episodeIds':[episode['id']],
-                'quality':preview.get('quality'),'languages':preview.get('languages',[]),
-                'releaseGroup':preview.get('releaseGroup',''),'indexerFlags':preview.get('indexerFlags',0)}
+                'quality':ours or preview.get('quality'),'languages':preview.get('languages',[]),
+                'releaseGroup':group or preview.get('releaseGroup',''),'indexerFlags':preview.get('indexerFlags',0)}
         result=self.request('manualimport',body=[values])
         if type(result) is not list or len(result)!=1:raise KeepReview()
         item=result[0]
         if (item.get('path')!=source or item.get('seriesId')!=series['id'] or item.get('rejections')
                 or [r.get('id') for r in item.get('episodes',[])]!=[episode['id']]
                 or not item.get('quality') or not item.get('languages')):raise KeepReview()
-        values['quality']=item['quality'];values['languages']=item['languages']
+        values['quality']=ours or item['quality'];values['languages']=item['languages']
         return {'name':'ManualImport','importMode':'copy','files':[values]}

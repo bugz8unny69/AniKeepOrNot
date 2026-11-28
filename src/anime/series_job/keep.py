@@ -152,7 +152,9 @@ def sonarr_import(series, keep, context):
             if not same_content(selection.staging_root, selection.media_relative_path, entry["staged_file"][2],
                                 entry.get("staged_content")):
                 raise KeepReview(failed_check=here("STAGED_FILE_CHANGED"))
-            record.update(payload=client.import_payload(selection, found, episode), episode_id=episode["id"],
+            release = next((t.get("release_name") for t in series.torrents if t["infohash"] == ep["torrent"]), None)
+            record.update(payload=client.import_payload(selection, found, episode, release_name=release),
+                          episode_id=episode["id"],
                           source_file=data["source_file"], phase="IMPORT_UNCERTAIN")
             context.checkpoint()                   # Recorded before the import command is sent.
             reply = client.request("command", body=record["payload"])

@@ -52,7 +52,8 @@ class FakeSonarr:
         done = self.command == 'completed' and self.imports
         return {'id': 55, 'episodeFileId': 9 if done else 0, 'hasFile': done}
 
-    def import_payload(self, selection, series, episode):
+    def import_payload(self, selection, series, episode, release_name=None):
+        self.release_name = release_name
         return {'name': 'ManualImport', 'importMode': 'copy', 'files': [{'path': selection.media_path}]}
 
     def search(self, series_id):
@@ -114,6 +115,7 @@ class KeepTests(unittest.TestCase):
         self.db.commit()
         self.attempt(100)                                 # Series added, import sent: Sonarr is importing.
         self.assertEqual(self.sonarr.sent, [('series', None), ('command', 'ManualImport')])
+        self.assertEqual(self.sonarr.release_name, '[G] Dungeon People - 05')   # Its quality and group, not the file's.
         work = get_series(self.db, 18162).work['keep']
         self.assertEqual((work['sonarr']['phase'], work['imports']['S01E05']['phase']), ('READY', 'IMPORT_UNCERTAIN'))
         self.sonarr.command = 'completed'
