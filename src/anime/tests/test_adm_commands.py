@@ -16,7 +16,8 @@ def adm(*args):
 
 def test_every_command_module_follows_the_contract():
     found = commands()
-    assert {'agent', 'report', 'running', 'keep', 'reject', 'services', 'set-password'} <= set(found)
+    assert {'agent', 'running', 'series', 'services', 'set-password', 'retitle'} <= set(found)
+    assert not {'keep', 'reject', 'retry', 'search', 'report'} & set(found)   # Now adm series --<action>.
     for name, module in found.items():
         assert module.NAME == name and module.SUMMARY.strip() and callable(module.main), name
 
