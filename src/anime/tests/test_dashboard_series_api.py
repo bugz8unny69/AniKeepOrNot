@@ -178,3 +178,28 @@ class DashboardLoadsTests(unittest.TestCase):
                                          str(static / "index.html"), page], capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("no error at load", result.stdout)
+
+
+class WorkloadSettingsTests(DashboardSeriesApiTests):
+    """Owner, 2026-11-28: 'Series worked on at once' and 'Torrents worked on at once per series'
+    share the Workload panel; its save sends each under its own section in one request."""
+
+    async def test_one_save_sets_both_workload_settings(self):
+        status, current, _ = await self.request("GET", "/api/v1/settings", token=ADMIN)
+        self.assertEqual(status, 200)
+        current = current["data"]
+        self.assertIn("series.torrents_at_once", current["fields"])
+        body = {"expected_revision": current["desired"]["revision"],
+                "settings": {"worker": {"concurrency": 3}, "series": {"torrents_at_once": 2}}}
+        status, saved, _ = await self.request("PATCH", "/api/v1/settings", body, token=ADMIN)
+        self.assertEqual(status, 200, saved)
+        saved = saved["data"]
+        self.assertEqual(saved["configuration"]["settings"]["worker"]["concurrency"], 3)
+        self.assertEqual(saved["configuration"]["settings"]["series"]["torrents_at_once"], 2)
+
+    def test_the_workload_panel_shows_both(self):
+        from pathlib import Path
+        script = (Path(__file__).resolve().parents[1] / "dashboard" / "static" / "dashboard.js").read_text()
+        self.assertIn("const PANEL_OF = {'series.torrents_at_once': 'worker'};", script)
+        self.assertIn("section === 'worker' ? 'Workload'", script)
+        self.assertIn("(values[own] ||= {})[key] = value;", script)      # Saved under its own section.

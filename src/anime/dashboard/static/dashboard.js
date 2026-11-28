@@ -962,10 +962,11 @@ function wireSectionForm(form, section) {
               input.dataset.kind === 'integer' ? Number(input.value) :
               input.dataset.kind === 'boolean' ? input.value === 'true' : input.value;
           } catch { throw new Error(COPY['dashboard.invalid_value']); }
-          values[input.name.split('.')[1]] = value;
+          const [own, key] = input.name.split('.');
+          (values[own] ||= {})[key] = value;              // Each field under its own section.
         }
         const saved = await request(API + '/settings', {method: 'PATCH',
-          body: {expected_revision: state.settings.desired.revision, settings: {[section]: values}}});
+          body: {expected_revision: state.settings.desired.revision, settings: values}});
         state.settings.desired = saved.configuration;
         for (const input of changedSettings) input.dataset.original = input.value;
         settingsSaved = true;
@@ -1018,14 +1019,21 @@ async function loadSettings(poll = false) {
     state.settings = settings; state.credentials = credentials; state.dirty = false;
     $('restart-notice').textContent = settings.pending_restart_fields.length ? COPY['dashboard.restart'] : '';
     const container = $('settings-fields'); container.replaceChildren();
+    // Owner, 2026-11-28: how much runs at once is one choice, so its two settings share a panel:
+    // series worked on at once (worker) and torrents worked on at once per series (series).
+    const PANEL_OF = {'series.torrents_at_once': 'worker'};
+    const panelOf = path => PANEL_OF[path] || path.split('.')[0];
     for (const section of Object.keys(settings.desired.settings)) {
+      if (!Object.keys(settings.fields).some(path => panelOf(path) === section)) continue;   // Nothing left to show.
       const panel = node('details', null, 'panel'); panel.dataset.section = section; panel.open = opened.has(section);
-      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section === 'transcode' ? 'Transcode' : settingLabel(section)));
+      panel.appendChild(node('summary', section === 'user_evaluation' ? 'Evaluation episodes' : section === 'transcode' ? 'Transcode'
+        : section === 'worker' ? 'Workload' : settingLabel(section)));
       const form = node('form', null, 'integration'); form.autocomplete = 'off';
       const rows = new Map();
       for (const [path, definition] of Object.entries(settings.fields)) {
-        if (!path.startsWith(section + '.')) continue;
-        const row = settingInput(path, definition, settings.desired.settings[section][path.split('.')[1]]);
+        if (panelOf(path) !== section) continue;
+        const [own, key] = path.split('.');
+        const row = settingInput(path, definition, settings.desired.settings[own][key]);
         rows.set(path, row); form.appendChild(row);
       }
       if (section === 'transcode') transcodeModeFields(rows);
