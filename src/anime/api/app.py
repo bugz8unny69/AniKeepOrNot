@@ -302,11 +302,20 @@ class Application:
             if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>body_limit):raise ApiError(413,'API_BODY_TOO_LARGE')
             if len(raw_query)>2048 or len(path)>512 or '%' in path:raise ApiError(404,'API_ROUTE_NOT_FOUND')
             if scope.get('raw_path',path.encode('utf-8'))!=path.encode('utf-8'):raise ApiError(400,'API_REQUEST_INVALID')
+            mounted=''
             for mount in ('/akon','/anime-discovery'):
                 if path==mount:
-                    path='/';break
+                    path='/';mounted=mount;break
                 if path.startswith(mount+'/'):
-                    path=path[len(mount):];break
+                    path=path[len(mount):];mounted=mount;break
+            if path=='/jobs' and scope['method']=='GET':
+                # Owner, 2026-11-27: the Jobs page went with the per-step jobs; an old tab,
+                # bookmark or link opens Intake instead of a bare "not found".
+                await send({'type':'http.response.start','status':302,'headers':[
+                    (b'location',(mounted+'/').encode()),(b'content-length',b'0'),(b'cache-control',b'no-store'),
+                    (b'x-request-id',request_id.encode())]})
+                await send({'type':'http.response.body','body':b''})
+                return
             if not (path.startswith(PREFIX+'/') or path in self.assets):raise ApiError(404,'API_ROUTE_NOT_FOUND')
             query=parse_qs(raw_query.decode('ascii'),keep_blank_values=True,max_num_fields=16,strict_parsing=True) if raw_query else {}
             raw=await asyncio.wait_for(self._body(receive,body_limit),timeout=15)

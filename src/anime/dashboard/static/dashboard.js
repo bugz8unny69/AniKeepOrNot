@@ -244,9 +244,8 @@ function navigateEpisodeJobs(anidbId, episode) {
   const seriesUrl = '/#series=' + encodeURIComponent(anidbId) +
     '&episode=' + encodeURIComponent(tvdbLabel(episode));
   if (window.history?.replaceState) window.history.replaceState(null, '', seriesUrl);
-  location.assign('/jobs#anidb_id=' + encodeURIComponent(anidbId) +
-    '&season=' + encodeURIComponent(episode.season) +
-    '&episode=' + encodeURIComponent(episode.episode));
+  // The Jobs page went with the per-step jobs: the series view shows its torrents and history.
+  location.assign(seriesUrl);
 }
 function relatedJobsButton(anidbId, episode) {
   const button = node('button', 'Related jobs', 'secondary');
@@ -821,7 +820,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       if (item.job_id) {
         const view = node('button', 'View job', 'secondary');
         view.type = 'button';
-        view.addEventListener('click', () => { location.assign('/jobs#job=' + item.job_id); });
+        view.addEventListener('click', () => { location.assign('/#series=' + encodeURIComponent(anidbId)); });
         action.appendChild(view);
         if (item.can_retry_job || item.can_try_next) {
           for (const [name, label] of [
@@ -1090,7 +1089,7 @@ async function bellAction(item, action, button) {
   try {
     const result = await request(`${API}/notifications/${item.notification_id}/actions/${action}`, {method: 'POST', body: {}});
     closeBell();
-    if (action === 'open_jobs') location.assign('/jobs');
+    if (action === 'open_jobs') location.assign('/running');   // The Jobs page is gone: what runs now.
     else if (action === 'open_job') await openHistory(result.job_id);
     else if (action === 'open_series') await openSeries(result.anidb_id);
     else if (action === 'add_release') {

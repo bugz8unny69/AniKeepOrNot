@@ -132,3 +132,22 @@ class DashboardSeriesApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["episodes"]["S01E01"]["state"], "staged")
         self.assertEqual(data["episodes"]["S01E01"]["file"], "Intake Show/S01E01.mkv")
         self.assertEqual(len(data["torrents"]), 1)
+
+
+class OldJobsPageTests(DashboardSeriesApiTests):
+    """Owner, 2026-11-27: after the upgrade the dashboard looked broken: the open tab was the
+    old Jobs page, removed with the per-step jobs, and it answered a bare 404."""
+
+    async def test_the_old_jobs_page_opens_intake_under_every_address(self):
+        for path, location in (("/jobs", "/"), ("/akon/jobs", "/akon/"), ("/anime-discovery/jobs", "/anime-discovery/")):
+            with self.subTest(path=path):
+                status, _, headers = await self.request("GET", path)
+                self.assertEqual(status, 302)
+                self.assertEqual(headers[b"location"], location.encode())
+        status, _, _ = await self.request("GET", "/")                       # Intake itself is served.
+        self.assertEqual(status, 200)
+
+    async def test_the_dashboard_no_longer_sends_anyone_to_the_jobs_page(self):
+        from pathlib import Path
+        script = (Path(__file__).resolve().parents[1] / "dashboard" / "static" / "dashboard.js").read_text()
+        self.assertNotIn("location.assign('/jobs", script)
