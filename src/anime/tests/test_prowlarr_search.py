@@ -462,3 +462,23 @@ class ProwlarrSettingsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MissingNumbersTests(unittest.TestCase):
+    """Production, 2026-11-27: One Piece (absolute numbering) has no TVDB episode in its target;
+    the reason written for a result that does not match formatted None and stopped the search."""
+
+    def test_a_target_without_a_tvdb_episode_searches_and_reports_unmatched_results(self):
+        class EveryQuery(FakeProwlarr):
+            def __call__(self, request, timeout):
+                self.queries.append(parse_qs(urlsplit(request.full_url).query)['query'][0])
+                return Response([row('[G] Kusuriya no Hitorigoto - 1159 (1080p)', A),       # Another episode.
+                                 row('[G] Kusuriya no Hitorigoto S01 (1080p) [Batch]', B)])  # A pack: no episode.
+        target = EpisodeTarget(None, 'SEARCHABLE', 1160, 99160, absolute_episode=1160)
+        observed = client(EveryQuery(), target).backfill(50, 100, (1160,), select_candidates=True)
+        self.assertEqual([(o.number, o.status) for o in observed], [(1160, 'NO_RESULTS')])
+
+    def test_episode_labels_say_what_is_known(self):
+        from src.anime.acquisition.prowlarr_search import episode_label
+        self.assertEqual([episode_label(1, 5), episode_label(1, None), episode_label(None, 1160), episode_label(None, None)],
+                         ['S01E05', 'S01', 'E1160', 'unknown'])

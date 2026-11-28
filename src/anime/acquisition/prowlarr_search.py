@@ -87,6 +87,21 @@ class SearchTimeout(SearchUnavailable):
                          failed_check=failed_check, failed_path=failed_path)
 
 
+
+def episode_label(season, episode):
+    """S01E05, S01 (a season pack), E1160 (absolute numbering, no season) or 'unknown'.
+
+    Production, 2026-11-27: One Piece's target has no TVDB episode, so formatting
+    S{season:02d}E{None:02d} for a log reason stopped the whole series search.
+    """
+    if season is not None and episode is not None:
+        return f"S{season:02d}E{episode:02d}"
+    if season is not None:
+        return f"S{season:02d}"
+    if episode is not None:
+        return f"E{episode:02d}"
+    return "unknown"
+
 @dataclass(frozen=True)
 class Options:
     base_url: str = field(repr=False)
@@ -596,12 +611,7 @@ class Client:
                                and not any(ord(c) < 32 or ord(c) == 127 for c in title))
                 is_torrent = protocol in ('torrent', None)
                 parsed, parse_reason = read_release(title_clean) if valid_title else (None, 'INVALID_TITLE')
-                episode_hint = None
-                if parsed is not None:
-                    if parsed.season is not None:
-                        episode_hint = f'S{parsed.season:02d}E{parsed.episode:02d}'
-                    else:
-                        episode_hint = f'E{parsed.episode:02d}'
+                episode_hint = episode_label(parsed.season, parsed.episode) if parsed is not None else None
 
                 is_match = valid_title and is_torrent and matches(parsed, prepared, target, season)
                 if not is_match:
@@ -615,7 +625,8 @@ class Client:
                     else:
                         primary_disp = 'UNMATCHED_TITLE_OR_EPISODE'
                         if parsed is not None:
-                            reason = f"parsed episode {episode_hint}; requested S{season:02d}E{target.tvdb_episode:02d}; excluded before policy"
+                            reason = (f"parsed episode {episode_hint}; requested "
+                                      f"{episode_label(season, target.tvdb_episode)}; excluded before policy")
                         else:
                             reason = f"unparseable title ({parse_reason}); excluded before policy"
                     counts_dispositions[primary_disp] = counts_dispositions.get(primary_disp, 0) + 1
