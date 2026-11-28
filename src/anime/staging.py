@@ -98,7 +98,8 @@ def specification(intent,evidence,identity,root,revision,*,display_title=None):
     ids.append(('anidb',episode))
     episode_nfo=nfo('episodedetails',[('title',f'Episode {number}'),('showtitle',shown),('season',effective_season),('episode',number)],
                     ids)
-    entries=[{'role':'media','path':media,'sha256':evidence['sha256'],'size':evidence['file'][2],'text':None},
+    entries=[{'role':'media','path':media,'sha256':evidence['sha256'],'size':evidence['file'][2],'text':None,
+              'content':evidence.get('content')},
              {'role':'episode','path':season_folder+'/'+basename+'.nfo','sha256':hashlib.sha256(episode_nfo).hexdigest(),
               'size':len(episode_nfo),'text':episode_nfo.decode()},
              {'role':'series','path':folder+'/tvshow.nfo','sha256':hashlib.sha256(show).hexdigest(),
@@ -157,6 +158,15 @@ def digest_fd(fd,size,flag):
     return digest.hexdigest(),before
 
 
+def source_matches(fd,source):
+    """The open file is still the recorded source: its size, and its content_id when one was
+    recorded (owner, 2026-11-27: never its mtime, which changes when nothing rewrote it)."""
+    from src.anime.acquisition.media import content_id
+    size=source['file'][2]
+    if os.fstat(fd).st_size!=size:return False
+    return source.get('content') is None or content_id(fd,size)==source['content']
+
+
 def open_regular(folder,name,flags=os.O_RDONLY):
     fd=os.open(name,flags|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder)
     try:signature(os.fstat(fd))
@@ -186,11 +196,10 @@ class Publisher:
             root=stack.enter_context(directory(plan['source_root']))
             folder,name=stack.enter_context(parent(root,plan['source']['path']))
             fd=open_regular(folder,name);stack.callback(os.close,fd)
-            info=signature(os.fstat(fd))
-            # Verification already hashed this video. Its saved device/inode
-            # are not durable across NFS remounts; size and mtime are cheap
-            # content-change indicators for the subsequent staging attempt.
-            if info[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
+            signature(os.fstat(fd))
+            # Still the video verification checked: size and content, never device,
+            # inode or mtime, which a remount or a touch changes.
+            if not source_matches(fd,plan['source']):raise StagingReview()
             return stack,fd
         except BaseException:stack.close();raise
 
@@ -219,11 +228,12 @@ class Publisher:
         self.guard()
         with directory(plan['source_root']) as root:
             with parent(root,plan['source']['path']) as (folder,name):
-                try:info=signature(os.stat(name,dir_fd=folder,follow_symlinks=False))
+                try:fd=open_regular(folder,name)
                 except FileNotFoundError:return
-                # The file's saved size and mtime are sufficient here;
-                # ownership is established by its verified source path.
-                if info[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
+                # Ownership is its verified source path; identity is its size and content.
+                try:
+                    if not source_matches(fd,plan['source']):raise StagingReview()
+                finally:os.close(fd)
                 self.guard();os.unlink(name,dir_fd=folder);os.fsync(folder)
 
     def _copy(self,plan,entry,fd):
@@ -248,7 +258,7 @@ class Publisher:
                         if count<=0:raise StagingUnavailable()
                         view=view[count:]
                 if os.read(source,1):raise StagingReview()
-                if signature(os.fstat(source))[2:4]!=tuple(plan['source']['file'][2:4]):raise StagingReview()
+                if not source_matches(source,plan['source']):raise StagingReview()
                 # Also prove the current absolute source path still resolves to it.
                 latest,latest_fd=self._source(plan)
                 with latest:
@@ -294,9 +304,13 @@ class Publisher:
                             if artifact is not None and artifact['phase']=='PUBLISH_UNCERTAIN':
                                 self.journal.confirm(self.claim,artifact['id'])
                             os.fsync(final);os.fsync(folder)
+                            content=None
+                            if entry['role']=='media':
+                                from src.anime.acquisition.media import content_id
+                                content=content_id(final,info[2])
                             receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
                                 'file':list(info),'sha256':digest,'hash_checked':entry['role']!='media',
-                                'artifact':None if artifact is None else artifact['id']})
+                                'artifact':None if artifact is None else artifact['id'],'content':content})
                             continue
                     finally:os.close(final)
                 # Missing NFOs with confirmed receipts and mismatched existing
@@ -337,8 +351,12 @@ class Publisher:
                             with directory(plan['source_root']) as source_root:
                                 with parent(source_root,plan['source']['path']) as (source_folder,name):
                                     source_info=signature(os.stat(name,dir_fd=source_folder,follow_symlinks=False))
-                                    if (source_info[2:4]!=tuple(plan['source']['file'][2:4])
-                                            or source_info[0]!=folder_sig[0]):raise StagingReview()
+                                    # Same filesystem now (a rename), and still the verified video.
+                                    if source_info[0]!=folder_sig[0]:raise StagingReview()
+                                    check_fd=open_regular(source_folder,name)
+                                    try:
+                                        if not source_matches(check_fd,plan['source']):raise StagingReview()
+                                    finally:os.close(check_fd)
                                     rename_file(source_folder,name,entry['temporary'],target_folder=folder)
                                     os.fsync(folder);os.fsync(source_folder)
                             fd=open_regular(folder,entry['temporary'])
@@ -366,8 +384,13 @@ class Publisher:
                     if after[2:4]!=before[2:4]:raise StagingReview()
                     if artifact['phase'] in ('TEMP','PUBLISH_UNCERTAIN'):
                         self.journal.confirm(self.claim,artifact['id'])
+                    content=None
+                    if entry['role']=='media':
+                        from src.anime.acquisition.media import content_id
+                        content=content_id(fd,after[2])         # What Keep and Reject compare later.
                     receipts.append({'role':entry['role'],'path':entry['path'],'root':folder_sig,
-                        'file':list(after),'sha256':digest,'hash_checked':entry['role']!='media','artifact':artifact['id']})
+                        'file':list(after),'sha256':digest,'hash_checked':entry['role']!='media','artifact':artifact['id'],
+                        'content':content})
                 finally:os.close(fd)
         # Revalidate all published files, including those recovered from an old
         # attempt. No source deletion or broad cleanup is part of staging.

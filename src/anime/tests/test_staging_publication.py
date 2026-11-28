@@ -44,7 +44,8 @@ class StagingPublicationTests(unittest.TestCase):
         base=Path(self.temp.name);source=base/'source';source.mkdir();self.target=base/'staging';self.target.mkdir()
         self.file=source/'episode.mkv';self.file.write_bytes(b'x'*100)
         evidence={'path':self.file.name,'root':root_identity(str(source)),'file':list(signature(self.file.stat())),
-                  'sha256':hashlib.sha256(b'x'*100).hexdigest(),'duration_ms':1440000,'languages':['eng','jpn']}
+                  'sha256':hashlib.sha256(b'x'*100).hexdigest(),'duration_ms':1440000,'languages':['eng','jpn'],
+                  'content':self.content(self.file)}
         intent=SimpleNamespace(options=SimpleNamespace(download_root=str(source)))
         self.plan=specification(intent,evidence,(100,101,200,0,10,201,'Title <& / dangerous>'),str(self.target),1)
         self.plan['root_identity']=root_identity(str(self.target))
@@ -172,6 +173,22 @@ class StagingPublicationTests(unittest.TestCase):
         self.assertEqual(len(receipts),3)
         self.assertEqual(self.video().stat().st_ino,target_inode)
         self.assertFalse(self.file.exists())
+
+    @staticmethod
+    def content(path):
+        from src.anime.acquisition.media import content_id
+        fd=os.open(path,os.O_RDONLY)
+        try:return content_id(fd,os.fstat(fd).st_size)
+        finally:os.close(fd)
+
+    def test_a_touched_source_is_still_the_same_file(self):
+        # Owner, 2026-11-27: mtime moves on files nobody rewrote; size and content decide.
+        expected=self.plan['source']['file']
+        os.utime(self.file,ns=(expected[3]+5*10**9,expected[3]+5*10**9))
+        receipts=self.publisher.publish(self.plan)
+        self.assertEqual(self.video().read_bytes(),b'x'*100)
+        media=next(r for r in receipts if r['role']=='media')
+        self.assertEqual(media['content'],self.content(self.video()))
 
     def test_cleanup_still_rejects_source_modification(self):
         self.file.write_bytes(b'y'*100)

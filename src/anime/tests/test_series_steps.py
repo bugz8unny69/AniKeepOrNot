@@ -184,6 +184,36 @@ class Steps(unittest.TestCase):
         self.assertEqual(self.run_step(download).next_step, 'check_media')
         self.assertEqual(self.torrent['files'][0]['local_path'], '/d/Show/Show - 05.mkv')
 
+    def test_staging_full_holds_a_new_download_until_there_is_room(self):
+        """Owner, 2026-11-27: nothing is downloaded that staging has no room for; it waits instead."""
+        from unittest import mock
+        from src.anime.series_job.steps import download as step
+        from src.anime.series_job.store import get_series, update_series, wake
+        staging = Path(self.configuration.value('storage.database_path')).parent / 'staging'
+        staging.mkdir()
+        self.configuration.values['storage.user_evaluation_root'] = str(staging)
+        save_metainfo(self.configuration, HASH, RAW)
+        gib = 2**30
+        self.torrent.update(step='download', episodes=['S01E05'], qb={'marker': 'a' * 32},
+                            files=[{'index': 1, 'path': 'Show/Show - 05.mkv', 'size': 2 * gib, 'episode': 'S01E05'}])
+        self.series.episodes['S01E05'] = {'state': 'reserved', 'torrent': HASH, 'file': None}
+        # Another series' torrent, started, not staged yet: 3 GB already on its way to staging.
+        wake(self.context.db, 1, 'Other', now=1)
+        other = get_series(self.context.db, 1)
+        other.torrents.append({'infohash': 'c' * 40, 'step': 'check_media', 'state': 'working',
+                               'qb': {'started': True}, 'episodes': ['S01E01'],
+                               'files': [{'size': 3 * gib, 'episode': 'S01E01'}]})
+        update_series(self.context.db, other, now=1)
+        with mock.patch.object(step, 'staging_free', return_value=5 * gib):     # 5 - 3 - 1 margin < 2.
+            result = self.run_step(download)
+        self.assertEqual((result.action, result.why), ('wait', 'STAGING_FULL'))
+        self.assertEqual(self.qb.calls, [])                                     # Nothing added or started.
+        self.assertTrue(any('staging is full' in line for line in self.series.recent))
+        with mock.patch.object(step, 'staging_free', return_value=7 * gib):     # Room now.
+            self.assertEqual(self.run_step(download).action, 'wait')
+        self.assertEqual(self.qb.calls, [('add', 'file')])
+        self.assertIsNone(self.torrent.get('why'))
+
     def test_a_full_disk_waits_then_restarts_the_torrent(self):
         self.torrent.update(step='download', episodes=['S01E05'],
                             qb={'marker': 'a' * 32, 'added': 'sent', 'selected': True, 'started': True},
@@ -297,6 +327,12 @@ class Steps(unittest.TestCase):
         self.assertEqual(json.loads(db.execute('SELECT torrents_json FROM series').fetchone()[0])[0]['files'][0]
                          .get('transcode_attempts'), 1 if transcode else None)   # Saved before the try.
         self.assertFalse(list((base / 'staging' / '.transcode').glob('*')) if transcode else [])
+        # Every staged video has a content id, with transcode on or off (owner, 2026-11-27).
+        from src.anime.acquisition.media import path_content_id
+        files = json.loads(db.execute('SELECT torrents_json FROM series').fetchone()[0])[0]['files'][0]
+        self.assertIsNotNone(self.torrent['files'][0]['media'].get('content'))      # From the media check.
+        self.assertEqual(self.torrent['files'][0]['staged_content'],
+                         path_content_id(str(base / 'staging'), staged, 40 if transcode else 100))
         db.close()
 
 

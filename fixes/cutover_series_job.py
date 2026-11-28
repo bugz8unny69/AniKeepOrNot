@@ -89,6 +89,22 @@ STOPPED_JOB_STATES = frozenset({"NEEDS_REVIEW", "BLOCKED"})
 PROGRAM_ERROR = "JOB_HANDLER_FAILED"
 
 
+OUTAGES = frozenset({"STAGING_BUSY", "STAGING_FULL", "DATABASE_ERROR", "TORRENT_DISK_FULL", "TRANSCODE_WAITING",
+                     "JOB_LEASE_EXPIRED"})
+
+
+def _is_outage(reason_code: str | None) -> bool:
+    """A reason that is an outage, not something wrong with the work: any *_UNAVAILABLE code,
+    the waits above, or a code the catalog marks as retried."""
+    if not reason_code:
+        return False
+    if reason_code.endswith("_UNAVAILABLE") or reason_code in OUTAGES:
+        return True
+    from src.anime.reasons import get_reason
+    known = get_reason(reason_code)
+    return bool(known is not None and known.retryable is True)
+
+
 def services_stopped() -> list[str]:
     """Return list of active service unit names; empty means all stopped."""
     if shutil.which("systemctl") is None:
@@ -254,6 +270,27 @@ def _qb_state_from_batch(db: sqlite3.Connection, plan_id: int) -> dict | None:
 def _torrent_name_from_manifest(manifest_json: str) -> str | None:
     manifest = json.loads(manifest_json)
     return manifest.get("name") or manifest.get("torrent_name")
+
+
+def _content_of_staged(plan: dict, media_path: str, size: int) -> str | None:
+    """content_id of a staged video (owner, 2026-11-27: Keep and Reject compare size and
+    content, not mtime). None when the file is not there or the plan names no root."""
+    from src.anime.acquisition.media import path_content_id
+    root = plan.get("root")
+    if not root:
+        return None
+    found = path_content_id(root, media_path, size)
+    return found or None
+
+
+def _set_staged_content(t: dict, code: str, plan: dict, media_path: str, size: int) -> None:
+    content = _content_of_staged(plan, media_path, size)
+    for f in t["files"]:
+        if f.get("episode") == code:
+            f["staged_content"] = content
+    for e in plan["entries"]:
+        if e["role"] == "media":
+            e["content"] = content
 
 
 def _single_file_entry(
@@ -584,6 +621,7 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
                 evidence_json=evidence_json, staged_file=media_receipt,
             ))
         t.setdefault("staging", {"plans": {}, "artifacts": []})["plans"][code] = plan
+        _set_staged_content(t, code, plan, media_path, media_receipt[2])
         ep_state = "kept" if entry["state"] == "KEPT" else ("dropped" if entry["state"] == "REJECTED" else "staged")
         entry["episodes"][code] = {"state": ep_state, "torrent": info_hash, "file": media_path}
 
@@ -643,6 +681,7 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
                 fentry["local_path"] = ev["path"]
             t["files"].append(fentry)
         t.setdefault("staging", {"plans": {}, "artifacts": []})["plans"][code] = plan
+        _set_staged_content(t, code, plan, media_path, media_receipt[2])
         ep_state = "kept" if entry["state"] == "KEPT" else ("dropped" if entry["state"] == "REJECTED" else "staged")
         entry["episodes"][code] = {"state": ep_state, "torrent": info_hash, "file": media_path}
 
@@ -661,6 +700,11 @@ def inspect_cutover(db: sqlite3.Connection, now_ms: int | None = None) -> dict:
     for job_id, event_id, kind, job_state, payload_json, reason_code, created_ms, updated_ms in unfinished:
         payload = json.loads(payload_json)
         is_stopped = job_state in STOPPED_JOB_STATES or job_state == "FAILED"
+        # Owner, 2026-11-27: an outage never stops work. Needs review for a reason that is an
+        # outage (the catalog says it is retried: staging or a service unreachable, a full
+        # disk) converts as waiting work; the series job waits for it on its own.
+        if is_stopped and job_state != "FAILED" and _is_outage(reason_code):
+            is_stopped = False
         t_state = "stopped" if is_stopped else "waiting"
         why = reason_code if is_stopped else None
 

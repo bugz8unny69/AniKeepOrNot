@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from src.anime.acquisition.cleanup import directory, parent
-from src.anime.acquisition.media import media_fingerprint, signature
+from src.anime.acquisition.media import content_id, media_fingerprint, signature
 from src.anime.async_io import blocking
 from src.anime.storage_mounts import DOWNLOADS, STAGING, uses_storage
 from src.anime.series_job.staging import write_torrent_key
@@ -46,8 +46,9 @@ def transcode_file(context, series, torrent, entry, client=None):
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=folder)
         try:
             before = signature(os.fstat(fd))
-            if before[2:4] != tuple(entry["media"]["file"][2:4]):
-                raise StagingReview("The downloaded file changed after its media check")
+            recorded = entry["media"].get("content")
+            if before[2] != entry["media"]["file"][2] or (recorded is not None and content_id(fd, before[2]) != recorded):
+                raise StagingReview("The downloaded file changed after its media check")   # Size and content.
             source = Path(f"/proc/{os.getpid()}/fd/{fd}")     # The transcoder reads the pinned file.
             spent = entry.get("transcode_attempts", 0)
             try:
@@ -67,9 +68,11 @@ def transcode_file(context, series, torrent, entry, client=None):
     with output.open("rb") as result:
         stat = signature(os.fstat(result.fileno()))
         fingerprint = media_fingerprint(result.fileno(), stat[2], stat)
+        content = content_id(result.fileno(), stat[2])
     with directory(output_root) as base:
         root_sig = [os.fstat(base).st_dev, os.fstat(base).st_ino]
-    return {"path": ".transcode/" + output.name, "file": list(stat), "sha256": fingerprint, "root": root_sig}
+    return {"path": ".transcode/" + output.name, "file": list(stat), "sha256": fingerprint, "content": content,
+            "root": root_sig}
 
 
 @uses_storage(STAGING, DOWNLOADS)       # Writes <staging>/.transcode from the download.

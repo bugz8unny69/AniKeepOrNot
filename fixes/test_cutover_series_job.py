@@ -351,6 +351,9 @@ class CutoverSeriesJobTests(unittest.TestCase):
         self._job(db, 41, "DOWNLOAD_TORRENT", "FAILED", "JOB_HANDLER_FAILED", {"anidb_id": 404}, "5" * 40)
         # FAILED for any other reason: finished (and 080 accepts it); not converted.
         self._job(db, 42, "PREPARE_ACQUISITION", "FAILED", "TORRENT_METADATA_TIMEOUT", {"anidb_id": 404}, "6" * 40)
+        # Needs review for an outage: never a stop; it converts as waiting work.
+        self._job(db, 43, "STAGE_USER_EVALUATION_MEDIA", "NEEDS_REVIEW", "STAGING_UNAVAILABLE", {"anidb_id": 404},
+                  "7" * 40)
         # A rejected series: its held job closes with no torrent.
         db.execute("INSERT INTO identified_anime VALUES(505, 505, 'Show Five')")
         db.execute("INSERT INTO anime_review_decisions(anidb_id, operation_id, job_id, decision, cleanup_state, "
@@ -369,12 +372,13 @@ class CutoverSeriesJobTests(unittest.TestCase):
             applied = cutover.execute_cutover(self.db_path, apply=True)
         self.assertEqual(applied["refused_jobs"], [])
         outcomes = {o["job_id"]: o["outcome"] for o in applied["job_outcomes"]}
-        self.assertEqual(sorted(outcomes), [40, 41, 50, 60])
+        self.assertEqual(sorted(outcomes), [40, 41, 43, 50, 60])
         self.assertEqual(outcomes[50], "closed: series rejected")
 
         db = sqlite3.connect(self.db_path)
         torrents = {t["infohash"]: t for t in get_series(db, 404).torrents}
-        self.assertEqual(sorted(torrents), ["4" * 40, "5" * 40])
+        self.assertEqual(sorted(torrents), ["4" * 40, "5" * 40, "7" * 40])
+        self.assertEqual((torrents["7" * 40]["state"], torrents["7" * 40]["why"]), ("waiting", None))
         self.assertEqual(torrents["4" * 40]["state"], "waiting")
         self.assertEqual((torrents["5" * 40]["state"], torrents["5" * 40]["why"]), ("stopped", "JOB_HANDLER_FAILED"))
         self.assertEqual(get_series(db, 505).torrents, [])

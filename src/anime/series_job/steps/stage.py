@@ -28,7 +28,8 @@ def plan_for(configuration, series, torrent, entry):
     season, number = int(entry["episode"][1:3]), int(entry["episode"][4:])
     identity = (series.anidb_id, entry["anidb_episode_id"], torrent["identity"]["anime"]["tvdb_series_id"],
                 season, number, entry.get("tvdb_episode_id"), series.title)
-    evidence = {"path": entry["path"], "sha256": entry["media"]["sha256"], "file": entry["media"]["file"]}
+    evidence = {"path": entry["path"], "sha256": entry["media"]["sha256"], "file": entry["media"]["file"],
+                "content": entry["media"].get("content")}
     if entry.get("transcoded"):
         # The transcode output in <staging>/.transcode is moved into place; the torrent's copy stays.
         source_root, evidence = root, entry["transcoded"]
@@ -61,7 +62,8 @@ async def stage(series: SeriesRow, torrent: dict, context) -> StepResult:
             plan = plans[entry["episode"]]
             receipts = await blocking(publisher.publish, plan)
             media = next(e["path"] for e in plan["entries"] if e["role"] == "media")
-            entry["staged_file"] = next(r["file"] for r in receipts if r["role"] == "media")   # Keep checks it.
+            receipt = next(r for r in receipts if r["role"] == "media")
+            entry["staged_file"], entry["staged_content"] = receipt["file"], receipt.get("content")   # Keep checks them.
             series.episodes[entry["episode"]] = {"state": "staged", "torrent": torrent["infohash"], "file": media}
             note(series, f"{label} · {entry['episode']} staged: {media}")
     except StagingConfiguration as exc:

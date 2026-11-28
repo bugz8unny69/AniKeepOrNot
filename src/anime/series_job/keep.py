@@ -144,7 +144,10 @@ def sonarr_import(series, keep, context):
             # The staged copy must still be the one staging wrote (its size and time).
             data = {"selection": asdict(selection), "source_file": entry["staged_file"]}
             check_source(data)
-            if _staged_signature(selection)[2:4] != entry["staged_file"][2:4]:
+            # Still the copy staging wrote: its size and content (never its mtime, owner 2026-11-27).
+            from src.anime.acquisition.media import same_content
+            if not same_content(selection.staging_root, selection.media_relative_path, entry["staged_file"][2],
+                                entry.get("staged_content")):
                 raise KeepReview(failed_check=here("STAGED_FILE_CHANGED"))
             record.update(payload=client.import_payload(selection, found, episode), episode_id=episode["id"],
                           source_file=data["source_file"], phase="IMPORT_UNCERTAIN")
@@ -186,14 +189,6 @@ def sonarr_import(series, keep, context):
         series.episodes[code]["state"] = "kept"
         note(series, f"series {series.anidb_id} {series.title} · {code} kept: {record['result']['relative_path']}")
     return None if waiting else "search"
-
-
-def _staged_signature(selection):
-    import os
-    from src.anime.acquisition.cleanup import directory, parent
-    from src.anime.acquisition.media import signature
-    with directory(selection.staging_root) as root, parent(root, selection.media_relative_path) as (folder, name):
-        return list(signature(os.stat(name, dir_fd=folder, follow_symlinks=False)))
 
 
 def search(series, keep, context):
@@ -283,9 +278,6 @@ def jellyfin(series, keep, context):
 
 def cleanup(series, keep, context):
     """Remove AKON's torrents (and their files) and the staged copies Sonarr imported."""
-    import os
-    from src.anime.acquisition.cleanup import directory, parent
-    from src.anime.acquisition.media import signature
     for torrent in series.torrents:
         qb = torrent.get("qb") or {}
         if qb.get("added") and not torrent.get("removed"):
@@ -294,15 +286,37 @@ def cleanup(series, keep, context):
                       if prefix != "akon" else context.torrents.client(context.configuration, qb["marker"]))
             client.remove_series_torrent(torrent["infohash"], qb["marker"])
             torrent["removed"] = True
+    # The staged copies Sonarr imported, with their NFOs; tvshow.nfo and the folders once no
+    # staged episode is left. Same rule as Reject: a path AKON planned, the same content.
+    from src.anime.series_job.reject import remove_staged
+    imported = {code for code, record in keep["imports"].items() if record.get("phase") == "COMPLETE"}
+    left = {code for code, ep in series.episodes.items() if ep.get("state") == "staged"} - imported
+    differ = sum(remove_staged(context.configuration, torrent, imported, series_nfo=not left)
+                 for torrent in series.torrents)
+    # An imported episode with no staging plan behind it: its recorded path, by the same rule.
+    import os
+    from src.anime.acquisition.cleanup import directory, parent
+    from src.anime.acquisition.media import same_content
+    planned = {code for t in series.torrents for code in ((t.get("staging") or {}).get("plans") or {})}
     root = context.configuration.value("storage.user_evaluation_root")
-    for code, record in keep["imports"].items():
+    for code in sorted(imported - planned):
         relative = series.episodes[code]["file"]
-        with directory(root) as base, parent(base, relative) as (folder, name):
-            try:
-                if list(signature(os.stat(name, dir_fd=folder, follow_symlinks=False)))[2:4] == record["source_file"][2:4]:
-                    os.unlink(name, dir_fd=folder)  # Only the copy AKON staged, unchanged.
-            except FileNotFoundError:
-                pass
+        entry = next((f for t in series.torrents for f in t.get("files", []) if f.get("episode") == code
+                      and f.get("staged_file")), None)
+        if entry is None:
+            continue
+        ours = same_content(root, relative, entry["staged_file"][2], entry.get("staged_content"))
+        if ours:
+            with directory(root) as base, parent(base, relative) as (folder, name):
+                try:
+                    os.unlink(name, dir_fd=folder)
+                except FileNotFoundError:
+                    pass
+        elif ours is False:
+            differ += 1
+    if differ:
+        note(series, f"series {series.anidb_id} {series.title} · {differ} staged file(s) differ from what AKON "
+                     "wrote, so they were left in the staging folder")
     note(series, f"series {series.anidb_id} {series.title} · kept; Sonarr owns it")
     return "done"
 

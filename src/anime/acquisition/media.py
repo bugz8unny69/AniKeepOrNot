@@ -76,6 +76,53 @@ def media_fingerprint(fd, size, before, *, sample_size=65536):
     return digest.hexdigest()
 
 
+SAMPLE=65536
+
+
+def content_id(fd, size):
+    """A file's identity that touching it cannot change: its size and three samples of it.
+
+    Owner, 2026-11-27: mtime moved on staged files nobody rewrote, and a remount changes
+    device numbers, so neither may decide whether a file is still the one AKON recorded.
+    SHA-256 of the size, the first, the middle and the last 64 KB: about 200 KB read on
+    any size of video. A replaced, truncated or re-encoded file differs; a touched, copied
+    or remounted one does not. Small files are read whole.
+    """
+    digest=hashlib.sha256(f'akon-content-1:{size}:'.encode())
+    starts=(0,) if size<=3*SAMPLE else (0,size//2-SAMPLE//2,size-SAMPLE)
+    for start in starts:
+        os.lseek(fd,start,os.SEEK_SET)
+        remaining=min(size-start,SAMPLE if size>3*SAMPLE else size)
+        while remaining:
+            chunk=os.read(fd,min(remaining,1024*1024))
+            if not chunk:raise MediaInvalid()
+            digest.update(chunk);remaining-=len(chunk)
+    os.lseek(fd,0,os.SEEK_SET)
+    return digest.hexdigest()
+
+
+def path_content_id(root, relative, size):
+    """content_id of root/relative, opened without following links; None when it is not there."""
+    try:
+        with directory(root) as base, parent(base, relative) as (folder, name):
+            fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder)
+            try:
+                info=os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_size!=size:return False
+                return content_id(fd,size)
+            finally:os.close(fd)
+    except FileNotFoundError:
+        return None
+
+
+def same_content(root, relative, size, recorded):
+    """True when the file is the one recorded: its size, and its content_id when one was
+    recorded (rows from before content_id have only the size). None when it is not there."""
+    found=path_content_id(root,relative,size)
+    if found is None or found is False:return found
+    return recorded is None or found==recorded
+
+
 def cancelled(flag):
     if flag.is_set():raise asyncio.CancelledError()
 
@@ -191,6 +238,7 @@ def verify_path(download_root, relative_path, size, flag, *, read_probe=probe, a
                     before=signature(os.fstat(fd))
                     if before[2]!=size:raise MediaInvalid()
                     media_hash=media_fingerprint(fd,size,before)
+                    content=content_id(fd,size)
                     cancelled(flag)
                     duration,languages=parse_probe(read_probe(fd,flag),PurePosixPath(relative_path).suffix.lower(),audio)
                     cancelled(flag)
@@ -198,7 +246,7 @@ def verify_path(download_root, relative_path, size, flag, *, read_probe=probe, a
                 finally:os.close(fd)
             with parent(root,relative_path) as (latest,leaf):
                 if signature(os.stat(leaf,dir_fd=latest,follow_symlinks=False))!=before:raise MediaInvalid()
-        return {'sha256':media_hash,'duration_ms':duration,'languages':list(languages),
+        return {'sha256':media_hash,'content':content,'duration_ms':duration,'languages':list(languages),
                 'root':list(root_sig),'file':list(before)}
     except CancellationError:
         # The worker stopping: check again later. Otherwise the path left the folder.

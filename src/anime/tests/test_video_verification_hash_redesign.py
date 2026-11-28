@@ -133,7 +133,8 @@ class VideoVerificationHashRedesignTests(unittest.TestCase):
                                    read_probe=lambda *_: probe_bytes())
         self.assertEqual(verified['file'][2], large_size)
         self.assertEqual(verified['languages'], ['eng', 'jpn'])
-        self.assertLessEqual(read_bytes, 65536)
+        # The header fingerprint and the three content_id samples: 256 KB of a 15 MB file.
+        self.assertLessEqual(read_bytes, 4 * 65536)
 
     def test_evidence_has_the_keys_staging_and_keep_read(self):
         large_size = 5 * 1024 * 1024
@@ -141,7 +142,7 @@ class VideoVerificationHashRedesignTests(unittest.TestCase):
             f.write(b'H' * 65536)
             f.truncate(large_size)
         verified = verify_path(str(self.root), 'ep.mkv', large_size, self.flag, read_probe=lambda *_: probe_bytes())
-        self.assertEqual(set(verified), {'root', 'file', 'sha256', 'duration_ms', 'languages'})
+        self.assertEqual(set(verified), {'root', 'file', 'sha256', 'content', 'duration_ms', 'languages'})
         self.assertEqual(verified['file'][2], large_size)
         self.assertEqual(len(verified['sha256']), 64)
         json.dumps(verified)                            # Stored in the series row as JSON.

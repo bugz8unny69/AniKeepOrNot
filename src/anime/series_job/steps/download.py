@@ -9,23 +9,75 @@ Then: select only the chosen files (every other file is skipped), start it,
 and check every POLL_MS until the chosen files are complete. A full download
 disk waits and restarts the torrent once there is room (owner, 2026-11-26);
 any other qBittorrent error drops the torrent with why.
+
+Staging full (owner, 2026-11-27): a torrent starts only when the staging folder has room
+for its files, after everything already on its way there (started, not staged yet). Until
+then it waits (STAGING_FULL) and nothing is downloaded, rather than finding at the end that
+it cannot be staged. A started torrent goes on: its room was counted when it started.
 """
+import json
+import os
+
 from src.anime.acquisition.metadata_service import STOPPED
 from src.anime.series_job.steps.common import StepResult, with_client
 from src.anime.series_job.store import SeriesRow, note
 from src.anime.series_job.torrents import read_metainfo
+from src.anime.storage_mounts import STAGING, uses_storage
 
 POLL_MS = 5000
 DISK_FULL_WAIT_MS = 10 * 60_000                  # A full download disk: check again in 10 minutes.
 DISK_MARGIN_BYTES = 256 * 1024 * 1024            # Room needed beyond what the download still needs.
+STAGING_FULL_WAIT_MS = 10 * 60_000               # Staging full: look again in 10 minutes.
+STAGING_MARGIN_BYTES = 1024 * 1024 * 1024        # Kept free on staging beyond what is on its way.
+ON_ITS_WAY = ("download", "check_media", "transcode", "stage")
 
 
+def _unstaged_bytes(torrent, episodes):
+    return sum(f.get("size", 0) for f in torrent.get("files", [])
+               if (episodes.get(f.get("episode")) or {}).get("state") != "staged")
+
+
+def staging_free(staging_root):
+    """Free bytes on the staging share (in a worker thread: a hard NFS mount can hang)."""
+    info = os.statvfs(staging_root)
+    return info.f_bavail * info.f_frsize
+
+
+def staging_room(db, torrent):
+    """(needed, on its way): this torrent's files, and the files of every other started torrent
+    not staged yet (transcoding can only make them smaller). A local query: the worker's thread."""
+    on_its_way = 0
+    for torrents_json, episodes_json in db.execute(
+            "SELECT torrents_json, episodes_json FROM series WHERE state IN ('WORKING','ASLEEP')"):
+        episodes = json.loads(episodes_json)
+        for other in json.loads(torrents_json):
+            if (other.get("infohash") != torrent["infohash"] and other.get("state") in ("working", "waiting")
+                    and other.get("step") in ON_ITS_WAY and (other.get("qb") or {}).get("started")):
+                on_its_way += _unstaged_bytes(other, episodes)
+    return sum(f.get("size", 0) for f in torrent.get("files", [])), on_its_way
+
+
+@uses_storage(STAGING)     # What can't be staged is not downloaded; a missing mount can't be measured.
 async def download(series: SeriesRow, torrent: dict, context) -> StepResult:
     now, info_hash = context.now, torrent["infohash"]
     qb = torrent["qb"]
     wanted = {f["index"] for f in torrent["files"]}
     label = (f"series {series.anidb_id} {series.title} · {', '.join(torrent['episodes'])} "
              f"{torrent.get('release_name', '')}")
+    staging_root = context.configuration.value("storage.user_evaluation_root")
+    if not qb.get("started") and staging_root:
+        from src.anime.async_io import blocking
+        free = await blocking(staging_free, staging_root)
+        needed, on_its_way = staging_room(context.db, torrent)
+        if free - on_its_way - STAGING_MARGIN_BYTES < needed:
+            if not str(torrent.get("why") or "").startswith("STAGING_FULL"):
+                note(series, f"{label} · waiting: staging is full ({free // 2**20} MB free, "
+                             f"{on_its_way // 2**20} MB already on its way, this needs {needed // 2**20} MB); "
+                             "it starts once Keep or Reject frees room")
+            torrent["why"] = "STAGING_FULL"
+            return StepResult.wait(now + STAGING_FULL_WAIT_MS, why="STAGING_FULL")
+        if torrent.get("why") == "STAGING_FULL":
+            torrent["why"] = None
 
     if qb.get("added") is None:
         raw = read_metainfo(context.configuration, info_hash)

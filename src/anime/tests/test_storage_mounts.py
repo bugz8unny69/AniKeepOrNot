@@ -137,7 +137,8 @@ class StepsDeclareTheirStorageTests(unittest.TestCase):
         from src.anime.storage_mounts import DOWNLOADS, LIBRARY, STAGING
         declared = {name: getattr(step, "storage", ()) for name, step in STEP_HANDLERS.items()}
         self.assertEqual(declared, {
-            "get_metadata": (), "check_release": (), "reserve_episodes": (), "download": (),   # qBittorrent's side.
+            "get_metadata": (), "check_release": (), "reserve_episodes": (),                   # qBittorrent's side.
+            "download": (STAGING,),                                   # Starts only with room in staging.
             "check_media": (DOWNLOADS,), "transcode": (STAGING, DOWNLOADS), "stage": (STAGING, DOWNLOADS)})
         self.assertEqual(run_reject.storage, (STAGING, DOWNLOADS))
         self.assertEqual(run_keep.storage, (STAGING, LIBRARY))
