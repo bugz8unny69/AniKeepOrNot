@@ -37,8 +37,9 @@ container paths to the same underlying folders. Do not mount SQLite on NFS.
 Use dedicated, disjoint roots; do not recursively change permissions on an
 existing library. The worker requires non-root operation for staging.
 
-If using other paths, edit the settings and both `RequiresMountsFor` and
-`ReadWritePaths` in the worker unit. Missing media mounts must be fixed before
+If using other paths, edit the settings and `RequiresMountsFor` in the worker
+unit (the worker writes media by file permissions, not `ReadWritePaths`, so an NFS
+remount needs no restart). Missing media mounts must be fixed before
 starting the worker. Unit examples do not create or mount media shares.
 
 ## Fresh installation

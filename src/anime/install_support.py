@@ -160,10 +160,16 @@ def units(snapshot,root,config_dir,state_dir,user,origin):
         # up or rejected its login; restarting cannot fix it, so do not loop.
         no_restart='RestartPreventExitStatus=78\n' if media else ''
         runtime='' if media else 'Environment=AKON_ADMIN_SOCKET=/run/akon/admin.sock\nRuntimeDirectory=akon\nRuntimeDirectoryMode=0700\n'
+        # Owner, 2026-11-28: the worker's media is NFS. ProtectSystem=strict with the media in
+        # ReadWritePaths pins each share to the mount there when the worker started; a remount
+        # (or an NFS submount that expired and came back) is then read-only to the worker until
+        # it restarts. 'full' keeps /usr, /boot and /etc read-only and leaves the media to file
+        # permissions, so the worker sees the mounts as they are now.
+        protect='full' if media else 'strict'
         return (f'[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=5\nDescription={APP_NAME} '+label+'\nPartOf=akon.target\nWants=network-online.target\nAfter=network-online.target remote-fs.target\n'+dependencies+mounts+
             '\n[Service]\nType=notify\nNotifyAccess=main\nWatchdogSec=60s\n'+runtime+'User='+user+'\nGroup='+user+'\nWorkingDirectory='+current.replace('%','%%')+
-            '\nEnvironment=PYTHONUNBUFFERED=1\nExecStart='+command+'\nRestart=on-failure\nRestartSec=10\n'+no_restart+'KillMode=mixed\nTimeoutStopSec=infinity\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths='+
-            ' '.join(quoted(p) for p in dict.fromkeys(base+(roots if media else [])))+'\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n')
+            '\nEnvironment=PYTHONUNBUFFERED=1\nExecStart='+command+'\nRestart=on-failure\nRestartSec=10\n'+no_restart+'KillMode=mixed\nTimeoutStopSec=infinity\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem='+protect+'\nReadWritePaths='+
+            ' '.join(quoted(p) for p in dict.fromkeys(base))+'\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n')
     return {'akon-api.service':service('API',api),
         'akon-worker.service':service('worker',worker,True),
         'akon.target':f'[Unit]\nDescription={APP_NAME}\nWants=akon-api.service akon-worker.service\nAfter=network-online.target remote-fs.target\n\n[Install]\nWantedBy=multi-user.target\n'}

@@ -86,6 +86,13 @@ class InstallerSupportTests(unittest.TestCase):
         self.assertNotIn('RestartPreventExitStatus',rendered['akon-api.service'])
         self.assertIn('RuntimeDirectoryMode=0700',rendered['akon-api.service'])
         self.assertIn('AKON_ADMIN_SOCKET=',rendered['akon-api.service'])
+        # A remount of the NFS media must not leave it read-only to the running worker.
+        worker=rendered['akon-worker.service']
+        self.assertIn('ProtectSystem=full\n',worker)
+        self.assertIn('ProtectSystem=strict\n',rendered['akon-api.service'])
+        rw=next(line for line in worker.splitlines() if line.startswith('ReadWritePaths='))
+        for media in ('/mnt/downloads','/mnt/staging','/mnt/Anime Library'):self.assertNotIn(media,rw)
+        self.assertIn(str(self.config),rw)
 
     def test_rendered_units_pass_systemd_parser(self):
         import shutil
