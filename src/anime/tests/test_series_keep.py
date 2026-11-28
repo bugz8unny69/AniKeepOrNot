@@ -163,6 +163,23 @@ class KeepTests(unittest.TestCase):
         self.attempt(10**13)                              # and the series is kept.
         self.assertEqual(get_series(self.db, 18162).state, 'KEPT')
 
+    def test_shoko_is_not_asked_for_kept_files_sonarr_has_since_replaced(self):
+        # Owner, 2026-11-28: Sonarr upgraded the kept episodes minutes after the import; Shoko
+        # was asked for the deleted files for 30 minutes.
+        from src.anime.series_job.keep import kept_files
+        keep_series_sync(self.db, 18162, now=10)
+        self.db.commit()
+        self.attempt(100)
+        self.sonarr.command = 'completed'
+        self.attempt(10**13)
+        series = get_series(self.db, 18162)
+        record = series.work['keep']['imports']['S01E05']
+        record['result']['episode_file_id'] = 9
+        self.assertEqual(kept_files(series, {55: 9}), [('Dungeon People/S01E05.mkv', 281728)])   # Still Sonarr's.
+        self.assertEqual(kept_files(series, {55: 12}), [])            # Upgraded: a new file.
+        self.assertEqual(kept_files(series, {55: 0}), [])             # Deleted.
+        self.assertEqual(len(kept_files(series)), 1)                  # adm shoko: every imported file.
+
 
 if __name__ == '__main__':
     unittest.main()

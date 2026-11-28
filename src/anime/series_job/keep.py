@@ -220,12 +220,24 @@ def search(series, keep, context):
     return "shoko"
 
 
-def kept_files(series):
-    """(path in the library, AniDB episode ID) of every file Keep imported."""
+def kept_files(series, still_there=None):
+    """(path in the library, AniDB episode ID) of every file Keep imported.
+
+    still_there: {Sonarr episode ID: its episode file ID now}. A file Sonarr has since
+    replaced (an upgrade) is left out: it is gone, and Sonarr's new file is Shoko's own
+    to find (owner, 2026-11-28: Shoko waited 30 minutes for files Sonarr had deleted)."""
     return [(record["result"]["relative_path"], next(
         f["anidb_episode_id"] for t in series.torrents for f in t.get("files", []) if f.get("episode") == code
         and t["infohash"] == series.episodes[code]["torrent"]))
-        for code, record in sorted(series.work["keep"]["imports"].items()) if record.get("phase") == "COMPLETE"]
+        for code, record in sorted(series.work["keep"]["imports"].items()) if record.get("phase") == "COMPLETE"
+        and (still_there is None or still_there.get(record["episode_id"]) == record["result"]["episode_file_id"])]
+
+
+def sonarr_files(context, series):
+    """{Sonarr episode ID: episode file ID} for the kept series, as Sonarr has them now."""
+    client, _ = _sonarr(context, series)
+    rows = client.request("episode", query={"seriesId": series.work["keep"]["sonarr"]["series_id"]})
+    return {row.get("id"): row.get("episodeFileId") for row in rows or ()}
 
 
 def shoko(series, keep, context):
@@ -233,8 +245,13 @@ def shoko(series, keep, context):
     from src.anime.shoko import Shoko
     if not context.configuration.value("shoko.base_url"):
         return "dubs"
-    linked, no_file, no_episode = link_files(Shoko(context.configuration, context.secrets), series.anidb_id,
-                                             kept_files(series))
+    files = kept_files(series, sonarr_files(context, series))
+    replaced = len(kept_files(series)) - len(files)
+    if replaced and not keep.get("shoko", {}).get("replaced"):
+        keep.setdefault("shoko", {"since_ms": context.now})["replaced"] = replaced
+        note(series, f"series {series.anidb_id} {series.title} · Shoko: {replaced} kept file(s) Sonarr has since "
+                     "replaced (upgrades) are left to Shoko to find")
+    linked, no_file, no_episode = link_files(Shoko(context.configuration, context.secrets), series.anidb_id, files)
     state = keep.setdefault("shoko", {"since_ms": context.now})
     state["linked"] = state.get("linked", 0) + linked
     if not no_file and not no_episode:
