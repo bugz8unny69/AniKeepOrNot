@@ -31,6 +31,10 @@ class RenameToAkonTests(unittest.TestCase):
             },
             "qbittorrent": {"base_url": "http://qb.test", "category": "anime-discovery"},
         })
+        # Production, 2026-11-27: an old conversion's backup, a settings.json with no schema version.
+        backup = etc / ".settings-backup-1bf1f1507bfe48ae85c5e029265b6cf6"
+        backup.mkdir()
+        (backup / "settings.json").write_text('{"worker": {"concurrency": 1}}')
         secrets = SecretStore(dev_cfg)
         secrets.initialize("tvdb-key")
         secrets.update_qbittorrent_credentials("admin", "pw", expected_revision=1)
@@ -132,6 +136,11 @@ class RenameToAkonTests(unittest.TestCase):
             self.assertEqual(["usermod", "-d", "/var/lib/akon", "akon"], cmds[6])    # Its home moves with the data.
             self.assertFalse((root / "etc/anime-discovery").exists())
             self.assertTrue((root / "etc/akon").exists())
+            # Only the live branch's settings change; the backup and the other copies are left.
+            self.assertEqual((root / "etc/akon/.settings-backup-1bf1f1507bfe48ae85c5e029265b6cf6/settings.json").read_text(),
+                             '{"worker": {"concurrency": 1}}')
+            self.assertEqual(ConfigurationStore(root / "etc/akon/branches/refactor").read().value("storage.database_path"),
+                             "/var/lib/anime-discovery/anime-discovery-refactor.sqlite")
             self.assertFalse((root / "var/lib/anime-discovery").exists())
             self.assertTrue((root / "var/lib/akon").exists())
             self.assertTrue((root / "var/lib/akon/akon-develop.sqlite").is_file())
@@ -164,6 +173,22 @@ class RenameToAkonTests(unittest.TestCase):
             adm_text = (root / "usr/local/bin/adm").read_text()
             self.assertIn("AKON_CONFIG_DIR=/etc/akon/branches/develop", adm_text)
             self.assertFalse((root / "usr/local/bin/anime-discovery-admin").exists())
+
+    def test_settings_it_cannot_read_stop_it_before_anything_changes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self._build_prod_layout(root)
+            (root / "etc/anime-discovery/branches/develop/settings.json").write_text('{"schema_version": "broken"}')
+            cmds = []
+
+            def fake_exec(cmd, *, check=True):
+                cmds.append(cmd)
+                return subprocess.CompletedProcess(cmd, 3 if cmd[:2] == ["systemctl", "is-active"] else 0, "", "")
+            with self.assertRaises(Exception):
+                rename_to_akon(prefix=root, apply=True, execute=fake_exec, out=lambda line: None)
+            self.assertFalse(any(c[0] in ("usermod", "groupmod") for c in cmds))      # Nothing renamed.
+            self.assertTrue((root / "etc/anime-discovery").is_dir())
+            self.assertFalse((root / "etc/akon").exists())
 
     def test_failure_in_middle_prints_undo_steps(self):
         with tempfile.TemporaryDirectory() as tmp:

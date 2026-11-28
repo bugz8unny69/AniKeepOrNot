@@ -137,6 +137,17 @@ def rename_to_akon(
         "qb_renamed": [],
     }
 
+    # Read everything first, so a file that can't be read stops the rename before it changes
+    # anything (production, 2026-11-27: a backup's settings.json without a schema version
+    # failed it after the user and /etc had been renamed).
+    live_settings = etc_old / "branches" / "develop"
+    if not (live_settings / "settings.json").is_file():
+        raise FileNotFoundError(f"Live settings not found: {live_settings / 'settings.json'}")
+    live = ConfigurationStore(live_settings).read()
+    if live.value("qbittorrent.base_url"):
+        SecretStore(live_settings).qbittorrent_credentials()
+    out(f"Checked: {live_settings}/settings.json (revision {live.revision}) and its qBittorrent credentials")
+
     if not apply:
         for s in plan["steps"]:
             out(f"[dry-run] {s}")
@@ -158,7 +169,9 @@ def rename_to_akon(
         # 2. Settings
         shutil.move(str(etc_old), str(etc_new))
         undo.append(f"mv {etc_new} {etc_old}")
-        for settings_file in sorted(etc_new.rglob("settings.json")):
+        # Only the live branch's settings: the other copies (other branches, the old top-level
+        # settings, backups) are not used and may be versions this release does not read.
+        for settings_file in [etc_new / "branches" / "develop" / "settings.json"]:
             branch_dir = settings_file.parent
             store = ConfigurationStore(branch_dir)
             snap = store.read()
@@ -169,7 +182,7 @@ def rename_to_akon(
                 updates.setdefault("qbittorrent", {})["category"] = "akon"
             if updates:
                 store.update(updates, expected_revision=snap.revision)
-        out(f"2. Moved settings {etc_old} -> {etc_new} and updated database_path/category")
+        out(f"2. Moved settings {etc_old} -> {etc_new} and updated the develop branch's database_path/category")
 
         # 3. Data
         _checkpoint_sqlite(var_old / old_db_name)
