@@ -62,12 +62,44 @@ def _adm_script(root: str, config_dir: str) -> str:
     )
 
 
+# Owner, 2026-11-27: only the live branch's settings and secrets stay; the rest goes.
+LIVE_BRANCH = "develop"
+LIVE_FILES = ("settings.json", "secrets.json", "management-password.json", ".settings.lock", ".management-password.lock")
+
+
+def settings_to_remove(etc: Path) -> list[Path]:
+    """Everything under the settings folder except the live branch's own files: other
+    branches, the old top-level settings and secrets, backups and .bak copies."""
+    keep_dir = etc / "branches" / LIVE_BRANCH
+    found = []
+    for path in sorted(etc.iterdir()):
+        if path.name != "branches":
+            found.append(path)
+    branches = etc / "branches"
+    if branches.is_dir():
+        for path in sorted(branches.iterdir()):
+            if path != keep_dir:
+                found.append(path)
+    if keep_dir.is_dir():
+        found += [path for path in sorted(keep_dir.iterdir()) if path.name not in LIVE_FILES]
+    return found
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def _rewrite_installer_json(installer_json: Path, *, branches_map: dict, config_dir: str,
                             old_root: str, new_root: str, old_cfg: str, new_cfg: str,
                             new_state: str):
     doc = json.loads(installer_json.read_text())
     new_branches = {}
     for ref, entry in (doc.get("branches") or {}).items():
+        if ref != LIVE_BRANCH:
+            continue                                   # Its settings are removed: not a branch any more.
         cfg = entry.get("config_dir", "")
         if cfg.startswith(old_cfg):
             cfg = new_cfg + cfg[len(old_cfg):]
@@ -133,6 +165,8 @@ def rename_to_akon(
             "retag & recategorize qBittorrent torrents in place (ad-<m> -> akon-<m>, category -> akon), set qb.prefix='ad', update qbittorrent.category='akon'",
             f"rewrite {var_new / 'installer/installer.json'} for /opt/akon, /etc/akon, /var/lib/akon, user akon",
             f"update {bin_dir / 'adm'} (AKON_CONFIG_DIR=/etc/akon/branches/develop) and remove anime-discovery-admin",
+            f"keep only the {LIVE_BRANCH} branch's settings and secrets in {etc_new}; remove the rest:",
+            *(f"    remove {etc_new / p.relative_to(etc_old)}" for p in settings_to_remove(etc_old)),
         ],
         "qb_renamed": [],
     }
@@ -271,6 +305,13 @@ def rename_to_akon(
         legacy_admin = bin_dir / "anime-discovery-admin"
         legacy_admin.unlink(missing_ok=True)
         out(f"6. Updated {adm_path} and removed legacy admin command")
+
+        # 7. Last, once everything else worked: only the live settings and secrets stay.
+        removed = settings_to_remove(etc_new)
+        for path in removed:
+            _remove(path)
+        out(f"7. Kept only {etc_new / 'branches' / LIVE_BRANCH} ({', '.join(LIVE_FILES)}); removed {len(removed)} other "
+            "settings, secrets and backups")
 
         return plan
     except BaseException:

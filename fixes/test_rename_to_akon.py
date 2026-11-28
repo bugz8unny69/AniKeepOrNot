@@ -136,11 +136,13 @@ class RenameToAkonTests(unittest.TestCase):
             self.assertEqual(["usermod", "-d", "/var/lib/akon", "akon"], cmds[6])    # Its home moves with the data.
             self.assertFalse((root / "etc/anime-discovery").exists())
             self.assertTrue((root / "etc/akon").exists())
-            # Only the live branch's settings change; the backup and the other copies are left.
-            self.assertEqual((root / "etc/akon/.settings-backup-1bf1f1507bfe48ae85c5e029265b6cf6/settings.json").read_text(),
-                             '{"worker": {"concurrency": 1}}')
-            self.assertEqual(ConfigurationStore(root / "etc/akon/branches/refactor").read().value("storage.database_path"),
-                             "/var/lib/anime-discovery/anime-discovery-refactor.sqlite")
+            # Owner, 2026-11-27: only the live branch's settings and secrets stay.
+            self.assertEqual(sorted(p.name for p in (root / "etc/akon").iterdir()), ["branches"])
+            self.assertEqual(sorted(p.name for p in (root / "etc/akon/branches").iterdir()), ["develop"])
+            self.assertTrue({"settings.json", "secrets.json"} <= {p.name for p in (root / "etc/akon/branches/develop").iterdir()})
+            self.assertEqual(SecretStore(root / "etc/akon/branches/develop").qbittorrent_credentials().username, "admin")
+            installer = json.loads((root / "var/lib/akon/installer/installer.json").read_text())
+            self.assertEqual(installer["branches"], {"develop": {"config_dir": "/etc/akon/branches/develop"}})
             self.assertFalse((root / "var/lib/anime-discovery").exists())
             self.assertTrue((root / "var/lib/akon").exists())
             self.assertTrue((root / "var/lib/akon/akon-develop.sqlite").is_file())
