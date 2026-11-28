@@ -22,7 +22,7 @@ class SeriesContext:
     claim: object = None            # The series lease (staging writes its records under it)
     secrets: object = None          # For the transcoder's agent token
     transcoder: object = None       # Tests only: a stand-in for services.transcode.transcode
-    catalog: object = None          # AniDB episode -> TVDB placement, for the backfill search
+    catalogs: object = None         # configuration -> catalog (AniDB episode -> TVDB placement), for the backfill search
 
 
 def build(secrets, cancelled):
@@ -45,8 +45,9 @@ def build(secrets, cancelled):
                            batch_verifier=make_batch_verifier(options_from_configuration, credentials,
                                                               read_saved, client_pool=pool))
     from src.anime.providers.backfill_catalog import make_catalog_factory
-    context = SeriesContext(verify=verify, torrents=Torrents(secrets), cancelled=cancelled, secrets=secrets)
+    # A factory, not a catalog: each attempt is a copy of this context with its own settings,
+    # and builds its catalog from them (search.py). A closure over this context would see
+    # the settings of none of them.
     catalogs = make_catalog_factory(options_from_configuration, credentials, client_pool=pool)
-    # The catalog follows the current settings: rebuilt from them on each use.
-    context.catalog = lambda aid, tid: catalogs(context.configuration)(aid, tid)
-    return context
+    return SeriesContext(verify=verify, torrents=Torrents(secrets), cancelled=cancelled, secrets=secrets,
+                         catalogs=catalogs)

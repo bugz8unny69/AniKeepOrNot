@@ -85,7 +85,8 @@ async def run_search(series, context):
     if search["due_ms"] > context.now:
         return search["due_ms"]
     try:
-        prowlarr = Prowlarr.from_context(context.configuration, context.secrets, catalog=context.catalog)
+        catalog = context.catalogs(context.configuration) if context.catalogs else None
+        prowlarr = Prowlarr.from_context(context.configuration, context.secrets, catalog=catalog)
         await blocking(run, series, context, prowlarr)
     except SearchConfiguration:
         search["due_ms"] = context.now + SETUP_WAIT_MS
