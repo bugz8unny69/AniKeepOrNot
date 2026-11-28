@@ -211,12 +211,11 @@ def search(series, keep, context):
         context.checkpoint()                       # Recorded before it is sent: one search per Keep.
         client, _ = _sonarr(context, series)
         try:
-            client.search(keep["sonarr"]["series_id"])
-            keep["search"] = "SENT"
+            keep["search"] = "SENT" if client.search(keep["sonarr"]["series_id"]) else "NOTHING_MISSING"
         except (KeepReview, KeepUnavailable):
             keep["search"] = "FAILED"              # Never fails the Keep; Sonarr searches on its own too.
         note(series, f"series {series.anidb_id} {series.title} · Sonarr search for missing episodes: "
-                     f"{keep['search'].lower()}")
+                     f"{keep['search'].lower().replace('_', ' ')}")
     return "shoko"
 
 

@@ -184,20 +184,29 @@ class Client:
         return body
 
     def search(self,series_id):
-        """Ask Sonarr once to search the series' monitored missing episodes."""
-        reply=self.request('command',body={'name':'SeriesSearch','seriesId':series_id})
+        """Ask Sonarr once to search the series' missing episodes, and only those; None when none are.
+
+        Owner, 2026-11-28: a SeriesSearch also searches every episode below the profile's cutoff,
+        so Sonarr replaced each episode AKON had just imported (HDTV-1080p, under Anime's
+        Bluray-1080p cutoff) minutes after the Keep."""
+        ids=sorted(row['id'] for row in self._missing(series_id))
+        if not ids:return None
+        reply=self.request('command',body={'name':'EpisodeSearch','episodeIds':ids})
         if type(reply.get('id')) is not int or reply['id']<=0:raise KeepReview()
         return reply['id']
 
-    def missing_episodes(self,series_id):
-        """(season, episode) Sonarr wants: monitored, aired, no file, not already downloading."""
+    def _missing(self,series_id):
         import datetime
         now=datetime.datetime.now(datetime.timezone.utc).isoformat()
         queued=self.request('queue',query={'seriesIds':series_id,'pageSize':1000})
         busy={record.get('episodeId') for record in queued.get('records') or ()}
-        return {(row['seasonNumber'],row['episodeNumber']) for row in self.request('episode',query={'seriesId':series_id})
+        return [row for row in self.request('episode',query={'seriesId':series_id})
                 if row.get('monitored') and not row.get('hasFile') and row['seasonNumber']>0
-                and (row.get('airDateUtc') or '9') <= now and row.get('id') not in busy}
+                and (row.get('airDateUtc') or '9') <= now and row.get('id') not in busy]
+
+    def missing_episodes(self,series_id):
+        """(season, episode) Sonarr wants: monitored, aired, no file, not already downloading."""
+        return {(row['seasonNumber'],row['episodeNumber']) for row in self._missing(series_id)}
 
     def push_release(self,title,magnet,info_hash,indexer,size,seeders):
         """Give Sonarr a release it would not find itself. Returns Sonarr's rejections ([] = grabbed)."""
