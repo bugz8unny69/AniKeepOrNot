@@ -16,7 +16,7 @@ from src.anime.tests import test_installer as base
 
 installer = base.installer
 
-UNIT = 'anime-discovery-api.service'
+UNIT = 'akon-api.service'                 # After the rename (RN-1).
 
 
 class ReleaseLayoutTests(base.InstallerOrchestrationTests):
@@ -134,7 +134,7 @@ class ReleaseLayoutTests(base.InstallerOrchestrationTests):
         with self.patches():
             installer.rollback(self.options, self.args, self.rollback_execute())
         launcher = (self.command.parent / 'adm').read_text()
-        self.assertIn('ANIME_DISCOVERY_CONFIG_DIR='+previous_config+'\n', launcher)
+        self.assertIn('AKON_CONFIG_DIR='+previous_config+'\n', launcher)
         self.assertEqual(os.readlink(self.root / 'current'), str(old))
 
     def test_rollback_refuses_when_the_database_is_too_new_for_the_previous_release(self):
@@ -246,7 +246,7 @@ class BranchUpgradeTests(base.InstallerOrchestrationTests):
         self.assertEqual(fetch[-1], 'refactor')                                  # The new branch was fetched.
         saved = json.loads((self.state / 'installer' / 'installer.json').read_text())
         self.assertEqual(saved['ref'], 'refactor')                               # Later upgrades keep it.
-        self.assertIn('ANIME_DISCOVERY_CONFIG_DIR='+self.options['config_dir']+'\n',
+        self.assertIn('AKON_CONFIG_DIR='+self.options['config_dir']+'\n',
                       (self.command.parent / 'adm').read_text())
         # Service files are rewritten from the new release, the old ones backed up.
         self.assertEqual((self.unitdir / UNIT).read_text(), '[Unit]\nDescription=Test\n')

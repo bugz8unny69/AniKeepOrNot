@@ -217,9 +217,14 @@ class AniDBScoringUnitTests(unittest.TestCase):
 
 class AniDBScoringIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.db_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        # A real file: identification opens the configured database itself (hand matches,
+        # recognized seasons), so an in-memory one is a different, empty database.
+        import tempfile
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.db_path = folder.name + "/akon.sqlite"
+        self.db_conn = sqlite3.connect(self.db_path, check_same_thread=False)
         initialize(self.db_conn)
-        self.db_path = ":memory:"
 
     def tearDown(self):
         self.db_conn.close()

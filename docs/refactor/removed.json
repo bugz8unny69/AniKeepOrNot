@@ -37,13 +37,6 @@
       "why": "Nothing referenced it; configuration validates audio modes itself."
     },
     {
-      "id": "RF-003 D6",
-      "kind": "constant",
-      "module": "src.anime.storage.prowlarr_snapshots",
-      "name": "MAX_INDEXER_LEN",
-      "why": "Nothing referenced it."
-    },
-    {
       "id": "1c785beb A1",
       "kind": "constant",
       "module": "src.anime.acquisition.metadata_service",
@@ -200,14 +193,6 @@
   ],
   "renamed": [
     {
-      "id": "1c785beb A5",
-      "kind": "class",
-      "module": "src.anime.storage.batch_candidates",
-      "old": "CandidateConflict",
-      "new": "BatchCandidateConflict",
-      "why": "storage/sonarr_candidates.py has its own, different CandidateConflict."
-    },
-    {
       "id": "RF-005",
       "kind": "class",
       "module": "src.anime.user_evaluation_policy",
@@ -230,70 +215,6 @@
       "old": "TrialSource",
       "new": "UserEvaluationSource",
       "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "class",
-      "module": "src.anime.batch.user_evaluation",
-      "old": "BatchTrialSource",
-      "new": "BatchUserEvaluationSource",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "class",
-      "module": "src.anime.batch.user_evaluation",
-      "old": "BatchTrialProposal",
-      "new": "BatchUserEvaluationProposal",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "function",
-      "module": "src.anime.batch.user_evaluation",
-      "old": "propose_batch_trial",
-      "new": "propose_batch_user_evaluation",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "function",
-      "module": "src.anime.storage.user_evaluations",
-      "old": "persist_trial",
-      "new": "persist_user_evaluation",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "function",
-      "module": "src.anime.storage.user_evaluations",
-      "old": "load_trial_source",
-      "new": "load_user_evaluation_source",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "function",
-      "module": "src.anime.storage.batch_user_evaluations",
-      "old": "persist_batch_trial",
-      "new": "persist_batch_user_evaluation",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "function",
-      "module": "src.anime.storage.batch_user_evaluations",
-      "old": "load_batch_trial_source",
-      "new": "load_batch_user_evaluation_source",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
-    },
-    {
-      "id": "RF-005",
-      "kind": "function",
-      "module": "src.anime.batch.window",
-      "old": "plan_batch_trial_window",
-      "new": "plan_batch_user_evaluation_window",
-      "why": "\"Trial\" is now \"user evaluation\" (owner decision, 2026-11-04)."
     }
   ],
   "text": [
@@ -305,15 +226,6 @@
         "src/anime/acquisition/metadata_service.py"
       ],
       "why": "qBittorrent's stopped states have one definition: import STOPPED from acquisition.metadata_service."
-    },
-    {
-      "id": "1c785beb A2",
-      "rule": "not_in",
-      "pattern": "sqlite_master",
-      "files": [
-        "src/anime/storage/batch_candidates.py"
-      ],
-      "why": "Connections have passed the schema-version check, so the batch tables exist; a probe only hides a broken database."
     },
     {
       "id": "RF-006a",
@@ -368,9 +280,7 @@
       "id": "JD-1c",
       "rule": "only_in",
       "pattern": "(?:INSERT INTO|UPDATE|DELETE FROM) resource(?:s|_operations)\\b",
-      "files": [
-        "src/anime/resources.py"
-      ],
+      "files": [],
       "why": "Only the resources interface writes the resources records (JD-1c)."
     },
     {

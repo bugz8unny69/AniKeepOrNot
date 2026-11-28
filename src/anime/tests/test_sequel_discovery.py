@@ -15,11 +15,34 @@ from src.anime.storage.migrations import LATEST_VERSION
 RELEASE = "[Dyna] Higurashi When They Cry S02 (BD 1080p AVC Opus 2.0) [Dual Audio] | Higurashi Sotsu"
 
 
+_DATABASE = None
+
+
+def _database():
+    """One empty, current database for the module: identification reads hand matches and
+    recognized seasons from it (there are none here), so it must exist."""
+    global _DATABASE
+    if _DATABASE is None:
+        import atexit, shutil, sqlite3, tempfile
+        from src.anime.storage.sqlite import initialize
+        folder = tempfile.mkdtemp(prefix="sequel-discovery-")
+        atexit.register(shutil.rmtree, folder, True)
+        _DATABASE = folder + "/akon.sqlite"
+        db = sqlite3.connect(_DATABASE)
+        initialize(db)
+        db.close()
+    return _DATABASE
+
+
 class Configuration:
+    values = {"identity.match_threshold_pct": 90}
+
     def value(self, name):
-        if name != "storage.database_path":
-            raise AssertionError(name)
-        return "/nonexistent/nextgen-test.db"
+        if name == "storage.database_path":
+            return _database()
+        if name in self.values:
+            return self.values[name]
+        raise AssertionError(name)
 
 
 class Delivery:

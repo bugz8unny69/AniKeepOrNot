@@ -339,7 +339,7 @@ class CheckerTests(unittest.TestCase):
         self.assertIsNone(REPO.resolve('src.anime.acquisition.audio.dual_audio_tagged'))
         missing = '.'.join(('src.anime.acquisition.audio', 'no_such_name'))  # Not a literal: the scan reads this file.
         self.assertEqual(REPO.resolve(missing), "src.anime.acquisition.audio has no 'no_such_name'")
-        self.assertIsNone(REPO.resolve('src.anime.storage.batch_candidates'))
+        self.assertIsNone(REPO.resolve('src.anime.series_job.store'))
         self.assertIn('no module', REPO.resolve('srcx.missing'))
 
     def test_definitions_include_functions_and_methods(self):

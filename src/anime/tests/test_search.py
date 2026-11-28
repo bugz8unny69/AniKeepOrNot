@@ -93,7 +93,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item['anidb_id'] for item in data['items']], [1001])
         self.assertEqual(set(data['items'][0]),
                          {'anidb_id', 'title', 'state', 'wake_at_ms', 'updated_at_ms', 'episodes',
-                          'torrents_active', 'torrents_stopped', 'keep'})
+                          'torrents_active', 'torrents_stopped', 'keep', 'stopped'})   # stopped: a program error.
         status, data = await self.search('scope=intake&q=dan')
         self.assertEqual([item['anidb_id'] for item in data['items']], [1002])
         status, data = await self.search('scope=intake&q=frieren')

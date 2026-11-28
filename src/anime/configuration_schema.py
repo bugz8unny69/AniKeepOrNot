@@ -38,7 +38,9 @@ def _source_url(value):
             raise ValueError()
         return authority+path
     except (ValueError, TypeError, AttributeError):
-        raise MetadataSourceConfigurationError() from None
+        # Its caller makes this a ConfigurationError. (The error class it raised lived in a
+        # module the series job removed, so an invalid URL raised NameError instead.)
+        raise ValueError('invalid metadata source URL') from None
 
 class ConfigurationError(ValueError):
     reason_code = "CONFIGURATION_INVALID"

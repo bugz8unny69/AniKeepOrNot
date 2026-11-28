@@ -1,4 +1,4 @@
-"""The production worker enables backfill acquisition without an extra flag."""
+"""The worker command: the series worker, with no acquisition flags."""
 import unittest
 from unittest.mock import patch
 
@@ -12,19 +12,13 @@ class BackfillWorkerCliTests(unittest.TestCase):
                                  '--sonarr-acquire'])
         self.assertEqual(error.exception.code, 2)
 
-    def test_default_worker_enables_backfill_acquisition(self):
+    def test_the_worker_command_runs_the_series_worker_with_no_flags(self):
+        """The series job runs its own trial and backfill searches: no option switches them on."""
         calls = []
 
-        async def serve(config_dir, **options):
-            calls.append(options)
+        async def run(config_dir):
+            calls.append(config_dir)
 
-        with patch('src.anime.__main__.check_local'), patch(
-            'src.anime.providers.configuration.run_identity_worker', new=serve
-        ):
+        with patch('src.anime.__main__.check_local'), patch('src.anime.worker.run_worker', new=run):
             self.assertEqual(main(['worker', '--config-dir', '/test/config']), 0)
-
-        self.assertEqual(calls, [{
-            'backfill': True,
-            'backfill_select': True,
-            'backfill_acquire': True,
-        }])
+        self.assertEqual(calls, ['/test/config'])

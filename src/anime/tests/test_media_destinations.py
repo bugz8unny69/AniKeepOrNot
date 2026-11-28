@@ -36,7 +36,7 @@ class MediaDestinationTests(unittest.TestCase):
             with self.subTest(user_evaluation=user_evaluation, keep=keep), self.assertRaises(ConfigurationError):
                 ConfigurationSnapshot(1, {"storage": {"user_evaluation_root": user_evaluation, "keep_root": keep}})
         with self.assertRaises(ConfigurationError):
-            ConfigurationSnapshot(1, {"storage": {"user_evaluation_root": "/var/lib/anime-discovery"}})
+            ConfigurationSnapshot(1, {"storage": {"user_evaluation_root": "/var/lib/akon"}})   # The database folder.
 
     def test_explicit_v2_upgrade_preserves_values_and_does_not_guess_roots(self):
         old = {"schema_version": 2, "revision": 9, "settings": {

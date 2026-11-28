@@ -37,7 +37,7 @@ class DownloadSettingsTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'qbittorrent':{'base_url':url}})
         for folder in ('/srv/trial','/srv/trial/downloads','/srv'):
             with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'storage':{'user_evaluation_root':'/srv/trial','download_root':folder}})
-        with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'storage':{'download_root':'/var/lib/anime-discovery'}})
+        with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'storage':{'download_root':'/var/lib/akon'}})
         with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'qbittorrent':{'password':'not-public'}})
         for value in (True,0,-1,1000001):
             with self.assertRaises(ConfigurationError):ConfigurationSnapshot(1,{'acquisition':{'max_plan_mb':value}})

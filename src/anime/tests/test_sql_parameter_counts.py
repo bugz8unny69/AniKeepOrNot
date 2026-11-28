@@ -44,7 +44,9 @@ def mismatches():
 class SqlParameterCountTests(unittest.TestCase):
     def test_literal_statements_bind_every_placeholder(self):
         found, checked = mismatches()
-        self.assertGreater(checked, 100, 'scanner unexpectedly found few statements')
+        # The series job replaced the per-step pipeline and most of its SQL (67 statements left,
+        # 2026-11-27); the bound only proves the scanner still finds statements.
+        self.assertGreater(checked, 50, 'scanner unexpectedly found few statements')
         self.assertEqual(found, [])
 
 
