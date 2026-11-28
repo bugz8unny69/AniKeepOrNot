@@ -106,7 +106,8 @@ def claim(db, now: int, lease_ms: int = DEFAULT_LEASE_MS) -> tuple[Claim, Series
             "FROM series "
             "WHERE (state = 'WORKING' OR (state = 'ASLEEP' AND wake_at_ms IS NOT NULL AND wake_at_ms <= ?)) "
             "  AND (lease_token IS NULL OR lease_expires_at_ms <= ?) "
-            "ORDER BY COALESCE(wake_at_ms, updated_at_ms), anidb_id "
+            # A promoted series first, the latest promotion first (owner, 2026-11-28).
+            "ORDER BY (promoted_at_ms IS NULL), promoted_at_ms DESC, COALESCE(wake_at_ms, updated_at_ms), anidb_id "
             "LIMIT 1"
         )
         row = db.execute(query, (now, now)).fetchone()
@@ -283,6 +284,30 @@ def note(row: SeriesRow, line: str, custom_logger: logging.Logger | None = None)
     if len(row.recent) > 50:
         row.recent = row.recent[-50:]
     (custom_logger or logger).info(line)
+
+
+def promote(db, anidb_id: int, promoted: bool, now: int | None = None) -> bool:
+    """Promote a series (worked on first, and woken now if it sleeps) or take it back.
+
+    Its own column, which save() and update_series() never write: a promotion made while
+    the worker holds the series stays. Returns False when there is no such series.
+    """
+    if now is None:
+        now = int(time.time() * 1000)
+    with _atomic(db):
+        if promoted:
+            cur = db.execute("UPDATE series SET promoted_at_ms = ?, state = CASE WHEN state = 'ASLEEP' THEN 'WORKING' "
+                             "ELSE state END, wake_at_ms = CASE WHEN state = 'ASLEEP' THEN NULL ELSE wake_at_ms END, "
+                             "updated_at_ms = ? WHERE anidb_id = ?", (now, now, anidb_id))
+        else:
+            cur = db.execute("UPDATE series SET promoted_at_ms = NULL, updated_at_ms = ? WHERE anidb_id = ?",
+                             (now, anidb_id))
+        return cur.rowcount == 1
+
+
+def promoted_at(db, anidb_id: int) -> int | None:
+    row = db.execute("SELECT promoted_at_ms FROM series WHERE anidb_id = ?", (anidb_id,)).fetchone()
+    return row[0] if row else None
 
 
 def get_series(db, anidb_id: int) -> SeriesRow | None:

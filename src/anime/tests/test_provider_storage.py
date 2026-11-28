@@ -110,6 +110,7 @@ class ProviderStorageTests(unittest.TestCase):
             for name in current_scripts[23:79]:db.executescript((SQL_DIR/name).read_text())
             self.assertEqual(db.execute("SELECT * FROM incoming_events").fetchall(),before)   # Kept up to v79.
             db.executescript((SQL_DIR/current_scripts[79]).read_text())    # v80: the old pipeline's tables go.
+            for name in current_scripts[80:]:db.executescript((SQL_DIR/name).read_text())   # v81 on: the series job.
             initialize(fresh)
             self.assertEqual(_structure(db),_structure(fresh))
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],len(current_scripts))

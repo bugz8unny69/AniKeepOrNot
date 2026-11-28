@@ -232,7 +232,9 @@ class CutoverSeriesJobTests(unittest.TestCase):
 
         # Migration 080 runs cleanly and matches fresh DB structure
         db2.executescript((migrations.SQL_DIR / "080_series_only.sql").read_text())
-        self.assertEqual(db2.execute("PRAGMA user_version").fetchone()[0], 80)
+        for name in migrations.SCRIPTS[80:]:                    # The installer applies the rest (v81 on).
+            db2.executescript((migrations.SQL_DIR / name).read_text())
+        self.assertEqual(db2.execute("PRAGMA user_version").fetchone()[0], migrations.LATEST_VERSION)
         self.assertEqual(db2.execute("PRAGMA foreign_key_check").fetchall(), [])
         fresh = sqlite3.connect(":memory:")
         initialize(fresh)
@@ -250,6 +252,10 @@ class CutoverSeriesJobTests(unittest.TestCase):
 
         with mock.patch.object(cutover, "services_stopped", return_value=[]):
             cutover.execute_cutover(self.db_path, apply=True)
+        upgrade = sqlite3.connect(self.db_path)                 # The installer, before the worker starts.
+        for name in migrations.SCRIPTS[79:]:
+            upgrade.executescript((migrations.SQL_DIR / name).read_text())
+        upgrade.close()
 
         db_keep = sqlite3.connect(self.db_path)
         keep_series_sync(db_keep, 101, now=10)

@@ -57,7 +57,8 @@ class RecognizedSeriesMigrationTests(unittest.TestCase):
             db.executescript((SQL_DIR / name).read_text())
         db.execute("UPDATE jobs SET state='DONE'")         # The cutover closes the old work before v80.
         db.commit()
-        db.executescript((SQL_DIR / SCRIPTS[79]).read_text())
+        for name in SCRIPTS[79:]:                          # v80, then the series job's own (v81 on).
+            db.executescript((SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         self.addCleanup(fresh.close)
         initialize(fresh)

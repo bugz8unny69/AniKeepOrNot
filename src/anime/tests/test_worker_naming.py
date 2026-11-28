@@ -114,7 +114,7 @@ class WorkerSqlMigrationTests(unittest.TestCase):
         from src.anime.storage.migrations import SCRIPTS as current_scripts
         for name in current_scripts[23:79]:self.db.executescript((SQL_DIR/name).read_text())
         self.db.execute("UPDATE jobs SET state='DONE'");self.db.commit()   # The cutover closes old work before v80.
-        self.db.executescript((SQL_DIR/current_scripts[79]).read_text())
+        for name in current_scripts[79:]:self.db.executescript((SQL_DIR/name).read_text())   # v80 on.
         initialize(self.db)  # Latest version accepted without implicit upgrade.
 
     def test_failure_before_version_bump_rolls_back_rows_and_vocabulary(self):

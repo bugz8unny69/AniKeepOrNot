@@ -46,6 +46,8 @@ class SeriesOnlyMigrationTests(unittest.TestCase):
         self.assertEqual(db.execute('SELECT english_title FROM anime_title_metadata').fetchall(),
                          [("Frieren: Beyond Journey's End",)])
         self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+        for name in migrations.SCRIPTS[80:]:                    # v81 on: the series job's own changes.
+            db.executescript((migrations.SQL_DIR / name).read_text())
         fresh = sqlite3.connect(':memory:')
         initialize(fresh)
         self.assertEqual(_structure(db), _structure(fresh))      # The same as a new database.

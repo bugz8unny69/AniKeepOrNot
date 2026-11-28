@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS series (
  lease_expires_at_ms INTEGER,
  created_at_ms INTEGER NOT NULL,
  updated_at_ms INTEGER NOT NULL,
- work_json TEXT NOT NULL DEFAULT '{}'
+ work_json TEXT NOT NULL DEFAULT '{}',
+ promoted_at_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_series_state_wake ON series(state, wake_at_ms);
 CREATE TABLE IF NOT EXISTS notifications (

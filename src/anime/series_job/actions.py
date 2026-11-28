@@ -114,6 +114,27 @@ def search_series_sync(db, anidb_id: int, context=None, now: int | None = None) 
     return _run_sync(search_series(db, anidb_id, context=context, now=now))
 
 
+def promote_series_sync(db, anidb_id: int, context=None, now: int | None = None, promoted: bool = True) -> dict:
+    """Work on this series first (owner, 2026-11-28): the next free lane takes it, before every
+    other series; a sleeping series is woken now. promoted=False puts it back in line."""
+    from src.anime.series_job.store import promote
+    series = get_series(db, anidb_id)
+    if series is None:
+        raise SeriesNotFound(f"Series {anidb_id} not found")
+    if promoted and series.state in ("KEPT", "REJECTED"):
+        raise SeriesDecided(f"Series {anidb_id} was already {series.state.lower()}",
+                            "ANIME_ACCEPTED" if series.state == "KEPT" else "ANIME_REJECTED")
+    promote(db, anidb_id, promoted, now)
+    if promoted:
+        return {"anidb_id": anidb_id, "promoted": True,
+                "message": f"{series.title} is worked on first; the next free worker takes it."}
+    return {"anidb_id": anidb_id, "promoted": False, "message": f"{series.title} is back in the usual order."}
+
+
+def unpromote_series_sync(db, anidb_id: int, context=None, now: int | None = None) -> dict:
+    return promote_series_sync(db, anidb_id, context, now, promoted=False)
+
+
 async def retry_series(db, anidb_id: int, context=None, now: int | None = None) -> dict:
     """Wake the series: a stopped torrent (program error) resumes at its step; a dropped one starts over."""
     if now is None:

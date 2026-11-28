@@ -93,6 +93,12 @@ function whyText(why) {
   const code = String(why).split(':')[0];
   return WHY[code] || String(why);
 }
+// Owner, 2026-11-28: work on a series first (the next free worker takes it), or put it back in line.
+async function setPromoted(anidbId, promoted) {
+  const result = await request(API + '/series/' + anidbId + '/' + (promoted ? 'promote' : 'unpromote'), {method: 'POST'});
+  notice(result.message);
+  return result;
+}
 function notice(message = '', error = false) {
   $('notice').textContent = message;
   $('notice').classList.toggle('error', error);
@@ -256,7 +262,8 @@ function renderRunning(data) {
   for (const s of seriesList) {
     const tr = node('tr');
     const titleTd = node('td');
-    const link = node('a', s.title + ' (#' + s.anidb_id + ')');
+    const link = node('a', (s.promoted_at_ms ? '▲ ' : '') + s.title + ' (#' + s.anidb_id + ')');
+    if (s.promoted_at_ms) link.title = 'Promoted: worked on first';
     link.href = '#';
     link.addEventListener('click', (e) => { e.preventDefault(); openSeries(s.anidb_id); });
     titleTd.appendChild(link);
@@ -313,6 +320,13 @@ function renderRunning(data) {
       } catch (err) { displayError(err); }
     });
     actTd.appendChild(cancelBtn);
+    const promoteBtn = node('button', s.promoted_at_ms ? 'unpromote' : 'promote', 'secondary');
+    promoteBtn.type = 'button';
+    promoteBtn.title = s.promoted_at_ms ? 'Put it back in the usual order.' : 'Work on this series first: the next free worker takes it.';
+    promoteBtn.addEventListener('click', async () => {
+      try { await setPromoted(s.anidb_id, !s.promoted_at_ms); await loadRunning(); } catch (err) { displayError(err); }
+    });
+    actTd.appendChild(promoteBtn);
 
     tr.appendChild(actTd);
     seriesRows.appendChild(tr);
@@ -348,6 +362,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         'State: ' + shown + (series.wake_at_ms ? ' · next check ' + date(series.wake_at_ms) : ''),
         series.stopped ? 'Stopped: ' + series.stopped + '. Retry resumes it.' : '',
         series.keep?.stopped ? 'Keep stopped: ' + series.keep.stopped + '. Fix it, then Retry.' : '',
+        series.promoted_at_ms ? 'Promoted: worked on first' : '',
       ].filter(Boolean).join(' · ');
       const list = $('series-episodes'); list.replaceChildren();
       const entries = Object.entries(series.episodes || {}).sort((a, b) => a[0].localeCompare(b[0]));
@@ -455,6 +470,18 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           finally { state.seriesBusy = false; searchBtn.disabled = false; }
         };
       }
+
+      const promoteBtn = $('series-promote');
+      const decided = series.state === 'KEPT' || series.state === 'REJECTED';
+      promoteBtn.hidden = decided;
+      promoteBtn.textContent = series.promoted_at_ms ? 'unpromote' : 'promote';
+      promoteBtn.onclick = async () => {
+        if (state.seriesBusy) return;
+        state.seriesBusy = true; promoteBtn.disabled = true;
+        try { await setPromoted(anidbId, !series.promoted_at_ms); dialog.close(); await refreshPage(); }
+        catch (err) { displayError(err); }
+        finally { state.seriesBusy = false; promoteBtn.disabled = false; }
+      };
 
       if (retryBtn) {
         retryBtn.onclick = async () => {

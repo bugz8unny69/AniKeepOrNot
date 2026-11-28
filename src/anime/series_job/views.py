@@ -34,7 +34,9 @@ def series_view(db, aid, language="english"):
     if s is None:
         return None
     search = s.work.get("search") or {}
+    from src.anime.series_job.store import promoted_at
     return {"anidb_id": s.anidb_id, "title": _title(db, s.anidb_id, s.title, language), "state": s.state,
+            "promoted_at_ms": promoted_at(db, s.anidb_id),
             "wake_at_ms": s.wake_at_ms, "torrents_at_once": s.torrents_at_once,
             "torrents": [_torrent(t) for t in s.torrents], "episodes": s.episodes, "recent": s.recent,
             "keep": _keep(s.work), "rejecting": "reject" in s.work, "stopped": s.work.get("stopped"),
@@ -54,11 +56,12 @@ def series_list(db, language="english", *, limit=30, before=(1 << 63) - 1, state
     if match is not None:
         where.append(match[0])
         params.extend(match[1])
-    rows = db.execute("SELECT anidb_id,title,state,wake_at_ms,torrents_json,episodes_json,updated_at_ms,work_json "
+    rows = db.execute("SELECT anidb_id,title,state,wake_at_ms,torrents_json,episodes_json,updated_at_ms,work_json,"
+                      "promoted_at_ms "
                       f"FROM series WHERE {' AND '.join(where)} ORDER BY anidb_id DESC LIMIT ?",
                       (*params, limit + 1)).fetchall()
     items = []
-    for aid, title, state_, wake, torrents, episodes, updated, work in rows[:limit]:
+    for aid, title, state_, wake, torrents, episodes, updated, work, promoted in rows[:limit]:
         torrents, episodes, work = json.loads(torrents), json.loads(episodes), json.loads(work)
         counts = {}
         for data in episodes.values():
@@ -67,7 +70,7 @@ def series_list(db, language="english", *, limit=30, before=(1 << 63) - 1, state
                       "wake_at_ms": wake, "updated_at_ms": updated, "episodes": counts,
                       "torrents_active": sum(t.get("state") in ACTIVE for t in torrents),
                       "torrents_stopped": sum(t.get("state") == "stopped" for t in torrents),
-                      "keep": _keep(work), "stopped": work.get("stopped")})
+                      "keep": _keep(work), "stopped": work.get("stopped"), "promoted_at_ms": promoted})
     return {"items": items, "next_before_id": rows[limit - 1][0] if len(rows) > limit else None}
 
 
@@ -75,15 +78,17 @@ def running(db, language="english"):
     """Running: every series with work in hand (a torrent on a step, Keep or Reject), and the
     releases the API is still identifying. A series waiting on a download is asleep between
     checks, so this is not only state WORKING."""
-    rows = db.execute("SELECT anidb_id,title,state,wake_at_ms,torrents_json,work_json FROM series "
-                      "WHERE state IN ('WORKING','ASLEEP') ORDER BY updated_at_ms DESC").fetchall()
+    rows = db.execute("SELECT anidb_id,title,state,wake_at_ms,torrents_json,work_json,promoted_at_ms FROM series "
+                      "WHERE state IN ('WORKING','ASLEEP') "
+                      "ORDER BY (promoted_at_ms IS NULL), promoted_at_ms DESC, updated_at_ms DESC").fetchall()
     series = []
-    for aid, title, state, wake, torrents, work in rows:
+    for aid, title, state, wake, torrents, work, promoted in rows:
         torrents, work = json.loads(torrents), json.loads(work)
         active = [_torrent(t) for t in torrents if t.get("state") in ACTIVE]
         if not active and "keep" not in work and "reject" not in work:
             continue
-        series.append({"anidb_id": aid, "title": _title(db, aid, title, language), "state": state, "wake_at_ms": wake, "torrents": active,
+        series.append({"anidb_id": aid, "title": _title(db, aid, title, language), "state": state, "wake_at_ms": wake,
+                       "promoted_at_ms": promoted, "torrents": active,
                        "keep": _keep(work), "rejecting": "reject" in work})
     waiting = db.execute("SELECT request_id,infohash,received_at_ms,tries FROM identity_requests "
                          "WHERE outcome IS NULL ORDER BY received_at_ms LIMIT 50").fetchall()

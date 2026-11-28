@@ -527,7 +527,7 @@ class Application:
                 if method!='GET':raise ApiError(405,'API_METHOD_INVALID')
                 return 200,self._intake(configuration,query),[]
             series_act=re.fullmatch(
-                PREFIX+r'/(?:intake/)?series/([1-9][0-9]{0,18})(?:/(keep|reject|search|retry|cancel|release))?',path)
+                PREFIX+r'/(?:intake/)?series/([1-9][0-9]{0,18})(?:/(keep|reject|search|retry|cancel|release|promote|unpromote))?',path)
             if series_act:
                 if query:raise ApiError(400,'API_REQUEST_INVALID')
                 aid=int(series_act[1])
@@ -736,6 +736,8 @@ class Application:
                 elif action=='search':result=actions.search_series_sync(db,aid)
                 elif action=='retry':result=actions.retry_series_sync(db,aid)
                 elif action=='cancel':result=actions.cancel_series_sync(db,aid)
+                elif action=='promote':result=actions.promote_series_sync(db,aid)
+                elif action=='unpromote':result=actions.unpromote_series_sync(db,aid)
                 else:
                     if set(body) not in ({'release_name','magnet_uri'},{'release_name','torrent_b64'}):
                         raise ApiError(400,'API_REQUEST_INVALID')

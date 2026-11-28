@@ -72,7 +72,8 @@ class BatchRecoveryMigrationsTests(unittest.TestCase):
             'identity_requests',  # v77 adds the identity bridge's waiting releases
             None,  # v78 keeps only the latest Prowlarr search result
             'series',  # v79 adds the series job table
-            None)  # v80 drops the old per-step tables
+            None,  # v80 drops the old per-step tables
+            None)  # v81 adds the series promotion column
         self.assertEqual(len(new_tables),migrations.LATEST_VERSION-30)
         for version,table in zip(range(31,migrations.LATEST_VERSION+1),new_tables):
             with self.subTest(version=version):

@@ -1,4 +1,4 @@
-"""adm series --id <anidb_id> [--keep | --reject | --search | --retry | --cancel]
+"""adm series --id <anidb_id> [--keep | --reject | --search | --retry | --cancel] [--promote | --unpromote]
 
 One series, by its AniDB ID. Without an action it shows the series: its state, its
 torrents and why each waits or stopped, its episodes and recent history. The actions
@@ -9,11 +9,16 @@ are the dashboard's:
   --reject   its torrents and staged files are removed (--reason CODE, --note TEXT)
   --search   search now for the trial episodes no torrent covers
   --cancel   drop its torrents that are not done; staged episodes stay
+
+and, alone or with an action (adm series --id 69 --retry --promote):
+
+  --promote    work on it first: the next free worker takes it, before every other series
+  --unpromote  put it back in the usual order
 """
 # Owner, 2026-11-27: one command for a series, its actions as options (it replaces adm keep,
 # reject, search, retry and report intake).
 NAME = 'series'
-SUMMARY = 'One series by AniDB ID: show it, or --retry, --keep, --reject, --search, --cancel'
+SUMMARY = 'One series by AniDB ID: show it, or --retry, --keep, --reject, --search, --cancel, --promote'
 
 ACTIONS = {
     'retry': 'stopped torrents resume, dropped ones start over, a stopped Keep resumes',
@@ -36,6 +41,11 @@ def main(argv, prog):
     chosen = parser.add_mutually_exclusive_group()
     for action, help_text in ACTIONS.items():
         chosen.add_argument('--' + action, dest='action', action='store_const', const=action, help=help_text)
+    order = parser.add_mutually_exclusive_group()
+    order.add_argument('--promote', dest='promote', action='store_const', const=True,
+                       help='work on it first: the next free worker takes it, before every other series')
+    order.add_argument('--unpromote', dest='promote', action='store_const', const=False,
+                       help='put it back in the usual order')
     parser.add_argument('--reason', default='', help='with --reject: a reason code (default REJECTED_BY_USER)')
     parser.add_argument('--note', default='', help='with --reject: why, in your words')
     parser.add_argument('--json', action='store_true', help='show the series as JSON')
@@ -45,15 +55,21 @@ def main(argv, prog):
         parser.error('--reason and --note go with --reject')
     configuration = ConfigurationStore(args.config_dir).read()
     with database(configuration.value('storage.database_path')) as db:
-        if args.action is None:
+        if args.action is None and args.promote is None:
             return show(db, args.anidb_id, configuration.value('anime.title_language'), args.json)
+        from src.anime.series_job.actions import promote_series_sync
+        messages = []
         try:
-            result = run(db, args.anidb_id, args.action, args.reason, args.note)
+            if args.action is not None:
+                messages.append(run(db, args.anidb_id, args.action, args.reason, args.note)['message'])
+            if args.promote is not None:                 # After the action: retry it, then put it first.
+                messages.append(promote_series_sync(db, args.anidb_id, promoted=args.promote)['message'])
         except (SeriesNotFound, SeriesDecided, ReleaseInvalid) as exc:
-            print(f'Refused: {exc}', file=sys.stderr)
+            db.commit()                                  # An action that ran stays done.
+            print('\n'.join(messages + [f'Refused: {exc}']), file=sys.stderr)
             return 1
         db.commit()
-    print(result['message'])
+    print('\n'.join(messages))
     return 0
 
 
@@ -74,7 +90,8 @@ def show(db, anidb_id, language, as_json=False):
     if as_json:
         print(json.dumps(item, indent=2, sort_keys=True))
         return 0
-    print(f"Series {item['anidb_id']} {item['title']}: {item['state']}")
+    print(f"Series {item['anidb_id']} {item['title']}: {item['state']}"
+          + (" · promoted: worked on first" if item.get('promoted_at_ms') else ""))
     if item.get('stopped'):
         print(f"  Stopped: {item['stopped']} (adm series --id {anidb_id} --retry resumes it)")
     if item['keep']:
