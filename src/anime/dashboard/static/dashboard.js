@@ -1966,7 +1966,9 @@ $('sign-out').addEventListener('click', async () => {
   try { await request(`${API}/auth/session`, {method: 'DELETE', body: {}}); clearPrivate(); }
   catch (error) { displayError(error); }
 });
-for (const id of ['intake-search', 'search', 'recognized-search']) {
+// The Jobs page and its controls went with the per-step jobs (owner, 2026-11-27): a missing
+// element here stopped the whole script at load, so the dashboard showed nothing.
+for (const id of ['intake-search', 'recognized-search']) {
   $(id).addEventListener('input', queueSearch);
   $(id).addEventListener('keydown', event => {
     if (event.key === 'Escape') { $(id).value = ''; clearTimeout(state.searchTimer); applySearch(); }
@@ -1986,37 +1988,17 @@ function filterSettings() {
   for (const panel of $('settings-fields').children) panel.hidden = !panel.textContent.toLowerCase().includes(query);
 }
 $('settings-search').addEventListener('input', filterSettings);
-$('status-filter').addEventListener('change', resetJobsPage);
 $('intake-filter').addEventListener('change', async () => {
   if (!state.csrf || state.page !== 'intake') return;
   if (state.loading) await state.loading;
   state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
   await loadActivity();
 });
-$('select-page').addEventListener('change', () => {
-  if (state.bulkSubmitting || state.page !== 'jobs') return;
-  if ($('select-page').checked) {
-    for (const job of state.jobs) {
-      if (state.selected.size >= 100) { notice(COPY['dashboard.bulk_limit'], true); break; }
-      state.selected.add(job.job_id);
-    }
-  } else {
-    for (const job of state.jobs) state.selected.delete(job.job_id);
-  }
-  renderJobs();
-});
-$('bulk-clear').addEventListener('click', () => {
-  if (state.bulkSubmitting) return;
-  if (!confirm('Clear the current selection; the jobs themselves will remain unchanged?')) return;
-  state.selected.clear();
-  renderJobs();
-});
-for (const name of ['retry', 'cancel', 'cleanup']) $('bulk-' + name).addEventListener('click', () => submitSelected(name));
-for (const id of ['next-page', 'intake-next']) $(id).addEventListener('click', async () => {
+for (const id of ['intake-next']) $(id).addEventListener('click', async () => {
   if (state.next === null || state.loading) return;
   state.previous.push(state.cursor); state.cursor = String(state.next); await loadActivity();
 });
-for (const id of ['previous-page', 'intake-previous']) $(id).addEventListener('click', async () => {
+for (const id of ['intake-previous']) $(id).addEventListener('click', async () => {
   if (!state.previous.length || state.loading) return;
   state.cursor = state.previous.pop(); await loadActivity();
 });

@@ -134,20 +134,45 @@ class DashboardSeriesApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data["torrents"]), 1)
 
 
-class OldJobsPageTests(DashboardSeriesApiTests):
-    """Owner, 2026-11-27: after the upgrade the dashboard looked broken: the open tab was the
-    old Jobs page, removed with the per-step jobs, and it answered a bare 404."""
+class MissingPagesTests(DashboardSeriesApiTests):
+    """Owner, 2026-11-27: a dashboard page that is not there (the old Jobs page) opens Intake."""
 
-    async def test_the_old_jobs_page_opens_intake_under_every_address(self):
-        for path, location in (("/jobs", "/"), ("/akon/jobs", "/akon/"), ("/anime-discovery/jobs", "/anime-discovery/")):
+    async def test_a_page_that_is_not_there_opens_intake_under_every_address(self):
+        for path, location in (("/jobs", "/"), ("/akon/jobs", "/akon/"), ("/anime-discovery/jobs", "/anime-discovery/"),
+                               ("/no/such/page", "/")):
             with self.subTest(path=path):
                 status, _, headers = await self.request("GET", path)
                 self.assertEqual(status, 302)
                 self.assertEqual(headers[b"location"], location.encode())
         status, _, _ = await self.request("GET", "/")                       # Intake itself is served.
         self.assertEqual(status, 200)
+        status, _, _ = await self.request("GET", "/favicon.ico")            # A file that is not there: 404.
+        self.assertEqual(status, 404)
+        status, body, _ = await self.request("GET", "/api/v1/no-such-route")  # The API keeps its JSON errors.
+        self.assertNotEqual(status, 302)
+        self.assertIn("error", body)
 
     async def test_the_dashboard_no_longer_sends_anyone_to_the_jobs_page(self):
         from pathlib import Path
         script = (Path(__file__).resolve().parents[1] / "dashboard" / "static" / "dashboard.js").read_text()
         self.assertNotIn("location.assign('/jobs", script)
+
+
+class DashboardLoadsTests(unittest.TestCase):
+    """Production, 2026-11-27: the dashboard showed nothing and made no request: at load,
+    dashboard.js attached listeners to the removed Jobs page's controls ($('search') was
+    null), and the error stopped the whole script. This runs the script at load against a
+    page with exactly index.html's element IDs (dashboard_load.js, in Node)."""
+
+    def test_the_script_loads_against_the_page_it_is_served_with(self):
+        import shutil, subprocess
+        from pathlib import Path
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is not installed")
+        here = Path(__file__).resolve().parent
+        static = here.parent / "dashboard" / "static"
+        result = subprocess.run([node, str(here / "dashboard_load.js"), str(static / "dashboard.js"),
+                                 str(static / "index.html")], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("no error at load", result.stdout)

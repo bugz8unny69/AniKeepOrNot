@@ -308,9 +308,10 @@ class Application:
                     path='/';mounted=mount;break
                 if path.startswith(mount+'/'):
                     path=path[len(mount):];mounted=mount;break
-            if path=='/jobs' and scope['method']=='GET':
-                # Owner, 2026-11-27: the Jobs page went with the per-step jobs; an old tab,
-                # bookmark or link opens Intake instead of a bare "not found".
+            if (scope['method']=='GET' and not path.startswith(PREFIX+'/') and path not in self.assets
+                    and '.' not in path.rsplit('/',1)[-1]):
+                # Owner, 2026-11-27: a dashboard page that is not there (the old Jobs page, a
+                # mistyped address) opens Intake. API routes and files still answer 404.
                 await send({'type':'http.response.start','status':302,'headers':[
                     (b'location',(mounted+'/').encode()),(b'content-length',b'0'),(b'cache-control',b'no-store'),
                     (b'x-request-id',request_id.encode())]})
