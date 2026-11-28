@@ -89,3 +89,9 @@ class OneFolderPerSeriesTests(unittest.TestCase):
             self.assertEqual(second["entries"][2]["path"], folder + "/tvshow.nfo")
             self.assertIn("As a Reincarnated Aristocrat", second["entries"][2]["text"])   # Shown in English.
             self.assertIsNone(series_folder(str(root), 1))
+            # Owner, 2026-11-28: once the folder AKON names now exists, an old one never takes new
+            # episodes (Marronnier was staged into both, and showed twice in Jellyfin).
+            (root / "As a Reincarnated Aristocrat [tvdbid-434704]" / "Season 03").mkdir(parents=True)
+            self.assertEqual(series_folder(str(root), 434704, "As a Reincarnated Aristocrat"),
+                             "As a Reincarnated Aristocrat [tvdbid-434704]")
+            self.assertEqual(series_folder(str(root), 434704), "As a Reincarnated Aristocrat [tvdbid-434704]")

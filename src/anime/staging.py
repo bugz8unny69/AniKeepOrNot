@@ -76,17 +76,25 @@ def nfo(root,values,ids):
     return ET.tostring(document,encoding='utf-8',xml_declaration=True)
 
 
-def series_folder(root,tvdb_series_id):
+def series_folder(root,tvdb_series_id,name=None):
     """The folder already holding this TVDB series in staging, or None: every season goes in one
-    folder, so Jellyfin shows one series (owner, 2026-11-27). Season 01's folder first."""
+    folder, so Jellyfin shows one series (owner, 2026-11-27).
+
+    With more than one, the one AKON names now ('<name> [tvdbid-N]') comes first, then any
+    folder of that form, and only then one of the old layout ('... [tvdbid-N] [anidbid-N]'):
+    a folder the old pipeline left must not take new episodes from the current one (owner,
+    2026-11-28: Marronnier was staged into both). Season 01's folder first among equals."""
     mark=f'[tvdbid-{tvdb_series_id}]'
     try:
-        found=sorted(name for name in os.listdir(root) if mark in name and os.path.isdir(os.path.join(root,name)))
+        found=sorted(entry for entry in os.listdir(root) if mark in entry and os.path.isdir(os.path.join(root,entry)))
     except FileNotFoundError:
         return None
     if not found:return None
-    with_first=[name for name in found if os.path.isdir(os.path.join(root,name,'Season 01'))]
-    return (with_first or found)[0]
+    if name and f'{slug(name)} {mark}' in found:
+        return f'{slug(name)} {mark}'
+    def rank(entry):
+        return (not entry.endswith(mark), not os.path.isdir(os.path.join(root,entry,'Season 01')))
+    return min(found,key=lambda entry:(rank(entry),entry))
 
 
 def specification(intent,evidence,identity,root,revision,*,display_title=None,series_name=None,folder=None):

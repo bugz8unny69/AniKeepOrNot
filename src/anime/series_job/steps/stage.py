@@ -41,7 +41,7 @@ def plan_for(configuration, series, torrent, entry, db=None):
         from src.anime.anime_titles import series_title
         name = series_title(db, tvdb, series.anidb_id, series.title, configuration.value("anime.title_language"))
     plan = specification(SimpleNamespace(options=SimpleNamespace(download_root=source_root)), evidence, identity,
-                         root, configuration.desired_revision, series_name=name, folder=series_folder(root, tvdb))
+                         root, configuration.desired_revision, series_name=name, folder=series_folder(root, tvdb, name))
     plan["source_root"] = source_root
     plan["transfer"] = "MOVE" if source_root == root else "COPY"
     plan["root_identity"] = root_identity(root)
