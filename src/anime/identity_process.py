@@ -136,9 +136,6 @@ def main(argv=None):
     return asyncio.run(run(arguments.config_dir))
 
 
-if __name__ == '__main__':
-    sys.exit(main())
-
 
 @dataclass(frozen=True)
 class IdentityRequest:
@@ -157,3 +154,9 @@ def _movie_request(request):
     except (ValueError, TypeError, AttributeError):
         return False
     return movie_title(title)
+
+
+# Last: run as a script, the module's own definitions above must exist first (production,
+# 2026-11-28: IdentityRequest was defined after this, so every release failed with NameError).
+if __name__ == '__main__':
+    sys.exit(main())
