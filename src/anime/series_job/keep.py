@@ -31,6 +31,9 @@ from src.anime.series_job.store import note
 
 STEPS = ("cancel", "sonarr_series", "sonarr_import", "search", "shoko", "dubs", "jellyfin", "cleanup")
 POLL_MS = 10_000
+# Sonarr marks a ManualImport completed even when it imported nothing (its log says why,
+# e.g. no write access to its library folder). Past this, Keep stops and says so.
+IMPORT_SETTLE_MS = 5 * 60_000
 DUBS_DELAY_MS = 10 * 60_000
 SHOKO_WAIT_MS = 30_000
 SHOKO_FILE_DEADLINE_MS = 30 * 60_000
@@ -176,7 +179,17 @@ def sonarr_import(series, keep, context):
         if status in ("failed", "aborted", "cancelled"):
             raise KeepReview(failed_check=here("COMMAND_FAILED"))
         episode = client.episode(selection, found)
-        if status != "completed" or not episode.get("hasFile") or not episode.get("episodeFileId"):
+        if status == "completed" and not (episode.get("hasFile") and episode.get("episodeFileId")):
+            seen = record.setdefault("completed_without_file_ms", context.now)
+            if context.now - seen >= IMPORT_SETTLE_MS:
+                record.clear()
+                record["phase"] = "PLANNED"              # Retry sends the import again.
+                raise KeepReview(f"Sonarr finished importing {code} but has no file for it; Sonarr's log "
+                                 "says why (often no write access to its library folder)",
+                                 failed_check=here("IMPORT_NOT_DONE"))
+            waiting = True
+            continue
+        if status != "completed":
             waiting = True
             continue
         file_record = client.request("episodefile/" + str(episode["episodeFileId"]))

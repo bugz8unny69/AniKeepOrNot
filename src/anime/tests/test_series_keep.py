@@ -21,6 +21,7 @@ STAGED = 'Dungeon People [tvdbid-438420] [anidbid-18162]/Season 01/Dungeon Peopl
 class FakeSonarr:
     def __init__(self, test):
         self.test, self.sent, self.has_series, self.command = test, [], False, 'queued'
+        self.imports = True            # False: Sonarr completes the command and imports nothing.
 
     def __call__(self, options, key):
         self.options = options
@@ -48,7 +49,7 @@ class FakeSonarr:
         return {'tvdbId': tvdb, 'monitor': monitor}
 
     def episode(self, selection, series):
-        done = self.command == 'completed'
+        done = self.command == 'completed' and self.imports
         return {'id': 55, 'episodeFileId': 9 if done else 0, 'hasFile': done}
 
     def import_payload(self, selection, series, episode):
@@ -136,6 +137,31 @@ class KeepTests(unittest.TestCase):
         retry_series_sync(self.db, 18162, now=200)
         self.db.commit()
         self.assertNotIn('stopped', get_series(self.db, 18162).work['keep'])
+
+    def test_sonarr_completing_without_a_file_stops_keep_and_retry_sends_it_again(self):
+        # Owner, 2026-11-28: Sonarr could not write its library folder; it marked each import
+        # completed, and Keep waited for ever without saying why.
+        from src.anime.series_job.keep import IMPORT_SETTLE_MS
+        keep_series_sync(self.db, 18162, now=10)
+        self.db.commit()
+        self.attempt(100)                                 # Import sent.
+        self.sonarr.command, self.sonarr.imports = 'completed', False
+        self.attempt(20_000)                              # Completed, no file: it may still appear.
+        self.assertIn('completed_without_file_ms', get_series(self.db, 18162).work['keep']['imports']['S01E05'])
+        self.assertNotIn('stopped', get_series(self.db, 18162).work['keep'])
+        self.attempt(20_000 + IMPORT_SETTLE_MS)
+        series = get_series(self.db, 18162)
+        self.assertIn('IMPORT_NOT_DONE', series.work['keep']['stopped'])
+        self.assertIn("Sonarr's log", series.work['keep']['stopped'])
+        self.assertEqual(series.work['keep']['imports']['S01E05'], {'phase': 'PLANNED'})
+        retry_series_sync(self.db, 18162, now=30_000 + IMPORT_SETTLE_MS)
+        self.db.commit()
+        self.sonarr.command, self.sonarr.imports = 'queued', True     # Sonarr's folder fixed.
+        self.attempt(40_000 + IMPORT_SETTLE_MS)           # The import is sent again,
+        self.assertEqual(self.sonarr.sent.count(('command', 'ManualImport')), 2)
+        self.sonarr.command = 'completed'
+        self.attempt(10**13)                              # and the series is kept.
+        self.assertEqual(get_series(self.db, 18162).state, 'KEPT')
 
 
 if __name__ == '__main__':
