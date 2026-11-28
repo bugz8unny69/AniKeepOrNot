@@ -88,6 +88,11 @@ const WHY = Object.freeze({
   TRANSCODE_WAITING: 'waiting for a transcoder', TORRENT_METADATA_WAITING: 'waiting for the file list',
   TORRENT_DOWNLOAD_IN_PROGRESS: 'downloading', KEEP_IMPORT_REVIEW: 'Sonarr refused the import',
 });
+// The current step's progress: download and transcode measure theirs; other steps show none.
+function progressText(t) {
+  return t.progress == null ? '-' : Math.round(t.progress * 100) + '%';
+}
+
 function whyText(why) {
   if (!why) return '';
   const code = String(why).split(':')[0];
@@ -296,10 +301,7 @@ function renderRunning(data) {
     if (!active.length) {
       progTd.appendChild(node('span', '-', 'muted'));
     } else {
-      for (const t of active) {
-        const pct = Math.round((t.progress || 0) * 100);
-        progTd.appendChild(node('div', pct + '%'));
-      }
+      for (const t of active) progTd.appendChild(node('div', progressText(t)));
     }
     tr.appendChild(progTd);
 
@@ -391,8 +393,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           const stateCell = node('td', t.state || '-');               // Why it waits, stopped or was dropped.
           if (t.why) stateCell.appendChild(node('small', ' — ' + whyText(t.why), 'muted'));
           tr.appendChild(stateCell);
-          const pct = Math.round((t.progress || 0) * 100);
-          tr.appendChild(node('td', pct + '%'));
+          tr.appendChild(node('td', progressText(t)));
           torrentsList.appendChild(tr);
         }
         const torrentsEmpty = $('series-torrents-empty');

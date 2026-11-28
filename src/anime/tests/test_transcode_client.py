@@ -68,7 +68,7 @@ def test_failover_wait_and_three_attempts(tmp_path):
         def health(self):
             if self.all_down or 'first' in self.address: raise ConnectionError()
             return {'busy': False, 'free_bytes': 100000, 'agent_version': AGENT_VERSION}
-        def run(self, source, output, rate, audio, flag, report, started):
+        def run(self, source, output, rate, audio, flag, report, started, progress=None):
             calls.append(self.address)
             started()
             if self.fail: raise client.TranscodeFailed('broken encode')
@@ -158,7 +158,7 @@ def test_agent_dies_after_upload_then_next_agent_used(tmp_path):
         token = 'test'
         def __init__(self, address, token): self.address = address
         def health(self): return {'busy':False,'free_bytes':100000,'agent_version':AGENT_VERSION}
-        def run(self, source, output, rate, audio, flag, report, started):
+        def run(self, source, output, rate, audio, flag, report, started, progress=None):
             started(); attempts.append(self.address)
             if 'first' in self.address: raise client.TranscodeFailed('HTTP 404: agent restarted')
             output.write_bytes(b'result')
@@ -246,7 +246,7 @@ class VersionedRemote:
             answer['agent_version'] = version
         return answer
 
-    def run(self, source, output, rate, audio, flag, report, started):
+    def run(self, source, output, rate, audio, flag, report, started, progress=None):
         self.uploads.append(self.address)
         started()
         output.write_bytes(b'encoded')
@@ -371,7 +371,7 @@ def test_agents_take_turns(tmp_path):
         token = 'test'
         def __init__(self, address, token): self.address = address
         def health(self): return {'busy': False, 'free_bytes': 100000, 'agent_version': AGENT_VERSION}
-        def run(self, source, output, rate, audio, flag, report, started):
+        def run(self, source, output, rate, audio, flag, report, started, progress=None):
             used.append(self.address.split('//')[1].split(':')[0])
             started(); output.write_bytes(b'encoded')
     with patch.object(client, '_TURN', [0]), patch.object(client.encode, 'check'):

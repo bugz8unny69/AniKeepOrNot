@@ -25,7 +25,8 @@ def main(argv, prog):
               + (f" · Keep at {s['keep']['step']}" if s['keep'] else '') + (' · rejecting' if s['rejecting'] else ''))
         for t in s['torrents']:
             episodes = f" [{', '.join(t['episodes'])}]" if t['episodes'] else ''
-            print(f"  {t['release_name']}{episodes}: {t['step'].replace('_', ' ')}, {int((t['progress'] or 0) * 100)}%")
+            print(f"  {t['release_name']}{episodes}: {t['step'].replace('_', ' ')}"
+                  + ('' if t['progress'] is None else f", {int(t['progress'] * 100)}%"))
     if now['waiting_identity']:
         print(f"Identifying with AniDB: {len(now['waiting_identity'])} release(s)")
     return 0

@@ -200,7 +200,7 @@ class Remote:
     def health(self):
         return self.request('GET', '/health')
 
-    def run(self, source, output, rate, audio, flag, report, started):
+    def run(self, source, output, rate, audio, flag, report, started, progress=lambda fraction: None):
         # SHA-256 must be known before the headers are sent. Verify it again during upload.
         name, size = agent_name(self.address), source.stat().st_size
         began = time.monotonic()
@@ -245,12 +245,13 @@ class Remote:
                 status = self.request('GET', '/jobs/'+job)
                 if status['state'] == 'failed': raise TranscodeFailed(status.get('error') or 'Agent encode failed')
                 if status['state'] == 'done': break
-                progress = status.get('progress', 0)
-                report(f'Transcoding on {self.address} ({progress}%)')
-                if progress != last_progress:
-                    last_progress, changed = progress, time.monotonic()
+                percent = status.get('progress', 0)
+                report(f'Transcoding on {self.address} ({percent}%)')
+                progress(max(0.0, min(1.0, float(percent or 0) / 100)))
+                if percent != last_progress:
+                    last_progress, changed = percent, time.monotonic()
                 elif time.monotonic() - changed >= 60:
-                    raise TranscodeFailed(f"No encoding progress for 60 seconds (agent at {progress}%, "
+                    raise TranscodeFailed(f"No encoding progress for 60 seconds (agent at {percent}%, "
                                           f"encoder {status.get('encoder') or 'not started'})")
                 if flag.wait(5): cancelled(flag)
             log.info('%s: encoded on %s in %.0fs', source.name, name, time.monotonic() - began)
@@ -281,8 +282,11 @@ class Remote:
 
 
 def transcode(source, output, configuration, secrets, flag, *, info=None, batch=False,
-              report=lambda text: None, started=lambda: None, attempts=0, remote_factory=Remote):
+              report=lambda text: None, started=lambda: None, attempts=0, remote_factory=Remote,
+              progress=lambda fraction: None):
     """Write output atomically. Return False when skipped; waits never become review.
+
+    progress(fraction) follows the encode, 0.0 to 1.0, local or on an agent (the dashboard shows it).
 
     started() durably spends an attempt before external work. The caller supplies
     a persisted count so agent outages and worker restarts cannot reset the limit.
@@ -378,11 +382,12 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
                                     encoders=encode.parse_encoders(configuration.value('transcode.encoders')),
                                     vaapi_device=configuration.value('transcode.vaapi_device'), workdir=work,
                                     cancelled=flag, source_info=info,
-                                    on_progress=lambda p: report(f'Transcoding locally ({int(p*100)}%)'))
+                                    on_progress=lambda p: (report(f'Transcoding locally ({int(p*100)}%)'), progress(p)))
                                 shutil.copyfile(encoded, temporary)
                             finally: shutil.rmtree(work, ignore_errors=True)
                         else:
-                            remote.run(source, temporary, rate, encode.audio_kbps(info['streams']), flag, report, spend)
+                            remote.run(source, temporary, rate, encode.audio_kbps(info['streams']), flag, report, spend,
+                                       progress=progress)
                         encode.check(source_info=info, output=temporary)
                         cancelled(flag)
                         os.replace(temporary, output)
@@ -404,7 +409,8 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
         if attempts > initial_attempts:
             # Retry another pass through the configured agents, retaining the same budget.
             return transcode(source, output, configuration, secrets, flag, info=info, batch=batch,
-                             report=report, started=started, attempts=attempts, remote_factory=remote_factory)
+                             report=report, started=started, attempts=attempts, remote_factory=remote_factory,
+                             progress=progress)
     if update_required:
         message = ' '.join(update_required)[:500]
         log.info('%s: no agent took it; waiting (%s)', source.name, '; '.join(skipped))

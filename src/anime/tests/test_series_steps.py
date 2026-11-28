@@ -301,7 +301,7 @@ class Steps(unittest.TestCase):
         self.context.claim = claim
         self.context.checkpoint = lambda: store.save(db, claim, row, now=3)
         self.configuration.values['transcode.mode'] = 'remote' if transcode else 'off'
-        def fake_transcoder(source, output, configuration, secrets, flag, *, started, attempts):
+        def fake_transcoder(source, output, configuration, secrets, flag, *, started, attempts, progress=lambda f: None):
             started()
             Path(output).write_bytes(b't' * 40)
             return True
@@ -343,6 +343,30 @@ class Steps(unittest.TestCase):
     def test_a_transcoded_file_is_moved_into_staging_and_the_torrents_copy_stays(self):
         self.staged(transcode=True)
 
+    def test_the_transcode_saves_its_progress_while_it_runs_and_the_views_show_each_steps_own(self):
+        # Owner, 2026-11-28: during the transcode the dashboard showed the download's 100%.
+        import sqlite3
+        from src.anime.series_job.views import step_progress
+        seen = []
+        def halfway(source, output, configuration, secrets, flag, *, started, attempts, progress):
+            started()
+            progress(0.5)                                 # Saved now, while the encode runs.
+            with sqlite3.connect(configuration.value('storage.database_path')) as other:
+                saved = json.loads(other.execute('SELECT torrents_json FROM series').fetchone()[0])[0]
+            seen.append(saved.get('transcode_progress'))
+            Path(output).write_bytes(b't' * 40)
+            return True
+        self.torrent['progress'] = 1.0                    # The download finished.
+        result, entry = self.staged(transcode=True, transcoder=halfway)
+        self.assertEqual(result.next_step, 'stage')
+        self.assertEqual(seen, [0.5])
+        self.assertEqual(self.torrent['transcode_progress'], 1.0)
+        working = {**self.torrent, 'state': 'working', 'transcode_progress': 0.42}
+        self.assertEqual(step_progress({**working, 'step': 'transcode'}), 0.42)   # Not the download's 100%.
+        self.assertEqual(step_progress({**working, 'step': 'download'}), 1.0)
+        self.assertIsNone(step_progress({**working, 'step': 'stage'}))          # A step with none shows none.
+        self.assertIsNone(step_progress({**working, 'step': 'transcode', 'state': 'done'}))
+
     def test_a_transcode_that_fails_on_every_agent_stops_the_torrent_and_keeps_it(self):
         from src.anime.services.transcode import TranscodeFailed
         from src.anime.series_job.steps.transcode import transcode
@@ -359,7 +383,7 @@ class Steps(unittest.TestCase):
 
     def test_our_share_failing_during_a_transcode_waits_and_gives_the_attempt_back(self):
         from src.anime.services.transcode import TranscodeStorageUnavailable
-        def failing(source, output, configuration, secrets, flag, *, started, attempts):
+        def failing(source, output, configuration, secrets, flag, *, started, attempts, progress=lambda f: None):
             started()                                     # The attempt was spent before the work...
             raise TranscodeStorageUnavailable('ESTALE on the staging share')   # ...then our share failed.
         result, entry = self.staged(transcode=True, transcoder=failing)

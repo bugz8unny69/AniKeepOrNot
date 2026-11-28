@@ -14,10 +14,23 @@ def _title(db, aid, title, language):
     return title_for(db, aid, title, language)     # The metadata, then AniDB's cached title list.
 
 
+# The steps that measure their progress, and where they keep it (owner, 2026-11-28: the
+# download's 100% stayed on screen through the transcode). Other steps show none.
+STEP_PROGRESS = {"download": "progress", "transcode": "transcode_progress"}
+
+
+def step_progress(t):
+    """The current step's progress, 0.0 to 1.0, or None when the step has none (or the torrent is not working)."""
+    key = STEP_PROGRESS.get(t.get("step"))
+    if key is None or t.get("state") not in ACTIVE:
+        return None
+    return t.get(key, 0.0)
+
+
 def _torrent(t):
     return {"infohash": t.get("infohash"), "release_name": t.get("release_name"), "step": t.get("step"),
             "state": t.get("state"), "why": t.get("why"), "episodes": t.get("episodes", []),
-            "progress": t.get("progress", 0.0), "cleanup": t.get("cleanup")}
+            "progress": step_progress(t), "cleanup": t.get("cleanup")}
 
 
 def _keep(work):

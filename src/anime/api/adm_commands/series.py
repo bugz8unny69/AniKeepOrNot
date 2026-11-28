@@ -106,7 +106,7 @@ def show(db, anidb_id, language, as_json=False):
     for t in item['torrents']:
         why = f" ({t['why']})" if t['why'] else ''
         print(f"  {t['release_name']}: {t['step']}, {t['state']}{why} "
-              f"[{', '.join(t['episodes'])}] {int((t['progress'] or 0) * 100)}%")
+              f"[{', '.join(t['episodes'])}]" + ('' if t['progress'] is None else f" {int(t['progress'] * 100)}%"))
     print('Recent:')
     for line in item['recent']:
         print('  ' + line)

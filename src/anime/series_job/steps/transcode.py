@@ -6,7 +6,9 @@ agent outages and restarts cannot reset it. The output goes to
 <staging folder>/.transcode/ and staging moves it into place.
 """
 import json
+import logging
 import os
+import sqlite3
 from pathlib import Path
 
 from src.anime.acquisition.cleanup import directory, parent
@@ -23,10 +25,13 @@ from src.anime.staging import StagingReview
 from src.transcode_agent.encode import EncodeError
 
 WAIT_MS = 10_000
+log = logging.getLogger(__name__)
 
 
-def transcode_file(context, series, torrent, entry, client=None):
-    """Transcode one file; returns its evidence in the staging folder, or None (small enough)."""
+def transcode_file(context, series, torrent, entry, client=None, share=(0, 1)):
+    """Transcode one file; returns its evidence in the staging folder, or None (small enough).
+
+    share=(i, n): this is the torrent's i-th of n files, for its transcode_progress."""
     configuration = context.configuration
     output_root = configuration.value("storage.user_evaluation_root")
     work = Path(output_root) / ".transcode"
@@ -39,6 +44,17 @@ def transcode_file(context, series, torrent, entry, client=None):
     def started():
         entry["transcode_attempts"] = entry.get("transcode_attempts", 0) + 1
         write_torrent_key(database, context.claim, series.torrents, torrent, "files")
+
+    def progress(fraction):
+        # Owner, 2026-11-28: the dashboard showed 100% (the download's) during the transcode.
+        overall = round((share[0] + fraction) / share[1], 2)
+        if overall == torrent.get("transcode_progress"):
+            return
+        torrent["transcode_progress"] = overall
+        try:
+            write_torrent_key(database, context.claim, series.torrents, torrent, "transcode_progress")
+        except sqlite3.Error as exc:                     # Only the display: the encode goes on.
+            log.info("series %s: transcode progress not saved (%s)", series.anidb_id, exc)
 
     qb = torrent["qb"]
     source_root = options_for(configuration, qb["marker"], prefix=qb.get("prefix", "akon")).download_root
@@ -54,7 +70,7 @@ def transcode_file(context, series, torrent, entry, client=None):
             try:
                 if not (client or context.transcoder or run_transcode)(source, output, configuration, context.secrets,
                                                                        context.cancelled, started=started,
-                                                                       attempts=spent):
+                                                                       attempts=spent, progress=progress):
                     return None
             except TranscodeStorageUnavailable:
                 if entry.get("transcode_attempts", 0) != spent:   # Our share failed: the attempt is given back.
@@ -83,11 +99,14 @@ async def transcode(series: SeriesRow, torrent: dict, context) -> StepResult:
              f"{torrent.get('release_name', '')}")
     if not context.configuration.value("storage.user_evaluation_root"):
         return StepResult.wait(context.now + SETUP_WAIT_MS, why="STAGING_CONFIGURATION_INVALID")
-    for entry in torrent["files"]:
+    torrent.setdefault("transcode_progress", 0.0)
+    files = torrent["files"]
+    for index, entry in enumerate(files):
         if "transcoded" in entry:
             continue
         try:
-            entry["transcoded"] = await blocking(transcode_file, context, series, torrent, entry)
+            entry["transcoded"] = await blocking(transcode_file, context, series, torrent, entry,
+                                                 share=(index, len(files)))
         except TranscodeWaiting:
             return StepResult.wait(context.now + WAIT_MS, why="TRANSCODE_WAITING")
         except TranscodeStorageUnavailable as exc:
@@ -100,4 +119,5 @@ async def transcode(series: SeriesRow, torrent: dict, context) -> StepResult:
             return StepResult.stop(f"STAGING_REVIEW: {exc}"[:300])
         note(series, f"{label} · {entry['episode']} "
                      + ("transcoded" if entry["transcoded"] else "kept as it is (already small enough)"))
+        torrent["transcode_progress"] = round((index + 1) / len(files), 2)
     return StepResult.done(next_step="stage")
