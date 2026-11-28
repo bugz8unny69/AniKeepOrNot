@@ -16,6 +16,13 @@ never a mount stays as simple as before. Nobody is asked; AKON learns it.
   mount appeared). A shallower one is the failure this guards against.
 - The mount is known by its path and source, never its device number: a remount
   gives the share a new one.
+- A folder mounted onto itself (a bind: systemd's ReadWritePaths under ProtectSystem=strict
+  does that) is not a share: it has the device of the mount it sits in, so it is passed
+  over. Both devices are read at the same moment; none is saved. Production, 2026-11-28:
+  /mnt/media/Torrents/anime, a plain folder of the media share, was learned as a mount
+  from the worker's ReadWritePaths bind; once the unit stopped binding it, the folder
+  'was not mounted' and downloads waited. Facts learned before binds were passed over
+  (no 'binds_ignored') are learned again from what is mounted now.
 - The facts are keyed by the folder's path: changing the folder setting starts over.
   To make a learned mount local on purpose, delete its entry from the file.
 
@@ -50,8 +57,8 @@ def _unescape(field):
     return field.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
 
 
-def mounts(text=None):
-    """[(mount_point, source, fstype)] from /proc/self/mountinfo."""
+def _entries(text=None):
+    """[(mount id, parent id, device, mount_point, source, fstype)] from /proc/self/mountinfo."""
     if text is None:
         text = Path("/proc/self/mountinfo").read_text()
     found = []
@@ -59,8 +66,20 @@ def mounts(text=None):
         left, _, right = line.partition(" - ")
         fields, tail = left.split(), right.split()
         if len(fields) >= 5 and len(tail) >= 2:
-            found.append((_unescape(fields[4]), _unescape(tail[1]), tail[0]))
+            found.append((fields[0], fields[1], fields[2], _unescape(fields[4]), _unescape(tail[1]), tail[0]))
     return found
+
+
+def mounts(text=None):
+    """[(mount_point, source, fstype)] from /proc/self/mountinfo, folders mounted onto themselves left out.
+
+    A mount with the device of the mount it sits in is a folder of that filesystem
+    bound in place, not a share of its own.
+    """
+    entries = _entries(text)
+    device = {mount_id: dev for mount_id, _, dev, *_ in entries}
+    return [(mount_point, source, fstype) for _, parent, dev, mount_point, source, fstype in entries
+            if device.get(parent) != dev]
 
 
 def _within(path, mount_point):
@@ -110,6 +129,10 @@ def check(database_path, root, *, now_ms=None, text=None):
     """
     facts = learned(database_path)
     known = facts.get(root)
+    relearn = known is not None and not known.get("binds_ignored")
+    if relearn:                                          # Learned before binds were passed over: look again.
+        del facts[root]
+        known = None
     try:
         mount_point, source, fstype = mount_of(root, text)
     except FileNotFoundError:
@@ -123,8 +146,10 @@ def check(database_path, root, *, now_ms=None, text=None):
         if not deeper:
             raise StorageNotMounted(root, known, (mount_point, source), _facts_file(database_path))
     elif not (mount_point == os.path.realpath(root) or fstype in NETWORK):
+        if relearn:
+            _save(database_path, facts)
         return "local"
-    facts[root] = {"mount_point": mount_point, "source": source, "fstype": fstype,
+    facts[root] = {"mount_point": mount_point, "source": source, "fstype": fstype, "binds_ignored": True,
                    "learned_at_ms": now_ms if now_ms is not None else time.time_ns() // 1_000_000}
     _save(database_path, facts)
     return "learned"

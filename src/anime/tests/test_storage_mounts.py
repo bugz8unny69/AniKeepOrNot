@@ -13,9 +13,9 @@ from src.anime.storage_mounts import FACTS, StorageNotMounted, check, learned, m
 ROOT_FS = "1 0 0:1 / / rw - ext4 /dev/sda1 rw\n"
 
 
-def line(mount_point, source, fstype="nfs4"):
+def line(mount_point, source, fstype="nfs4", ids="9 1", device="0:9"):
     escape = lambda text: text.replace(" ", chr(92) + "040")
-    return f"9 1 0:9 / {escape(mount_point)} rw - {fstype} {escape(source)} rw\n"
+    return f"{ids} {device} / {escape(mount_point)} rw - {fstype} {escape(source)} rw\n"
 
 
 class StorageMountTests(unittest.TestCase):
@@ -69,6 +69,30 @@ class StorageMountTests(unittest.TestCase):
         self.staging.rmdir()
         with self.assertRaises(StorageNotMounted):
             self.check("")
+
+    def test_a_folder_bound_onto_itself_is_not_a_share(self):
+        # Production, 2026-11-28: systemd's ReadWritePaths binds each folder onto itself; the bind
+        # has the device of the share it sits in (0:49), a real share has its own (0:46).
+        above = line(str(self.media), "nas:/store/media", ids="5 1", device="0:49")
+        bind = line(self.root, "nas:/store/media/Anime Trial", ids="6 5", device="0:49")
+        self.assertEqual(self.check(above + bind), "learned")
+        self.assertEqual(learned(self.database)[self.root]["mount_point"], str(self.media))
+        self.assertEqual(self.check(above), "mounted")            # The bind is gone: nothing is missing.
+        share = line(self.root, "nas:/store/media/Anime Trial", ids="6 5", device="0:46")
+        self.assertEqual(self.check(above + share), "learned")   # Its own device: a share.
+        self.assertEqual(learned(self.database)[self.root]["mount_point"], self.root)
+
+    def test_a_fact_learned_from_a_bind_before_binds_were_told_apart_is_learned_again(self):
+        (self.base / FACTS).write_text(json.dumps({self.root: {
+            "mount_point": self.root, "source": "nas:/store/media/Anime Trial", "fstype": "nfs4", "learned_at_ms": 1}}))
+        above = line(str(self.media), "nas:/store/media")
+        self.assertEqual(self.check(above), "learned")            # Not 'not mounted': it looked again.
+        self.assertEqual(learned(self.database)[self.root]["mount_point"], str(self.media))
+        self.assertTrue(learned(self.database)[self.root]["binds_ignored"])
+        (self.base / FACTS).write_text(json.dumps({self.root: {
+            "mount_point": self.root, "source": "nas:/x", "fstype": "nfs4", "learned_at_ms": 1}}))
+        self.assertEqual(self.check(""), "local")                 # Local now: the old fact is dropped.
+        self.assertEqual(learned(self.database), {})
 
     def test_mountinfo_escapes_are_read(self):
         self.assertIn(("/mnt/Anime Trial", "nas:/x", "nfs4"), mounts(line("/mnt/Anime Trial", "nas:/x")))
