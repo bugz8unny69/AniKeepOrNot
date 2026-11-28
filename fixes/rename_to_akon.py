@@ -104,8 +104,10 @@ def rename_to_akon(
     live_cfg_rel = "etc/akon/branches/develop"
     live_cfg_abs = prefix / live_cfg_rel
     old_db_name = "anime-discovery-develop.sqlite"
-    new_db_name = "akon.sqlite"
-    new_db_logical = "/var/lib/akon/akon.sqlite"
+    # Owner, 2026-11-27: the branch stays in the name, as the installer names a branch's
+    # database (<state>/akon-<branch>.sqlite).
+    new_db_name = "akon-develop.sqlite"
+    new_db_logical = "/var/lib/akon/akon-develop.sqlite"
     old_db_logical = "/var/lib/anime-discovery/anime-discovery-develop.sqlite"
 
     active = active_services(execute)
@@ -127,6 +129,7 @@ def rename_to_akon(
             "usermod -l akon anime-discovery && groupmod -n akon anime-discovery && usermod -d /var/lib/akon akon",
             f"move {etc_old} -> {etc_new} and update storage.database_path -> {new_db_logical}",
             f"checkpoint & move {var_old} -> {var_new}, rename {old_db_name} -> {new_db_name}",
+            f"remove the old pipeline's empty lock files in {var_new} (.{old_db_name}.nextgen-*, .nextgen-*stage-*.lock)",
             "retag & recategorize qBittorrent torrents in place (ad-<m> -> akon-<m>, category -> akon), set qb.prefix='ad', update qbittorrent.category='akon'",
             f"rewrite {var_new / 'installer/installer.json'} for /opt/akon, /etc/akon, /var/lib/akon, user akon",
             f"update {bin_dir / 'adm'} (AKON_CONFIG_DIR=/etc/akon/branches/develop) and remove anime-discovery-admin",
@@ -184,6 +187,17 @@ def rename_to_akon(
             old_files.rename(new_files)
             undo.append(f"mv {new_files} {old_files}")
         out(f"3. Moved data {var_old} -> {var_new} and renamed live database to {new_db_name}")
+
+        # 3b. Lock files: the old pipeline's per-operation and staging locks, and the old database
+        # name's gate locks (the gate makes its own for the new name). Only empty regular files.
+        removed = 0
+        for lock in sorted(var_new.iterdir()):
+            stale = (lock.name.startswith(f".{old_db_name}.nextgen-")
+                     or (lock.name.startswith(".nextgen-") and lock.name.endswith(".lock") and "stage-" in lock.name))
+            if stale and lock.is_file() and not lock.is_symlink() and lock.stat().st_size == 0:
+                lock.unlink()
+                removed += 1
+        out(f"3b. Removed {removed} old lock files")
 
         # 4. qBittorrent (RN-3)
         cfg_dir = live_cfg_abs if live_cfg_abs.is_dir() else etc_new

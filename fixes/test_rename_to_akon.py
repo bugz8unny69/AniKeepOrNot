@@ -108,6 +108,10 @@ class RenameToAkonTests(unittest.TestCase):
                     return subprocess.CompletedProcess(cmd, 3, "", "")
                 return subprocess.CompletedProcess(cmd, 0, "", "")
 
+            # The old pipeline's empty lock files, and another branch database's gate lock.
+            for name in (".anime-discovery-develop.sqlite.nextgen-operation-12", ".anime-discovery-develop.sqlite.nextgen-work",
+                         ".nextgen-stage-7.lock", ".nextgen-batch-stage-8.lock", ".anime-discovery.sqlite.nextgen-work"):
+                (root / "var/lib/anime-discovery" / name).touch()
             fake_qb = mock.Mock()
             fake_qb.rename_legacy_torrents.return_value = {
                 "renamed": [{"hash": "a" * 40, "marker": "1" * 32, "name": "[G] Test Series - 01"}],
@@ -130,19 +134,21 @@ class RenameToAkonTests(unittest.TestCase):
             self.assertTrue((root / "etc/akon").exists())
             self.assertFalse((root / "var/lib/anime-discovery").exists())
             self.assertTrue((root / "var/lib/akon").exists())
-            self.assertTrue((root / "var/lib/akon/akon.sqlite").is_file())
-            self.assertTrue((root / "var/lib/akon/akon-files/metainfo").is_dir())
+            self.assertTrue((root / "var/lib/akon/akon-develop.sqlite").is_file())
+            left = sorted(p.name for p in (root / "var/lib/akon").iterdir() if p.name.startswith("."))
+            self.assertEqual(left, [".anime-discovery.sqlite.nextgen-work"])    # Only the other branch's own lock.
+            self.assertTrue((root / "var/lib/akon/akon-develop-files/metainfo").is_dir())
             # Other branches' DBs left alone (RN-0 Q2)
             self.assertTrue((root / "var/lib/akon/anime-discovery.sqlite").is_file())
             self.assertTrue((root / "var/lib/akon/anime-discovery-refactor.sqlite").is_file())
 
             # Settings rewritten via ConfigurationStore
             dev_snap = ConfigurationStore(root / "etc/akon/branches/develop").read()
-            self.assertEqual(dev_snap.value("storage.database_path"), "/var/lib/akon/akon.sqlite")
+            self.assertEqual(dev_snap.value("storage.database_path"), "/var/lib/akon/akon-develop.sqlite")
             self.assertEqual(dev_snap.value("qbittorrent.category"), "akon")
 
             # Series row updated with qb.prefix = "ad" and row counts intact
-            db = sqlite3.connect(root / "var/lib/akon/akon.sqlite")
+            db = sqlite3.connect(root / "var/lib/akon/akon-develop.sqlite")
             s101 = get_series(db, 101)
             self.assertEqual(s101.torrents[0]["qb"]["prefix"], "ad")
             db.close()
