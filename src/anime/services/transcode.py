@@ -24,6 +24,20 @@ _SLOTS = threading.Condition()
 _BUSY = set()
 _PIPELINE_WAITERS = 0
 _LOCAL_INITIALIZED = set()
+_TURN = [0]                   # Round robin: which agent the next transcode asks first.
+
+
+def in_turn(agents):
+    """The agents in the order this transcode asks them: each transcode starts one further
+    along (owner, 2026-11-27: the first agent took every transcode; the second sat idle).
+    A busy, unreachable or failing agent still hands the video to the next one."""
+    agents = tuple(agents)
+    if len(agents) < 2:
+        return agents
+    with _SLOTS:
+        start = _TURN[0] % len(agents)
+        _TURN[0] += 1
+    return agents[start:] + agents[:start]
 
 
 class TranscodeWaiting(RuntimeError):
@@ -285,7 +299,7 @@ def transcode(source, output, configuration, secrets, flag, *, info=None, batch=
     temporary = output.with_name(output.name+'.tmp')
     temporary.unlink(missing_ok=True)
     output.parent.mkdir(parents=True, exist_ok=True)
-    candidates = ('local',) if mode == 'local' else configuration.value('transcode.agents')
+    candidates = ('local',) if mode == 'local' else in_turn(configuration.value('transcode.agents'))
     last_error = 'No agent available'
     update_required = []      # Reachable agents refused for their version: why the job waits.
     skipped = []              # (agent, why) for the log: why this video did not go to an agent.

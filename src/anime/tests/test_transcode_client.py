@@ -19,6 +19,12 @@ class Secrets:
     def transcode_token(self, address): return 'test-token'
 
 
+@pytest.fixture(autouse=True)
+def first_agent_first():
+    """Each test starts with the first agent's turn (round robin keeps a turn across calls)."""
+    client._TURN[0] = 0
+
+
 def config(**values):
     return ConfigurationSnapshot(1, {'transcode': {'mode': 'remote', 'target_mb': 1, 'retries': 0,
                                 'agents': ['http://first:8787', 'http://second:8787'], **values}})
@@ -352,3 +358,31 @@ def test_each_skipped_agent_is_logged_with_its_reason(tmp_path, caplog):
     assert 'episode.mkv: skipped first:8787: the agent reports a job running' in text
     assert 'episode.mkv: skipped second:8787: 10 B free on the agent, needs 6.1 kB' in text
     assert 'episode.mkv: no agent took it; waiting' in text
+
+
+def test_agents_take_turns(tmp_path):
+    """Owner, 2026-11-27: the first agent took every transcode and the second sat idle.
+    Each transcode now starts with the agent after the one the previous transcode asked first."""
+    source, output = tmp_path/'source', tmp_path/'result'
+    source.write_bytes(b'x'*4096)
+    info = {'duration': 1, 'streams': []}
+    used = []
+    class Remote:
+        token = 'test'
+        def __init__(self, address, token): self.address = address
+        def health(self): return {'busy': False, 'free_bytes': 100000, 'agent_version': AGENT_VERSION}
+        def run(self, source, output, rate, audio, flag, report, started):
+            used.append(self.address.split('//')[1].split(':')[0])
+            started(); output.write_bytes(b'encoded')
+    with patch.object(client, '_TURN', [0]), patch.object(client.encode, 'check'):
+        for _ in range(4):
+            assert client.transcode(source, output, config(), Secrets(), threading.Event(), info=info,
+                                    remote_factory=Remote)
+    assert used == ['first', 'second', 'first', 'second']
+
+
+def test_in_turn_rotates_and_keeps_every_agent():
+    with patch.object(client, '_TURN', [0]):
+        orders = [client.in_turn(('a', 'b', 'c')) for _ in range(4)]
+    assert orders == [('a', 'b', 'c'), ('b', 'c', 'a'), ('c', 'a', 'b'), ('a', 'b', 'c')]
+    assert client.in_turn(('only',)) == ('only',)
