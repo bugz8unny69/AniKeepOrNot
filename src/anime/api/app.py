@@ -296,7 +296,7 @@ class Application:
             raw_query=scope.get('query_string',b'')
             path=scope.get('path','')
             manual_upload=scope['method']=='POST' and bool(re.fullmatch(
-                PREFIX+r'/intake/series/[1-9][0-9]{0,18}/episodes/[0-9]{1,4}/[1-9][0-9]{0,3}/submit',path))
+                PREFIX+r'/(?:intake/)?series/[1-9][0-9]{0,18}/release',path))   # A .torrent file is larger.
             body_limit=MAX_TORRENT_BODY if manual_upload else MAX_BODY
             length=headers.get('content-length')
             if length is not None and (not re.fullmatch('[0-9]{1,8}',length) or int(length)>body_limit):raise ApiError(413,'API_BODY_TOO_LARGE')

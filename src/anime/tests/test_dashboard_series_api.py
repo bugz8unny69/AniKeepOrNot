@@ -172,7 +172,9 @@ class DashboardLoadsTests(unittest.TestCase):
             self.skipTest("node is not installed")
         here = Path(__file__).resolve().parent
         static = here.parent / "dashboard" / "static"
-        result = subprocess.run([node, str(here / "dashboard_load.js"), str(static / "dashboard.js"),
-                                 str(static / "index.html")], capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("no error at load", result.stdout)
+        for page in ("/", "/running", "/recognized", "/settings"):
+            with self.subTest(page=page):
+                result = subprocess.run([node, str(here / "dashboard_load.js"), str(static / "dashboard.js"),
+                                         str(static / "index.html"), page], capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("no error at load", result.stdout)

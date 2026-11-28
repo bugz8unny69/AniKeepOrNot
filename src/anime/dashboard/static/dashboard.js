@@ -25,10 +25,10 @@ const $ = id => document.getElementById(id);
 const BUTTON_LABELS = Object.freeze({
   'Submit release': 'add release', 'Save match and retry': 'save match',
   'View series': 'details', 'Matching details': 'details', 'Episode coverage': 'coverage',
-  'View job': 'jobs', 'Related jobs': 'jobs', 'Episodes': 'details',
+  'Episodes': 'details',
   'Retry acquisition': 'retry', 'Try next release': 'cancel', 'Search': 'search again',
   'Retry search': 'search again', 'Save changes': 'save', 'Add torrent/magnet': 'add release',
-  'Open series': 'series', 'Open job': 'history', 'Open jobs page': 'jobs',
+  'Open series': 'series',
 });
 const BUTTON_HINTS = Object.freeze({
   keep: 'Import the staged acquisition into the permanent library.',
@@ -39,7 +39,6 @@ const BUTTON_HINTS = Object.freeze({
   'retry shoko': 'Retry optional Shoko metadata without repeating the library import.',
   details: 'Open or close the details for this item.',
   coverage: 'Open the verified episode coverage for this release.',
-  history: 'Open this job’s recorded history.', jobs: 'Open related jobs on the Jobs page.',
   series: 'Open the series and its staged and missing episodes.',
   'search again': 'Search saved and new releases for this episode.',
   'save match': 'Save this verified mapping and retry identification.',
@@ -65,23 +64,12 @@ const node = (tag, text, cls) => {
   return el;
 };
 const state = {
-  csrf: null, generation: 0, requests: new Set(), jobs: [], pending: new Set(),
-  selected: new Set(), bulkSubmitting: false,
+  csrf: null, generation: 0, requests: new Set(), items: [], pending: new Set(),
   page: location.pathname === '/settings' ? 'settings' : location.pathname === '/running' ? 'running' : location.pathname === '/recognized' ? 'recognized' : 'intake',
   cursor: MAX_CURSOR, previous: [], next: null, loading: null, timer: null,
   settings: null, credentials: null, dirty: false, settingsVersion: 0,
-  historyJob: null, historyCursor: 0, historyNext: null, historyVersion: 0,
   matchingJob: null, matchingVersion: 0,
-  seriesBusy: false, manualTarget: null, expandedJobId: null,
-  episodeFilter: (() => {
-    if (location.pathname !== '/jobs') return null;
-    const params = new URLSearchParams((location.hash || '').slice(1));
-    const fields = ['anidb_id', 'season', 'episode'].map(name => params.get(name));
-    return fields.every(value => value !== null && /^\d{1,18}$/.test(value))
-      ? {anidb_id: fields[0], season: fields[1], episode: fields[2]} : null;
-  })(),
-  search: location.pathname === '/jobs' && /^\d{1,18}$/.test(new URLSearchParams((location.hash || '').slice(1)).get('job') || '')
-    ? '#' + new URLSearchParams((location.hash || '').slice(1)).get('job') : '',
+  seriesBusy: false, manualTarget: null, search: '',
   recognizedSearch: '', recognizedSignature: null, searchTimer: null,
   services: null, servicesAt: 0,
 };
@@ -91,6 +79,20 @@ const SERVICE_STATES = Object.freeze({
   AUTH_FAILED: ['Login rejected', 'bad'], UNSUPPORTED: ['Unsupported version', 'bad'],
   DISABLED: ['Off', 'off'], UNKNOWN: ['Unknown', 'unknown'],
 });
+// Why a torrent waits or stopped (the series job's codes), in plain words.
+const WHY = Object.freeze({
+  STAGING_FULL: 'staging is full: it starts once Keep or Reject frees room',
+  STORAGE_UNAVAILABLE: 'a storage folder cannot be reached or is not mounted',
+  NETWORK_UNAVAILABLE: 'the network failed', SERVICE_UNAVAILABLE: 'a service is down',
+  SERVICE_SETUP_INVALID: 'a service needs setting up', TORRENT_DISK_FULL: 'the download disk is full',
+  TRANSCODE_WAITING: 'waiting for a transcoder', TORRENT_METADATA_WAITING: 'waiting for the file list',
+  TORRENT_DOWNLOAD_IN_PROGRESS: 'downloading', KEEP_IMPORT_REVIEW: 'Sonarr refused the import',
+});
+function whyText(why) {
+  if (!why) return '';
+  const code = String(why).split(':')[0];
+  return WHY[code] || String(why);
+}
 function notice(message = '', error = false) {
   $('notice').textContent = message;
   $('notice').classList.toggle('error', error);
@@ -101,23 +103,20 @@ function clearPrivate(message = '') {
   for (const controller of state.requests) controller.abort();
   state.requests.clear();
   clearTimeout(state.timer);
-  state.jobs = []; state.pending.clear(); state.selected.clear(); state.bulkSubmitting = false;
+  state.items = []; state.pending.clear();
   state.settings = null; state.credentials = null;
   state.previous = []; state.cursor = MAX_CURSOR; state.next = null; state.dirty = false;
   state.settingsVersion += 1;
-  state.historyJob = null; state.historyVersion += 1;
   state.matchingJob = null; state.matchingVersion += 1;
   state.services = null; state.servicesAt = 0; renderServices();
-  $('intake-rows').replaceChildren(); $('job-rows').replaceChildren(); $('settings-fields').replaceChildren();
-  $('history-rows').replaceChildren();
+  $('intake-rows').replaceChildren(); $('settings-fields').replaceChildren();
   $('matching-body').replaceChildren(); $('matching-summary').textContent = '';
   $('recognized-rows').replaceChildren(); $('recognized-note').textContent = '';
   $('bell-items').replaceChildren(); $('bell-note').textContent = ''; state.bellNext = null;
   $('bell-panel').hidden = true; renderBellCount(0);
   $('access-key').value = '';
   state.search = ''; state.recognizedSearch = ''; state.recognizedSignature = null; clearTimeout(state.searchTimer);
-  $('intake-search').value = ''; $('search').value = ''; $('recognized-search').value = '';
-  if ($('history-dialog').open) $('history-dialog').close();
+  $('intake-search').value = ''; $('recognized-search').value = '';
   if ($('matching-dialog').open) $('matching-dialog').close();
   if ($('series-dialog').open) $('series-dialog').close();
   if ($('help-dialog').open) $('help-dialog').close();
@@ -131,7 +130,7 @@ async function request(path, {method = 'GET', body} = {}) {
   if (!path.startsWith(API + '/')) throw new Error(COPY['dashboard.request_failed']);
   const generation = state.generation;
   const controller = new AbortController(); state.requests.add(controller);
-  const timeout = setTimeout(() => controller.abort(), path.endsWith('/submit') ? 30000 : 15000);
+  const timeout = setTimeout(() => controller.abort(), path.endsWith('/release') ? 30000 : 15000);
   try {
     const headers = {'Accept': 'application/json'};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -158,48 +157,6 @@ function displayError(error) {
   if (error.name !== 'AbortError') notice(error.message || COPY['dashboard.request_failed'], true);
 }
 function date(value) { return value ? new Date(value).toLocaleString() : '—'; }
-function statusBadge(job) {
-  const classes = {DONE: 'completed', RUNNING: 'running', RETRY_WAIT: 'waiting', NEEDS_REVIEW: 'blocked', BLOCKED: 'blocked', CANCELED: 'blocked', FAILED: 'blocked'};
-  return node('span', job.status?.message || 'Unknown status', 'status ' + (classes[job.state] || ''));
-}
-function actionButton(job, action, label) {
-  const capability = job.actions?.[action];
-  const submitting = state.bulkSubmitting || state.pending.has(job.cancellation.operation_id);
-  const enabled = Boolean(capability?.enabled && capability.execution_available !== false && !submitting);
-  const explanation = submitting ? COPY['dashboard.submitting'] :
-    capability?.disabled_reason?.message || capability?.availability_reason?.message;
-  const wrapper = node('span', null, 'action-tooltip');
-  const button = node('button', label, ['cancel', 'cleanup'].includes(action) || buttonLabel(label) === 'retry cleanup' ? 'danger' : 'secondary');
-  button.type = 'button'; button.disabled = !enabled;
-  if (!enabled) {
-    wrapper.tabIndex = 0; wrapper.dataset.disabled = 'true';
-    wrapper.title = explanation || COPY['dashboard.not_available'];
-    wrapper.setAttribute('aria-label', label + ': ' + wrapper.title);
-    button.title = wrapper.title;
-  }
-  button.addEventListener('click', () => submitAction(job, action));
-  wrapper.appendChild(button); return wrapper;
-}
-async function submitAction(job, action) {
-  if (state.pending.has(job.cancellation.operation_id)) return;
-  const capability = job.actions?.[action];
-  if (!capability?.enabled || capability.execution_available === false) return;
-  if (action === 'cancel' && !confirm(COPY['dashboard.confirm_cancel'])) return;
-  if ((action === 'cleanup' || action === 'retry' && job.kind?.startsWith('CLEANUP_')) && !confirm(COPY['dashboard.confirm_cleanup'])) return;
-  state.pending.add(job.cancellation.operation_id); renderJobs();
-  try {
-    const body = action === 'retry' ? {expected_attempt: job.attempt_count, expected_reason: job.reason?.code} : {};
-    const receipt = await request(`${API}/jobs/${job.job_id}/${action}`, {method: 'POST', body});
-    notice(receipt.notification?.message || COPY['dashboard.request_failed']);
-  } catch (error) { displayError(error); }
-  finally {
-    // Drain a poll that began before the action, then obtain a fresh snapshot.
-    if (state.loading) await state.loading;
-    state.pending.delete(job.cancellation.operation_id);
-  }
-  // A lost response is reconciled by reading status, never by replaying a POST.
-  if (state.csrf) await loadActivity();
-}
 function tvdbLabel(episode) {
   return 'S' + String(episode.season).padStart(2, '0') +
     'E' + String(episode.episode).padStart(2, '0');
@@ -234,254 +191,6 @@ function manualSubmissionProblem(target, title, magnet) {
   return null;
 }
 // Missing episodes are AniDB-numbered; the verified TVDB placement is a label when known.
-function missingLabel(item) {
-  return 'E' + String(item.anidb_episode).padStart(2, '0') +
-    (item.season == null ? '' : ' · TVDB ' + tvdbLabel(item));
-}
-function navigateEpisodeJobs(anidbId, episode) {
-  // Keep the episode in the previous history entry so native browser Back
-  // reopens the same series view without another navigation control.
-  const seriesUrl = '/#series=' + encodeURIComponent(anidbId) +
-    '&episode=' + encodeURIComponent(tvdbLabel(episode));
-  if (window.history?.replaceState) window.history.replaceState(null, '', seriesUrl);
-  // The Jobs page went with the per-step jobs: the series view shows its torrents and history.
-  location.assign(seriesUrl);
-}
-function relatedJobsButton(anidbId, episode) {
-  const button = node('button', 'Related jobs', 'secondary');
-  button.type = 'button';
-  button.addEventListener('click', () => navigateEpisodeJobs(anidbId, episode));
-  return button;
-}
-function renderJobs() {
-  if (state.page === 'intake') { $('transcode-batch').hidden = true; renderSeries(); return; }
-  const batchPanel = $('transcode-batch');
-  const batch = state.transcodeBatch;
-  batchPanel.hidden = !batch || !['QUEUED', 'RUNNING'].includes(batch.state);
-  batchPanel.replaceChildren();
-  if (batch) {
-    batchPanel.appendChild(node('strong', `Transcoding staged videos: ${batch.done + batch.skipped + batch.failed}/${batch.total}`));
-    batchPanel.appendChild(node('p', `${batch.current_file || 'Waiting for transcoder'} · ${batch.failed} failed`));
-  }
-  const tbody = $('job-rows'); tbody.replaceChildren();
-  const jobs = state.jobs;
-  $('no-jobs').hidden = jobs.length !== 0;
-  for (const job of jobs) {
-    const tr = node('tr');
-    const td = value => { const cell = node('td', value); tr.appendChild(cell); return cell; };
-    if (state.page === 'jobs') {
-      const cell = td();
-      const checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.checked = state.selected.has(job.job_id);
-      checkbox.disabled = state.bulkSubmitting;
-      checkbox.setAttribute('aria-label', 'Select job #' + job.job_id);
-      checkbox.addEventListener('change', () => {
-        if (state.bulkSubmitting) return;
-        if (checkbox.checked && state.selected.size >= 100) {
-          checkbox.checked = false; notice(COPY['dashboard.bulk_limit'], true); return;
-        }
-        if (checkbox.checked) state.selected.add(job.job_id);
-        else state.selected.delete(job.job_id);
-        renderBulkControls();
-      });
-      cell.appendChild(checkbox);
-    }
-    td(date(job.received_at_ms || job.created_at_ms));
-    const title = td();
-    title.appendChild(node('strong', job.anime_title || (job.release_name ? 'Anime not identified' : 'Management job'), 'job-anime'));
-    const targets = job.episode_targets || [];
-    if (targets.length) {
-      const shown = targets.slice(0, 3).map(tvdbLabel).join(', ');
-      title.appendChild(node('small', 'TVDB ' + shown +
-        (targets.length > 3 ? ' +' + (targets.length - 3) + ' more' : ''), 'job-episode'));
-    } else if (job.release_name) {
-      title.appendChild(node('small', 'Episode not determined', 'muted job-note'));
-    }
-    if (job.release_name) {
-      const release = node('span', job.release_name, 'job-release muted');
-      release.title = job.release_name;
-      title.appendChild(release);
-      const expanded = node('details', null, 'job-details');
-      const summary = node('summary', 'details');
-      expanded.appendChild(summary);
-      expanded.appendChild(node('p', job.release_name, 'job-release-full'));
-      expanded.appendChild(node('small', targets.length ?
-        'Verified TVDB target: ' + targets.map(tvdbLabel).join(', ') :
-        'Episode mapping has not been verified for this job.', 'muted'));
-      expanded.open = state.expandedJobId === job.job_id;
-      expanded.addEventListener('toggle', () => {
-        if (expanded.open) state.expandedJobId = job.job_id;
-        else if (state.expandedJobId === job.job_id) state.expandedJobId = null;
-        if (expanded.open) {
-          for (const other of tbody.querySelectorAll('details.job-details')) {
-            if (other !== expanded) other.open = false;
-          }
-        }
-      });
-      title.appendChild(expanded);
-    }
-    td().appendChild(node('span', `#${job.job_id} · ${job.transcode_step || job.label?.message || 'Job'}`));
-    const status = td(); status.appendChild(statusBadge(job));
-    const details = td();
-    if (job.reason) {
-      details.appendChild(node('p', job.reason.message));
-      if (job.reason.action) details.appendChild(node('small', job.reason.action, 'muted'));
-    } else if (job.cancellation.state === 'STAGED' && !job.actions?.keep?.job?.completion) details.appendChild(node('p', COPY['dashboard.staged']));
-    if (job.cleanup_progress) {
-      const phases = {
-        PREPARED: 'Preparing cleanup', STOP_UNCERTAIN: 'Confirming torrent stopped',
-        REMOVE_UNCERTAIN: 'Confirming torrent removed (no repeat deletion)',
-        FILES: 'Cleaning leftover files', COMPLETE: 'Cleanup completed'
-      };
-      details.appendChild(node('small',
-        `Cleanup: ${phases[job.cleanup_progress.phase] || 'Cleanup needs attention'} · Last advanced ${date(job.cleanup_progress.since_ms)}`,
-        'muted'));
-    }
-    if (job.size_detail) details.appendChild(node('p', job.size_detail));
-    if (job.failed_detail || job.reason?.code) {
-      const technical = node('details', null, 'technical-details');
-      technical.appendChild(node('summary', 'details'));
-      technical.appendChild(node('pre', [job.reason?.code, job.failed_detail].filter(Boolean).join('\n')));
-      details.appendChild(technical);
-    }
-    const activeAction = ['cleanup', 'keep'].map(name => job.actions?.[name]?.job).find(Boolean);
-    if (activeAction) {
-      details.appendChild(node('p', `Job #${activeAction.job_id}: ${activeAction.status.message}`));
-      if (activeAction.reason) details.appendChild(node('small', activeAction.reason.message, 'muted'));
-      if (activeAction.completion) details.appendChild(node('p', activeAction.completion.message));
-      if (activeAction.post_keep_cleanup) {
-        const cleanup = activeAction.post_keep_cleanup;
-        details.appendChild(node('small', cleanup.completed ? cleanup.completion.message : `Staging cleanup: ${cleanup.status.message}`, 'muted'));
-        if (cleanup.reason) details.appendChild(node('small', cleanup.reason.message, 'muted'));
-      }
-      if (activeAction.download_cleanup) {
-        const cleanup = activeAction.download_cleanup;
-        details.appendChild(node('small', cleanup.completed ? cleanup.completion.message : `Download cleanup: ${cleanup.status.message}`, 'muted'));
-        if (cleanup.reason) details.appendChild(node('small', cleanup.reason.message, 'muted'));
-      }
-      if (activeAction.optional_shoko) {
-        const shoko = activeAction.optional_shoko;
-        details.appendChild(node('small', `Optional Shoko metadata: ${shoko.status.message}`, 'muted'));
-        if (shoko.metadata) details.appendChild(node('small', `${shoko.metadata.title} · ${shoko.metadata.episode_title}`, 'muted'));
-        if (shoko.reason) details.appendChild(node('small', shoko.reason.message, 'muted'));
-      }
-    }
-    const actions = td();
-    const keep = job.actions?.keep;
-    if (keep?.enabled && keep.execution_available !== false && !keep.job?.completion && keep.job?.state !== 'DONE') {
-      actions.appendChild(actionButton(job, 'keep', 'keep'));
-    } else if (keep && !keep.job?.completion && keep.job?.state !== 'DONE' && job.cancellation.state === 'STAGED') {
-      actions.appendChild(actionButton(job, 'keep', 'keep'));
-    }
-    for (const name of ['cancel', 'cleanup']) {
-      if (job.actions?.[name]?.enabled) actions.appendChild(actionButton(job, name, name));
-    }
-    const followups = [keep?.job?.download_cleanup, keep?.job?.post_keep_cleanup, keep?.job?.optional_shoko];
-    for (const followup of followups) {
-      if (!followup || !['NEEDS_REVIEW', 'BLOCKED', 'FAILED'].includes(followup.state)) continue;
-      const shoko = followup === keep?.job?.optional_shoko;
-      const button = node('button', shoko ? 'retry shoko' : 'retry cleanup', shoko ? 'secondary' : 'danger');
-      if (!shoko) button.title = 'Retry ' + (followup === keep?.job?.download_cleanup ? 'download' : 'staging') + ' cleanup for job #' + followup.job_id + ' without repeating the library import.';
-      button.disabled = state.pending.has(job.cancellation.operation_id) || state.bulkSubmitting;
-      button.addEventListener('click', () => retryFollowup(job, followup, shoko));
-      actions.appendChild(button);
-    }
-    if (['NEEDS_REVIEW', 'FAILED', 'BLOCKED'].includes(job.state) && job.actions?.retry?.enabled) {
-      actions.appendChild(actionButton(job, 'retry', job.kind === 'ENRICH_SHOKO_METADATA' ? 'retry shoko' : job.kind?.startsWith('CLEANUP_') ? 'retry cleanup' : 'retry'));
-    }
-    if (job.event_id && !job.is_management_action) {
-      const matching = node('button', 'Matching details', 'secondary');
-      matching.type = 'button';
-      matching.addEventListener('click', () => openMatching(job.job_id));
-      actions.appendChild(matching);
-    }
-    if (job.kind === 'VERIFY_RELEASE') {
-      const coverage = node('button', 'Episode coverage', 'secondary');
-      coverage.type = 'button';
-      coverage.addEventListener('click', () => openCoverage(job.job_id));
-      actions.appendChild(coverage);
-    }
-    const history = node('button', 'History', 'secondary');
-    history.addEventListener('click', () => openHistory(job.job_id)); actions.appendChild(history);
-    tbody.appendChild(tr);
-  }
-  $('previous-page').disabled = state.previous.length === 0;
-  $('next-page').disabled = state.next === null;
-  if (state.page === 'jobs') renderBulkControls();
-}
-async function retryFollowup(parent, followup, shoko = false) {
-  const operation = parent.cancellation.operation_id;
-  if (state.pending.has(operation) || state.bulkSubmitting) return;
-  if (!shoko && !confirm('Retry permanent removal of this cleanup job’s owned files; deleted files cannot be recovered?')) return;
-  state.pending.add(operation); renderJobs();
-  try {
-    const job = await request(`${API}/jobs/${followup.job_id}`);
-    if (!job.actions?.retry?.enabled) throw new Error('This recovery is no longer available; check its history.');
-    await request(`${API}/jobs/${followup.job_id}/retry`, {method: 'POST', body: {
-      expected_attempt: job.attempt_count, expected_reason: job.reason?.code
-    }});
-    notice(shoko ? 'Shoko metadata retry queued.' : 'Cleanup retry queued.');
-  } catch (error) { displayError(error); }
-  finally {
-    if (state.loading) await state.loading;
-    state.pending.delete(operation);
-    if (state.csrf) await loadActivity();
-  }
-}
-function renderBulkControls() {
-  if (state.page !== 'jobs') return;
-  const count = state.selected.size;
-  $('bulk-actions').hidden = count === 0;
-  $('selection-count').textContent = count + ' selected (max 100)';
-  for (const name of ['retry', 'cancel', 'cleanup']) $('bulk-' + name).disabled = !count || state.bulkSubmitting;
-  $('bulk-clear').disabled = state.bulkSubmitting;
-  const onPage = state.jobs;
-  $('select-page').disabled = state.bulkSubmitting || !onPage.length;
-  $('select-page').checked = Boolean(onPage.length && onPage.every(job => state.selected.has(job.job_id)));
-  $('select-page').indeterminate = onPage.some(job => state.selected.has(job.job_id)) && !$('select-page').checked;
-}
-async function resetJobsPage() {
-  if (!state.csrf || state.page !== 'jobs') return;
-  if (state.loading) await state.loading;
-  state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
-  await loadActivity();
-}
-async function submitSelected(action) {
-  if (state.bulkSubmitting || !state.csrf || state.page !== 'jobs' || !state.selected.size) return;
-  const ids = [...state.selected];
-  if (!['retry', 'cancel', 'cleanup'].includes(action)) return;
-  const effect = action === 'retry' ? 'retry eligible failed steps; already performed effects remain' : action === 'cancel' ? 'cancel acquisitions and permanently remove their owned files; deletion cannot be undone' : 'permanently remove remaining owned files; deletion cannot be undone';
-  if (!confirm(`For ${ids.length} selected jobs, ${effect}?`)) return;
-  state.bulkSubmitting = true; renderJobs();
-  let successful = 0, failed = 0, submitted = null;
-  try {
-    if (ids.length > 5) {
-      submitted = await request(API + '/jobs/bulk', {method: 'POST', body: {action, job_ids: ids}});
-      state.selected.clear();
-      notice(`Bulk job #${submitted.job_id} submitted for ${ids.length} selected jobs. Follow its history for the result.`);
-    } else {
-      for (const id of ids) {
-        if (!state.csrf) break;
-        try {
-          let body = {};
-          if (action === 'retry') {
-            const job = await request(`${API}/jobs/${id}`);
-            if (!job.actions?.retry?.enabled) { failed++; continue; }
-            body = {expected_attempt: job.attempt_count, expected_reason: job.reason?.code};
-          }
-          await request(`${API}/jobs/${id}/${action}`, {method: 'POST', body});
-          state.selected.delete(id);
-          successful++;
-        } catch (error) { failed++; if (!state.csrf) break; }
-      }
-      if (state.csrf) notice(`${successful} job action(s) accepted; ${failed} could not be applied.`, failed > 0);
-    }
-  } catch (error) { displayError(error); }
-  finally {
-    if (state.loading) await state.loading;
-    state.bulkSubmitting = false;
-    if (state.csrf) await loadActivity();
-  }
-}
 const INTAKE_STATUS = Object.freeze({
   REJECTED: 'Rejected', ACCEPTED: 'Accepted', STAGED: 'Ready to Keep', WAITING_FOR_DUB: 'Waiting for dub', TRACKING: 'Tracking',
 });
@@ -497,29 +206,23 @@ function openManualSubmission(anidbId, episode) {
   $('series-manual-panel').scrollIntoView?.({block: 'nearest'});
   $('series-manual-title').focus?.();
 }
-function manualSubmissionButton(anidbId, episode) {
-  const button = node('button', 'Submit release', 'secondary');
-  button.type = 'button';
-  button.addEventListener('click', () => openManualSubmission(anidbId, episode));
-  return button;
-}
 function renderSeries() {
   const tbody = $('intake-rows'); tbody.replaceChildren();
-  $('intake-empty').hidden = state.jobs.length !== 0;
-  for (const series of state.jobs) {
+  $('intake-empty').hidden = state.items.length !== 0;
+  for (const series of state.items) {
     const tr = node('tr');
     const td = value => { const cell = node('td', value); tr.appendChild(cell); return cell; };
     // One row per series (the series job): its episodes by state, what it is doing.
     const episodes = series.episodes || {};
     const staged = (episodes.staged || 0) + (episodes.kept || 0);
     const working = (episodes.reserved || 0) + (episodes.downloading || 0) + (episodes.verified || 0);
-    const label = series.keep ? (series.keep.stopped ? 'Keep stopped' : 'Keeping')
+    const label = series.stopped ? 'Stopped' : series.keep ? (series.keep.stopped ? 'Keep stopped' : 'Keeping')
       : {KEPT: 'Kept', REJECTED: 'Rejected', WORKING: 'Working', ASLEEP: 'Waiting'}[series.state] || series.state;
     td(String(series.anidb_id));
     td().appendChild(node('strong', series.title));
     td(staged + (episodes.kept ? ' kept' : ' staged'));
     td().appendChild(node('span', label,
-      'status ' + (series.state === 'REJECTED' || series.torrents_stopped || series.keep?.stopped ? 'blocked' :
+      'status ' + (series.state === 'REJECTED' || series.stopped || series.torrents_stopped || series.keep?.stopped ? 'blocked' :
         series.state === 'KEPT' ? 'completed' : 'waiting')));
     td(working ? working + ' on the way' : (series.torrents_active ? series.torrents_active + ' torrent(s)' : '—'));
     const actions = td();
@@ -565,8 +268,9 @@ function renderRunning(data) {
       torrentsTd.appendChild(node('span', 'Waiting for downloads or wake', 'muted'));
     } else {
       for (const t of active) {
-        const line = (t.episodes?.length ? t.episodes.join(', ') + ' · ' : '') + (t.release_name || t.infohash?.slice(0, 8));
-        torrentsTd.appendChild(node('div', line));
+        const line = node('div', (t.episodes?.length ? t.episodes.join(', ') + ' · ' : '') + (t.release_name || t.infohash?.slice(0, 8)));
+        if (t.why) line.appendChild(node('small', ' — ' + whyText(t.why), 'muted'));
+        torrentsTd.appendChild(line);
       }
     }
     tr.appendChild(torrentsTd);
@@ -639,7 +343,12 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
 
     if (series.torrents && Array.isArray(series.torrents)) {
       $('series-title').textContent = series.title;
-      $('series-description').textContent = 'State: ' + series.state + (series.wake_at_ms ? ' · wake scheduled' : '');
+      const shown = {WORKING: 'Working', ASLEEP: 'Waiting', KEPT: 'Kept', REJECTED: 'Rejected'}[series.state] || series.state;
+      $('series-description').textContent = [
+        'State: ' + shown + (series.wake_at_ms ? ' · next check ' + date(series.wake_at_ms) : ''),
+        series.stopped ? 'Stopped: ' + series.stopped + '. Retry resumes it.' : '',
+        series.keep?.stopped ? 'Keep stopped: ' + series.keep.stopped + '. Fix it, then Retry.' : '',
+      ].filter(Boolean).join(' · ');
       const list = $('series-episodes'); list.replaceChildren();
       const entries = Object.entries(series.episodes || {}).sort((a, b) => a[0].localeCompare(b[0]));
       for (const [epCode, epData] of entries) {
@@ -664,7 +373,9 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
           const eps = t.episodes?.length ? ' [' + t.episodes.join(', ') + ']' : '';
           tr.appendChild(node('td', name + eps));
           tr.appendChild(node('td', t.step || '-'));
-          tr.appendChild(node('td', t.state || '-'));
+          const stateCell = node('td', t.state || '-');               // Why it waits, stopped or was dropped.
+          if (t.why) stateCell.appendChild(node('small', ' — ' + whyText(t.why), 'muted'));
+          tr.appendChild(stateCell);
           const pct = Math.round((t.progress || 0) * 100);
           tr.appendChild(node('td', pct + '%'));
           torrentsList.appendChild(tr);
@@ -672,8 +383,9 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
         const torrentsEmpty = $('series-torrents-empty');
         if (torrentsEmpty) torrentsEmpty.hidden = series.torrents.length !== 0;
       }
-      $('series-missing').replaceChildren();
-      $('series-missing-empty').hidden = true;
+      const recent = $('series-recent'); recent.replaceChildren();          // Newest first.
+      for (const line of [...(series.recent || [])].reverse()) recent.appendChild(node('li', line));
+      $('series-recent-empty').hidden = (series.recent || []).length !== 0;
 
       const rejected = $('series-rejected');
       const controls = $('series-reject-controls');
@@ -759,211 +471,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       }
 
       if (!dialog.open) dialog.showModal();
-      return;
-    }
-    $('series-title').textContent = series.title;
-    const alternative = series.title === series.english_title ? series.romaji_title : series.english_title;
-    const description = [alternative, series.type, series.year].filter(Boolean).join(' · ');
-    $('series-description').textContent = description ||
-      'No series synopsis is stored in the verified metadata yet.';
-    const list = $('series-episodes'); list.replaceChildren();
-    for (const item of series.episodes) {
-      const tr = node('tr');
-      tr.dataset.episode = tvdbLabel(item);
-      tr.appendChild(node('td', tvdbLabel(item)));
-      const status = node('td', item.status);
-      if (item.active_reservation_count) status.appendChild(node('small',
-        item.active_reservation_count + ' active reservation(s)', 'muted job-note'));
-      if (item.reservation_count > (item.active_reservation_count || 0)) status.appendChild(node('small',
-        (item.reservation_count - (item.active_reservation_count || 0)) +
-        ' previous reservation(s)', 'muted job-note'));
-      if (item.manual_submission_count) status.appendChild(node('small',
-        item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
-      tr.appendChild(status);
-      const actions = node('td');
-      actions.appendChild(relatedJobsButton(anidbId, item));
-      tr.appendChild(actions);
-      list.appendChild(tr);
-    }
-    $('series-episodes-empty').hidden = series.episodes.length !== 0;
-    state.manualTarget = null;
-    $('series-manual-panel').hidden = true;
-    const missing = $('series-missing'); missing.replaceChildren();
-    for (const item of series.missing) {
-      const tr = node('tr');
-      const placed = item.season != null;
-      tr.dataset.episode = placed ? tvdbLabel(item) : 'E' + item.anidb_episode;
-      tr.appendChild(node('td', missingLabel(item)));
-      const statusLabel = item.status === 'NO_RESULTS' ? 'No usable candidates' :
-        item.status === 'WAITING_FOR_DUB' ? 'Waiting for dub' :
-        item.status.replaceAll('_', ' ').toLowerCase();
-      const result = node('td', statusLabel);
-      if (item.active_reservation_count) result.appendChild(node('small',
-        item.active_reservation_count + ' active reservation(s)', 'muted job-note'));
-      if (item.reservation_count > (item.active_reservation_count || 0)) result.appendChild(node('small',
-        (item.reservation_count - (item.active_reservation_count || 0)) +
-        ' previous reservation(s)', 'muted job-note'));
-      if (item.manual_submission_count) result.appendChild(node('small',
-        item.manual_submission_count + ' manual candidate(s)', 'muted job-note'));
-      if (item.reason_code) {
-        const technical = node('details', null, 'technical-details');
-        technical.appendChild(node('summary', 'details'));
-        technical.appendChild(node('pre', item.reason_code)); result.appendChild(technical);
-      }
-      if (item.waiting_job_ids?.length) {
-        result.appendChild(node('small', item.waiting_job_ids.length + ' competing release(s) on hold', 'muted job-note'));
-      }
-      tr.appendChild(result);
-      const action = node('td');
-      if (placed) action.appendChild(relatedJobsButton(anidbId, item));
-      if (placed && !series.rejection) action.appendChild(manualSubmissionButton(anidbId, item));
-      if (item.job_id) {
-        const view = node('button', 'View job', 'secondary');
-        view.type = 'button';
-        view.addEventListener('click', () => { location.assign('/#series=' + encodeURIComponent(anidbId)); });
-        action.appendChild(view);
-        if (item.can_retry_job || item.can_try_next) {
-          for (const [name, label] of [
-            ['retry', 'Retry acquisition'], ['cancel', 'Try next release']
-          ]) {
-            if (name === 'retry' && !item.can_retry_job ||
-                name === 'cancel' && !item.can_try_next) continue;
-            const button = node('button', label, 'secondary');
-            button.type = 'button';
-            button.addEventListener('click', async () => {
-              if (state.seriesBusy) return;
-              state.seriesBusy = true; button.disabled = true;
-              try {
-                // The Jobs API is authoritative for the current, guarded action.
-                const job = await request(API + '/jobs/' + item.job_id);
-                if (!job.actions?.[name]?.enabled ||
-                    job.actions[name].execution_available === false) {
-                  throw new Error('This job action is no longer available. Refresh Intake.');
-                }
-                if (name === 'cancel' && !confirm(
-                  'Cancel this release and permanently remove its owned downloads so another release can be tried; deletion cannot be undone?')) return;
-                const body = name === 'retry'
-                  ? {expected_attempt: job.attempt_count, expected_reason: job.reason?.code} : {};
-                const receipt = await request(API + '/jobs/' + item.job_id + '/' + name,
-                  {method: 'POST', body});
-                notice(receipt.notification?.message || 'Episode recovery submitted.');
-                dialog.close(); await loadActivity();
-              } catch (error) { displayError(error); }
-              finally { state.seriesBusy = false; button.disabled = false; }
-            });
-            action.appendChild(button);
-          }
-        }
-      }
-      if (item.can_retry_size) {
-        const acquire = node('button', 'acquire', 'secondary');
-        acquire.type = 'button';
-        acquire.title = 'Recheck the prior size-rejected release against the current size settings after safe cleanup.';
-        acquire.addEventListener('click', async () => {
-          if (state.seriesBusy) return;
-          if (!confirm('Retry this release with current size limits and permanently clean up its old owned downloads first; deletion cannot be undone?')) return;
-          state.seriesBusy = true; acquire.disabled = true;
-          try {
-            const receipt = await request(API + '/intake/series/' + anidbId +
-              '/backfill/' + item.anidb_episode + '/acquire', {method: 'POST', body: {}});
-            notice('Acquisition recovery Job #' + receipt.job_id + ' queued. Open Related jobs for progress.');
-            dialog.close(); await loadActivity();
-          } catch (error) { displayError(error); }
-          finally { state.seriesBusy = false; acquire.disabled = false; }
-        });
-        action.appendChild(acquire);
-      }
-      if (item.can_retry) {
-        const retry = node('button', 'search again', 'secondary');
-        retry.type = 'button';
-        retry.addEventListener('click', async () => {
-          if (state.seriesBusy) return;
-          let deleteCache;
-          {
-            $('search-again-episode').textContent = missingLabel(item);
-            $('search-again-delete').checked = item.status === 'CANDIDATES';
-            const choice = $('search-again-dialog');
-            choice.returnValue = ''; choice.showModal();
-            const confirmed = await new Promise(resolve => {
-              choice.addEventListener('close', () => resolve(choice.returnValue === 'search'), {once: true});
-            });
-            if (!confirmed) return;
-            if ($('search-again-delete').checked && !confirm('Permanently delete saved release magnets for this episode and search again; the cache deletion cannot be undone?')) return;
-            deleteCache = $('search-again-delete').checked;
-            if (item.status === 'CANDIDATES' && !deleteCache) {
-              notice('Previously selected candidates require Delete cache before a fresh search.', true);
-              return;
-            }
-          }
-          state.seriesBusy = true; retry.disabled = true;
-          try {
-            const data = await request(API + '/intake/series/' + anidbId +
-              '/backfill/' + item.anidb_episode + '/retry',
-              {method: 'POST', body: {delete_cache: deleteCache}});
-            notice('Backfill ' + (data.reused ? 'already queued' : 'submitted') + '.');
-            dialog.close(); await loadActivity();
-          } catch (error) { displayError(error); }
-          finally { state.seriesBusy = false; retry.disabled = false; }
-        });
-        action.appendChild(retry);
-      }
-      tr.appendChild(action); missing.appendChild(tr);
-    }
-    $('series-missing-empty').hidden = series.missing.length !== 0;
-    const rejected = $('series-rejected');
-    const controls = $('series-reject-controls');
-    const reject = $('series-reject');
-    const rejectHistory = $('series-reject-history');
-    rejected.hidden = !series.rejection;
-    controls.hidden = !!series.rejection;
-    reject.hidden = !!series.rejection;
-    rejectHistory.hidden = !series.rejection;
-    if (series.rejection) {
-      rejected.textContent = 'Rejected: ' + (series.rejection.reason || 'No reason recorded') +
-        '. Cleanup: ' + series.rejection.cleanup_state.toLowerCase().replaceAll('_', ' ') +
-        '. Future Intake is blocked.';
-      rejectHistory.onclick = () => { dialog.close(); openHistory(series.rejection.job_id); };
-    }
-    reject.onclick = async () => {
-      if (state.seriesBusy || series.rejection) return;
-      const reason = $('series-reject-reason').value;
-      const note = $('series-reject-note').value;
-      const count = series.reject_operations.length;
-      if (!confirm('Reject ' + series.title + ', block future Intake, and permanently remove ' + count + ' staged acquisition(s) and their owned downloads; deletion cannot be undone?')) return;
-      state.seriesBusy = true; reject.disabled = true;
-      try {
-        const result = await request(API + '/intake/series/' + anidbId + '/reject', {
-          method: 'POST', body: {operation_ids: series.reject_operations, reason, note}
-        });
-        notice(result.message + ' Follow job #' + result.job_id + ' for cleanup status.');
-        dialog.close(); await loadActivity();
-      } catch (error) { displayError(error); }
-      finally { state.seriesBusy = false; reject.disabled = false; }
-    };
-    const keep = $('series-keep'), keepTip = $('series-keep-tooltip');
-    const keepBlocked = series.keep_operations.length ? keepBlockedMessage() : null;
-    keep.disabled = !!series.rejection || series.keep_operations.length === 0 || !!keepBlocked;
-    keepTip.hidden = !!series.rejection || !series.keep_operations.length;
-    keepTip.title = keep.title = keepBlocked || 'Import all staged acquisitions in this series into the permanent library.';
-    keepTip.tabIndex = keepBlocked ? 0 : -1;
-    keepTip.dataset.disabled = keepBlocked ? 'true' : 'false';
-    keep.textContent = 'keep';
-    keep.onclick = async () => {
-      if (state.seriesBusy || !series.keep_operations.length) return;
-      state.seriesBusy = true; keep.disabled = true;
-      try {
-        const result = await request(API + '/intake/series/' + anidbId + '/keep',
-          {method: 'POST', body: {operation_ids: series.keep_operations}});
-        notice(result.message + (result.failed.length ?
-          ' ' + result.failed.length + ' acquisition(s) require another attempt.' : ''));
-        dialog.close(); await loadActivity();
-      } catch (error) { displayError(error); if (error.status) void loadServices(); }
-      finally { state.seriesBusy = false; }
-    };
-    if (!dialog.open) dialog.showModal();
-    if (focusEpisode) {
-      const row = [...list.children, ...missing.children].find(row => row.dataset.episode === focusEpisode);
-      row?.scrollIntoView?.({block: 'nearest'});
+      if (focusEpisode) list.querySelector(`[data-episode="${focusEpisode}"]`)?.scrollIntoView?.({block: 'nearest'});
     }
     if (recordLocation && window.history?.pushState) {
       window.history.pushState(null, '', '/#series=' + encodeURIComponent(anidbId));
@@ -971,33 +479,21 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
   } catch (error) { displayError(error); }
 }
 async function loadActivity() {
+  // Intake: one row per series (the series job); the search and the filter narrow it.
   if (state.loading) return state.loading;
   const generation = state.generation;
   state.loading = (async () => {
     try {
-      // One search route; the page decides the scope and keeps its own filters.
       let path = state.search
-        ? `${API}/search?${searchQuery(state.page === 'intake' ? 'intake' : 'jobs', state.search)}&before_id=${state.cursor}&limit=30`
-        : `${API}/${state.page === 'intake' ? 'intake/series' : 'jobs'}?before_id=${state.cursor}&limit=30`;
-      if (state.page === 'intake' && $('intake-filter').value) {
-        path += '&status=' + encodeURIComponent($('intake-filter').value);
-      }
-      if (state.page === 'jobs') {
-        if (state.episodeFilter) {
-          for (const [key, value] of Object.entries(state.episodeFilter)) {
-            path += '&' + key + '=' + encodeURIComponent(value);
-          }
-        }
-        const filter = $('status-filter').value;
-        if (filter && filter !== 'ALL') path += '&state=' + encodeURIComponent(filter);
-        path += '&show_completed=' + Number(['ALL', 'DONE'].includes(filter));
-        path += '&show_canceled=' + Number(['ALL', 'CANCELED'].includes(filter));
-      }
+        ? `${API}/search?${searchQuery('intake', state.search)}&before_id=${state.cursor}&limit=30`
+        : `${API}/intake/series?before_id=${state.cursor}&limit=30`;
+      if ($('intake-filter').value) path += '&status=' + encodeURIComponent($('intake-filter').value);
       const data = await request(path);
       if (generation !== state.generation || !state.csrf) return;
-      state.jobs = data.items; state.transcodeBatch = data.transcode_batch; state.next = data.next_before_id ?? null; renderJobs();
-      $(state.page === 'intake' ? 'intake-empty' : 'no-jobs').textContent = state.search || (state.page === 'intake' && $('intake-filter').value)
-        ? 'No matches. Change the search or filter to see more items.' : state.page === 'intake' ? 'No staged anime. New episodes appear here once downloaded and staged.' : 'No jobs in this view. Change the status filter or submit an episode.';
+      state.items = data.items; state.next = data.next_before_id ?? null; renderSeries();
+      $('intake-empty').textContent = state.search || $('intake-filter').value
+        ? 'No matches. Change the search or filter to see more items.'
+        : 'No staged anime. New episodes appear here once downloaded and staged.';
       liveStatus(true);
     } catch (error) {
       if (generation === state.generation) {
@@ -1089,9 +585,7 @@ async function bellAction(item, action, button) {
   try {
     const result = await request(`${API}/notifications/${item.notification_id}/actions/${action}`, {method: 'POST', body: {}});
     closeBell();
-    if (action === 'open_jobs') location.assign('/running');   // The Jobs page is gone: what runs now.
-    else if (action === 'open_job') await openHistory(result.job_id);
-    else if (action === 'open_series') await openSeries(result.anidb_id);
+    if (action === 'open_series') await openSeries(result.anidb_id);
     else if (action === 'add_release') {
       await openSeries(result.anidb_id);
       const episode = releaseEpisode(result.release_name || '');
@@ -1104,10 +598,6 @@ function openBell() { $('bell-panel').hidden = false; $('bell').setAttribute('ar
 function closeBell() { $('bell-panel').hidden = true; $('bell').setAttribute('aria-expanded', 'false'); }
 // Keep needs Sonarr: the reason it cannot run now, or null. The server
 // refuses the same request with the same message.
-function keepBlockedMessage() {
-  const sonarr = state.services?.find(item => item.service === 'sonarr');
-  return !sonarr || sonarr.stale || ['UP', 'UNKNOWN'].includes(sonarr.status) ? null : sonarr.message;
-}
 function liveStatus(connected) {
   $('live-indicator').textContent = connected ? 'live' : 'paused (reconnecting)';
   $('live-indicator').className = 'status ' + (connected ? 'running' : 'waiting');
@@ -1127,78 +617,11 @@ async function tick() {
     if (state.csrf) state.timer = setTimeout(tick, 5000);
   }
 }
-async function openHistory(jobId) {
-  state.historyJob = jobId; state.historyCursor = 0; state.historyNext = null; state.historyVersion += 1;
-  $('history-title').textContent = `Job #${jobId} history`; $('history-rows').replaceChildren();
-  if (!$('history-dialog').open) $('history-dialog').showModal();
-  await loadHistory();
-}
 const ATTEMPT_STATES = Object.freeze({
   STAGED: 'Staged', FAILED: 'Failed', IN_PROGRESS: 'In progress', NOT_TRIED: 'Not tried yet',
 });
 // Every ranked release tried for this backfill episode, so a rejected
 // release can be explained without querying the database.
-function renderAttempts(found) {
-  const section = node('section', null, 'trace-section attempts');
-  section.appendChild(node('h3', `Releases tried for episode ${found.episode}`));
-  for (const item of found.attempts) {
-    const line = node('article', null, 'history-entry');
-    const name = item.release_name || `Ranked release #${item.rank} (not sent yet)`;
-    line.appendChild(node('p', `${item.rank}. ${name}`));
-    const status = [ATTEMPT_STATES[item.state] || item.state];
-    if (item.reason) status.push(item.reason.message);
-    if (item.trace_id) status.push(item.trace_id);
-    line.appendChild(node('small', status.join(' · '), item.state === 'FAILED' ? 'attempt-failed' : 'muted'));
-    if (item.detail) line.appendChild(node('small', item.detail, 'muted'));
-    section.appendChild(line);
-  }
-  $('history-rows').appendChild(section);
-}
-async function loadHistory() {
-  const version = state.historyVersion; const job = state.historyJob;
-  if (!job) return;
-  $('history-more').disabled = true;
-  try {
-    const data = await request(`${API}/jobs/${job}/history?after_id=${state.historyCursor}&limit=50`);
-    if (version !== state.historyVersion || !state.csrf) return;
-    // Every line names the job that did the work (its *_job.py module).
-    const worker = data.job?.module || data.job?.kind || `Job #${job}`;
-    if (data.job) $('history-title').textContent = `Job #${job} · ${data.job.label?.message || data.job.kind} · ${worker}`;
-    if (data.job && !state.historyCursor && Number.isInteger(data.job.poll_check_count)) {
-      $('history-rows').appendChild(node('p',
-        `${data.job.poll_check_count} deferred checks · ${data.job.work_attempt_count} other runs · ${data.job.scheduler_claim_count} total claims`,
-        'muted'));
-      if (data.job.cleanup_progress) {
-        const p = data.job.cleanup_progress;
-        $('history-rows').appendChild(node('p', `Cleanup checkpoint: ${p.phase} · Last advanced ${date(p.since_ms)}`, 'muted'));
-      }
-    }
-    if (data.job?.kind === 'REJECT_SERIES' && !state.historyCursor) {
-      $('history-rows').appendChild(node('p',
-        'Rejected: ' + (data.job.rejection_reason || 'Reason not recorded') +
-        ' · Cleanup: ' + (data.job.cleanup_state || 'Unknown'), 'muted'));
-    }
-    if (data.job?.target_job_id && !state.historyCursor) {
-      const line = node('p', `Works on Job #${data.job.target_job_id}. Its history: `, 'muted');
-      const open = node('button', 'history', 'secondary'); open.type = 'button';
-      open.addEventListener('click', () => openHistory(data.job.target_job_id));
-      line.appendChild(open); $('history-rows').appendChild(line);
-    }
-    if (data.backfill_attempts?.attempts?.length) renderAttempts(data.backfill_attempts);
-    for (const entry of data.items) {
-      const article = node('article', null, 'history-entry');
-      article.appendChild(node('small', date(entry.occurred_at_ms), 'muted'));
-      article.appendChild(node('p', `${worker}: ${entry.event.message}`));
-      if (entry.reason) { article.appendChild(node('p', entry.reason.message)); article.appendChild(node('small', entry.reason.action, 'muted')); }
-      if (entry.detail) article.appendChild(node('p', entry.detail));
-      $('history-rows').appendChild(article);
-    }
-    if (!data.items.length && !state.historyCursor) $('history-rows').appendChild(node('p', COPY['dashboard.no_history']));
-    state.historyNext = data.next_after_id;
-    $('history-more').hidden = state.historyNext === null;
-  } catch (error) { displayError(error); }
-  finally { if (version === state.historyVersion) $('history-more').disabled = false; }
-}
 const MATCHING_STEPS = Object.freeze({
   release_title: 'Release title parsed',
   recognized_season: 'Previously verified season',
@@ -1243,57 +666,6 @@ function matchingSection(root, title) {
   const section = node('section', null, 'trace-section');
   section.appendChild(node('h3', title)); root.appendChild(section);
   return section;
-}
-function matchingCard(root, label, value) {
-  const card = node('div', null, 'trace-card');
-  card.appendChild(node('span', label, 'trace-label'));
-  card.appendChild(node('strong', value ?? 'Not recorded'));
-  root.appendChild(card);
-}
-async function openCoverage(jobId) {
-  const version = ++state.matchingVersion;
-  state.matchingJob = jobId;
-  $('matching-title').textContent = `Job #${jobId} · Episode coverage`;
-  const summary = $('matching-summary'), body = $('matching-body');
-  body.replaceChildren(); summary.textContent = 'Loading saved episode verification…';
-  if (!$('matching-dialog').open) $('matching-dialog').showModal();
-  try {
-    const result = await request(`${API}/jobs/${jobId}/coverage`);
-    if (version !== state.matchingVersion || state.matchingJob !== jobId || !state.csrf) return;
-    summary.textContent = `Attempt ${result.attempts} · ${result.state.replaceAll('_', ' ').toLowerCase()}`;
-    if (result.reason?.message) summary.textContent += ` · ${result.reason.message}`;
-    if (!result.available || !result.evidence) {
-      body.appendChild(node('p', 'No verified episode coverage was saved for this job.', 'muted'));
-      return;
-    }
-    const ev = result.evidence;
-    const heading = matchingSection(body, ev.kind === 'batch' ? 'Verified regular episodes (batch)' : 'Verified episode');
-    heading.appendChild(node('p', `${ev.episode_count} episode(s) verified in TVDB season ${ev.tvdb_season}. This does not mean media was downloaded or staged.`, 'muted'));
-    if (ev.kind === 'batch') {
-      const message = ev.user_evaluation_plan_ready
-        ? `${ev.planned_episode_count} episode(s) picked for your evaluation. Planned size: ${ev.planned_size_bytes} bytes. No downloads are authorized by this plan.`
-        : 'No episodes have been picked for evaluation from this pack yet.';
-      heading.appendChild(node('p', message, 'muted'));
-    }
-    const grid = node('div', null, 'trace-grid'); heading.appendChild(grid);
-    for (const ep of ev.episodes || []) {
-      const label = `TVDB S${String(ev.tvdb_season).padStart(2, '0')}E${String(ep.tvdb_episode).padStart(2, '0')}`;
-      const detail = `AniDB episode ${ep.anidb_episode}${ep.file_index == null ? '' : ' · File #' + ep.file_index}`
-        + (ev.kind === 'batch' && ev.user_evaluation_plan_ready ? (ep.planned ? ' · Picked for evaluation' : ' · Not picked') : '');
-      matchingCard(grid, label, detail);
-      if (ep.path) grid.appendChild(node('small', ep.path, 'muted'));
-    }
-    if (ev.truncated) body.appendChild(node('p', 'Showing the first 100 verified files.', 'muted'));
-    if (ev.kind === 'batch') body.appendChild(node('p',
-      'Extra files and actual download selection are not proved by this record. See the acquisition job for transfer status.',
-      'muted'));
-  } catch (error) {
-    if (version === state.matchingVersion && state.matchingJob === jobId) {
-      body.replaceChildren();
-      summary.textContent = 'Episode coverage could not be loaded.';
-      body.appendChild(node('p', error.message || 'Request failed.', 'muted'));
-    }
-  }
 }
 // A release refused with API Reject: match it by hand, then it is identified again.
 function openBellMatch(item) {
@@ -1347,90 +719,6 @@ function manualMatchForm(root, item) {
   section.appendChild(form);
 }
 
-async function openMatching(jobId) {
-  const version = ++state.matchingVersion;
-  state.matchingJob = jobId;
-  $('matching-title').textContent = `Job #${jobId} · Matching details`;
-  const summary = $('matching-summary'), body = $('matching-body');
-  body.replaceChildren(); summary.textContent = 'Loading recorded identity evidence…';
-  if (!$('matching-dialog').open) $('matching-dialog').showModal();
-  try {
-    const result = await request(`${API}/jobs/${jobId}/matching`);
-    if (version !== state.matchingVersion || state.matchingJob !== jobId || !state.csrf) return;
-    summary.textContent = `Attempt ${result.attempts} · ${result.state.replaceAll('_',' ').toLowerCase()}`;
-    if (result.reason?.message) summary.textContent += ` · ${result.reason.message}`;
-    if (!result.available || !result.evidence) {
-      body.appendChild(node('p',
-        result.attempts === 0 ? 'Identification has not started yet.' :
-          'No detailed evidence was saved for this attempt. Older jobs cannot be reconstructed retroactively.',
-        'muted'));
-      return;
-    }
-    const ev = result.evidence;
-    const lookup = matchingSection(body, 'Release and lookup');
-    const lookupGrid = node('div', null, 'trace-grid'); lookup.appendChild(lookupGrid);
-    if (result.release_name) matchingCard(lookupGrid, 'Original release name', result.release_name);
-    matchingCard(lookupGrid, 'Release season', ev.season == null ? 'Not specified' : `Season ${ev.season}`);
-    matchingCard(lookupGrid, 'Episode candidate', ev.episode == null ? 'Not parsed' : `Episode ${ev.episode}`);
-    matchingCard(lookupGrid, 'AniDB search queries', ev.queries?.length ? ev.queries.join(' · ') : 'Not searched');
-    const checks = matchingSection(body, 'Verification checks');
-    const failedCheck = (ev.checks || []).find(c => c.status === 'failed');
-    if (failedCheck) {
-      const banner = node('div', null, 'trace-card');
-      banner.appendChild(node('strong', `Blocking check: ${MATCHING_STEPS[failedCheck.step] || 'Verification needs review'}`));
-      if (failedCheck.note) banner.appendChild(node('p', MATCHING_NOTES[failedCheck.note] || 'Open the recorded evidence for technical details.', 'muted'));
-      checks.appendChild(banner);
-    }
-    if (!ev.checks?.length) checks.appendChild(node('p', 'No checks were recorded.', 'muted'));
-    for (const check of ev.checks || []) {
-      const line = node('div', null, 'trace-check');
-      const symbols = {passed: '✓', failed: '✕', waiting: '…', skipped: '—'};
-      const css = {passed: 'trace-pass', failed: 'trace-fail', waiting: 'trace-unknown', skipped: 'trace-unknown'};
-      line.appendChild(node('span', symbols[check.status] || '?', 'trace-state ' + (css[check.status] || 'trace-unknown')));
-      const content = node('div');
-      content.appendChild(node('strong', MATCHING_STEPS[check.step] || 'Unknown check'));
-      if (check.note) content.appendChild(node('small', MATCHING_NOTES[check.note] || 'No additional details recorded.', 'muted'));
-      line.appendChild(content); checks.appendChild(line);
-    }
-    if (result.candidate_evidence?.length) {
-      const cands = result.candidate_evidence;
-      const candidates = matchingSection(body, `AniDB candidate ranking (${cands.length})`);
-      for (const c of cands) {
-        const card = node('div', null, 'trace-card');
-        const header = node('div');
-        header.appendChild(node('strong', `Rank ${c.rank} · AniDB #${c.anidb_id} — ${c.display_title || c.matched_title}`));
-        const badge = c.selected ? ' [SELECTED]' : (c.eligible ? ' [ELIGIBLE]' : ' [INELIGIBLE]');
-        header.appendChild(node('span', badge, c.selected ? 'trace-passed' : (c.eligible ? 'muted' : 'trace-failed')));
-        card.appendChild(header);
-        card.appendChild(node('p', `Similarity: ${c.similarity_pct}% · Matched: "${c.matched_variant}" → "${c.matched_title}"`, 'muted'));
-        candidates.appendChild(card);
-      }
-    } else {
-      const candCount = ev.anidb_candidates?.length || 0;
-      const candIds = (ev.anidb_candidates || []).map(c => '#' + c.anidb_id).join(', ');
-      const candidates = matchingSection(body, `AniDB candidates (${candCount}` + (candCount > 0 ? ` · ${candIds})` : ')'));
-      if (!ev.anidb_candidates?.length)
-        candidates.appendChild(node('p', 'No AniDB candidates recorded. The worker may have stopped before querying AniDB.', 'muted'));
-      for (const candidate of ev.anidb_candidates || []) {
-        const card = node('div', null, 'trace-card');
-        card.appendChild(node('strong', `AniDB #${candidate.anidb_id}`));
-        card.appendChild(node('p', candidate.titles?.length ? candidate.titles.join(' · ') : 'No provider titles recorded', 'muted'));
-        candidates.appendChild(card);
-      }
-    }
-    const mapping = matchingSection(body, 'Verified provider identities');
-    const mappingGrid = node('div', null, 'trace-grid'); mapping.appendChild(mappingGrid);
-    matchingCard(mappingGrid, 'Selected AniDB work', ev.selected_anidb_id ? `AniDB #${ev.selected_anidb_id}` : 'Not verified');
-    matchingCard(mappingGrid, 'Selected TVDB series', ev.selected_tvdb_id ? `TVDB #${ev.selected_tvdb_id}` : 'Not verified');
-    matchingCard(mappingGrid, 'TVDB titles', ev.tvdb_titles?.length ? ev.tvdb_titles.join(' · ') : 'Not recorded');
-    mapping.appendChild(node('p', 'Title agreement alone never authorizes an episode download. Exact season and episode mapping is verified separately.', 'muted'));
-  } catch (error) {
-    if (version === state.matchingVersion) {
-      summary.textContent = 'Unable to load matching details.';
-      body.replaceChildren(node('p', error.message || COPY['dashboard.request_failed'], 'muted'));
-    }
-  }
-}
 
 function newAgentToken() {
   const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
@@ -1900,7 +1188,8 @@ async function applySearch() {
     if (text === state.recognizedSearch) return;
     state.recognizedSearch = text; await loadRecognized(); return;
   }
-  const text = searchText($(state.page === 'intake' ? 'intake-search' : 'search').value);
+  if (state.page !== 'intake') return;              // Only Intake and Names have a search box.
+  const text = searchText($('intake-search').value);
   if (text === state.search) return;
   if (state.loading) await state.loading;
   state.search = text; state.previous = []; state.cursor = MAX_CURSOR; state.next = null;
@@ -1918,7 +1207,6 @@ async function showWorkspace() {
   $('intake-panel').hidden = state.page !== 'intake';
   const runningPanel = $('running-panel');
   if (runningPanel) runningPanel.hidden = state.page !== 'running';
-  if ($('jobs-panel')) $('jobs-panel').hidden = true;
   $('settings-panel').hidden = state.page !== 'settings';
   $('recognized-panel').hidden = state.page !== 'recognized';
   for (const link of document.querySelectorAll('nav a')) link.classList.toggle('selected', new URL(link.href).pathname === location.pathname);
@@ -2002,7 +1290,6 @@ for (const id of ['intake-previous']) $(id).addEventListener('click', async () =
   if (!state.previous.length || state.loading) return;
   state.cursor = state.previous.pop(); await loadActivity();
 });
-$('history-close').addEventListener('click', () => $('history-dialog').close());
 $('matching-close').addEventListener('click', () => $('matching-dialog').close());
 $('series-manual-source').addEventListener('change', () => {
   const file = $('series-manual-source').value === 'torrent';
@@ -2044,10 +1331,9 @@ $('series-manual-form').addEventListener('submit', async event => {
       }
       body.torrent_b64 = btoa(binary);
     }
-    const result = await request(API + '/intake/series/' + target.anidbId +
-      '/episodes/' + target.season + '/' + target.episode + '/submit',
-      {method: 'POST', body});
-    notice(result.message + ' Job #' + result.job_id + ' · Open Related jobs to track it.');
+    // The series job takes a release for the series; it finds the episodes in it itself.
+    const result = await request(API + '/series/' + target.anidbId + '/release', {method: 'POST', body});
+    notice(result.message);
     $('series-manual-panel').hidden = true;
     state.manualTarget = null;
     $('series-dialog').close();
@@ -2074,10 +1360,6 @@ window.addEventListener('popstate', () => {
 $('matching-dialog').addEventListener('close', () => {
   state.matchingJob = null; state.matchingVersion += 1;
   $('matching-body').replaceChildren();
-});
-$('history-dialog').addEventListener('close', () => { state.historyJob = null; state.historyVersion += 1; });
-$('history-more').addEventListener('click', async () => {
-  if (state.historyNext === null) return; state.historyCursor = state.historyNext; await loadHistory();
 });
 window.addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
 document.addEventListener('visibilitychange', () => { void refreshPage(); });
@@ -2113,8 +1395,8 @@ function keyboardShortcut(event) {
   const pages = {'1': '/', '2': '/running', '3': '/recognized', '4': '/settings'};
   if (pages[event.key]) { event.preventDefault(); location.assign(pages[event.key]); }
   else if (event.key === '/') {
-    const id = state.page === 'recognized' ? 'recognized-search' : state.page === 'settings' ? 'settings-search' : state.page === 'intake' ? 'intake-search' : 'search';
-    $(id)?.focus(); event.preventDefault();
+    const id = {recognized: 'recognized-search', settings: 'settings-search', intake: 'intake-search'}[state.page];
+    if (id) { $(id)?.focus(); event.preventDefault(); }
   } else if (event.key === '?') { event.preventDefault(); showHelp(); }
 }
 document.addEventListener('keydown', keyboardShortcut);
