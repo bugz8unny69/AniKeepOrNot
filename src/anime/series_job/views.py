@@ -53,6 +53,7 @@ def series_view(db, aid, language="english"):
             "wake_at_ms": s.wake_at_ms, "torrents_at_once": s.torrents_at_once,
             "torrents": [_torrent(t) for t in s.torrents], "episodes": s.episodes, "recent": s.recent,
             "keep": _keep(s.work), "rejecting": "reject" in s.work, "stopped": s.work.get("stopped"),
+            "waiting": s.work.get("waiting"),
             "search": {"wanted": search.get("wanted", []), "due_ms": search.get("due_ms")},
             "created_at_ms": s.created_at_ms, "updated_at_ms": s.updated_at_ms}
 
@@ -114,7 +115,7 @@ def running(db, language="english"):
             continue
         series.append({"anidb_id": aid, "title": _title(db, aid, title, language), "state": state, "wake_at_ms": wake,
                        "promoted_at_ms": promoted, "torrents": active,
-                       "keep": _keep(work), "rejecting": "reject" in work})
+                       "keep": _keep(work), "rejecting": "reject" in work, "waiting": work.get("waiting")})
     waiting = db.execute("SELECT request_id,infohash,received_at_ms,tries FROM identity_requests "
                          "WHERE outcome IS NULL ORDER BY received_at_ms LIMIT 50").fetchall()
     return {"series": series, "waiting_identity": [

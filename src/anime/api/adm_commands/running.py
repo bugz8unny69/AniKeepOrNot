@@ -22,11 +22,13 @@ def main(argv, prog):
         print('Nothing is being worked on.')
     for s in now['series']:
         print(f"Series {s['anidb_id']} {s['title']}"
-              + (f" · Keep at {s['keep']['step']}" if s['keep'] else '') + (' · rejecting' if s['rejecting'] else ''))
+              + (f" · Keep at {s['keep']['step']}" if s['keep'] else '') + (' · rejecting' if s['rejecting'] else '')
+              + (f" · waiting: {s['waiting']}" if s.get('waiting') else ''))
         for t in s['torrents']:
             episodes = f" [{', '.join(t['episodes'])}]" if t['episodes'] else ''
             print(f"  {t['release_name']}{episodes}: {t['step'].replace('_', ' ')}"
-                  + ('' if t['progress'] is None else f", {int(t['progress'] * 100)}%"))
+                  + ('' if t['progress'] is None else f", {int(t['progress'] * 100)}%")
+                  + (f", waiting: {t['why'].split(':')[0]}" if t.get('why') else ''))
     if now['waiting_identity']:
         print(f"Identifying with AniDB: {len(now['waiting_identity'])} release(s)")
     return 0

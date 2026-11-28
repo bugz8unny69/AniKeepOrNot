@@ -363,6 +363,7 @@ async function openSeries(anidbId, recordLocation = true, focusEpisode = null) {
       $('series-description').textContent = [
         'State: ' + shown + (series.wake_at_ms ? ' · next check ' + date(series.wake_at_ms) : ''),
         series.stopped ? 'Stopped: ' + series.stopped + '. Retry resumes it.' : '',
+        series.waiting ? 'Waiting: ' + whyText(series.waiting.split(' at ')[0]) + ' (' + series.waiting + ')' : '',
         series.keep?.stopped ? 'Keep stopped: ' + series.keep.stopped + '. Fix it, then Retry.' : '',
         series.promoted_at_ms ? 'Promoted: worked on first' : '',
       ].filter(Boolean).join(' · ');

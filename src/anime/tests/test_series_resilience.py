@@ -129,6 +129,55 @@ class SeriesResilienceTests(unittest.TestCase):
         retry_series_sync(self.db, AID, now=6000)
         self.assertEqual(get_series(self.db, AID).torrents[0]["state"], "working")   # Resumes at stage.
 
+    def test_a_step_wait_is_said_once_shows_why_and_says_when_it_is_over(self):
+        """Owner, 2026-11-28: not a warning every minute; the torrent shows why it waits."""
+        from src.anime.series_job.steps.common import StepResult
+        from src.anime.series_job import worker as series_worker
+        from src.anime.storage_mounts import StorageNotMounted
+        add_torrent(self.db, AID, {"infohash": "9" * 40, "release_name": "[G] Show - 01", "step": "check_media",
+                                   "state": "working", "qb": {"marker": "b" * 32, "added": "sent"}}, now=1000)
+        missing = StorageNotMounted("/mnt/t", {"mount_point": "/mnt/t", "source": "nas:/t"}, ("/mnt", "nas:/"))
+        outcomes = [missing, missing, None]
+
+        async def check_media(series, torrent, context):
+            outcome = outcomes.pop(0)
+            if outcome is not None:
+                raise outcome
+            return StepResult.wait(10 ** 12)
+        attempt = lambda now: asyncio.run(run_series_attempt(self.db, self.context(), now=now))
+        with patch.dict(series_worker.STEP_HANDLERS, {"check_media": check_media}):
+            with self.assertLogs("akon.series", level="WARNING") as logs:
+                attempt(5000)
+                attempt(5000 + SERVICE_WAIT_MS)
+            self.assertEqual(len(logs.output), 1)                          # Once, not every minute.
+            torrent = get_series(self.db, AID).torrents[0]
+            self.assertTrue(torrent["why"].startswith("STORAGE_UNAVAILABLE: /mnt/t is not mounted"))
+            attempt(5000 + 2 * SERVICE_WAIT_MS)
+        series = get_series(self.db, AID)
+        self.assertIsNone(series.torrents[0]["why"])
+        waits = [line for line in series.recent if "check media waiting" in line]
+        self.assertEqual(len(waits), 1)
+        self.assertTrue(series.recent[-1].endswith("check media goes on: STORAGE_UNAVAILABLE is over"))
+
+    def test_a_series_wait_is_said_once_and_shows_why(self):
+        series = get_series(self.db, AID)
+        series.work["search"] = {"wanted": [3], "due_ms": 1000}
+        update_series(self.db, series, now=1000)
+        with patch("src.anime.series_job.search.run", side_effect=ConnectionResetError("reset by peer")), \
+                patch("src.anime.acquisition.prowlarr_search.Client.from_context", return_value=object()), \
+                self.assertLogs("akon.series", level="WARNING") as logs:
+            for now in (5000, 5000 + SERVICE_WAIT_MS):
+                series = get_series(self.db, AID)
+                series.work["search"]["due_ms"] = 1000
+                update_series(self.db, series, now=now)
+                asyncio.run(run_series_attempt(self.db, self.context(), now=now))
+        self.assertEqual(len(logs.output), 1)
+        series = get_series(self.db, AID)
+        self.assertRegex(series.work["waiting"], r"^NETWORK_UNAVAILABLE at \S+:\d+ \(ConnectionResetError\)$")
+        self.assertEqual(sum("waiting:" in line for line in series.recent), 1)
+        asyncio.run(run_series_attempt(self.db, self.context(), now=5000 + 2 * SERVICE_WAIT_MS))
+        self.assertNotIn("waiting", get_series(self.db, AID).work)       # An attempt got through.
+
     # The series: Search, Keep, Reject and Cancel run outside the steps.
 
     def search_raising(self, error):

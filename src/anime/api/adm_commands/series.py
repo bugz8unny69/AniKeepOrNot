@@ -94,6 +94,8 @@ def show(db, anidb_id, language, as_json=False):
           + (" · promoted: worked on first" if item.get('promoted_at_ms') else ""))
     if item.get('stopped'):
         print(f"  Stopped: {item['stopped']} (adm series --id {anidb_id} --retry resumes it)")
+    if item.get('waiting'):
+        print(f"  Waiting: {item['waiting']} (it goes on by itself once that is fixed)")
     if item['keep']:
         keep = item['keep']
         print(f"  Keep: at {keep['step']}" + (f"; stopped: {keep['stopped']}" if keep['stopped'] else ''))

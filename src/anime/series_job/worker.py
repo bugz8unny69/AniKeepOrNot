@@ -1,6 +1,7 @@
 """SJ-4: Worker loop for series jobs."""
 import asyncio
 import logging
+import re
 import time
 
 from src.anime.series_job.steps.metadata import get_metadata
@@ -15,6 +16,7 @@ from src.anime.series_job.steps.common import SERVICE_WAIT_MS, STEP_SEQUENCE, ne
 from src.anime.series_job.store import LeaseLost, _atomic, claim, note, renew, save
 
 logger = logging.getLogger("akon.series")
+_OUTAGE_WHY = re.compile(r"[A-Z][A-Z_]+: ")       # A torrent's why while an outage makes it wait.
 
 STEP_HANDLERS = {
     "get_metadata": get_metadata,
@@ -65,6 +67,9 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
         return False
 
     claim_obj, series = claimed
+    # Why the series waited last time ('REASON at file:line'); an attempt that gets through
+    # saves the series without it.
+    was_waiting = series.work.pop("waiting", None)
     try:
         return await _attempt(db, context, claim_obj, series, now)
     except LeaseLost:
@@ -72,15 +77,20 @@ async def run_series_attempt(db, context, now: int | None = None) -> bool:
     except Exception as exc:
         # Boundary (owner, 2026-11-27): Search, Keep, Reject or Cancel raised. An outage
         # makes the series wait; a program error stops this series (not the worker) until Retry.
-        return _series_error(db, claim_obj, series, exc, now)
+        return _series_error(db, claim_obj, series, exc, now, was_waiting)
 
 
-def _series_error(db, claim_obj, series, exc, now):
+def _series_error(db, claim_obj, series, exc, now, was_waiting=None):
     label = f"series {series.anidb_id} {series.title}"
     reason = outage(exc)
     if reason is not None:
-        logger.warning("%s · waiting: %s at %s (%s); trying again in a minute", label, reason, where(exc), exc)
-        note(series, f"{label} · waiting: {reason} at {where(exc)}; trying again in a minute")
+        # Owner, 2026-11-28: said once, when the wait starts or its reason changes, not every
+        # minute; the series shows why it waits (work['waiting']) until an attempt gets through.
+        waiting = f"{reason} at {where(exc)}"
+        if waiting != was_waiting:
+            logger.warning("%s · waiting: %s (%s); it goes on by itself once that is fixed", label, waiting, exc)
+            note(series, f"{label} · waiting: {waiting} ({exc}); it goes on by itself once that is fixed")
+        series.work["waiting"] = waiting
         series.state, series.wake_at_ms = "ASLEEP", now + SERVICE_WAIT_MS
     else:
         error_loc = f"program error at {where(exc)}"
@@ -152,8 +162,16 @@ async def _attempt(db, context, claim_obj, series, now):
             # error" and keeps its files; Retry resumes it at this step.
             reason = outage(exc)
             if reason is not None:
-                logger.warning("series %s %s · %s %s · %s waiting: %s at %s (%s)", series.anidb_id, series.title,
-                               ep_label, release_name, step_name.replace("_", " "), reason, where(exc), exc)
+                # Owner, 2026-11-28: said once, when the wait starts or its reason changes, not
+                # every minute; the torrent shows why it waits ('REASON: ...') until the step gets through.
+                if not str(torrent.get("why") or "").startswith(reason + ":"):
+                    logger.warning("series %s %s · %s %s · %s waiting: %s at %s (%s)", series.anidb_id,
+                                   series.title, ep_label, release_name, step_name.replace("_", " "), reason,
+                                   where(exc), exc)
+                    note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · "
+                                 f"{step_name.replace('_', ' ')} waiting: {reason} ({exc}); "
+                                 "it goes on by itself once that is fixed")
+                torrent["why"] = f"{reason}: {exc} (at {where(exc)})"[:500]
                 torrent["state"] = "working"
                 wake = now + SERVICE_WAIT_MS
                 min_wake_ms = wake if min_wake_ms is None else min(min_wake_ms, wake)
@@ -175,6 +193,10 @@ async def _attempt(db, context, claim_obj, series, now):
                     "release_name": release_name[:1024],
                 }, now=now)
             continue
+        if _OUTAGE_WHY.match(str(torrent.get("why") or "")):         # The step got through: the wait is over.
+            note(series, f"series {series.anidb_id} {series.title} · {ep_label} {release_name} · "
+                         f"{step_name.replace('_', ' ')} goes on: {torrent['why'].split(':')[0]} is over")
+            torrent["why"] = None
         if result.action == "done":
             moved = True
             next_step = result.next_step or next_step_name(step_name)
